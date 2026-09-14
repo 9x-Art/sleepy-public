@@ -163,6 +163,31 @@
     return (n / 1024 / 1024).toFixed(2) + ' MB';
   }
 
+  /* ---------------------------- 时间 ---------------------------- */
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+  function timeStr(ts) {
+    var d = new Date(ts);
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
+  function dateStr(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function relativeTime(ts) {
+    if (!ts) return '';
+    var diff = Date.now() - ts;
+    if (diff < 0) return dateStr(ts);
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
+    if (diff < 604800000) return Math.floor(diff / 86400000) + '天前';
+    return dateStr(ts);
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.ui = {
@@ -176,7 +201,10 @@
     switchField: switchField,
     button: button,
     note: note,
-    fmtBytes: fmtBytes
+    fmtBytes: fmtBytes,
+    timeStr: timeStr,
+    dateStr: dateStr,
+    relativeTime: relativeTime
   };
 
 })(window);

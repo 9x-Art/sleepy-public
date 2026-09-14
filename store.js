@@ -53,7 +53,16 @@
     appearance: {
       theme: 'night',
       fontScale: 1
-    }
+    },
+
+    /* 3.x 聊天记录：[{ id, name, createdAt, updatedAt, messages: [...] }] */
+    chats: [],
+
+    /* D2 收藏：被收藏的单条消息快照 */
+    favorites: [],
+
+    /* 手账本 */
+    diaries: []
   };
 
   /* ---------------------------- 工具 ---------------------------- */
@@ -92,6 +101,17 @@
   var listeners = [];
   var lastError = null;
 
+  /* 兼容早期版本的坏存档。
+     旧版 set() 对单段路径写成了 cache[top][top] = value，
+     于是 chats 被存成 { chats: [...] }。这里读的时候解一层，
+     免得老用户升上来以后「聊天记录全没了」。 */
+  function unwrapSelf(top, val) {
+    if (!has(DEFAULTS, top)) return val;
+    if (!isObj(val)) return val;
+    if (!has(val, top)) return val;
+    return val[top];
+  }
+
   function load(top) {
     if (has(cache, top)) return cache[top];
     var base = has(DEFAULTS, top) ? clone(DEFAULTS[top]) : null;
@@ -99,7 +119,8 @@
     try {
       var raw = global.localStorage.getItem(NS + top);
       if (raw !== null && raw !== undefined) {
-        val = base !== null ? merge(base, JSON.parse(raw)) : JSON.parse(raw);
+        var parsed = unwrapSelf(top, JSON.parse(raw));
+        val = base !== null ? merge(base, parsed) : parsed;
       }
     } catch (e) {
       lastError = {
@@ -151,14 +172,20 @@
     var parts = String(path).split('.');
     var top = parts[0];
     load(top);
-    if (!isObj(cache[top])) cache[top] = {};
 
-    var cur = cache[top];
-    for (var i = 1; i < parts.length - 1; i++) {
-      if (!isObj(cur[parts[i]])) cur[parts[i]] = {};
-      cur = cur[parts[i]];
+    /* 单段路径 = 整体替换。老写法会把值塞进 cache[top][top]，
+       存出 { chats: [...] } 这种套娃结构，读回来就不是数组了。 */
+    if (parts.length === 1) {
+      cache[top] = clone(value);
+    } else {
+      if (!isObj(cache[top])) cache[top] = {};
+      var cur = cache[top];
+      for (var i = 1; i < parts.length - 1; i++) {
+        if (!isObj(cur[parts[i]])) cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = clone(value);
     }
-    cur[parts[parts.length - 1]] = clone(value);
 
     var ok = persist(top);
     notify(path, ok);
@@ -175,14 +202,18 @@
       var parts = String(pairs[i][0]).split('.');
       var top = parts[0];
       load(top);
-      if (!isObj(cache[top])) cache[top] = {};
 
-      var cur = cache[top];
-      for (var j = 1; j < parts.length - 1; j++) {
-        if (!isObj(cur[parts[j]])) cur[parts[j]] = {};
-        cur = cur[parts[j]];
+      if (parts.length === 1) {
+        cache[top] = clone(pairs[i][1]);
+      } else {
+        if (!isObj(cache[top])) cache[top] = {};
+        var cur = cache[top];
+        for (var j = 1; j < parts.length - 1; j++) {
+          if (!isObj(cur[parts[j]])) cur[parts[j]] = {};
+          cur = cur[parts[j]];
+        }
+        cur[parts[parts.length - 1]] = clone(pairs[i][1]);
       }
-      cur[parts[parts.length - 1]] = clone(pairs[i][1]);
 
       if (!touched[top]) { touched[top] = true; keys.push(top); }
     }
@@ -225,7 +256,8 @@
     for (var top in payload.data) {
       if (!has(payload.data, top)) continue;
       var base = has(DEFAULTS, top) ? clone(DEFAULTS[top]) : null;
-      cache[top] = base !== null ? merge(base, payload.data[top]) : clone(payload.data[top]);
+      var incoming = unwrapSelf(top, payload.data[top]);
+      cache[top] = base !== null ? merge(base, incoming) : clone(incoming);
       if (persist(top)) written.push(top);
     }
     notify('*', true);

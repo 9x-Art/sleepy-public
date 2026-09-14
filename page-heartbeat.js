@@ -1,69 +1,43 @@
-/* page-heartbeat.js — 心声页（MVP） */
+/* ============================================================
+   page-heartbeat.js — 心声（施工卡模块 E，本轮不实现）
+   依赖：store.js、ui.js、app.js
+
+   ⚠️ 这一版是占位页：内容是写死的，只保证「点进来不报错」。
+   真正的 E1（头像未读光点）/ E2（独立渲染层）要在模块 D 跑通之后做，
+   E 的挂载点是聊天页的气泡头像（.msg-avatar）。
+
+   历史遗留：这个文件末尾原本粘着一整段日记列表渲染的代码，跑到了
+   })(window); 之外，一加载就 ReferenceError。已清理。
+   ============================================================ */
 (function (global) {
   'use strict';
 
   var Sleepy = (global.Sleepy = global.Sleepy || {});
+  var ui = Sleepy.ui;
+  var h = ui.h;
+
+  var PLACEHOLDER_HEARTBEATS = [
+    { text: '今天摸到了云朵的边。', at: '刚刚' },
+    { text: '耳机里循环着同一首歌，第 7 遍。', at: '12 分钟前' }
+  ];
 
   Sleepy.register('heartbeat', {
     title: '心声',
     render: function (ctx) {
       var body = ctx.body;
-      body.innerHTML = 
-        '<h2 class="page-title">心声</h2>' +
-        '<div class="heartbeat-feed"></div>';
-      
-      var feed = body.querySelector('.heartbeat-feed');
-      feed.innerHTML = 
-        '<div class="heartbeat-item">' +
-          '<p class="heartbeat-text">今天摸到了云朵的边。</p>' +
-          '<p class="heartbeat-time">刚刚</p>' +
-        '</div>' +
-        '<div class="heartbeat-item">' +
-          '<p class="heartbeat-text">耳机里循环着同一首歌，第7遍。</p>' +
-          '<p class="heartbeat-time">12分钟前</p>' +
-        '</div>';
+
+      body.appendChild(h('p', 'set-group-note',
+        '这里会放她没说出口的话。施工卡模块 E 做完之后才接真数据。'));
+
+      var feed = h('div', 'heartbeat-feed');
+      PLACEHOLDER_HEARTBEATS.forEach(function (item) {
+        var row = h('div', 'heartbeat-item');
+        row.appendChild(h('p', 'heartbeat-text', item.text));
+        row.appendChild(h('p', 'heartbeat-time', item.at));
+        feed.appendChild(row);
+      });
+      body.appendChild(feed);
     }
   });
+
 })(window);
-      /* ======================= 日记列表渲染 ======================= */
-      var diaries = store.get('diaries') || [];
-      diaries.sort(function (a, b) { return b.timestamp - a.timestamp; });
-      
-      diaries.forEach(function (d) {
-        var diaryItem = h('div', 'diary-item');
-        
-        // 左侧时间戳
-        var timeEl = h('span', 'diary-time');
-        timeEl.textContent = d.status === 'written' ? relativeTime(d.timestamp) : '待写';
-        
-        // 右侧内容
-        var contentEl = h('div', 'diary-content');
-        if (d.status === 'written') {
-          contentEl.innerHTML = '<p>' + d.content.replace(/\n/g, '<br>') + '</p>';
-        } else {
-          contentEl.textContent = '记得写今天的日记哦：' + d.content.slice(0, 20) + '…';
-          contentEl.style.color = '#888';
-        }
-        
-        // 状态标记
-        if (d.status === 'pending') {
-          var remindBtn = h('button', 'diary-remind');
-          remindBtn.textContent = '现在写';
-          remindBtn.addEventListener('click', function () {
-            var newContent = prompt('补写日记：', d.content);
-            if (newContent !== null && newContent.trim()) {
-              d.content = newContent.trim();
-              d.status = 'written';
-              d.timestamp = Date.now();
-              store.set('diaries', diaries);
-              render();
-              ctx.toast('日记已补写', 'ok');
-            }
-          });
-          contentEl.appendChild(remindBtn);
-        }
-        
-        diaryItem.appendChild(timeEl);
-        diaryItem.appendChild(contentEl);
-        heartbeatFeed.appendChild(diaryItem);
-      });

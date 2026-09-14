@@ -141,9 +141,41 @@
     return (m && m.baseUrl && m.model) ? '已配置' : '未配置';
   }
 
+  function subApiSummary() {
+    var list = store.get('subApis');
+    if (!Array.isArray(list) || !list.length) return '未配置';
+    var on = 0;
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].enabled) on++;
+    return '已启用 ' + on + ' / ' + list.length + ' 组';
+  }
+
   /* ======================= 页面：设置（一级） ======================= */
 
   Sleepy.register('settings', {
+    title: '设置',
+    render: function (ctx) {
+      var body = ctx.body;
+
+      var g1 = group('模型连接');
+      var rowModel = row({
+        label: '模型连接',
+        hint: '主 API · 副 API · 后台任务',
+        value: mainApiSummary(),
+        onClick: function () { ctx.open('settings-model'); }
+      });
+      g1.card.appendChild(rowModel);
+      body.appendChild(g1.wrap);
+
+      var g2 = group('外观与文字');
+      g2.card.appendChild(row({ label: '主题与字号', hint: '夜灯 / 浅色 + 字号' }));
+      body.appendChild(g2.wrap);
+
+      var g3 = group('人设与预设');
+      g3.card.appendChild(row({ label: '人设预设库', hint: '增删改 + 导入导出 txt / md（禁 json）' }));
+      g3.card.appendChild(row({ label: '聊天默认参数', hint: '2.12 温度 · 流式开关' }));
+      body.appendChild(g3.wrap);
+
+      var g4 = group('数据与备份');
       var rowData = row({
         label: '数据与备份',
         hint: '导出 · 导入 · 存储空间 · 清理',
@@ -171,6 +203,7 @@
       ctx.refreshSummary();
     },
     onShow: function (ctx) { if (ctx.refreshSummary) ctx.refreshSummary(); }
+  });
 
   /* ==================== 页面：模型连接（二级） ==================== */
 
@@ -179,17 +212,25 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var summary = mainApiSummary();
       var g = group('对话');
-      var g4 = group('数据与备份');
-      g.card.appendChild(row({
+      var rowMain = row({
         label: '主 API',
         hint: '日常对话走这一个',
-        badge: summary,
-        badgeKind: (summary === '已配置') ? 'ok' : 'dim',
+        badge: mainApiSummary(),
+        badgeKind: (mainApiSummary() === '已配置') ? 'ok' : 'dim',
         onClick: function () { ctx.open('settings-mainapi'); }
-      }));
-      g.card.appendChild(row({ label: '副 API', hint: '2.3 多组 + 轮询顺序 + 启用开关' }));
+      });
+      g.card.appendChild(rowMain);
+
+      var subText = subApiSummary();
+      var rowSub = row({
+        label: '副 API',
+        hint: '主 API 挂了就按顺序轮询这些',
+        badge: subText,
+        badgeKind: (subText === '未配置') ? 'dim' : 'ok',
+        onClick: function () { ctx.open('settings-subapi'); }
+      });
+      g.card.appendChild(rowSub);
       body.appendChild(g.wrap);
 
       var g2 = group('后台任务');
@@ -205,7 +246,14 @@
 
       body.appendChild(h('p', 'set-foot',
         '所有 Key 只存在这台设备的浏览器里，不经过我的服务器。'));
-    }
+
+      /* 从副 API 页返回时刷新徽标：只改文字，不重建 DOM */
+      ctx.refreshSummary = function () {
+        setRowValue(rowMain, mainApiSummary());
+        setRowValue(rowSub, subApiSummary());
+      };
+    },
+    onShow: function (ctx) { if (ctx.refreshSummary) ctx.refreshSummary(); }
   });
 
   /* ==================== 页面：主 API（三级） ==================== */

@@ -1,12 +1,20 @@
 /* ============================================================
-   page-chat.js — 聊天核心 v0
-   依赖：store.js、ui.js、app.js（必须在它们之后加载）
-   覆盖 ROADMAP：3.1 会话列表 · 3.2 聊天页 UI · 3.3 发文字收文字（首条里程碑）
-   页面：chat-list → chat-detail
+   page-chat.js — 聊天核心（施工卡模块 D）
+   依赖：store.js、ui.js、app.js、api.js（必须在它们之后加载）
+   覆盖：D1 消息发送/接收 · D2 气泡长按菜单 · D3 reroll · D4 加号面板
+   页面：chat-list → chat-detail → favorites
 
-   数据结构约定：
+   数据结构：
      chats: [{ id, name, createdAt, updatedAt, messages: [...] }]
-     message: { id, role: 'user' | 'assistant', content, timestamp }
+     message: { id, role:'user'|'assistant'|'system', type?, content, timestamp, quote? }
+       type 缺省 = 文字气泡；'file' / 'photo' = 附件气泡
+
+   两个刻意的取舍，别当成 bug：
+   1) 附件只存元数据（文件名 / 大小 / 类型），不存 base64。
+      localStorage 只有 5MB 左右，塞两张原图就把配额撑爆，store 会直接
+      写失败（QuotaExceededError）。真要存图，等接 IndexedDB 再说。
+   2) 「空输入点发送」给模型塞的是一句用户口吻的指令。这是临时办法，
+      等 F 模块（提示词引擎）做出来就该由 F 统一组装。
    ============================================================ */
 (function (global) {
   'use strict';
@@ -14,36 +22,35 @@
   var Sleepy = (global.Sleepy = global.Sleepy || {});
   var store = Sleepy.store;
   var ui = Sleepy.ui;
-
-  var h = ui.h;
-  var group = ui.group;
-  var row = ui.row;
-  var setRowValue = ui.setRowValue;
-  var textField = ui.textField;
-  var button = ui.button;
-  var fmtBytes = ui.fmtBytes;
   var api = Sleepy.api;
 
-  /* 模块级流式状态：聊天页任何一屏都能中止，离开页面也能收场 */
-  var streaming = false;
-  var activeHandle = null;
+  var h = ui.h;
+  var fmtBytes = ui.fmtBytes;
+  var timeStr = ui.timeStr;
+  var relativeTime = ui.relativeTime;
 
-  /* ---------------------------- 数据层 ---------------------------- */
+  var AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237A5C4A'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z'/%3E%3C/svg%3E";
+
+  /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管 */
+  var PROACTIVE_HINT = '（我这边安静着，没打字，你主动开口说一句吧。）';
+
+  /* ============================ 数据层 ============================ */
 
   function getChats() {
     var list = store.get('chats');
-    if (!Array.isArray(list)) return [];
-    return list;
+    return Array.isArray(list) ? list : [];
   }
 
-  function saveChats(chats) {
-    store.set('chats', chats);
+  function saveChats(list) { store.set('chats', list); }
+
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
 
   function createChat(name) {
     var chats = getChats();
     var chat = {
-      id: String(Date.now()),
+      id: newId(),
       name: name || '新对话',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -54,74 +61,142 @@
     return chat;
   }
 
-  function getChat(chatId) {
+  function getChat(id) {
+    if (!id) return null;
     var chats = getChats();
     for (var i = 0; i < chats.length; i++) {
-      if (chats[i].id === chatId) return chats[i];
+      if (chats[i].id === id) return chats[i];
     }
     return null;
   }
 
-  function updateChat(chatId, updates) {
+  /* 唯一改数据的入口：拿全列表 → 改目标对话 → 整表落盘。
+     只写单条对话会把别的对话冲掉（老版本踩过这个坑）。 */
+  function mutate(chatId, fn) {
     var chats = getChats();
     for (var i = 0; i < chats.length; i++) {
-      if (chats[i].id === chatId) {
-        Object.assign(chats[i], updates);
-        chats[i].updatedAt = Date.now();
-        saveChats(chats);
-        return chats[i];
-      }
-    }
-    return null;
-  }
-
-  function deleteChat(chatId) {
-    var chats = getChats();
-    var idx = -1;
-    for (var i = 0; i < chats.length; i++) {
-      if (chats[i].id === chatId) { idx = i; break; }
-    }
-    if (idx >= 0) {
-      chats.splice(idx, 1);
+      if (chats[i].id !== chatId) continue;
+      fn(chats[i]);
+      chats[i].updatedAt = Date.now();
       saveChats(chats);
-      return true;
+      return chats[i];
     }
-    return false;
+    return null;
   }
 
   function addMessage(chatId, msg) {
-    var chats = getChats();
-    for (var i = 0; i < chats.length; i++) {
-      if (chats[i].id === chatId) {
-        chats[i].messages.push(msg);
-        chats[i].updatedAt = Date.now();
-        saveChats(chats);   /* 保存全列表；原版 saveChats([chat]) 会把其他对话冲掉 */
-        return msg;
+    mutate(chatId, function (c) { c.messages.push(msg); });
+    return msg;
+  }
+
+  function dropMessages(chatId, ids) {
+    mutate(chatId, function (c) {
+      c.messages = c.messages.filter(function (m) { return ids.indexOf(m.id) < 0; });
+    });
+  }
+
+  function patchMessage(chatId, id, patch) {
+    mutate(chatId, function (c) {
+      for (var i = 0; i < c.messages.length; i++) {
+        if (c.messages[i].id !== id) continue;
+        for (var k in patch) {
+          if (Object.prototype.hasOwnProperty.call(patch, k)) c.messages[i][k] = patch[k];
+        }
+        return;
       }
+    });
+  }
+
+  /* ============================ 小工具 ============================ */
+
+  /* 附件的可读文本。存进上下文时用它代替二进制 */
+  function attachText(m) {
+    if (m.type === 'photo') return '[我发了一张照片：' + (m.name || '未命名') + ']';
+    if (m.type === 'file') return '[我发了一个文件：' + (m.name || '未命名') + '（' + fmtBytes(m.size || 0) + '）]';
+    return m.content || '';
+  }
+
+  function previewOf(msg) {
+    if (!msg) return '空对话';
+    if (msg.type === 'photo') return '你发了张照片';
+    if (msg.type === 'file') return '你发了个文件';
+    var t = String(msg.content || '').replace(/\s+/g, ' ').slice(0, 20);
+    return (msg.role === 'user' ? '你说：' : '她回：') + t;
+  }
+
+  function copyText(text) {
+    if (global.navigator && global.navigator.clipboard && global.navigator.clipboard.writeText) {
+      return global.navigator.clipboard.writeText(text);
     }
-    return null;
+    /* file:// 下有些浏览器不给 clipboard，退回老办法 */
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) resolve(); else reject(new Error('浏览器不允许复制'));
+      } catch (e) {
+        reject(e);
+      }
+    });
   }
 
-  /* ---------------------------- 时间格式化 ---------------------------- */
+  /* 长按（触摸 480ms / 鼠标按住 480ms / 右键）打开菜单 */
+  function bindLongPress(el, fn) {
+    var timer = null;
+    var sx = 0, sy = 0;
 
-  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function clear() {
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+    function fire() {
+      timer = null;
+      el.__lpAt = Date.now();
+      fn();
+    }
+    function move(x, y) {
+      if (!timer) return;
+      if (Math.abs(x - sx) > 10 || Math.abs(y - sy) > 10) clear();
+    }
 
-  function timeStr(ts) {
-    var d = new Date(ts);
-    return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    el.addEventListener('touchstart', function (e) {
+      var t = e.touches[0];
+      sx = t.clientX; sy = t.clientY;
+      clear();
+      timer = setTimeout(fire, 480);
+    }, { passive: true });
+    el.addEventListener('touchmove', function (e) {
+      var t = e.touches[0];
+      move(t.clientX, t.clientY);
+    }, { passive: true });
+    el.addEventListener('touchend', clear);
+    el.addEventListener('touchcancel', clear);
+
+    el.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      sx = e.clientX; sy = e.clientY;
+      clear();
+      timer = setTimeout(fire, 480);
+    });
+    el.addEventListener('mousemove', function (e) { move(e.clientX, e.clientY); });
+    el.addEventListener('mouseup', clear);
+    el.addEventListener('mouseleave', clear);
+
+    el.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      clear();
+      fire();
+    });
   }
 
-  function dateStr(ts) {
-    var d = new Date(ts);
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-  }
-
-  function relativeTime(ts) {
-    var diff = Date.now() - ts;
-    if (diff < 60000) return '刚刚';
-    if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
-    if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
-    return dateStr(ts);
+  /* 刚长按完紧接着的那次 click 要忽略，否则会连点两次 */
+  function wasLongPressed(el) {
+    return Date.now() - (el.__lpAt || 0) < 700;
   }
 
   /* ======================= 页面：会话列表 ======================= */
@@ -130,94 +205,69 @@
     title: '字条',
     render: function (ctx) {
       var body = ctx.body;
-      var self = this;
 
-      /* 空状态 */
       var emptyWrap = h('div', 'empty');
       emptyWrap.appendChild(h('div', 'empty-paper'));
       emptyWrap.appendChild(h('p', 'empty-text', '还没有写过任何字条'));
-      emptyWrap.appendChild(h('p', 'empty-hint', '点击下方 + 新建一个对话'));
+      emptyWrap.appendChild(h('p', 'empty-hint', '点右下角的 + 新建一个对话'));
       body.appendChild(emptyWrap);
 
-      /* 列表容器 */
       var listWrap = h('div', 'chat-list-wrap');
       body.appendChild(listWrap);
 
-      /* FAB 新建按钮 */
-      var fab = h('button', 'fab-btn');
+      var fab = h('button', 'fab-btn', '+');
       fab.type = 'button';
-      fab.innerHTML = '+';
+      fab.title = '新建对话';
       fab.addEventListener('click', function () {
-        var name = prompt('给新对话起个名字？');
-        if (name && name.trim()) {
-          var chat = createChat(name.trim());
-          ctx.toast('已新建 · ' + chat.name, 'ok');
-          ctx.open('chat-detail', { chatId: chat.id });
-        }
+        var name = prompt('给这个对话起个名字？', '新对话');
+        if (name === null) return;
+        var chat = createChat(String(name).trim() || '新对话');
+        ctx.toast('已新建 · ' + chat.name, 'ok');
+        ctx.open('chat-detail', { chatId: chat.id });
       });
       body.appendChild(fab);
 
-      ctx.refreshList = function () {
+      function rebuild() {
         var chats = getChats();
         listWrap.innerHTML = '';
         emptyWrap.style.display = chats.length ? 'none' : 'flex';
 
-        if (chats.length === 0) return;
-
         chats.forEach(function (chat) {
           var item = h('div', 'chat-item');
-          item.setAttribute('data-id', chat.id);
 
           var main = h('div', 'chat-item-main');
-          var nameEl = h('span', 'chat-item-name');
-          nameEl.textContent = chat.name;
-          main.appendChild(nameEl);
+          main.appendChild(h('span', 'chat-item-name', chat.name));
 
           var meta = h('div', 'chat-item-meta');
-          var timeEl = h('span', 'chat-item-time');
-          timeEl.textContent = relativeTime(chat.updatedAt);
-          meta.appendChild(timeEl);
-
-          var lastMsg = chat.messages.length > 0 ? chat.messages[chat.messages.length - 1] : null;
-          if (lastMsg) {
-            var preview = h('span', 'chat-item-preview');
-            preview.textContent = lastMsg.role === 'user' ? '你说：' + lastMsg.content.slice(0, 20) : '她回：' + lastMsg.content.slice(0, 20);
-            meta.appendChild(preview);
-          } else {
-            var preview = h('span', 'chat-item-preview');
-            preview.textContent = '空对话';
-            meta.appendChild(preview);
-          }
+          meta.appendChild(h('span', 'chat-item-time', relativeTime(chat.updatedAt)));
+          var msgs = Array.isArray(chat.messages) ? chat.messages : [];
+          meta.appendChild(h('span', 'chat-item-preview', previewOf(msgs[msgs.length - 1])));
           main.appendChild(meta);
           item.appendChild(main);
 
-          /* 左滑删除 */
-          var delBtn = h('button', 'chat-item-del');
-          delBtn.type = 'button';
-          delBtn.textContent = '删';
-          delBtn.addEventListener('click', function (e) {
+          var del = h('button', 'chat-item-del', '删');
+          del.type = 'button';
+          del.title = '删除这个对话';
+          del.addEventListener('click', function (e) {
             e.stopPropagation();
-            if (confirm('确定要删除 "' + chat.name + '" 吗？')) {
-              deleteChat(chat.id);
-              self.refreshList();
-              ctx.toast('已删除', 'ok');
-            }
+            if (!confirm('确定删除「' + chat.name + '」？里面的聊天记录会一起没掉。')) return;
+            saveChats(getChats().filter(function (c) { return c.id !== chat.id; }));
+            rebuild();
+            ctx.toast('已删除', 'ok');
           });
-          item.appendChild(delBtn);
+          item.appendChild(del);
 
           item.addEventListener('click', function () {
             ctx.open('chat-detail', { chatId: chat.id });
           });
-
           listWrap.appendChild(item);
         });
-      };
+      }
 
-      self.refreshList();
+      ctx.rebuild = rebuild;
+      rebuild();
     },
-    onShow: function (ctx) {
-      if (ctx.refreshList) ctx.refreshList();
-    }
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
 
   /* ======================= 页面：聊天详情 ======================= */
@@ -225,156 +275,55 @@
   Sleepy.register('chat-detail', {
     title: '聊天',
     render: function (ctx) {
-      var body = ctx.body;
-      /* ======================= 顶部导航栏（MVP） ======================= */
-      var navBar = h('div', 'nav-bar');
-      
-      // 返回按钮
-      var backBtn = h('button', 'nav-back', '←');
-      backBtn.type = 'button';
-      backBtn.addEventListener('click', function () { ctx.back(); });
-      
-      // 头像（点击跳转朋友圈）
-      var avatarImg = h('img', 'nav-avatar');
-      avatarImg.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237A5C4A'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z'/%3E%3C/svg%3E";
-      avatarImg.alt = '她';
-      avatarImg.title = '朋友圈';
-      avatarImg.addEventListener('click', function () { ctx.open('moments'); });
-      
-      // 右侧动作组
-      var actions = h('div', 'nav-actions');
-      
-      // 设置按钮
-      var settingsBtn = h('button', 'nav-action', '⚙️');
-      settingsBtn.type = 'button';
-      settingsBtn.title = '设置';
-      settingsBtn.addEventListener('click', function () { ctx.open('settings'); });
-      
-      // 搜索按钮（精致小标）
-      var searchBtn = h('button', 'nav-action');
-      searchBtn.type = 'button';
-      searchBtn.title = '搜索聊天记录';
-      searchBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#7A5C4A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
-      searchBtn.addEventListener('click', function () {
-        // 展开内嵌搜索栏
-        var searchWrap = h('div', 'search-bar-wrap');
-        searchWrap.style.cssText = 'position:absolute;top:52px;right:12px;left:12px;display:flex;gap:8px;align-items:center;padding:8px;background:rgba(255,255,255,0.95);border-radius:10px;border:1px solid rgba(214,199,172,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.08);z-index:12;';
-        
-        var searchInput = h('input', 'search-input');
-        searchInput.type = 'text';
-        searchInput.placeholder = '搜索聊天记录…';
-        searchInput.style.cssText = 'flex:1;border:1px solid #D6C7AC;border-radius:6px;padding:6px 10px;font-size:14px;outline:none;';
-        searchInput.style.cssText = 'flex:1;border:1px solid #D6C7AC;border-radius:6px;padding:6px 10px;font-size:14px;outline:none;';
-        
-        // 实时搜索 + 结果渲染
-        var resultsWrap = h('div', 'search-results');
-        resultsWrap.style.cssText = 'max-height:300px;overflow-y:auto;margin-top:8px;background:white;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.08);display:none;';
-        searchWrap.appendChild(resultsWrap);
-        
-        function highlight(text, keyword) {
-          if (!keyword) return text;
-          var regex = new RegExp('(' + keyword.replace(/[.*+?^${}()|\[\]\\]/g, '\\$&') + ')', 'gi');
-          return text.replace(regex, '<mark>$1</mark>');
-        }
-        
-        function performSearch(keyword) {
-          if (!keyword.trim()) {
-            resultsWrap.style.display = 'none';
-            return;
-          }
-          
-          var matches = [];
-          chat.messages.forEach(function (msg, idx) {
-            if (msg.content && msg.content.toLowerCase().includes(keyword.toLowerCase())) {
-              matches.push({ msg: msg, idx: idx });
-            }
-          });
-          
-          resultsWrap.innerHTML = '';
-          if (matches.length === 0) {
-            resultsWrap.style.display = 'block';
-            resultsWrap.innerHTML = '<div class="search-result-empty">没有找到相关消息</div>';
-            return;
-          }
-          
-          resultsWrap.style.display = 'block';
-          matches.forEach(function (item) {
-            var resultItem = h('div', 'search-result-item');
-            var preview = h('div', 'search-result-preview');
-            preview.innerHTML = highlight(item.msg.content.slice(0, 50), keyword);
-            var meta = h('div', 'search-result-meta');
-            meta.textContent = timeStr(item.msg.timestamp);
-            var jumpBtn = h('button', 'search-result-jump');
-            jumpBtn.textContent = '跳转';
-            jumpBtn.addEventListener('click', function () {
-              var bubbles = msgWrap.querySelectorAll('.msg-bubble');
-              if (bubbles[item.idx]) {
-                bubbles[item.idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                bubbles[item.idx].style.backgroundColor = 'rgba(255,255,0,0.2)';
-                setTimeout(function () { bubbles[item.idx].style.backgroundColor = ''; }, 1500);
-              }
-              searchWrap.remove();
-            });
-            resultItem.appendChild(preview);
-            resultItem.appendChild(meta);
-            resultItem.appendChild(jumpBtn);
-            resultsWrap.appendChild(resultItem);
-          });
-        }
-        
-        searchInput.addEventListener('input', function (e) {
-          performSearch(e.target.value);
-        });
-        
-        searchInput.addEventListener('keydown', function (e) {
-          if (e.key === 'Escape') {
-            searchWrap.remove();
-          } else if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            // 回车不关闭，保持结果可见
-          }
-        });
-        
-        var closeBtn = h('button', 'search-close');
-        closeBtn.type = 'button';
-        closeBtn.innerHTML = '×';
-        closeBtn.style.cssText = 'background:transparent;border:none;font-size:18px;color:#7A5C4A;cursor:pointer;padding:0 4px;';
-        closeBtn.addEventListener('click', function () { searchWrap.remove(); });
-        
-        searchWrap.appendChild(searchInput);
-        searchWrap.appendChild(closeBtn);
-        body.appendChild(searchWrap);
-        searchInput.focus();
-      });
-      
-      actions.appendChild(settingsBtn);
-      actions.appendChild(searchBtn);
-      
-      navBar.appendChild(backBtn);
-      navBar.appendChild(avatarImg);
-      navBar.appendChild(actions);
-      body.insertBefore(navBar, body.firstChild);
-      var params = ctx.params;
-      var chatId = params.chatId;
-      var chat = getChat(chatId);
+      var chatId = ctx.params.chatId;
 
-      if (!chat) {
-        ctx.toast('找不到该对话', 'err');
+      if (!getChat(chatId)) {
+        ctx.toast('找不到这个对话', 'err');
         ctx.back();
         return;
       }
+      ctx.setTitle(getChat(chatId).name);
+      ctx.setActions([
+        { label: '\u2605', onClick: function () { ctx.open('favorites'); } },
+        { label: '\u2699', onClick: function () { ctx.open('settings'); } }
+      ]);
 
-      ctx.setTitle(chat.name);
+      var body = ctx.body;
 
-      /* 消息容器 */
+      /* -------- 只活在这一次拜访里的状态，不落盘 -------- */
+      var reqSeq = 0;        /* 请求序号，旧回调一律丢弃 */
+      var pending = null;    /* { text, timestamp, targetId } */
+      var handle = null;     /* api.runChat 的句柄，用于停止 */
+      var quote = null;      /* { role, content } */
+      var selecting = false;
+      var selected = {};     /* id -> true */
+
+      /* ------------------------ 多选条 ------------------------ */
+
+      var selBar = h('div', 'msg-select-bar');
+      selBar.style.display = 'none';
+      body.appendChild(selBar);
+
+      /* ------------------------ 消息区 ------------------------ */
+
       var msgWrap = h('div', 'msg-wrap');
       body.appendChild(msgWrap);
 
-      /* 输入区域 */
+      /* ------------------------ 底部 ------------------------ */
+
+      var foot = h('div', 'chat-foot');
+
+      var quoteBar = h('div', 'msg-quote-bar');
+      quoteBar.style.display = 'none';
+      foot.appendChild(quoteBar);
+
+      var panel = h('div', 'plus-panel');
+      foot.appendChild(panel);
+
       var inputArea = h('div', 'input-area');
       var textarea = h('textarea', 'chat-input');
       textarea.placeholder = '写下你想说的话…';
-      textarea.rows = 3;
+      textarea.rows = 1;
       textarea.setAttribute('autocapitalize', 'off');
       textarea.setAttribute('autocorrect', 'off');
       textarea.setAttribute('spellcheck', 'false');
@@ -382,702 +331,666 @@
       var sendBtn = h('button', 'send-btn', '发');
       sendBtn.type = 'button';
 
+      var plusBtn = h('button', 'plus-btn', '+');
+      plusBtn.type = 'button';
+      plusBtn.title = '更多';
+
       inputArea.appendChild(textarea);
       inputArea.appendChild(sendBtn);
-      body.appendChild(inputArea);
+      inputArea.appendChild(plusBtn);
+      foot.appendChild(inputArea);
+      body.appendChild(foot);
 
-      /* 渲染状态：pending 是正在等的回复，不落盘，离开即消失 */
-      var pendingMsg = null;
-      var reqHandle = null;
+      /* 长按菜单：底部弹出的动作表 */
+      var menuMask = h('div', 'msg-menu-mask');
+      var menu = h('div', 'msg-menu');
+      var menuList = h('div', 'msg-menu-list');
+      var menuCancel = h('button', 'msg-menu-cancel', '取消');
+      menuCancel.type = 'button';
+      menu.appendChild(menuList);
+      menu.appendChild(menuCancel);
+      body.appendChild(menuMask);
+      body.appendChild(menu);
 
-      /* 统一改数据：拿全列表→改目标对话→落盘。避免再次出现"只存单条" */
-      function mutateChat(fn) {
-        var chats = getChats();
-        var c = null;
-        for (var i = 0; i < chats.length; i++) {
-          if (chats[i].id === chatId) { c = chats[i]; break; }
-        }
-        if (!c) return false;
-        fn(c);
-        saveChats(chats);
-        chat = c;
-        return true;
+      /* ======================== 渲染 ======================== */
+
+      function autoGrow() {
+        textarea.style.height = 'auto';
+        /* 注意：render 阶段元素还没挂进文档，scrollHeight 是 0，
+           所以下限必须给足，并且进入页面时要再算一次（见 ctx.reload）。 */
+        textarea.style.height = Math.max(42, Math.min(textarea.scrollHeight, 120)) + 'px';
       }
 
-      function cancelReq() {
-        if (reqHandle) { try { reqHandle.abort(); } catch (e) {} }
-        reqHandle = null;
-        pendingMsg = null;
-        streaming = false;
-        renderMessages();
-        updateSendUI();
-      }
-
-      function renderMessages() {
+      function renderMessages(keepScroll) {
+        var prev = msgWrap.scrollTop;
         msgWrap.innerHTML = '';
-        chat.messages.forEach(function (msg, idx) {
-          appendBubble(msg, msg.role === 'assistant' ? [regenerateBtn(idx)] : null);
+
+        var c = getChat(chatId);
+        if (!c) return;
+
+        c.messages.forEach(function (m) {
+          msgWrap.appendChild(bubbleFor(m, c));
         });
-        if (pendingMsg) appendPending();
-        msgWrap.scrollTop = msgWrap.scrollHeight;
+        if (pending && !pending.targetId) msgWrap.appendChild(pendingBubble());
+
+        if (keepScroll) msgWrap.scrollTop = prev;
+        else msgWrap.scrollTop = msgWrap.scrollHeight;
       }
 
-      function appendBubble(msg, actions) {
-        var bubble = h('div', 'msg-bubble ' + (msg.role === 'user' ? 'msg-user' : 'msg-assistant'));
-        // 消息复制功能
-        bubble.addEventListener('click', function () {
-          if (msg.content) {
-            navigator.clipboard.writeText(msg.content.slice(0, 120)).then(function () {
-              ctx.toast('已复制：' + msg.content.slice(0, 20) + '...', 'ok');
-            }, function () {
-              ctx.toast('复制失败，请检查浏览器权限', 'err');
-            });
-          }
-        var text = h('div', 'msg-text');
-        text.textContent = msg.content || '（空）';
-        
-        // Char 头像（点击跳转心声）
-        if (msg.role === 'assistant') {
-          var avatar = h('img', 'msg-avatar');
-          avatar.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237A5C4A'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z'/%3E%3C/svg%3E";
-          avatar.alt = '她';
-          avatar.title = '心声';
-          avatar.addEventListener('click', function () { ctx.open('heartbeat'); });
-          bubble.insertBefore(avatar, text);
-        }
-        
-        bubble.appendChild(text);
-        // 长按菜单升级 v0.2
-        var longPressTimer = null;
-        var isSelecting = false;
-        var selectedMessages = [];
+      function bubbleFor(msg, c) {
+        var role = msg.role === 'user' ? 'user'
+                 : (msg.role === 'system' ? 'system' : 'assistant');
+        var bubble = h('div', 'msg-bubble msg-' + role);
+        bubble.setAttribute('data-id', msg.id);
 
-        function updateSelectionUI() {
-          if (selectedMessages.length === 0) {
-            meta.innerHTML = '';
-            meta.appendChild(h('span', 'msg-time', timeStr(msg.timestamp)));
-            return;
-          }
-          var selectBar = h('div', 'msg-select-bar');
-          selectBar.innerHTML = '<span>' + selectedMessages.length + ' 条已选</span>' +
-            '<button class="msg-act" title="取消选择">×</button>' +
-            '<button class="msg-act" title="批量删除">🗑️</button>' +
-            '<button class="msg-act" title="批量转发">📤</button>';
-          selectBar.querySelector('button[title="取消选择"]').addEventListener('click', function () {
-            selectedMessages.forEach(m => m.selected = false);
-            selectedMessages = [];
-            updateSelectionUI();
-            renderMessages();
+        var herePending = !!(pending && pending.targetId === msg.id);
+        if (herePending) bubble.classList.add('is-pending');
+        if (selecting && selected[msg.id]) bubble.classList.add('is-selected');
+
+        if (role === 'assistant') {
+          var av = h('img', 'msg-avatar');
+          av.src = AVATAR;
+          av.alt = '她';
+          av.title = '心声';
+          av.addEventListener('click', function (e) {
+            e.stopPropagation();
+            ctx.open('heartbeat');
           });
-          selectBar.querySelector('button[title="批量删除"]').addEventListener('click', function () {
-            if (confirm('确定要删除这 ' + selectedMessages.length + ' 条消息吗？')) {
-              selectedMessages.forEach(m => deleteMessage(chatId, m.id));
-              selectedMessages = [];
-              renderMessages();
-            }
-          });
-          selectBar.querySelector('button[title="批量转发"]').addEventListener('click', function () {
-            ctx.toast('已转发 ' + selectedMessages.length + ' 条消息', 'ok');
-            selectedMessages = [];
-            updateSelectionUI();
-          });
-          meta.innerHTML = '';
-          meta.appendChild(selectBar);
+          bubble.appendChild(av);
         }
 
-        // 左滑引用检测
-        var startX = 0;
-        bubble.addEventListener('touchstart', function (e) {
-          startX = e.touches[0].clientX;
-          longPressTimer = setTimeout(function () {
-            // 长按菜单
-            isSelecting = true;
-            msg.selected = !msg.selected;
-            if (msg.selected && !selectedMessages.includes(msg)) {
-              selectedMessages.push(msg);
-            } else if (!msg.selected && selectedMessages.includes(msg)) {
-              selectedMessages = selectedMessages.filter(m => m !== msg);
-            }
-            updateSelectionUI();
-          }, 500);
-        });
+        /* 内容列：引用条 / 正文 / 时间都装在这里，头像才能并排在左边 */
+        var content = h('div', 'msg-body');
 
-        bubble.addEventListener('touchmove', function (e) {
-
-      /* ======================= 转账功能（真实） ======================= */
-      function showTransferDialog() {
-        var dialog = h('div', 'transfer-dialog');
-        dialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:20px;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);z-index:20;width:80%;max-width:300px;';
-        
-        var title = h('h3', 'transfer-title', '转账');
-        
-        var amountLabel = h('label', 'transfer-label', '金额（元）：');
-        var amountInput = h('input', 'transfer-input');
-        amountInput.type = 'number';
-        amountInput.placeholder = '0.00';
-        amountInput.min = '0.01';
-        amountInput.step = '0.01';
-        
-        var noteLabel = h('label', 'transfer-label', '备注（可选）：');
-        var noteInput = h('textarea', 'transfer-textarea');
-        noteInput.placeholder = '说点什么…';
-        noteInput.rows = 2;
-        
-        var btnWrap = h('div', 'transfer-btns');
-        var cancelBtn = h('button', 'transfer-btn transfer-cancel', '取消');
-        var confirmBtn = h('button', 'transfer-btn transfer-confirm', '确认转账');
-        
-        cancelBtn.addEventListener('click', function () { document.body.removeChild(dialog); });
-        confirmBtn.addEventListener('click', function () {
-          var amount = parseFloat(amountInput.value);
-          if (isNaN(amount) || amount < 0.01) {
-            ctx.toast('请输入有效金额', 'err');
-            return;
-          }
-          var note = noteInput.value.trim();
-          var content = '你向她转账 ' + amount.toFixed(2) + ' 元' + (note ? '（备注：' + note + '）' : '');
-          var systemMsg = {
-            id: String(Date.now()),
-            role: 'system',
-            content: content,
-            timestamp: Date.now()
-          };
-          addMessage(chatId, systemMsg);
-          renderMessages();
-          document.body.removeChild(dialog);
-          ctx.toast('转账成功', 'ok');
-        });
-        
-        btnWrap.appendChild(cancelBtn);
-        btnWrap.appendChild(confirmBtn);
-        
-        dialog.appendChild(title);
-        dialog.appendChild(amountLabel);
-        dialog.appendChild(amountInput);
-        dialog.appendChild(noteLabel);
-        dialog.appendChild(noteInput);
-        dialog.appendChild(btnWrap);
-        
-        document.body.appendChild(dialog);
-        amountInput.focus();
-      }
-      
-      // 注册到加号面板
-      panelActions.find(a => a.id === 'transfer').handler = showTransferDialog;
-          if (longPressTimer && !isSelecting) {
-
-      /* ======================= 拍一拍功能（真实） ======================= */
-      function doPat(customText) {
-        var text = customText || '你拍了拍她';
-        var systemMsg = {
-          id: String(Date.now()),
-          role: 'system',
-          content: text,
-          timestamp: Date.now()
-        };
-        addMessage(chatId, systemMsg);
-        renderMessages();
-        ctx.toast('拍一拍发送成功', 'ok');
-      }
-      
-      // 注册双击事件到顶部头像
-      avatarImg.addEventListener('dblclick', function () { doPat(); });
-      
-      // 注册双击事件到气泡头像（需在 appendBubble 中动态绑定）
-      // 已在 appendBubble 中通过 onclick 绑定，此处追加 dblclick
-      
-      // 注册到加号面板
-      panelActions.find(a => a.id === 'pat').handler = function () {
-        var custom = prompt('自定义拍一拍文案（可选）：', '你拍了拍她的肩膀');
-        if (custom !== null) {
-          doPat(custom.trim() || '你拍了拍她');
+        if (msg.quote) {
+          content.appendChild(h('div', 'msg-quote',
+            '引用' + (msg.quote.role === 'user' ? '我' : '她') + '：' + msg.quote.content));
         }
-      };
-            var dx = e.touches[0].clientX - startX;
 
-      /* ======================= 发文件功能（真实） ======================= */
-      function showFilePicker() {
-        var input = document.createElement('input');
-        input.type = 'file';
-        input.style.display = 'none';
-        input.onchange = function (e) {
-          var file = e.target.files[0];
-          if (!file) return;
-          
-          var fileMsg = {
-            id: String(Date.now()),
-            role: 'user',
-            type: 'file',
-            name: file.name,
-            size: file.size,
-            timestamp: Date.now()
-          };
-          addMessage(chatId, fileMsg);
-          renderMessages();
-          ctx.toast('文件已发送', 'ok');
-        };
-        document.body.appendChild(input);
-        input.click();
-        setTimeout(function () { document.body.removeChild(input); }, 100);
-      }
-      
-      // 注册到加号面板
-      panelActions.find(a => a.id === 'file').handler = showFilePicker;
-            if (dx < -20) { // 左滑 >20px
+        if (msg.type === 'photo' || msg.type === 'file') {
+          content.appendChild(attachCard(msg));
+        } else {
+          var textEl = h('div', 'msg-text');
+          var shown = herePending ? pending.text : (msg.content || '（空）');
+          if (herePending && !shown) textEl.appendChild(h('span', 'typing-dots', '···'));
+          else textEl.textContent = shown;
+          content.appendChild(textEl);
+        }
 
-      /* ======================= 相册功能（真实） ======================= */
-      function showPhotoAlbum() {
-        var album = h('div', 'photo-album');
-        album.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:25;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
-        
-        var title = h('h3', 'album-title', '选择照片');
-        title.style.cssText = 'color:white;margin-bottom:20px;font-size:18px;';
-        
-        var grid = h('div', 'album-grid');
-        grid.style.cssText = 'display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;max-width:400px;width:100%;';
-        
-        // Mock 图片数据
-        var mockImages = [
-          'https://via.placeholder.com/300/FFB6C1/FFFFFF?text=IMG+1',
-          'https://via.placeholder.com/300/98FB98/FFFFFF?text=IMG+2',
-          'https://via.placeholder.com/300/87CEFA/FFFFFF?text=IMG+3',
-          'https://via.placeholder.com/300/FFD700/FFFFFF?text=IMG+4',
-          'https://via.placeholder.com/300/FF6347/FFFFFF?text=IMG+5',
-          'https://via.placeholder.com/300/BA55D3/FFFFFF?text=IMG+6',
-          'https://via.placeholder.com/300/20B2AA/FFFFFF?text=IMG+7',
-          'https://via.placeholder.com/300/FF69B4/FFFFFF?text=IMG+8',
-          'https://via.placeholder.com/300/7B68EE/FFFFFF?text=IMG+9'
-        ];
-        
-        mockImages.forEach(function (url) {
-          var img = h('img', 'album-item');
-          img.src = url;
-          img.style.cssText = 'width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;cursor:pointer;';
-          img.addEventListener('click', function () {
-            var imageMsg = {
-              id: String(Date.now()),
-              role: 'user',
-              type: 'image',
-              url: url,
-              thumbnail: url.replace('300', '100'),
-              timestamp: Date.now()
-            };
-            addMessage(chatId, imageMsg);
-            renderMessages();
-            document.body.removeChild(album);
-            ctx.toast('图片已发送', 'ok');
-          });
-          grid.appendChild(img);
-        });
-        
-        var closeBtn = h('button', 'album-close');
-        closeBtn.textContent = '×';
-        closeBtn.style.cssText = 'position:absolute;top:20px;right:20px;background:transparent;border:none;color:white;font-size:24px;cursor:pointer;';
-        closeBtn.addEventListener('click', function () { document.body.removeChild(album); });
-        
-        album.appendChild(closeBtn);
-        album.appendChild(title);
-        album.appendChild(grid);
-        document.body.appendChild(album);
-      }
-      
-      // 注册到加号面板
-      panelActions.find(a => a.id === 'photo').handler = showPhotoAlbum;
-              clearTimeout(longPressTimer);
-
-      /* ======================= 日记功能（定时 + 立即） ======================= */
-      function showDiaryDialog() {
-        var dialog = h('div', 'diary-dialog');
-        dialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:20px;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);z-index:20;width:80%;max-width:300px;';
-        
-        var title = h('h3', 'diary-title', '写日记');
-        var textArea = h('textarea', 'diary-input');
-        textArea.placeholder = '今天发生了什么…';
-        textArea.rows = 4;
-        
-        var nowBtn = h('button', 'diary-btn diary-now', '现在写');
-        var laterBtn = h('button', 'diary-btn diary-later', '定时写');
-        var cancelBtn = h('button', 'diary-btn diary-cancel', '取消');
-        
-        // 处理立即写
-        nowBtn.addEventListener('click', function () {
-          var content = textArea.value.trim();
-          if (content) {
-            var diaryMsg = {
-              id: String(Date.now()),
-              role: 'system',
-              type: 'diary',
-              content: content,
-              timestamp: Date.now(),
-              status: 'written'
-            };
-            addMessage(chatId, diaryMsg);
-            renderMessages();
-            store.set('diaries', (store.get('diaries') || []).concat(diaryMsg));
-            document.body.removeChild(dialog);
-            ctx.toast('日记已记录', 'ok');
-          } else {
-            ctx.toast('日记内容不能为空', 'err');
-          }
-        });
-        
-        // 处理定时写
-        laterBtn.addEventListener('click', function () {
-          var content = textArea.value.trim();
-          if (!content) {
-            ctx.toast('请先输入日记内容', 'err');
-            return;
-          }
-          
-          var times = ['明天早上', '下午茶时间', '晚上睡前'];
-          var selectedTime = prompt('选择定时时间：\n' + times.join('\n'), '明天早上');
-          if (!selectedTime) return;
-          
-          var delayMap = {
-            '明天早上': 24 * 60 * 60 * 1000, // 24小时后
-            '下午茶时间': 12 * 60 * 60 * 1000, // 12小时后
-            '晚上睡前': 18 * 60 * 60 * 1000 // 18小时后
-          };
-          
-          var delay = delayMap[selectedTime] || 24 * 60 * 60 * 1000; // 默认24小时
-          var diaryMsg = {
-            id: String(Date.now()),
-            role: 'system',
-            type: 'diary',
-            content: content,
-            timestamp: Date.now() + delay,
-            status: 'pending'
-          };
-          
-          store.set('diaries', (store.get('diaries') || []).concat(diaryMsg));
-          document.body.removeChild(dialog);
-          ctx.toast('日记定时成功：' + selectedTime, 'ok');
-          
-          setTimeout(function () {
-            var reminder = prompt('记得写日记哦：' + diaryMsg.content.slice(0, 20) + '…');
-            if (reminder !== null) {
-              diaryMsg.status = 'written';
-              diaryMsg.timestamp = Date.now(); // 实际写作时间
-              store.set('diaries', store.get('diaries').map(function (d) {
-                if (d.id === diaryMsg.id) return diaryMsg;
-                return d;
-              }));
-              ctx.toast('日记已补写', 'ok');
-            }
-          }, delay);
-        });
-        
-        // 取消按钮
-        cancelBtn.addEventListener('click', function () { document.body.removeChild(dialog); });
-        
-        dialog.appendChild(title);
-        dialog.appendChild(textArea);
-        dialog.appendChild(nowBtn);
-        dialog.appendChild(laterBtn);
-        dialog.appendChild(cancelBtn);
-        document.body.appendChild(dialog);
-        textArea.focus();
-      }
-      
-      // 注册到加号面板
-          panelActions.find(a => a.id === 'diary').handler = function () { ctx.open('diary'); };
-        
-              // 引用回复
-              var quoteInput = h('input', 'msg-quote-input', '');
-              quoteInput.placeholder = '引用回复…';
-              quoteInput.style.width = 'calc(100% - 40px)';
-              quoteInput.addEventListener('keydown', function (ev) {
-                if (ev.key === 'Enter' && !ev.shiftKey) {
-                  ev.preventDefault();
-                  var content = quoteInput.value.trim();
-                  if (content) {
-                    doSend(); // TODO: 实际插入引用前缀
-                    ctx.toast('已发送引用回复', 'ok');
-                    meta.removeChild(quoteInput);
-                  }
-                }
-              });
-              meta.innerHTML = '';
-              meta.appendChild(h('span', 'msg-time', timeStr(msg.timestamp)));
-              meta.appendChild(quoteInput);
-              quoteInput.focus();
-            }
-          }
-        });
-
-        bubble.addEventListener('touchend', function () {
-          if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-          }
-        });
-
-        bubble.addEventListener('click', function () {
-          if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-          }
-          if (isSelecting) return;
-
-          // 单击操作菜单（非多选模式）
-          var menu = h('div', 'msg-action-menu');
-          menu.innerHTML = '';
-          
-          // 收藏
-          var favBtn = h('button', 'msg-act', '⭐ 收藏');
-          favBtn.addEventListener('click', function () {
-            ctx.toast('已收藏：' + (msg.content.slice(0, 20) + (msg.content.length > 20 ? '...' : '')), 'ok');
-          });
-          menu.appendChild(favBtn);
-
-          // 编辑（仅用户消息）
-          if (msg.role === 'user') {
-            var editBtn = h('button', 'msg-act', '✏️ 编辑');
-            editBtn.addEventListener('click', function () {
-              var newContent = prompt('编辑这条消息：', msg.content);
-              if (newContent !== null && newContent.trim()) {
-                msg.content = newContent.trim();
-                saveChats(getChats());
-                renderMessages();
-                ctx.toast('已更新', 'ok');
-              }
-            });
-            menu.appendChild(editBtn);
-          }
-
-          // 复制
-          var copyBtn = h('button', 'msg-act', '📋 复制');
-          copyBtn.addEventListener('click', function () {
-            navigator.clipboard.writeText(msg.content).then(function () {
-              ctx.toast('已复制', 'ok');
-            });
-          });
-          menu.appendChild(copyBtn);
-
-          // reroll（带说明）
-          var rerollBtn = h('button', 'msg-act', '🔄 reroll');
-          rerollBtn.addEventListener('click', function () {
-            var reason = prompt('reroll 理由（可选）：', '语气更温柔');
-            if (reason === null) return;
-            ctx.toast('reroll 已提交：' + (reason || '无说明'), 'ok');
-          });
-          menu.appendChild(rerollBtn);
-
-          meta.innerHTML = '';
-          meta.appendChild(menu);
-        });
         var meta = h('div', 'msg-meta');
         meta.appendChild(h('span', 'msg-time', timeStr(msg.timestamp)));
-        (actions || []).forEach(function (b) { meta.appendChild(b); });
-        bubble.appendChild(meta);
 
-        msgWrap.appendChild(bubble);
+        var isLast = c.messages[c.messages.length - 1] === msg;
+        if (herePending) {
+          var stopBtn = h('button', 'msg-act', '停止');
+          stopBtn.type = 'button';
+          stopBtn.addEventListener('click', function (e) { e.stopPropagation(); stopReply(); });
+          meta.appendChild(stopBtn);
+        } else if (role === 'assistant' && !msg.type && isLast && !pending) {
+          meta.appendChild(rerollBtn(msg));
+        }
+        content.appendChild(meta);
+        bubble.appendChild(content);
+
+        if (role !== 'system') {
+          bindLongPress(bubble, function () { openMenu(msg); });
+          bubble.addEventListener('click', function () {
+            if (wasLongPressed(bubble)) return;
+            if (selecting) toggleSelect(msg.id);
+          });
+        }
+        return bubble;
       }
 
-      function appendPending() {
+      function attachCard(msg) {
+        var card = h('div', 'msg-attach');
+        card.appendChild(h('span', 'msg-attach-ic', msg.type === 'photo' ? '📷' : '📎'));
+        var main = h('div', 'msg-attach-main');
+        main.appendChild(h('span', 'msg-attach-name', msg.name || '未命名'));
+        main.appendChild(h('span', 'msg-attach-size', fmtBytes(msg.size || 0)));
+        card.appendChild(main);
+        return card;
+      }
+
+      function pendingBubble() {
         var bubble = h('div', 'msg-bubble msg-assistant is-pending');
-        var text = h('div', 'msg-text');
-        if (pendingMsg.content) {
-          text.textContent = pendingMsg.content;
-        } else {
-          text.appendChild(h('span', 'typing-dots', '···'));
-        }
-        bubble.appendChild(text);
+
+        var av = h('img', 'msg-avatar');
+        av.src = AVATAR;
+        av.alt = '她';
+        bubble.appendChild(av);
+
+        var content = h('div', 'msg-body');
+        var textEl = h('div', 'msg-text');
+        if (pending.text) textEl.textContent = pending.text;
+        else textEl.appendChild(h('span', 'typing-dots', '···'));
+        content.appendChild(textEl);
 
         var meta = h('div', 'msg-meta');
-        meta.appendChild(h('span', 'msg-time', timeStr(pendingMsg.timestamp)));
-        var stop = h('button', 'msg-act', '停止');
-        stop.type = 'button';
-        stop.addEventListener('click', cancelReq);
-        meta.appendChild(stop);
-        bubble.appendChild(meta);
-
-        msgWrap.appendChild(bubble);
+        meta.appendChild(h('span', 'msg-time', timeStr(pending.timestamp)));
+        var stopBtn = h('button', 'msg-act', '停止');
+        stopBtn.type = 'button';
+        stopBtn.addEventListener('click', function () { stopReply(); });
+        meta.appendChild(stopBtn);
+        content.appendChild(meta);
+        bubble.appendChild(content);
+        return bubble;
       }
 
-      function regenerateBtn(idx) {
-        var b = h('button', 'msg-act', '重新生成');
+      function rerollBtn(msg) {
+        var b = h('button', 'msg-act', 'reroll');
         b.type = 'button';
-        b.addEventListener('click', function () { regenerate(idx); });
+        b.addEventListener('click', function (e) {
+          e.stopPropagation();
+          startReroll(msg);
+        });
         return b;
       }
 
-      renderMessages();
+      function updateSendUI() {
+        var busy = !!pending;
+        sendBtn.disabled = busy;
+        sendBtn.textContent = busy ? '…' : '发';
+      }
 
-      /* 发送逻辑 */
+      /* ======================== 多选 ======================== */
+
+      function selectedIds() { return Object.keys(selected); }
+
+      function enterSelect(id) {
+        selecting = true;
+        selected = {};
+        if (id) selected[id] = true;
+        renderSelection();
+        renderMessages(true);
+      }
+
+      function exitSelect() {
+        selecting = false;
+        selected = {};
+        renderSelection();
+        renderMessages(true);
+      }
+
+      function toggleSelect(id) {
+        if (selected[id]) delete selected[id];
+        else selected[id] = true;
+        if (!selectedIds().length) { exitSelect(); return; }
+        renderSelection();
+        renderMessages(true);
+      }
+
+      function renderSelection() {
+        selBar.innerHTML = '';
+        if (!selecting) {
+          selBar.style.display = 'none';
+          return;
+        }
+        selBar.style.display = 'flex';
+        selBar.appendChild(h('span', 'msg-select-info', '已选 ' + selectedIds().length + ' 条'));
+
+        var del = h('button', 'msg-select-act is-danger', '删除');
+        del.type = 'button';
+        del.addEventListener('click', function () {
+          var ids = selectedIds();
+          if (!ids.length) return;
+          if (!confirm('删除这 ' + ids.length + ' 条消息？')) return;
+          dropMessages(chatId, ids);
+          exitSelect();
+          ctx.toast('已删除 ' + ids.length + ' 条', 'ok');
+        });
+
+        var cancel = h('button', 'msg-select-act', '取消');
+        cancel.type = 'button';
+        cancel.addEventListener('click', exitSelect);
+
+        selBar.appendChild(del);
+        selBar.appendChild(cancel);
+      }
+
+      /* ======================== 长按菜单 ======================== */
+
+      function openMenu(msg) {
+        menuList.innerHTML = '';
+
+        var items = [
+          { label: '引用回复', run: function () { startQuote(msg); } },
+          { label: '多选', run: function () { enterSelect(msg.id); } },
+          { label: '收藏', run: function () { favorite(msg); } },
+          { label: '编辑', run: function () { editMsg(msg); } },
+          { label: '复制', run: function () { copyMsg(msg); } },
+          { label: '删除', kind: 'danger', run: function () { removeMsg(msg); } }
+        ];
+
+        items.forEach(function (it) {
+          var b = h('button', 'msg-menu-item' + (it.kind ? ' is-' + it.kind : ''), it.label);
+          b.type = 'button';
+          b.addEventListener('click', function () {
+            closeMenu();
+            it.run();
+          });
+          menuList.appendChild(b);
+        });
+
+        menu.classList.add('is-open');
+        menuMask.classList.add('is-open');
+      }
+
+      function closeMenu() {
+        menu.classList.remove('is-open');
+        menuMask.classList.remove('is-open');
+      }
+
+      menuMask.addEventListener('click', closeMenu);
+      menuCancel.addEventListener('click', closeMenu);
+
+      function startQuote(msg) {
+        quote = {
+          role: msg.role,
+          content: (msg.type ? attachText(msg) : (msg.content || '')).slice(0, 140)
+        };
+        renderQuote();
+        textarea.focus();
+      }
+
+      function clearQuote() {
+        quote = null;
+        renderQuote();
+      }
+
+      function renderQuote() {
+        quoteBar.innerHTML = '';
+        if (!quote) {
+          quoteBar.style.display = 'none';
+          return;
+        }
+        quoteBar.style.display = 'flex';
+        quoteBar.appendChild(h('span', 'msg-quote-text',
+          '引用' + (quote.role === 'user' ? '我' : '她') + '：' + quote.content));
+        var x = h('button', 'msg-quote-x', '\u00d7');
+        x.type = 'button';
+        x.title = '取消引用';
+        x.addEventListener('click', clearQuote);
+        quoteBar.appendChild(x);
+      }
+
+      function favorite(msg) {
+        var list = store.get('favorites');
+        if (!Array.isArray(list)) list = [];
+        var c = getChat(chatId);
+        list.unshift({
+          id: newId(),
+          chatId: chatId,
+          chatName: c ? c.name : '',
+          role: msg.role,
+          content: (msg.type ? attachText(msg) : (msg.content || '')),
+          savedAt: Date.now()
+        });
+        store.set('favorites', list);
+        ctx.toast('已收藏，右上角 ★ 里能查到', 'ok');
+      }
+
+      function editMsg(msg) {
+        if (msg.type) {
+          ctx.toast('附件气泡先不支持编辑', 'warn');
+          return;
+        }
+        var next = prompt('编辑这条消息：', msg.content || '');
+        if (next === null) return;
+        next = String(next).trim();
+        if (!next) {
+          ctx.toast('内容不能为空', 'err');
+          return;
+        }
+        patchMessage(chatId, msg.id, { content: next });
+        renderMessages();
+        ctx.toast('已更新', 'ok');
+      }
+
+      function copyMsg(msg) {
+        var text = msg.type ? attachText(msg) : (msg.content || '');
+        if (!text) return;
+        copyText(text).then(
+          function () { ctx.toast('已复制', 'ok'); },
+          function () { ctx.toast('复制失败，浏览器没给权限', 'err'); }
+        );
+      }
+
+      function removeMsg(msg) {
+        if (!confirm('删掉这条消息？')) return;
+        dropMessages(chatId, [msg.id]);
+        renderMessages();
+        ctx.toast('已删除', 'ok');
+      }
+
+      /* ==================== 发送 / 接收 / reroll ==================== */
+
+      function buildMessages(opts) {
+        opts = opts || {};
+        var c = getChat(chatId);
+        if (!c) return [];
+
+        var limit = store.get('chatDefaults.contextMessages') || 20;
+        var out = [];
+
+        c.messages.forEach(function (m) {
+          if (opts.excludeId && m.id === opts.excludeId) return;
+          if (m.role !== 'user' && m.role !== 'assistant') return;
+
+          var text = m.type ? attachText(m) : (m.content || '');
+          if (!text) return;
+          if (m.quote) {
+            text = '（引用' + (m.quote.role === 'user' ? '我自己' : '你') +
+                   '刚说的：“' + m.quote.content + '”）\n' + text;
+          }
+          out.push({ role: m.role, content: text });
+        });
+
+        if (limit > 0 && out.length > limit) out = out.slice(-limit);
+
+        if (opts.note) {
+          out.push({
+            role: 'user',
+            content: '（请按这个要求重新说一遍上一条回复：' + opts.note + '）'
+          });
+        }
+        if (opts.proactive) out.push({ role: 'user', content: PROACTIVE_HINT });
+        return out;
+      }
+
+      function requestReply(opts) {
+        opts = opts || {};
+        if (pending) { ctx.toast('还在等她回话', 'warn'); return; }
+
+        var msgs = buildMessages(opts);
+        if (!msgs.length) { ctx.toast('还没有可以接的话', 'warn'); return; }
+
+        var mySeq = ++reqSeq;
+        pending = { text: '', timestamp: Date.now(), targetId: opts.targetId || null };
+        renderMessages();
+        updateSendUI();
+
+        var useStream = store.get('chatDefaults.stream') !== false;
+
+        handle = api.runChat(msgs, {
+          onDelta: function (delta) {
+            if (mySeq !== reqSeq) return;
+            pending.text += delta;
+            renderMessages();
+          },
+          onDone: function (cand, text) {
+            if (mySeq !== reqSeq) return;
+            var finalText = String(text || '').trim();
+            var target = pending ? pending.targetId : null;
+            pending = null;
+            handle = null;
+
+            if (!finalText) {
+              ctx.toast('她这次没出声，要不再试一次？', 'warn');
+              renderMessages();
+              updateSendUI();
+              return;
+            }
+            if (target) patchMessage(chatId, target, { content: finalText, timestamp: Date.now() });
+            else addMessage(chatId, {
+              id: newId(),
+              role: 'assistant',
+              content: finalText,
+              timestamp: Date.now()
+            });
+            renderMessages();
+            updateSendUI();
+          },
+          /* 注意：runChat 暴露的是 onFail（全部候选都失败 / 一个候选都没有），
+             不是 onError。写成 onError 的话没有任何回调会被触发，
+             发送键会永久卡在禁用状态。api.js 头部的契约注释里写的就是 onFail。 */
+          onFail: function (list, err) {
+            if (mySeq !== reqSeq) return;
+            pending = null;
+            handle = null;
+            var why = (err && err.error) ? err.error : '请求失败，检查一下网络或 API 配置';
+            ctx.toast('❌ ' + why, 'err');
+            renderMessages();
+            updateSendUI();
+          }
+        }, useStream);
+      }
+
+      function stopReply() {
+        if (!pending) return;
+        var partial = String(pending.text || '').trim();
+        var target = pending.targetId;
+
+        reqSeq++;                       /* 让在途回调统统失效 */
+        if (handle) { try { handle.abort(); } catch (e) { /* 忽略 */ } }
+        handle = null;
+        pending = null;
+
+        if (partial) {
+          if (target) patchMessage(chatId, target, { content: partial, timestamp: Date.now() });
+          else addMessage(chatId, {
+            id: newId(),
+            role: 'assistant',
+            content: partial,
+            timestamp: Date.now()
+          });
+        } else if (target) {
+          patchMessage(chatId, target, { content: '（这条被停掉了）' });
+        }
+
+        renderMessages();
+        updateSendUI();
+        ctx.toast('已停止', 'ok');
+      }
+
+      function startReroll(msg) {
+        if (pending) { ctx.toast('还在等她回话', 'warn'); return; }
+        var reason = prompt('想让她怎么改？留空就是直接重说一遍。', '');
+        if (reason === null) return;
+        var note = String(reason).trim();
+
+        patchMessage(chatId, msg.id, { content: '' });
+        requestReply({ excludeId: msg.id, targetId: msg.id, note: note });
+      }
+
       function doSend() {
+        if (pending) { ctx.toast('还在等她回话', 'warn'); return; }
+
         var content = textarea.value.trim();
+
+        /* D1：输入框空着点发送 = 让她主动开口说话，而不是发一个空气泡 */
         if (!content) {
-          // 触发回复（如 reroll 最后一条 assistant 消息）
-          triggerReply();
+          requestReply({ proactive: true });
           return;
         }
 
-        /* 用户消息 */
-        var userMsg = {
-          id: String(Date.now()),
+        var msg = {
+          id: newId(),
           role: 'user',
           content: content,
           timestamp: Date.now()
         };
-        addMessage(chatId, userMsg);
+        if (quote) msg.quote = { role: quote.role, content: quote.content };
+
+        addMessage(chatId, msg);
         textarea.value = '';
-        textarea.style.height = 'auto';
+        autoGrow();
+        clearQuote();
         renderMessages();
-
-        /* 真实 API 接入：流式请求 */
-        var contextMessages = store.get('chatDefaults.contextMessages') || 20;
-        var messages = chat.messages.concat(userMsg).slice(-contextMessages);
-        streaming = true;
-        activeHandle = api.runChat(messages, {
-          onDelta: function (delta, more) {
-            if (!pendingMsg) {
-              pendingMsg = {
-                id: 'pending-' + Date.now(),
-                role: 'assistant',
-                content: '',
-                timestamp: Date.now()
-              };
-              addMessage(chatId, pendingMsg);
-            }
-            pendingMsg.content += delta;
-            renderMessages();
-          },
-          onDone: function (cand, text, info) {
-            streaming = false;
-            activeHandle = null;
-            if (text && text.trim()) {
-              var assistantMsg = {
-                id: String(Date.now()),
-                role: 'assistant',
-                content: text.trim(),
-                timestamp: Date.now()
-              };
-              addMessage(chatId, assistantMsg);
-              renderMessages();
-            } else {
-              ctx.toast('API 返回空内容，请检查模型配置', 'warn');
-            }
-          },
-          onError: function (list, err) {
-            streaming = false;
-            activeHandle = null;
-            var msg = err && err.error ? err.error : '请求失败，请检查网络或 API 配置';
-            ctx.toast('❌ ' + msg, 'err');
-            // 恢复发送按钮状态（若被禁用）
-            sendBtn.disabled = false;
-            sendBtn.textContent = '发';
-          }
-        }, true);
-        renderMessages();
-
-        /* 模拟延迟后回复 */
-        setTimeout(function () {
-          updateChat(chatId, {}); // 触发刷新
-          var replyMsg = {
-            id: String(Date.now()),
-            role: 'assistant',
-            content: '这是自动回复测试——你说了"' + content + '"。下一步会接入真实 API。',
-            timestamp: Date.now(),
-            isTyping: false
-          };
-          /* 替换 loading 消息 */
-          var chats = getChats();
-          for (var i = 0; i < chats.length; i++) {
-            if (chats[i].id === chatId) {
-              var msgs = chats[i].messages;
-              for (var j = 0; j < msgs.length; j++) {
-                if (msgs[j].isTyping) {
-                  msgs[j] = replyMsg;
-                  break;
-                }
-              }
-              break;
-            }
-          }
-          saveChats(chats);
-          renderMessages();
-        }, 1500);
+        requestReply({});
       }
 
+      /* ======================== 加号面板 ======================== */
+
+      function pickAttachment(accept, kind) {
+        var input = document.createElement('input');
+        input.type = 'file';
+        if (accept) input.accept = accept;
+        input.style.display = 'none';
+        input.addEventListener('change', function () {
+          var f = input.files && input.files[0];
+          if (input.parentNode) input.parentNode.removeChild(input);
+          if (!f) return;
+          addMessage(chatId, {
+            id: newId(),
+            role: 'user',
+            type: kind,
+            name: f.name,
+            size: f.size,
+            mime: f.type || '',
+            content: (kind === 'photo' ? '[照片] ' : '[文件] ') + f.name,
+            timestamp: Date.now()
+          });
+          closePanel();
+          renderMessages();
+          ctx.toast(kind === 'photo' ? '照片发出去了' : '文件发出去了', 'ok');
+        });
+        document.body.appendChild(input);
+        input.click();
+      }
+
+      var PLUS_ITEMS = [
+        { id: 'photo', ic: '📷', name: '发照片', run: function () { pickAttachment('image/*', 'photo'); } },
+        { id: 'file', ic: '📎', name: '发文件', run: function () { pickAttachment('', 'file'); } },
+        { id: 'transfer', ic: '💰', name: '转账' },
+        { id: 'pat', ic: '👋', name: '拍一拍' },
+        { id: 'genimg', ic: '🎨', name: '生图' },
+        { id: 'checkin', ic: '📍', name: '查岗' },
+        { id: 'diary', ic: '📓', name: '日记' },
+        { id: 'sticker', ic: '😄', name: '表情包' }
+      ];
+
+      function buildPanel() {
+        panel.innerHTML = '';
+        PLUS_ITEMS.forEach(function (it) {
+          var b = h('button', 'plus-item' + (it.run ? '' : ' is-soon'));
+          b.type = 'button';
+          b.setAttribute('data-id', it.id);
+          b.appendChild(h('span', 'plus-ic', it.ic));
+          b.appendChild(h('span', 'plus-name', it.name));
+          b.addEventListener('click', function () {
+            if (!it.run) {
+              ctx.toast(it.name + ' 留到软装阶段再做', 'warn');
+              return;
+            }
+            it.run();
+          });
+          panel.appendChild(b);
+        });
+      }
+
+      function togglePanel() {
+        if (panel.classList.contains('is-open')) closePanel();
+        else {
+          panel.classList.add('is-open');
+          renderMessages();
+        }
+      }
+
+      function closePanel() { panel.classList.remove('is-open'); }
+
+      buildPanel();
+
+      /* ======================== 事件绑定 ======================== */
+
       sendBtn.addEventListener('click', doSend);
+      plusBtn.addEventListener('click', togglePanel);
+
       textarea.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           doSend();
         }
       });
+      textarea.addEventListener('input', autoGrow);
 
-      /* 自适应高度 */
-      textarea.addEventListener('input', function () {
-        textarea.style.height = 'auto';
-        textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-      });
+      /* ======================== 收尾 ======================== */
 
-      /* 每次回到页面时刷新消息 */
-      ctx.onRefresh = function () {
-        chat = getChat(chatId);
-        if (chat) {
-          ctx.setTitle(chat.name);
-          renderMessages();
-        }
+      renderQuote();
+      updateSendUI();
+      autoGrow();
+      renderMessages();
+
+      ctx.reload = function () {
+        var c = getChat(chatId);
+        if (!c) { ctx.back(); return; }
+        ctx.setTitle(c.name);
+        autoGrow();          /* 这时候才真的挂进文档，高度算得准 */
+        renderMessages();
       };
     },
-    onShow: function (ctx) {
-      if (ctx.onRefresh) ctx.onRefresh();
+    onShow: function (ctx) { if (ctx.reload) ctx.reload(); },
+    onHide: function (ctx) {
+      /* 离开页面时把菜单收掉，免得回来还开着 */
+      if (ctx.el) {
+        var m = ctx.el.querySelector('.msg-menu.is-open');
+        var k = ctx.el.querySelector('.msg-menu-mask.is-open');
+        if (m) m.classList.remove('is-open');
+        if (k) k.classList.remove('is-open');
+      }
     }
   });
-})(window);
-      /* ======================= 加号面板（+）v0.1 ======================= */
-      var plusBtn = h('button', 'plus-btn', '+');
-      plusBtn.type = 'button';
-      plusBtn.title = '更多功能';
-      inputArea.appendChild(plusBtn);
 
-      var panel = h('div', 'plus-panel');
-      panel.style.display = 'none';
-      body.appendChild(panel);
+  /* ======================= 页面：收藏夹 ======================= */
 
-      var panelActions = [
-        { id: 'transfer', name: '转账', icon: '💰' },
-        { id: 'pat', name: '拍一拍', icon: '👋' },
-        { id: 'file', name: '发文件', icon: '📎' },
-        { id: 'photo', name: '发照片', icon: '📷' },
-        { id: 'genimg', name: '生图发送', icon: '🎨' },
-        { id: 'checkin', name: '查岗', icon: '📍' },
-        { id: 'diary', name: '日记', icon: '📓' },
-        { id: 'sticker', name: '表情包', icon: '😄' }
-      ];
+  Sleepy.register('favorites', {
+    title: '收藏夹',
+    render: function (ctx) {
+      var body = ctx.body;
 
-      function showPlusPanel() {
-        if (panel.style.display === 'flex') {
-          panel.style.display = 'none';
-          return;
-        }
+      var listWrap = h('div', 'fav-list');
+      var emptyWrap = h('div', 'empty');
+      emptyWrap.appendChild(h('div', 'empty-paper'));
+      emptyWrap.appendChild(h('p', 'empty-text', '还没有收藏过任何一条'));
+      emptyWrap.appendChild(h('p', 'empty-hint', '长按一条消息，选「收藏」'));
+      body.appendChild(emptyWrap);
+      body.appendChild(listWrap);
 
-        panel.innerHTML = '';
-        panel.style.display = 'flex';
+      function rebuild() {
+        var list = store.get('favorites');
+        if (!Array.isArray(list)) list = [];
+        listWrap.innerHTML = '';
+        emptyWrap.style.display = list.length ? 'none' : 'flex';
 
-        panelActions.forEach(function (act) {
-          var btn = h('button', 'plus-item');
-          btn.innerHTML = act.icon + '<span>' + act.name + '</span>';
-          btn.title = act.name;
-          btn.addEventListener('click', function () {
-            ctx.toast('已触发：' + act.name, 'ok');
-            panel.style.display = 'none';
-            // TODO: 实际动作注册点
+        list.forEach(function (f) {
+          var item = h('div', 'fav-item');
+          item.appendChild(h('div', 'fav-text', f.content || '（空）'));
+
+          var meta = h('div', 'fav-meta');
+          meta.appendChild(h('span', 'fav-src',
+            (f.chatName || '聊天') + ' · ' + relativeTime(f.savedAt)));
+
+          var jump = h('button', 'fav-btn', '去看看');
+          jump.type = 'button';
+          jump.addEventListener('click', function () {
+            if (!getChat(f.chatId)) { ctx.toast('原来的对话已经删掉了', 'err'); return; }
+            ctx.open('chat-detail', { chatId: f.chatId });
           });
-          panel.appendChild(btn);
+
+          var del = h('button', 'fav-btn is-danger', '移除');
+          del.type = 'button';
+          del.addEventListener('click', function () {
+            var cur = store.get('favorites');
+            var next = [];
+            (Array.isArray(cur) ? cur : []).forEach(function (x) {
+              if (x.id !== f.id) next.push(x);
+            });
+            store.set('favorites', next);
+            rebuild();
+            ctx.toast('已移除', 'ok');
+          });
+
+          meta.appendChild(jump);
+          meta.appendChild(del);
+          item.appendChild(meta);
+          listWrap.appendChild(item);
         });
       }
 
-      plusBtn.addEventListener('click', showPlusPanel);
+      ctx.rebuild = rebuild;
+      rebuild();
+    },
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
+  });
 
-      // 点击其他区域收起面板
-      document.addEventListener('click', function (e) {
-        if (panel.style.display === 'flex' && 
-            !e.target.closest('.plus-btn') && 
-            !e.target.closest('.plus-panel')) {
-          panel.style.display = 'none';
-        }
-      });
+})(window);
