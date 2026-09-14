@@ -46,7 +46,12 @@
       contextMessages: 20,
       maxTokens: 1024,
       temperature: 0.85,
-      stream: true
+      stream: true,
+      /* E 模块：每收到一条回复后，是否额外发一次请求生成「没说出口的心里话」。
+         会多消耗一倍请求量，嫌贵就在这里关掉（心声浮层里也留了手动按钮）。 */
+      heartbeatAuto: true,
+      /* 每次生成几条心声 */
+      heartbeatCount: 2
     },
 
     /* 2.11 外观 */

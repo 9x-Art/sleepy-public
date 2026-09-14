@@ -1314,3 +1314,133 @@ body{
 .moment-name{font-size:12.5px;color:var(--text-dim);}
 .moment-text{margin:0;font-size:13.5px;line-height:1.6;color:var(--text);}
 .moment-time{margin:8px 0 0;font-size:11px;color:var(--text-faint);}
+
+/* ============================================================
+   模块 E：心声
+   E1 顶部头像的未读呼吸光点 · E2 独立渲染层（便签，不是气泡）
+   ============================================================ */
+
+/* ------------------- E1 头像 + 未读呼吸光点 ------------------- */
+.avatar-slot{
+  position:relative;flex:none;
+  display:inline-flex;align-items:center;justify-content:center;
+  width:32px;height:32px;cursor:pointer;
+}
+.head-avatar{
+  width:32px;height:32px;border-radius:50%;display:block;
+  transition:transform .12s var(--ease);
+}
+.avatar-slot:active .head-avatar{transform:scale(.92);}
+.hb-dot{
+  position:absolute;top:-1px;right:-1px;
+  width:9px;height:9px;border-radius:50%;
+  background:var(--coral);
+  box-shadow:0 0 0 2px var(--bg);      /* 和背景同色的描边，让光点从头像上「浮」起来 */
+  display:none;
+}
+.avatar-slot.has-unread .hb-dot{display:block;}
+/* 向外扩散的呼吸圈，只动 transform / opacity */
+.avatar-slot.has-unread .hb-dot::after{
+  content:'';position:absolute;inset:0;border-radius:50%;
+  background:var(--coral);
+  animation:hb-breath 1.9s ease-out infinite;
+}
+@keyframes hb-breath{
+  0%{transform:scale(1);opacity:.75;}
+  70%{transform:scale(2.4);opacity:0;}
+  100%{transform:scale(2.4);opacity:0;}
+}
+@media (prefers-reduced-motion: reduce){
+  .avatar-slot.has-unread .hb-dot::after{animation:none;opacity:.45;}
+}
+
+/* ---------------------- E2 独立渲染层 ---------------------- */
+.hb-mask{
+  position:absolute;inset:0;
+  background:rgba(20,17,34,.55);
+  z-index:72;
+  display:none;
+}
+.hb-mask.is-open{display:block;}
+
+.hb-sheet{
+  position:absolute;left:0;right:0;bottom:0;
+  z-index:73;
+  display:none;flex-direction:column;
+  max-height:64%;
+  padding:16px 16px calc(env(safe-area-inset-bottom) + 16px);
+  background:var(--bg-2);
+  border-top:1px solid var(--line);
+  border-radius:18px 18px 0 0;
+}
+.hb-sheet.is-open{display:flex;}
+
+.hb-head{flex:none;display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;}
+.hb-titles{flex:1;min-width:0;}
+.hb-title{
+  margin:0;font-family:var(--ff-serif);
+  font-size:16px;color:var(--text);
+}
+.hb-sub{margin:3px 0 0;font-size:11px;color:var(--text-faint);}
+.hb-close{
+  flex:none;width:26px;height:26px;
+  border:0;border-radius:50%;
+  background:var(--bg-3);color:var(--text-dim);
+  font-size:15px;line-height:1;font-family:inherit;cursor:pointer;
+}
+
+.hb-list{
+  flex:1;min-height:0;overflow-y:auto;
+  display:flex;flex-direction:column;gap:10px;
+  padding-right:2px;
+}
+
+/* 纸条：没有尾巴、没有大圆角、左边一道竖线、衬线字体。
+   刻意和 .msg-bubble（圆角 + 尖角尾巴 + 实底）拉开距离。 */
+.hb-note{
+  padding:10px 12px 8px 14px;
+  background:rgba(232,184,123,.08);
+  border-left:2px solid var(--amber);
+  border-radius:0 10px 10px 0;
+}
+.hb-note-text{
+  margin:0;font-family:var(--ff-serif);
+  font-size:13.5px;line-height:1.7;color:var(--text);
+  word-break:break-word;
+}
+.hb-note-time{
+  margin:6px 0 0;font-size:10.5px;
+  color:var(--text-faint);text-align:right;
+}
+
+.hb-foot{
+  flex:none;display:flex;align-items:center;gap:10px;
+  margin-top:12px;padding-top:12px;
+  border-top:1px solid var(--line);
+}
+.hb-foot .btn{flex:1;}
+
+.hb-auto{flex:none;display:flex;align-items:center;gap:6px;cursor:pointer;}
+.hb-auto input{
+  appearance:none;-webkit-appearance:none;
+  width:34px;height:20px;margin:0;
+  border-radius:10px;background:var(--bg-3);
+  position:relative;cursor:pointer;
+  transition:background .18s var(--ease);
+}
+.hb-auto input::after{
+  content:'';position:absolute;top:2px;left:2px;
+  width:16px;height:16px;border-radius:50%;
+  background:var(--text-faint);
+  transition:transform .18s var(--ease), background .18s var(--ease);
+}
+.hb-auto input:checked{background:rgba(232,184,123,.28);}
+.hb-auto input:checked::after{transform:translateX(14px);background:var(--amber);}
+.hb-auto-text{font-size:11.5px;color:var(--text-dim);}
+
+.hb-empty{text-align:center;padding:22px 0;}
+.hb-empty-text{
+  margin:0;font-family:var(--ff-serif);
+  font-size:13px;color:var(--text-dim);
+}
+.hb-empty-hint{margin:6px 0 0;font-size:11px;color:var(--text-faint);}

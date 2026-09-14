@@ -262,9 +262,27 @@
     open(id, params);
   }
 
+  /* history.back() 是异步的：popstate 回来之前 pageStack 不会变。
+     所以这里必须挡住重入 —— 否则快速连点两次返回会连着调两次 back()，
+     一路退过 replaceState 留下的那条基线记录，把**整个页面**带出 App
+     （file:// 下就是一页空白）。实机表现为：手抖连点返回，App 直接没了。 */
+  var backPending = false;
+  var backTimer = null;
+
+  function clearBackPending() {
+    backPending = false;
+    if (backTimer) { clearTimeout(backTimer); backTimer = null; }
+  }
+
   function requestBack() {
     if (!pageStack.length) return;
-    if (histOK) { try { global.history.back(); return; } catch (e) { histOK = false; } }
+    if (backPending) return;              /* 上一次返回还没落地，忽略这次 */
+    if (histOK) {
+      backPending = true;
+      /* 兜底：万一 popstate 没来（例如已经退到基线），别把返回永久锁死 */
+      backTimer = setTimeout(clearBackPending, 700);
+      try { global.history.back(); return; } catch (e) { clearBackPending(); histOK = false; }
+    }
     closeTop();
   }
 
@@ -287,6 +305,7 @@
   }
 
   global.addEventListener('popstate', function (ev) {
+    clearBackPending();          /* 这次返回已经落地，可以再接下一次了 */
     var st = ev.state;
     var target = (st && typeof st.depth === 'number') ? st.depth : 0;
     var guard = 0;

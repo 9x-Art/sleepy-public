@@ -288,6 +288,16 @@
         { label: '\u2699', onClick: function () { ctx.open('settings'); } }
       ]);
 
+      /* 她的头像挂在顶栏右侧 —— 未读心声的光点需要一个固定可见的位置，
+         挂气泡头像上会随消息列表滚走。setActions 会清空右侧插槽，
+         所以这里做成「缺了就补」的幂等形式。 */
+      function ensureHeadAvatar() {
+        var side = ctx.el.querySelector('.app-head-side');
+        if (!side || side.querySelector('.avatar-slot')) return;
+        side.insertBefore(Sleepy.heartbeat.mountAvatar(ctx, chatId), side.firstChild);
+      }
+      ensureHeadAvatar();
+
       var body = ctx.body;
 
       /* -------- 只活在这一次拜访里的状态，不落盘 -------- */
@@ -406,10 +416,10 @@
           var av = h('img', 'msg-avatar');
           av.src = AVATAR;
           av.alt = '她';
-          av.title = '心声';
+          av.title = '她';
           av.addEventListener('click', function (e) {
             e.stopPropagation();
-            ctx.open('heartbeat');
+            Sleepy.heartbeat.openOverlay(ctx, chatId);
           });
           bubble.appendChild(av);
         }
@@ -758,6 +768,10 @@
             });
             renderMessages();
             updateSendUI();
+
+            /* E1：回复落地之后在后台问一次「她没说出口的心里话」。
+               非流式、静默失败，失败了也不影响这条回复。 */
+            Sleepy.heartbeat.maybeAuto(chatId);
           },
           /* 注意：runChat 暴露的是 onFail（全部候选都失败 / 一个候选都没有），
              不是 onError。写成 onError 的话没有任何回调会被触发，
@@ -933,24 +947,26 @@
         var c = getChat(chatId);
         if (!c) { ctx.back(); return; }
         ctx.setTitle(c.name);
-        autoGrow();          /* 这时候才真的挂进文档，高度算得准 */
+        ensureHeadAvatar();          /* 顶栏头像被 setActions 清掉时补回来 */
+        Sleepy.heartbeat.syncDots(chatId);
+        autoGrow();                  /* 这时候才真的挂进文档，高度算得准 */
         renderMessages();
       };
     },
     onShow: function (ctx) { if (ctx.reload) ctx.reload(); },
     onHide: function (ctx) {
-      /* 离开页面时把菜单收掉，免得回来还开着 */
+      /* 离开页面时把菜单和心声浮层收掉，免得回来还开着 */
       if (ctx.el) {
         var m = ctx.el.querySelector('.msg-menu.is-open');
         var k = ctx.el.querySelector('.msg-menu-mask.is-open');
         if (m) m.classList.remove('is-open');
         if (k) k.classList.remove('is-open');
       }
+      Sleepy.heartbeat.closeOverlay(ctx);
     }
   });
 
   /* ======================= 页面：收藏夹 ======================= */
-
   Sleepy.register('favorites', {
     title: '收藏夹',
     render: function (ctx) {
@@ -1010,5 +1026,21 @@
     },
     onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
+
+  /* =================== 对外的数据层（给模块 E 用） ===================
+     chats 的数据模型归本文件管，模块 E（心声）要把 heartbeats 挂到对话上，
+     与其让 E 自己再写一份「读全表 → 改 → 整表落盘」，不如从这里暴露。
+     两份实现迟早会漂移，而这类漂移的典型后果就是「只存单条，把别的对话冲掉」。
+
+     page-heartbeat.js 是在本文件之前加载的，所以它必须惰性取用
+     （运行时才读 Sleepy.chatStore），不能在加载期缓存。 */
+  Sleepy.chatStore = {
+    getChats: getChats,
+    saveChats: saveChats,
+    getChat: getChat,
+    mutate: mutate,
+    addMessage: addMessage,
+    newId: newId
+  };
 
 })(window);
