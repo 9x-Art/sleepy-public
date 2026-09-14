@@ -436,7 +436,7 @@
           content.appendChild(attachCard(msg));
         } else {
           var textEl = h('div', 'msg-text');
-          var shown = herePending ? pending.text : (msg.content || '（空）');
+          var shown = herePending ? pendingVisible() : (msg.content || '（空）');
           if (herePending && !shown) textEl.appendChild(h('span', 'typing-dots', '···'));
           else textEl.textContent = shown;
           content.appendChild(textEl);
@@ -487,7 +487,8 @@
 
         var content = h('div', 'msg-body');
         var textEl = h('div', 'msg-text');
-        if (pending.text) textEl.textContent = pending.text;
+        var shown = pendingVisible();
+        if (shown) textEl.textContent = shown;
         else textEl.appendChild(h('span', 'typing-dots', '···'));
         content.appendChild(textEl);
 
@@ -519,6 +520,13 @@
            忙碌状态只加 class，靠 CSS 的呼吸动画表达「在等她回话」。 */
         sendBtn.classList[busy ? 'add' : 'remove']('is-busy');
         sendBtn.title = busy ? '还在等她回话' : '发送（输入框留空，就是让她主动开口）';
+      }
+
+      /* 流式过程中，原始输出里 <心声> 之后的内容不能进气泡。
+         统一从这里取正文，别再直接读 pending.raw。 */
+      function pendingVisible() {
+        if (!pending) return '';
+        return Sleepy.heartbeat.splitReply(pending.raw).visible;
       }
 
       /* ======================== 多选 ======================== */
@@ -716,6 +724,18 @@
 
         if (limit > 0 && out.length > limit) out = out.slice(-limit);
 
+        /* 心声跟主回复一起出：往最前面塞一条系统指令，要求模型把
+           「没说出口的心里话」用 <心声>…</心声> 包在正文末尾。
+           这样一轮聊天只发一次请求（上一版是聊完再补发一次，额度翻倍）。
+           放在 slice 之后，所以不会被上下文条数截掉。 */
+        var cfg = store.get('chatDefaults') || {};
+        if (cfg.heartbeatAuto !== false && out.length) {
+          out.unshift({
+            role: 'system',
+            content: Sleepy.heartbeat.replySpec(cfg.heartbeatCount || 2)
+          });
+        }
+
         if (opts.note) {
           out.push({
             role: 'user',
@@ -734,7 +754,8 @@
         if (!msgs.length) { ctx.toast('还没有可以接的话', 'warn'); return; }
 
         var mySeq = ++reqSeq;
-        pending = { text: '', timestamp: Date.now(), targetId: opts.targetId || null };
+        /* raw 是模型吐的全部内容（含心声标签）；信封正文一律走 pendingVisible() */
+        pending = { raw: '', timestamp: Date.now(), targetId: opts.targetId || null };
         renderMessages();
         updateSendUI();
 
@@ -743,12 +764,15 @@
         handle = api.runChat(msgs, {
           onDelta: function (delta) {
             if (mySeq !== reqSeq) return;
-            pending.text += delta;
+            pending.raw += delta;
             renderMessages();
           },
           onDone: function (cand, text) {
             if (mySeq !== reqSeq) return;
-            var finalText = String(text || '').trim();
+
+            /* 正文和心声在同一次输出里，这里一刀切开 */
+            var split = Sleepy.heartbeat.splitReply(text);
+            var finalText = split.visible.trim();
             var target = pending ? pending.targetId : null;
             pending = null;
             handle = null;
@@ -769,9 +793,11 @@
             renderMessages();
             updateSendUI();
 
-            /* E1：回复落地之后在后台问一次「她没说出口的心里话」。
-               非流式、静默失败，失败了也不影响这条回复。 */
-            Sleepy.heartbeat.maybeAuto(chatId);
+            /* 心声是这条回复自带的，入库即可 —— 不需要再发一次请求。
+               模型没写标签就什么都不发生，属于正常情况。 */
+            if (split.heartbeat && split.heartbeat.trim()) {
+              Sleepy.heartbeat.commit(chatId, split.heartbeat);
+            }
           },
           /* 注意：runChat 暴露的是 onFail（全部候选都失败 / 一个候选都没有），
              不是 onError。写成 onError 的话没有任何回调会被触发，
@@ -790,7 +816,12 @@
 
       function stopReply() {
         if (!pending) return;
-        var partial = String(pending.text || '').trim();
+
+        /* 手动停止时只保留正文；心声标签里的内容可能是半截的，
+           只有整段标签已经闭合（模型写完了）才收下。 */
+        var split = Sleepy.heartbeat.splitReply(pending.raw);
+        var partial = split.visible.trim();
+        var beat = (split.closed && split.heartbeat) ? split.heartbeat : '';
         var target = pending.targetId;
 
         reqSeq++;                       /* 让在途回调统统失效 */
@@ -809,6 +840,8 @@
         } else if (target) {
           patchMessage(chatId, target, { content: '（这条被停掉了）' });
         }
+
+        if (beat.trim()) Sleepy.heartbeat.commit(chatId, beat);
 
         renderMessages();
         updateSendUI();

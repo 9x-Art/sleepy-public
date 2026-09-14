@@ -1355,25 +1355,38 @@ body{
 }
 
 /* ---------------------- E2 独立渲染层 ---------------------- */
+/* 面板做在**页面正中**，不是底部抽屉。
+   底部抽屉和「长按菜单 / 加号面板」是同一种姿势，会和它们混在一起；
+   心声是一个独立的小世界，居中浮起来更像「翻开一页心里的东西」。 */
 .hb-mask{
   position:absolute;inset:0;
-  background:rgba(20,17,34,.55);
+  background:rgba(20,17,34,.6);
   z-index:72;
   display:none;
 }
 .hb-mask.is-open{display:block;}
 
-.hb-sheet{
-  position:absolute;left:0;right:0;bottom:0;
+.hb-panel{
+  position:absolute;left:50%;top:50%;
+  width:min(86%, 340px);
+  max-height:70%;
   z-index:73;
-  display:none;flex-direction:column;
-  max-height:64%;
-  padding:16px 16px calc(env(safe-area-inset-bottom) + 16px);
+  display:flex;flex-direction:column;
+  padding:16px;
   background:var(--bg-2);
-  border-top:1px solid var(--line);
-  border-radius:18px 18px 0 0;
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 18px 48px rgba(0,0,0,.45);
+  /* 用 opacity / visibility / transform 出场，留得住过渡动画；
+     直接用 display 切换是没法过渡的 */
+  opacity:0;visibility:hidden;pointer-events:none;
+  transform:translate(-50%,-50%) scale(.94);
+  transition:opacity .18s var(--ease),transform .18s var(--ease),visibility .18s;
 }
-.hb-sheet.is-open{display:flex;}
+.hb-panel.is-open{
+  opacity:1;visibility:visible;pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1);
+}
 
 .hb-head{flex:none;display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;}
 .hb-titles{flex:1;min-width:0;}
