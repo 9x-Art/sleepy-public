@@ -1,0 +1,17 @@
+# 依赖（本项目零依赖，出现 node_modules 说明误装了东西）
+node_modules/
+
+# 日志与临时产物
+*.log
+*.jsonl
+npm-debug.log*
+pnpm-debug.log*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地调试图（截图一律放项目外，这里兜个底）
+shot-*.png

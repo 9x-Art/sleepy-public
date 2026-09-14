@@ -1,0 +1,6 @@
+# 本项目零依赖。这个文件唯一的作用是关掉 pnpm 的两项默认行为：
+# 每次运行脚本前自动校验依赖（会生成 node_modules 空壳 + 打印 "Already up to date"），
+# 以及生成没有内容的 lockfile。
+packages: []
+verifyDepsBeforeRun: false
+lockfile: false

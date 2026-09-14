@@ -1,0 +1,14 @@
+{
+  "name": "sleepy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "小手机 · 本地优先的角色扮演小手机（零依赖静态前端）",
+  "scripts": {
+    "dev": "node serve.js --open",
+    "serve": "node serve.js",
+    "check": "node scripts/check.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
