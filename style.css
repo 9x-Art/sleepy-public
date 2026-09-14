@@ -1457,3 +1457,75 @@ body{
   font-size:13px;color:var(--text-dim);
 }
 .hb-empty-hint{margin:6px 0 0;font-size:11px;color:var(--text-faint);}
+
+/* ============================================================
+   A5 人设预设库：多行文本框 + 字数
+   ============================================================ */
+.set-textarea{
+  width:100%;
+  background:var(--bg);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 11px;
+  color:var(--text);
+  font-family:var(--ff);
+  font-size:13.5px;
+  line-height:1.65;
+  outline:none;
+  resize:vertical;
+  min-height:130px;
+  transition:border-color .16s var(--ease);
+}
+.set-textarea:focus{border-color:rgba(232,184,123,.55);}
+.set-textarea::placeholder{color:var(--text-faint);}
+.set-count{
+  margin:6px 0 0;
+  font-size:10.5px;
+  color:var(--text-faint);
+  text-align:right;
+}
+
+/* ============================================================
+   E2 心声面板改版：最新一条 + 可翻历史
+   ============================================================ */
+/* 滚动容器从 .hb-list 上移到 .hb-body —— 标题和底部按钮要固定住 */
+.hb-body{
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+  padding-right:2px;
+}
+.hb-list{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top:10px;
+}
+
+/* 最新那条放大一点，一眼就能看完 */
+.hb-note.is-latest{
+  padding:14px 14px 10px 16px;
+  background:rgba(232,184,123,.13);
+  border-left-width:3px;
+}
+.hb-note.is-latest .hb-note-text{
+  font-size:15px;
+  line-height:1.8;
+}
+
+/* 「看前面的 N 条」/「回到最新」 */
+.hb-more{
+  display:block;
+  width:100%;
+  margin-top:10px;
+  padding:9px 6px;
+  background:transparent;
+  border:1px dashed rgba(185,175,201,.26);
+  border-radius:10px;
+  color:var(--text-dim);
+  font-family:inherit;
+  font-size:11.5px;
+  cursor:pointer;
+  transition:background .15s var(--ease);
+}
+.hb-more:active{background:var(--bg-3);}

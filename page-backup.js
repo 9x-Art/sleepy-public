@@ -23,6 +23,7 @@
   var setRowValue = ui.setRowValue;
   var button = ui.button;
   var fmtBytes = ui.fmtBytes;
+  var downloadText = ui.downloadText;
 
   var FILE_PREFIX = 'sleepy';
 
@@ -34,24 +35,7 @@
            '-' + pad2(d.getHours()) + pad2(d.getMinutes());
   }
 
-  /* Blob + a[download]。file:// 下也能用，不依赖任何库 */
-  function downloadText(fileName, text) {
-    try {
-      var blob = new global.Blob([text], { type: 'application/json;charset=utf-8' });
-      var url = global.URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(function () { global.URL.revokeObjectURL(url); }, 4000);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
+  /* 下载逻辑已经提到 ui.downloadText（导出人设预设也要用），这里不再自留一份 */
 
   Sleepy.register('settings-backup', {
     title: '数据与备份',
@@ -168,7 +152,7 @@
       function doExport() {
         var payload = store.exportAll();
         var text = JSON.stringify(payload, null, 2);
-        var ok = downloadText(FILE_PREFIX + '-' + stamp() + '.json', text);
+        var ok = downloadText(FILE_PREFIX + '-' + stamp() + '.json', text, 'application/json');
         if (ok) ctx.toast('已导出 · ' + fmtBytes(store.usage().bytes), 'ok');
         else ctx.toast('导出失败：浏览器拦下了下载', 'err');
         refresh();

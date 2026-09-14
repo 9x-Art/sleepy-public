@@ -210,20 +210,58 @@
     return entry;
   }
 
+  /* 页面实例是缓存复用的（build 只跑一次）。所以「同一个 id 带着不同参数
+     再次打开」时必须把 body 重渲染一遍 —— 否则 render 的闭包里还捏着上
+     一次的参数。真实后果：先看 A 预设、返回、再看 B，页面上还是 A 的内容，
+     这时候点保存就把 A 的内容写进 B 了。
+     参数没变就不重渲染（不然会打断正在流式的聊天页）。 */
+  function sameParams(a, b) {
+    try {
+      return JSON.stringify(a || {}) === JSON.stringify(b || {});
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function applyParams(entry, params) {
+    if (!entry || !entry.ctx) return;
+    if (sameParams(entry.params, params)) return;
+    entry.params = params || {};
+    entry.ctx.params = entry.params;
+    var def = entry.def;
+    if (!def || typeof def.render !== 'function') return;
+    entry.ctx.body.innerHTML = '';
+    try {
+      def.render(entry.ctx);
+    } catch (e) {
+      logError(e);
+      entry.ctx.body.innerHTML =
+        '<div class="empty"><div class="empty-paper"></div>' +
+        '<p class="empty-text">这一页出错了</p>' +
+        '<p class="empty-hint"></p></div>';
+      entry.ctx.body.querySelector('.empty-hint').textContent = (e && e.message) || String(e);
+    }
+  }
+
   function open(id, params) {
     if (!id) return;
-    /* 已经在栈里就退回那一层，不重复压栈 */
+    params = params || {};
+
+    /* 已经在栈里就退回那一层，不重复压栈；但参数变了要先重渲染 */
     for (var i = 0; i < pageStack.length; i++) {
-      if (pageStack[i].id === id) { closeTo(i); return; }
+      if (pageStack[i].id !== id) continue;
+      applyParams(pageStack[i], params);
+      closeTo(i);
+      return;
     }
+
     var entry = built[id];
     if (!entry) {
       entry = build(id, params);
       built[id] = entry;
       stack.appendChild(entry.el);
     } else {
-      entry.params = params || entry.params;
-      entry.ctx.params = entry.params;
+      applyParams(entry, params);
     }
     void entry.el.offsetWidth;
     pageStack.push(entry);

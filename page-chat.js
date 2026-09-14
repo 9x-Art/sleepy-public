@@ -730,10 +730,7 @@
            放在 slice 之后，所以不会被上下文条数截掉。 */
         var cfg = store.get('chatDefaults') || {};
         if (cfg.heartbeatAuto !== false && out.length) {
-          out.unshift({
-            role: 'system',
-            content: Sleepy.heartbeat.replySpec(cfg.heartbeatCount || 2)
-          });
+          out.unshift({ role: 'system', content: Sleepy.heartbeat.replySpec() });
         }
 
         if (opts.note) {

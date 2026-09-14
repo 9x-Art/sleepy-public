@@ -5,22 +5,25 @@
      E1 头像「未读心声」状态位 + 呼吸光点动画
      E2 心声内容独立渲染层（点头像弹出，不与普通消息气泡共用组件）
 
-   心声怎么来的（v2：跟着主回复一起出，不额外占一次生成）
-     不再「回复落地后再发一次请求」，而是在同一个请求里加一条系统指令，
+   心声怎么来的（跟着主回复一起出，不额外占一次生成额度）
+     不是「回复落地后再发一次请求」，而是在同一个请求里加一条系统指令，
      要求模型把心声用 <心声>…</心声> 包在回复末尾。前端在流式过程中就把
      这段切出来：正文进气泡，心声进心声池。
      好处：生成额度不翻倍、延迟不增加、心声和这一轮回复必然对应。
-     代价：依赖模型听话。所以 splitReply() 对「半个标签」做了保护，
+     代价：依赖模型听话。splitReply() 对「半个标签」做了保护，
            拿不到标签也只是没有新心声，绝不影响正文。
+     **一轮永远只有一条** —— 不做「每次几条」的配置；多写了只取第一句。
 
-   为什么是「弹出层」而不是一个页面：
-     施工卡写的是「点头像弹出」，验收要求「弹出的展示层与普通聊天气泡在
-     视觉上明显区分」。做成独立页面的话，点一下要经历整页切换动画，
-     和「瞥一眼她没说出口的话」这个动作不搭。
+   面板为什么居中、为什么分两页
+     - 居中：底部抽屉和「长按菜单 / 加号面板」是同一种姿势，放一起会混；
+       心声是独立的小世界，居中浮起来更像「翻开一页心里的东西」。
+     - 分页：默认只看**最新一条**（这是你刚聊完最想知道的），
+       想看前面的点「看前面的 N 条」翻到历史，历史页再点「回到最新」。
+       全堆成一长串的话，最新那条反而被埋在下面。
 
    为什么挂「顶部头像」来显示未读：
      气泡头像会随消息列表滚走，未读光点经常看不见。顶部头像固定可见。
-     气泡头像仍可点（同样打开浮层），只是不挂光点，避免一屏两个跳动的小点。
+     气泡头像仍可点（同样打开面板），只是不挂光点，避免一屏两个跳动的小点。
 
    数据挂在对话上：chat.heartbeats = [{ id, text, at, read }]
      —— 挂 chats 里就能被 store.exportAll() 一起导出，不用再登记新键。
@@ -41,12 +44,11 @@
 
   var AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237A5C4A'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z'/%3E%3C/svg%3E";
 
-  /* 标记用中文尖括号而不是 <!-- 之类，模型照抄的意愿更高，也不容易和
-     正常对话里的英文尖括号撞车 */
+  /* 标记用中文尖括号，模型照抄的意愿更高，也不容易和对话里的英文尖括号撞车 */
   var OPEN = '<心声>';
   var CLOSE = '</心声>';
 
-  /* 手动按钮那一路会按对话 id 去重，避免连点堆请求 */
+  /* 手动按钮那一路按对话 id 去重，避免连点堆请求 */
   var generating = {};
 
   /* ---------------------------- 依赖访问 ---------------------------- */
@@ -104,7 +106,7 @@
     /* 兜底：模型把标签写在了最前面，正文就空了。
        这种情况宁可把正文还回来，也不要给用户一个空气泡。 */
     if (!visible.trim() && beat.trim()) {
-      visible = (rest.replace(CLOSE, '')).trim();
+      visible = rest.replace(CLOSE, '').trim();
       beat = '';
     }
 
@@ -124,37 +126,35 @@
       if (t.length < 2 || t.length > 60) return;
       out.push(t);
     });
-    return out.slice(0, n || 4);
+    return out.slice(0, n || 1);
   }
 
-  /* 把一段心声原文入库。返回收了几条 */
+  /* 把一段心声原文入库。一轮只收第一条。
+     模型不听话写了好几行时，取第一句 —— 那是它最想说的。 */
   function commit(chatId, rawBeat) {
     var cs = chatStore();
     if (!cs || !chatId) return 0;
-    var cfg = store.get('chatDefaults') || {};
-    var n = Math.max(1, Math.min(4, cfg.heartbeatCount || 2));
-    var items = parseLines(rawBeat, n);
+    var items = parseLines(rawBeat, 1);
     if (!items.length) return 0;
 
     cs.mutate(chatId, function (c) {
       if (!Array.isArray(c.heartbeats)) c.heartbeats = [];
-      items.forEach(function (t) {
-        c.heartbeats.push({ id: newId(), text: t, at: Date.now(), read: false });
-      });
+      c.heartbeats.push({ id: newId(), text: items[0], at: Date.now(), read: false });
     });
     syncDots(chatId);
-    return items.length;
+    return 1;
   }
 
-  /* 给 buildMessages 用的系统指令。放在消息数组最前面。
-     写得尽量短——它是每次请求都要付钱的输入 token。 */
-  function replySpec(count) {
+  /* 给 buildMessages 用的系统指令，放在消息数组最前面。
+     写得尽量短 —— 它是每次请求都要付钱的输入 token。 */
+  function replySpec() {
     return [
       '【输出格式】正文写完后，另起一行，用 ' + OPEN + ' 和 ' + CLOSE +
-        ' 包住她没说出口的心里话。',
-      '心声写 1~' + count + ' 行，每行不超过 25 字；只写她此刻的内心活动和感受，',
-      '不是对别人说话、不出现称呼，不复述正文，不提问，不讲道理。',
-      '实在没有就整段省略。',
+        ' 包住她这一轮没说出口的那一句心里话。',
+      '只写一句，不超过 25 字，不要写成多行。',
+      '只写她此刻的内心活动：不是对别人说话、不出现称呼，不复述正文，',
+      '不提问，不讲道理。实在没有就整段省略。',
+      '',
       '例：',
       '那我先睡了。',
       '',
@@ -220,18 +220,26 @@
   }
 
   /* ------------------------ E2 独立渲染层 ------------------------ */
+
+  function sortedChat(chatId) {
+    var cs = chatStore();
+    if (!cs) return [];
+    return listOf(cs.getChat(chatId)).slice().sort(function (a, b) {
+      return (b.at || 0) - (a.at || 0);
+    });
+  }
+
   /* 挂在 ctx 上复用，一个页面只建一次 */
   function ensureOverlay(ctx) {
     if (ctx.__hb) return ctx.__hb;
 
     var mask = h('div', 'hb-mask');
-    var sheet = h('div', 'hb-panel');
+    var panel = h('div', 'hb-panel');
 
     var head = h('div', 'hb-head');
     var titles = h('div', 'hb-titles');
-    var title = h('p', 'hb-title', '心声');
     var sub = h('p', 'hb-sub', '');
-    titles.appendChild(title);
+    titles.appendChild(h('p', 'hb-title', '心声'));
     titles.appendChild(sub);
     var close = h('button', 'hb-close', '\u00d7');
     close.type = 'button';
@@ -239,7 +247,7 @@
     head.appendChild(titles);
     head.appendChild(close);
 
-    var list = h('div', 'hb-list');
+    var body = h('div', 'hb-body');
 
     var foot = h('div', 'hb-foot');
     var ask = button('现在想一条', 'ghost', function () {
@@ -252,11 +260,11 @@
           ask.textContent = '现在想一条';
         },
         onNew: function () {
-          /* 用户正盯着面板看，新生成的就直接算已读，
-             否则关掉面板会发现光点又亮了，很奇怪 */
+          /* 用户正盯着面板看，新生成的直接算已读（否则关掉会发现光点又亮了），
+             并且翻回「最新」页让他看到那条新的 */
           markRead(cid);
           syncDots(cid);
-          render(ctx, cid);
+          render(ctx, cid, 'latest');
         }
       });
     });
@@ -264,7 +272,7 @@
     var autoToggle = h('label', 'hb-auto');
     var autoBox = h('input');
     autoBox.type = 'checkbox';
-    autoToggle.title = '让模型在每次回复末尾顺带写一段心声（不额外消耗一次请求）';
+    autoToggle.title = '让模型在每次回复末尾顺带写一句心声（不额外消耗一次请求）';
     autoToggle.appendChild(autoBox);
     autoToggle.appendChild(h('span', 'hb-auto-text', '回复时附带'));
     autoBox.addEventListener('change', function () {
@@ -274,78 +282,114 @@
     foot.appendChild(ask);
     foot.appendChild(autoToggle);
 
-    sheet.appendChild(head);
-    sheet.appendChild(list);
-    sheet.appendChild(foot);
+    panel.appendChild(head);
+    panel.appendChild(body);
+    panel.appendChild(foot);
     ctx.body.appendChild(mask);
-    ctx.body.appendChild(sheet);
+    ctx.body.appendChild(panel);
 
     mask.addEventListener('click', function () { closeOverlay(ctx); });
     close.addEventListener('click', function () { closeOverlay(ctx); });
 
     ctx.__hb = {
       mask: mask,
-      sheet: sheet,
+      panel: panel,
       sub: sub,
-      list: list,
-      autoBox: autoBox
+      body: body,
+      autoBox: autoBox,
+      view: 'latest'
     };
     return ctx.__hb;
   }
 
-  function render(ctx, chatId) {
-    var cs = chatStore();
-    if (!cs) return;
-    var box = ensureOverlay(ctx);
-    var chat = cs.getChat(chatId);
-    var items = listOf(chat).slice().sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+  function noteEl(item, extra) {
+    var note = h('div', 'hb-note' + (extra ? ' ' + extra : ''));
+    note.appendChild(h('p', 'hb-note-text', item.text));
+    note.appendChild(h('p', 'hb-note-time', relativeTime(item.at)));
+    return note;
+  }
 
-    box.list.innerHTML = '';
+  function render(ctx, chatId, view) {
+    var box = ensureOverlay(ctx);
+    if (view) box.view = view;
+
+    var items = sortedChat(chatId);
+    box.body.innerHTML = '';
+
+    var cfg = store.get('chatDefaults') || {};
+    box.autoBox.checked = cfg.heartbeatAuto !== false;
 
     if (!items.length) {
+      box.sub.textContent = '她没说出口的话';
       var empty = h('div', 'hb-empty');
       empty.appendChild(h('p', 'hb-empty-text', '她还没在心里留下什么'));
       empty.appendChild(h('p', 'hb-empty-hint', '再聊几句就有了'));
-      box.list.appendChild(empty);
-    } else {
-      items.forEach(function (item) {
-        var note = h('div', 'hb-note');
-        note.appendChild(h('p', 'hb-note-text', item.text));
-        note.appendChild(h('p', 'hb-note-time', relativeTime(item.at)));
-        box.list.appendChild(note);
-      });
+      box.body.appendChild(empty);
+      return;
     }
 
-    var cfg = store.get('chatDefaults') || {};
-    box.sub.textContent = items.length ? ('一共 ' + items.length + ' 条') : '她没说出口的话';
-    box.autoBox.checked = cfg.heartbeatAuto !== false;
+    if (box.view === 'history') {
+      var rest = items.slice(1);
+      box.sub.textContent = '前面的 ' + rest.length + ' 条';
+
+      var back = h('button', 'hb-more', '← 回到最新');
+      back.type = 'button';
+      back.addEventListener('click', function () { render(ctx, chatId, 'latest'); });
+      box.body.appendChild(back);
+
+      if (!rest.length) {
+        var none = h('div', 'hb-empty');
+        none.appendChild(h('p', 'hb-empty-text', '前面没有了'));
+        none.appendChild(h('p', 'hb-empty-hint', '这是她的第一条心声'));
+        box.body.appendChild(none);
+      } else {
+        var list = h('div', 'hb-list');
+        rest.forEach(function (item) { list.appendChild(noteEl(item)); });
+        box.body.appendChild(list);
+      }
+      return;
+    }
+
+    /* 最新页：只放一条，看得清 */
+    box.sub.textContent = items.length > 1
+      ? ('最新 · 一共 ' + items.length + ' 条')
+      : '第一条';
+    box.body.appendChild(noteEl(items[0], 'is-latest'));
+
+    var more = items.length - 1;
+    if (more > 0) {
+      var btn = h('button', 'hb-more', '看前面的 ' + more + ' 条');
+      btn.type = 'button';
+      btn.addEventListener('click', function () { render(ctx, chatId, 'history'); });
+      box.body.appendChild(btn);
+    }
   }
 
   function openOverlay(ctx, chatId) {
     var box = ensureOverlay(ctx);
-    render(ctx, chatId);
+    render(ctx, chatId, 'latest');
     /* 看过就算读过 —— 光点在这里消失 */
     markRead(chatId);
     syncDots(chatId);
     box.mask.classList.add('is-open');
-    box.sheet.classList.add('is-open');
+    box.panel.classList.add('is-open');
   }
 
   function closeOverlay(ctx) {
     if (!ctx.__hb) return;
     ctx.__hb.mask.classList.remove('is-open');
-    ctx.__hb.sheet.classList.remove('is-open');
+    ctx.__hb.panel.classList.remove('is-open');
   }
 
   /* ============ 手动补一条（自带一次小请求，跟主回复无关） ============ */
 
-  function manualPrompt(n) {
+  function manualPrompt() {
     return [
       '你在为角色生成「心声」——她没说出口的心里话。',
       '',
       '要求：',
       '1. 只写她此刻的内心活动和感受；不是在对别人说话，不要出现任何称呼。',
-      '2. 每条不超过 25 个字，写 ' + n + ' 条，一行一条。',
+      '2. 只写一句，不超过 25 个字。',
       '3. 只输出正文。不要编号、引号、书名号、括号备注、表情符号。',
       '4. 不要复述对方说过的内容，不要提问，不要讲道理，不要描写动作。'
     ].join('\n');
@@ -361,7 +405,6 @@
     if (!chat) { if (opts.onSettled) opts.onSettled(0); return; }
 
     var cfg = store.get('chatDefaults') || {};
-    var n = Math.max(1, Math.min(4, cfg.heartbeatCount || 2));
     var limit = cfg.contextMessages || 20;
 
     var context = [];
@@ -371,8 +414,9 @@
       if (t) context.push({ role: m.role, content: t });
     });
 
-    var msgs = [{ role: 'system', content: manualPrompt(n) }].concat(context);
+    var msgs = [{ role: 'system', content: manualPrompt() }].concat(context);
     if (msgs.length < 2) { if (opts.onSettled) opts.onSettled(0); return; }
+    if (msgs.length > limit + 1) msgs = [msgs[0]].concat(msgs.slice(-limit));
 
     generating[chatId] = true;
 

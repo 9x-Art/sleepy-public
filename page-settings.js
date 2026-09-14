@@ -149,6 +149,12 @@
     return '已启用 ' + on + ' / ' + list.length + ' 组';
   }
 
+  function presetText() {
+    var list = store.get('presets');
+    var n = Array.isArray(list) ? list.length : 0;
+    return n ? (n + ' 个') : '还没有';
+  }
+
   /* ======================= 页面：设置（一级） ======================= */
 
   Sleepy.register('settings', {
@@ -171,7 +177,13 @@
       body.appendChild(g2.wrap);
 
       var g3 = group('人设与预设');
-      g3.card.appendChild(row({ label: '人设预设库', hint: '增删改 + 导入导出 txt / md（禁 json）' }));
+      var rowPreset = row({
+        label: '人设预设库',
+        hint: '增删改 + 导入导出 txt / md（禁 json）',
+        value: presetText(),
+        onClick: function () { ctx.open('settings-presets'); }
+      });
+      g3.card.appendChild(rowPreset);
       g3.card.appendChild(row({
         label: '聊天默认参数',
         hint: '温度 · 上下文条数 · 流式 · 心声',
@@ -201,6 +213,7 @@
          只改文字、不重建 DOM，从下级页返回时滚动位置不会丢。 */
       ctx.refreshSummary = function () {
         setRowValue(rowModel, mainApiSummary());
+        setRowValue(rowPreset, presetText());
         setRowValue(rowData, usageText());
         foot.textContent = '灰着的行是还没贴好的 · 当前存档 ' + usageText();
       };
@@ -255,14 +268,9 @@
       g2.card.appendChild(f.stream.el);
       body.appendChild(g2.wrap);
 
-      var g3 = group('心声', '跟着每次回复一起产出，不额外占一次生成额度。');
+      var g3 = group('心声', '跟着每次回复一起产出，一轮一条，不额外占一次生成额度。');
       f.heartbeatAuto = switchField({ label: '回复时附带心声', value: cfg.heartbeatAuto });
       g3.card.appendChild(f.heartbeatAuto.el);
-      f.heartbeatCount = numField({
-        label: '每条回复最多收几条', hint: '留空按 2 条算',
-        value: cfg.heartbeatCount, min: 1, max: 4, step: 1
-      });
-      g3.card.appendChild(f.heartbeatCount.el);
       body.appendChild(g3.wrap);
 
       var btnRow = h('div', 'btn-row');
@@ -281,8 +289,7 @@
           maxTokens: Math.round(num(f.maxTokens, 1024)),
           contextMessages: Math.round(num(f.contextMessages, 20)),
           stream: f.stream.get(),
-          heartbeatAuto: f.heartbeatAuto.get(),
-          heartbeatCount: Math.round(num(f.heartbeatCount, 2))
+          heartbeatAuto: f.heartbeatAuto.get()
         };
       }
 
@@ -300,7 +307,6 @@
         f.contextMessages.input.value = String(def.contextMessages);
         f.stream.input.checked = !!def.stream;
         f.heartbeatAuto.input.checked = !!def.heartbeatAuto;
-        f.heartbeatCount.input.value = String(def.heartbeatCount);
         ctx.toast('已填回默认值，记得保存', 'ok');
       }
     }

@@ -132,6 +132,28 @@
     };
   }
 
+  /* 多行文本。人设正文、以后的世界书条目都用它 */
+  function textArea(o) {
+    var wrap = fieldShell(o.label, o.hint);
+    var ta = h('textarea', 'set-textarea');
+    ta.value = o.value == null ? '' : String(o.value);
+    ta.rows = o.rows || 8;
+    if (o.placeholder) ta.placeholder = o.placeholder;
+    ta.setAttribute('autocapitalize', 'off');
+    ta.setAttribute('autocorrect', 'off');
+    ta.setAttribute('spellcheck', 'false');
+    wrap.appendChild(ta);
+
+    if (o.counter) {
+      var count = h('p', 'set-count', '');
+      wrap.appendChild(count);
+      var sync = function () { count.textContent = ta.value.length + ' 字'; };
+      ta.addEventListener('input', sync);
+      sync();
+    }
+    return { el: wrap, input: ta, get: function () { return ta.value; } };
+  }
+
   function switchField(o) {
     var wrap = h('div', 'set-field set-field-row');
     var main = h('div', 'set-field-main');
@@ -192,6 +214,49 @@
     return dateStr(ts);
   }
 
+  /* ------------------------- 文件存取（零依赖） ------------------------- */
+
+  /* Blob + a[download]。file:// 下也能用，不依赖任何库。
+     导出备份、导出人设预设都走这一个，别再各写一份。 */
+  function downloadText(fileName, text, mime) {
+    try {
+      var blob = new global.Blob([text], {
+        type: (mime || 'text/plain') + ';charset=utf-8'
+      });
+      var url = global.URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { global.URL.revokeObjectURL(url); }, 4000);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /* 选一个文本文件读进来。回调给 (正文, 文件名) */
+  function pickTextFile(accept, onText, onError) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    if (accept) input.accept = accept;
+    input.style.display = 'none';
+    input.addEventListener('change', function () {
+      var f = input.files && input.files[0];
+      if (input.parentNode) input.parentNode.removeChild(input);
+      if (!f) return;
+      var reader = new global.FileReader();
+      reader.onload = function () { onText(String(reader.result || ''), f.name); };
+      reader.onerror = function () { if (onError) onError('读不出这个文件'); };
+      reader.readAsText(f);
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.ui = {
@@ -202,13 +267,16 @@
     fieldShell: fieldShell,
     textField: textField,
     numField: numField,
+    textArea: textArea,
     switchField: switchField,
     button: button,
     note: note,
     fmtBytes: fmtBytes,
     timeStr: timeStr,
     dateStr: dateStr,
-    relativeTime: relativeTime
+    relativeTime: relativeTime,
+    downloadText: downloadText,
+    pickTextFile: pickTextFile
   };
 
 })(window);
