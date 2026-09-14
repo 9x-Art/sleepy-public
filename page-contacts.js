@@ -315,7 +315,7 @@
       f.name = textField({
         label: '角色名',
         value: existing ? existing.name : '',
-        placeholder: '例如 阿岚 / 冷淡系',
+        placeholder: '',
         hint: '聊天记录里出现的名字就是它'
       });
       g.card.appendChild(f.name.el);
