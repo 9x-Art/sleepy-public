@@ -154,18 +154,17 @@ body{
   transition:transform .16s var(--ease);
 }
 .ic svg{display:block;width:54px;height:54px;}
-.icon:active .ic{transform:scale(.9);}
-.tape{
-  position:absolute;
-  top:-3px;
-  left:50%;
-  width:25px;
-  height:9px;
-  background:var(--tape,#F4A29C);
-  opacity:.82;
-  transform:translateX(-50%) rotate(var(--tape-r,0deg));
-  border-radius:1px;
+/* 首页图标统一线性 SVG：fill/stroke/线宽在 CSS 统一接管，
+   HTML 里只画形状 —— 想换粗细换颜色改这里一处就够 */
+.ic svg, .dock-ic svg{
+  fill:none;
+  stroke:var(--text);
+  stroke-width:1.6;
+  stroke-linecap:round;
+  stroke-linejoin:round;
 }
+.dock-ic svg{display:block;width:30px;height:30px;stroke:var(--text-faint);}
+.icon:active .ic{transform:scale(.9);}
 .ic-name{
   font-size:11.5px;
   color:var(--text-dim);
