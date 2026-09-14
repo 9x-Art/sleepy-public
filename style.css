@@ -329,6 +329,15 @@ body{
   transition:background .16s var(--ease),transform .16s var(--ease);
 }
 .head-act:active{transform:scale(.94);}
+
+/* 只有图形没有文字的动作按钮（名片夹的导入 / 导出）。
+   收到 32 见方，两个图标并排也不会把标题挤走。 */
+.head-act-icon{
+  width:32px;height:32px;
+  padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.head-act-icon svg{display:block;}
 .head-act:disabled{opacity:.4;cursor:default;}
 .head-act-primary{background:var(--amber);color:#2A2118;font-weight:600;}
 
@@ -594,7 +603,7 @@ body{
   max-width:82%;display:flex;flex-direction:column;
   position:relative;word-break:break-word;
 }
-/* 她的气泡：头像在左，引用条 / 正文 / 时间在右 */
+/* 角色的气泡：头像在左，引用条 / 正文 / 时间在右 */
 .msg-assistant{flex-direction:row;align-items:flex-start;}
 .msg-body{display:flex;flex-direction:column;min-width:0;}
 .msg-user{align-self:flex-end;}
@@ -605,7 +614,7 @@ body{
 .msg-assistant .msg-text{
   background:var(--paper);
   /* 原本写的是 color:var(--text)，而 --text 就是 #F2E8DC，和这张纸同一个颜色，
-     所以她的每句话都是浅字写在浅底上，等于隐身。 */
+     所以角色的每句话都是浅字写在浅底上，等于隐身。 */
   color:#2A2118;
   border-radius:3px 18px 18px 18px;
 }
@@ -657,7 +666,7 @@ body{
   transition:transform .12s var(--ease), background .2s var(--ease);
 }
 .send-btn:active{transform:scale(.94);}
-/* 忙碌状态：爪印变淡呼吸，比单纯置灰更像「她在打字」 */
+/* 忙碌状态：爪印变淡呼吸，比单纯置灰更像「对方在打字」 */
 .send-btn.is-busy{
   background:var(--bg-3);color:var(--text-faint);
   cursor:default;
@@ -1117,7 +1126,7 @@ body{
   min-width:56px;
 }
 
-/* 等她的…… 呼吸点 */
+/* 等回复的…… 呼吸点 */
 .typing-dots{
   letter-spacing:2px;
   animation:blink 1.1s ease-in-out infinite;
@@ -1529,3 +1538,142 @@ body{
   transition:background .15s var(--ease);
 }
 .hb-more:active{background:var(--bg-3);}
+
+/* ============================================================
+   应用内弹层（ui.prompt / ui.confirm）
+   替代原生 prompt() / confirm() —— 原生弹窗的标题是「127.0.0.1:5173 显示」，
+   还挂着地址栏，在一个「小手机」里非常出戏，手机上还会把页面顶上去。
+   ============================================================ */
+.dl-mask{
+  position:absolute;inset:0;
+  background:rgba(20,17,34,.62);
+  z-index:80;
+  display:none;
+}
+.dl-mask.is-open{display:block;}
+
+.dl-card{
+  position:absolute;
+  left:50%;top:50%;
+  width:min(320px, 82%);
+  z-index:81;
+  display:none;
+  flex-direction:column;
+  padding:18px 18px 14px;
+  background:var(--bg-2);
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow:0 18px 44px rgba(0,0,0,.5);
+}
+.dl-card.is-open{
+  display:flex;
+  animation:dl-in .16s var(--ease) both;
+}
+@keyframes dl-in{
+  from{opacity:0;transform:translate(-50%,-50%) scale(.95);}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1);}
+}
+
+.dl-title{
+  margin:0 0 12px;
+  font-family:var(--ff-serif);
+  font-size:15px;line-height:1.55;
+  color:var(--text);
+}
+
+/* 副说明：删除类操作把后果写在这里，比塞进标题里好读 */
+.dl-note{
+  margin:-8px 0 12px;
+  font-size:11.5px;line-height:1.55;
+  color:var(--text-faint);
+}
+
+.dl-input{
+  width:100%;
+  box-sizing:border-box;
+  margin-bottom:14px;
+  padding:10px 12px;
+  background:var(--bg);
+  border:1px solid var(--line);
+  border-radius:10px;
+  color:var(--text);
+  font-family:var(--ff);
+  font-size:14px;
+  outline:none;
+}
+.dl-input:focus{border-color:rgba(232,184,123,.55);}
+.dl-input::placeholder{color:var(--text-faint);}
+
+.dl-acts{display:flex;gap:8px;}
+.dl-btn{
+  flex:1;
+  padding:10px 8px;
+  border:0;border-radius:11px;
+  background:var(--bg-3);
+  color:var(--text-dim);
+  font-family:inherit;font-size:13.5px;
+  cursor:pointer;
+  transition:transform .12s var(--ease);
+}
+.dl-btn:active{transform:scale(.97);}
+.dl-btn-ok{
+  background:var(--amber);color:#2A2118;
+  font-weight:600;
+}
+.dl-btn-ok.is-danger{background:var(--coral);color:#2A2118;}
+
+/* ============================================================
+   名片夹（角色）
+   预设库原本挂在设置里，但那本来就该是「新增角色」。
+   ============================================================ */
+.contact-list{
+  display:flex;flex-direction:column;gap:10px;
+  padding-bottom:84px;          /* 给右下角 FAB 让位 */
+}
+
+.contact-card{
+  display:flex;align-items:center;gap:12px;
+  width:100%;box-sizing:border-box;
+  padding:12px 14px;
+  background:var(--bg-2);
+  border:1px solid var(--line);
+  border-radius:14px;
+  color:var(--text);
+  font-family:inherit;text-align:left;
+  cursor:pointer;
+  transition:transform .12s var(--ease);
+}
+.contact-card:active{transform:scale(.985);}
+
+.contact-av{
+  flex:none;
+  width:40px;height:40px;border-radius:50%;
+  background:var(--bg-3);
+  color:var(--text-dim);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--ff-serif);font-size:17px;
+}
+.contact-main{
+  flex:1;min-width:0;
+  display:flex;flex-direction:column;gap:4px;
+}
+.contact-name{
+  font-size:14.5px;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.contact-line{
+  font-size:11.5px;color:var(--text-faint);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+.contact-empty{
+  padding:26px 0 10px;
+  text-align:center;
+}
+.contact-empty-text{
+  margin:0;font-family:var(--ff-serif);
+  font-size:13.5px;color:var(--text-dim);
+}
+.contact-empty-hint{
+  margin:8px 0 0;font-size:11.5px;color:var(--text-faint);
+}

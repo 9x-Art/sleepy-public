@@ -24,13 +24,13 @@
 
   /* 没注册的 App 落到这里，保证点了不白屏（ROADMAP 1.6） */
   var PLACEHOLDER = {
-    chat:     { title: '字条',   hint: '这里会是你和她的对话。' },
-    moments:  { title: '拼贴墙', hint: '她愿意给你看的东西，会贴在这里。' },
-    diary:    { title: '手账本', hint: '她写给你的日记，一页一天。' },
-    memory:   { title: '回忆页', hint: '你们聊过的事，会被收进这里。' },
-    music:    { title: '磁带',   hint: '一起听点什么。' },
+    chat:     { title: '聊天',   hint: '这里会是你和角色的对话。' },
+    moments:  { title: '朋友圈', hint: '角色愿意给你看的东西，会贴在这里。' },
+    diary:    { title: '日记', hint: '写给你的日记，一页一天。' },
+    memory:   { title: '记忆', hint: '你们聊过的事，会被收进这里。' },
+    music:    { title: '音乐',   hint: '一起听点什么。' },
     contacts: { title: '名片夹', hint: '你在这部手机里认识的人。' },
-    settings: { title: '设置',   hint: 'API 配置、数据备份、人设预设都在这里。' },
+    settings: { title: '设置',   hint: 'API 配置、数据备份、聊天参数都在这里。' },
     support:  { title: '反馈',   hint: '有问题随时找我（联系方式待填）。' }
   };
 
@@ -76,12 +76,12 @@
   function applyGreeting() {
     var h = new Date().getHours();
     var t, s;
-    if (h < 5)       { t = '还没睡呀';   s = '她也在熬夜'; }
-    else if (h < 11) { t = '早上好';     s = '她刚醒，还在找眼镜'; }
-    else if (h < 14) { t = '中午好';     s = '她刚吃完饭'; }
-    else if (h < 18) { t = '下午好';     s = '她在忙，晚点回你'; }
-    else if (h < 23) { t = '晚上好';     s = '她刚到家'; }
-    else             { t = '晚安，睡睡'; s = '她在本子上贴好了今天'; }
+    if (h < 5)       { t = '还没睡呀';   s = '灯还亮着'; }
+    else if (h < 11) { t = '早上好';     s = '刚醒，还在找眼镜'; }
+    else if (h < 14) { t = '中午好';     s = '刚吃完饭'; }
+    else if (h < 18) { t = '下午好';     s = '在忙，晚点回你'; }
+    else if (h < 23) { t = '晚上好';     s = '刚到家'; }
+    else             { t = '晚安，睡睡'; s = '今天的本子已经贴好了'; }
     greetTitle.textContent = t;
     greetSub.textContent = s;
   }
@@ -170,8 +170,17 @@
         (list || []).forEach(function (a) {
           var b = document.createElement('button');
           b.type = 'button';
-          b.className = 'head-act' + (a.kind ? ' head-act-' + a.kind : '');
-          b.textContent = a.label;
+          b.className = 'head-act' +
+            (a.kind ? ' head-act-' + a.kind : '') +
+            (a.svg ? ' head-act-icon' : '');
+          /* 图标按钮：svg 是页面里写死的字符串常量，不走用户输入 */
+          if (a.svg) {
+            b.innerHTML = a.svg;
+            b.setAttribute('aria-label', a.label || '');
+            b.title = a.label || '';
+          } else {
+            b.textContent = a.label;
+          }
           if (a.disabled) b.disabled = true;
           b.addEventListener('click', function () { safeCall(a.onClick, b); });
           sideEl.appendChild(b);

@@ -150,9 +150,9 @@
   function replySpec() {
     return [
       '【输出格式】正文写完后，另起一行，用 ' + OPEN + ' 和 ' + CLOSE +
-        ' 包住她这一轮没说出口的那一句心里话。',
+        ' 包住角色这一轮没说出口的那一句心里话。',
       '只写一句，不超过 25 字，不要写成多行。',
-      '只写她此刻的内心活动：不是对别人说话、不出现称呼，不复述正文，',
+      '只写角色此刻的内心活动：不是对别人说话、不出现称呼，不复述正文，',
       '不提问，不讲道理。实在没有就整段省略。',
       '',
       '例：',
@@ -204,8 +204,8 @@
 
     var img = h('img', 'head-avatar');
     img.src = AVATAR;
-    img.alt = '她';
-    img.title = '看她没说出口的话';
+    img.alt = '角色';
+    img.title = '看没说出口的话';
 
     slot.appendChild(img);
     slot.appendChild(h('span', 'hb-dot'));
@@ -252,7 +252,7 @@
     var foot = h('div', 'hb-foot');
     var ask = button('现在想一条', 'ghost', function () {
       ask.disabled = true;
-      ask.textContent = '她正在想…';
+      ask.textContent = '在想…';
       var cid = ctx.params && ctx.params.chatId;
       generate(cid, {
         onSettled: function () {
@@ -320,9 +320,9 @@
     box.autoBox.checked = cfg.heartbeatAuto !== false;
 
     if (!items.length) {
-      box.sub.textContent = '她没说出口的话';
+      box.sub.textContent = '没说出口的话';
       var empty = h('div', 'hb-empty');
-      empty.appendChild(h('p', 'hb-empty-text', '她还没在心里留下什么'));
+      empty.appendChild(h('p', 'hb-empty-text', '心里还没留下什么'));
       empty.appendChild(h('p', 'hb-empty-hint', '再聊几句就有了'));
       box.body.appendChild(empty);
       return;
@@ -340,7 +340,7 @@
       if (!rest.length) {
         var none = h('div', 'hb-empty');
         none.appendChild(h('p', 'hb-empty-text', '前面没有了'));
-        none.appendChild(h('p', 'hb-empty-hint', '这是她的第一条心声'));
+        none.appendChild(h('p', 'hb-empty-hint', '这是第一条心声'));
         box.body.appendChild(none);
       } else {
         var list = h('div', 'hb-list');
@@ -385,10 +385,10 @@
 
   function manualPrompt() {
     return [
-      '你在为角色生成「心声」——她没说出口的心里话。',
+      '你在为角色生成「心声」——角色没说出口的心里话。',
       '',
       '要求：',
-      '1. 只写她此刻的内心活动和感受；不是在对别人说话，不要出现任何称呼。',
+      '1. 只写角色此刻的内心活动和感受；不是在对别人说话，不要出现任何称呼。',
       '2. 只写一句，不超过 25 个字。',
       '3. 只输出正文。不要编号、引号、书名号、括号备注、表情符号。',
       '4. 不要复述对方说过的内容，不要提问，不要讲道理，不要描写动作。'

@@ -121,7 +121,7 @@
     if (msg.type === 'photo') return '你发了张照片';
     if (msg.type === 'file') return '你发了个文件';
     var t = String(msg.content || '').replace(/\s+/g, ' ').slice(0, 20);
-    return (msg.role === 'user' ? '你说：' : '她回：') + t;
+    return (msg.role === 'user' ? '你说：' : '对方回：') + t;
   }
 
   function copyText(text) {
@@ -202,7 +202,7 @@
   /* ======================= 页面：会话列表 ======================= */
 
   Sleepy.register('chat-list', {
-    title: '字条',
+    title: '聊天',
     render: function (ctx) {
       var body = ctx.body;
 
@@ -218,8 +218,12 @@
       var fab = h('button', 'fab-btn', '+');
       fab.type = 'button';
       fab.title = '新建对话';
-      fab.addEventListener('click', function () {
-        var name = prompt('给这个对话起个名字？', '新对话');
+      fab.addEventListener('click', async function () {
+        var name = await ui.prompt({
+          title: '给这个对话起个名字',
+          value: '新对话',
+          ok: '创建'
+        });
         if (name === null) return;
         var chat = createChat(String(name).trim() || '新对话');
         ctx.toast('已新建 · ' + chat.name, 'ok');
@@ -248,9 +252,15 @@
           var del = h('button', 'chat-item-del', '删');
           del.type = 'button';
           del.title = '删除这个对话';
-          del.addEventListener('click', function (e) {
+          del.addEventListener('click', async function (e) {
             e.stopPropagation();
-            if (!confirm('确定删除「' + chat.name + '」？里面的聊天记录会一起没掉。')) return;
+            var yes = await ui.confirm({
+              title: '删除「' + chat.name + '」？',
+              note: '里面的聊天记录会一起没掉。',
+              ok: '删除',
+              danger: true
+            });
+            if (!yes) return;
             saveChats(getChats().filter(function (c) { return c.id !== chat.id; }));
             rebuild();
             ctx.toast('已删除', 'ok');
@@ -288,7 +298,7 @@
         { label: '\u2699', onClick: function () { ctx.open('settings'); } }
       ]);
 
-      /* 她的头像挂在顶栏右侧 —— 未读心声的光点需要一个固定可见的位置，
+      /* 角色的头像挂在顶栏右侧 —— 未读心声的光点需要一个固定可见的位置，
          挂气泡头像上会随消息列表滚走。setActions 会清空右侧插槽，
          所以这里做成「缺了就补」的幂等形式。 */
       function ensureHeadAvatar() {
@@ -415,8 +425,8 @@
         if (role === 'assistant') {
           var av = h('img', 'msg-avatar');
           av.src = AVATAR;
-          av.alt = '她';
-          av.title = '她';
+          av.alt = '角色';
+          av.title = '角色';
           av.addEventListener('click', function (e) {
             e.stopPropagation();
             Sleepy.heartbeat.openOverlay(ctx, chatId);
@@ -429,7 +439,7 @@
 
         if (msg.quote) {
           content.appendChild(h('div', 'msg-quote',
-            '引用' + (msg.quote.role === 'user' ? '我' : '她') + '：' + msg.quote.content));
+            '引用' + (msg.quote.role === 'user' ? '我' : '对方') + '：' + msg.quote.content));
         }
 
         if (msg.type === 'photo' || msg.type === 'file') {
@@ -482,7 +492,7 @@
 
         var av = h('img', 'msg-avatar');
         av.src = AVATAR;
-        av.alt = '她';
+        av.alt = '角色';
         bubble.appendChild(av);
 
         var content = h('div', 'msg-body');
@@ -517,9 +527,9 @@
         var busy = !!pending;
         sendBtn.disabled = busy;
         /* 别用 textContent 改发送键——那会把爪印 SVG 抹掉。
-           忙碌状态只加 class，靠 CSS 的呼吸动画表达「在等她回话」。 */
+           忙碌状态只加 class，靠 CSS 的呼吸动画表达「在等回复」。 */
         sendBtn.classList[busy ? 'add' : 'remove']('is-busy');
-        sendBtn.title = busy ? '还在等她回话' : '发送（输入框留空，就是让她主动开口）';
+        sendBtn.title = busy ? '还在等回复' : '发送（输入框留空，就是让角色主动开口）';
       }
 
       /* 流式过程中，原始输出里 <心声> 之后的内容不能进气泡。
@@ -567,10 +577,15 @@
 
         var del = h('button', 'msg-select-act is-danger', '删除');
         del.type = 'button';
-        del.addEventListener('click', function () {
+        del.addEventListener('click', async function () {
           var ids = selectedIds();
           if (!ids.length) return;
-          if (!confirm('删除这 ' + ids.length + ' 条消息？')) return;
+          var yes = await ui.confirm({
+            title: '删除选中的 ' + ids.length + ' 条？',
+            ok: '删除',
+            danger: true
+          });
+          if (!yes) return;
           dropMessages(chatId, ids);
           exitSelect();
           ctx.toast('已删除 ' + ids.length + ' 条', 'ok');
@@ -642,7 +657,7 @@
         }
         quoteBar.style.display = 'flex';
         quoteBar.appendChild(h('span', 'msg-quote-text',
-          '引用' + (quote.role === 'user' ? '我' : '她') + '：' + quote.content));
+          '引用' + (quote.role === 'user' ? '我' : '对方') + '：' + quote.content));
         var x = h('button', 'msg-quote-x', '\u00d7');
         x.type = 'button';
         x.title = '取消引用';
@@ -666,12 +681,16 @@
         ctx.toast('已收藏，右上角 ★ 里能查到', 'ok');
       }
 
-      function editMsg(msg) {
+      async function editMsg(msg) {
         if (msg.type) {
           ctx.toast('附件气泡先不支持编辑', 'warn');
           return;
         }
-        var next = prompt('编辑这条消息：', msg.content || '');
+        var next = await ui.prompt({
+          title: '编辑这条消息',
+          value: msg.content || '',
+          ok: '保存'
+        });
         if (next === null) return;
         next = String(next).trim();
         if (!next) {
@@ -692,8 +711,13 @@
         );
       }
 
-      function removeMsg(msg) {
-        if (!confirm('删掉这条消息？')) return;
+      async function removeMsg(msg) {
+        var yes = await ui.confirm({
+          title: '删掉这条消息？',
+          ok: '删除',
+          danger: true
+        });
+        if (!yes) return;
         dropMessages(chatId, [msg.id]);
         renderMessages();
         ctx.toast('已删除', 'ok');
@@ -745,7 +769,7 @@
 
       function requestReply(opts) {
         opts = opts || {};
-        if (pending) { ctx.toast('还在等她回话', 'warn'); return; }
+        if (pending) { ctx.toast('还在等回复', 'warn'); return; }
 
         var msgs = buildMessages(opts);
         if (!msgs.length) { ctx.toast('还没有可以接的话', 'warn'); return; }
@@ -775,7 +799,7 @@
             handle = null;
 
             if (!finalText) {
-              ctx.toast('她这次没出声，要不再试一次？', 'warn');
+              ctx.toast('这次没出声，要不再试一次？', 'warn');
               renderMessages();
               updateSendUI();
               return;
@@ -845,9 +869,14 @@
         ctx.toast('已停止', 'ok');
       }
 
-      function startReroll(msg) {
-        if (pending) { ctx.toast('还在等她回话', 'warn'); return; }
-        var reason = prompt('想让她怎么改？留空就是直接重说一遍。', '');
+      async function startReroll(msg) {
+        if (pending) { ctx.toast('还在等回复', 'warn'); return; }
+        var reason = await ui.prompt({
+          title: '想怎么改？',
+          note: '留空就是直接重说一遍。',
+          value: '',
+          ok: '重说'
+        });
         if (reason === null) return;
         var note = String(reason).trim();
 
@@ -856,11 +885,11 @@
       }
 
       function doSend() {
-        if (pending) { ctx.toast('还在等她回话', 'warn'); return; }
+        if (pending) { ctx.toast('还在等回复', 'warn'); return; }
 
         var content = textarea.value.trim();
 
-        /* D1：输入框空着点发送 = 让她主动开口说话，而不是发一个空气泡 */
+        /* D1：输入框空着点发送 = 让角色主动开口说话，而不是发一个空气泡 */
         if (!content) {
           requestReply({ proactive: true });
           return;

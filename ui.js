@@ -257,6 +257,153 @@
     input.click();
   }
 
+  /* ------------------------- 应用内弹层 ------------------------- */
+
+  /* 为什么不用原生 prompt() / confirm()：
+     它们弹出来的是浏览器自己的对话框 —— 标题写着「127.0.0.1:5173 显示」，
+     旁边还挂着地址栏。在一个「小手机」里冒出这种东西，沉浸感当场就没了，
+     手机上更难看（iOS 还会把整个页面顶上去）。
+     这里用跟心声面板同一套材质做应用内版本。
+
+     用法跟原生几乎一样，区别是返回 Promise：
+
+       var name = await ui.prompt({ title: '给这个对话起个名字？', value: '新对话' });
+       if (name === null) return;                          // 用户取消
+       if (await ui.confirm({ title: '确定删除？', ok: '删除', danger: true })) { ... }
+
+     全局单例：同一时刻只有一个弹层，连点不会叠出一堆。
+     遮罩 / ESC / 取消 都算取消（input 返回 null，confirm 返回 false）。
+     输入框里按回车＝确定。 */
+
+  /* 两个变量分开管，别合成一个：
+     dialogEls —— DOM，只建一次，之后一直复用
+     dialog    —— 当前这一次打开的会话（null = 没打开）
+
+     一开始我把两者合成一个变量，关闭时清掉引用，下次打开又新建一份 DOM，
+     页面上就堆着好几层弹层 —— 症状是「点了按钮像没反应」，
+     其实新弹层开在最后面，被先前那份残留挡着。 */
+  var dialogEls = null;
+  var dialog = null;
+
+  function closeDialog(result) {
+    if (!dialog) return;
+    var d = dialog;
+    /* 先断开引用：resolve 的回调里可能马上又要开一个弹层，
+       不先清掉的话新开的那个会被当成「旧的」关掉 */
+    dialog = null;
+    dialogEls.mask.classList.remove('is-open');
+    dialogEls.card.classList.remove('is-open');
+    if (d.done) d.done(result);
+  }
+
+  /* 只负责建 DOM。建过就复用，永远不会有第二份 */
+  function ensureDialog() {
+    if (dialogEls) return dialogEls;
+
+    /* 挂到手机壳里而不是 body，这样它跟着手机屏一起裁剪、一起居中 */
+    var host = document.getElementById('phone') || document.body;
+
+    var mask = h('div', 'dl-mask');
+    var card = h('div', 'dl-card');
+    var title = h('p', 'dl-title');
+    var note = h('p', 'dl-note');
+
+    var input = h('input', 'dl-input');
+    input.type = 'text';
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('spellcheck', 'false');
+
+    var acts = h('div', 'dl-acts');
+    var cancelBtn = h('button', 'dl-btn', '取消');
+    cancelBtn.type = 'button';
+    var okBtn = h('button', 'dl-btn dl-btn-ok', '确定');
+    okBtn.type = 'button';
+    acts.appendChild(cancelBtn);
+    acts.appendChild(okBtn);
+
+    card.appendChild(title);
+    card.appendChild(note);
+    card.appendChild(input);
+    card.appendChild(acts);
+    host.appendChild(mask);
+    host.appendChild(card);
+
+    /* 取消时给什么值：输入框给 null，确认框给 false */
+    function cancelValue() {
+      return (dialog && dialog.kind === 'confirm') ? false : null;
+    }
+
+    function submit() {
+      if (!dialog) return;
+      closeDialog(dialog.kind === 'input' ? input.value : true);
+    }
+
+    mask.addEventListener('click', function () { closeDialog(cancelValue()); });
+    cancelBtn.addEventListener('click', function () { closeDialog(cancelValue()); });
+    okBtn.addEventListener('click', function () { submit(); });
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeDialog(cancelValue()); }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!dialog) return;
+      if (e.key === 'Escape') closeDialog(cancelValue());
+    });
+
+    dialogEls = {
+      mask: mask, card: card, title: title, note: note,
+      input: input, okBtn: okBtn
+    };
+    return dialogEls;
+  }
+
+  function openDialog(o) {
+    o = o || {};
+    /* 上一个还没关就又开一个：把旧的当成取消，否则它的 Promise 永远挂着 */
+    if (dialog) closeDialog(null);
+
+    var els = ensureDialog();
+    var kind = o.kind === 'confirm' ? 'confirm' : 'input';
+
+    els.title.textContent = o.title || '';
+    els.note.textContent = o.note || '';
+    els.note.style.display = o.note ? '' : 'none';
+    els.okBtn.textContent = o.ok || (kind === 'confirm' ? '确定' : '保存');
+    els.okBtn.className = 'dl-btn dl-btn-ok' + (o.danger ? ' is-danger' : '');
+    els.input.style.display = kind === 'input' ? '' : 'none';
+    els.input.value = o.value == null ? '' : String(o.value);
+    els.input.placeholder = o.placeholder || '';
+
+    return new Promise(function (resolve) {
+      dialog = { kind: kind, done: resolve };
+      els.mask.classList.add('is-open');
+      els.card.classList.add('is-open');
+      if (kind === 'input') {
+        /* 等一帧再聚焦，刚 display 出来的元素直接 focus 在部分浏览器上不生效 */
+        setTimeout(function () { els.input.focus(); els.input.select(); }, 30);
+      }
+    });
+  }
+
+  /* 文本输入弹窗。确定 → 输入内容（未 trim，交给调用方决定），取消 → null */
+  function prompt(o) {
+    if (typeof o === 'string') o = { title: o };
+    o = o || {};
+    o.kind = 'input';
+    return openDialog(o);
+  }
+
+  /* 确认弹窗。确定 → true，取消 → false */
+  function confirmBox(o) {
+    if (typeof o === 'string') o = { title: o };
+    o = o || {};
+    o.kind = 'confirm';
+    if (o.ok === undefined) o.ok = '确定';
+    return openDialog(o);
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.ui = {
@@ -276,7 +423,10 @@
     dateStr: dateStr,
     relativeTime: relativeTime,
     downloadText: downloadText,
-    pickTextFile: pickTextFile
+    pickTextFile: pickTextFile,
+    /* 应用内弹层。注意是 Promise 版，不是原生 prompt / confirm */
+    prompt: prompt,
+    confirm: confirmBox
   };
 
 })(window);

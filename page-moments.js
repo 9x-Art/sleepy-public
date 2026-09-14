@@ -24,12 +24,12 @@
   ];
 
   Sleepy.register('moments', {
-    title: '拼贴墙',
+    title: '朋友圈',
     render: function (ctx) {
       var body = ctx.body;
 
       body.appendChild(h('p', 'set-group-note',
-        '她愿意给你看的东西，会贴在这面墙上。现在是示例内容。'));
+        '角色愿意给你看的东西，会贴在这面墙上。现在是示例内容。'));
 
       var feed = h('div', 'moment-feed');
       PLACEHOLDER.forEach(function (m) {
@@ -38,9 +38,9 @@
         var head = h('div', 'moment-head');
         var av = h('img', 'moment-avatar');
         av.src = AVATAR;
-        av.alt = '她';
+        av.alt = '角色';
         head.appendChild(av);
-        head.appendChild(h('span', 'moment-name', '她'));
+        head.appendChild(h('span', 'moment-name', '角色'));
         item.appendChild(head);
 
         item.appendChild(h('p', 'moment-text', m.text));

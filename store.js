@@ -70,8 +70,9 @@
     /* D2 收藏：被收藏的单条消息快照 */
     favorites: [],
 
-    /* A5 人设预设库 */
-    presets: [],
+    /* 名片夹里的角色：[{ id, name, content, createdAt, updatedAt }]
+       （A5 时期叫 presets「人设预设库」，后来归到名片夹，改名并做了迁移） */
+    characters: [],
 
     /* 手账本 */
     diaries: []
@@ -324,7 +325,32 @@
     persist('meta');
   }
 
+  /* 顺序有意如此：先搬旧键，再初始化 meta */
+  migrateKeys();
   ensureInstalled();
+
+  /* ------------------------- 一次性迁移 ------------------------- */
+
+  /* A5 时期的「人设预设库」存在 presets 键里。后来归位到名片夹，改叫 characters。
+     老存档不能丢：新键还没有数据、旧键有数据时，搬一次过去。
+     旧键保留不删 —— 万一要回退到旧版本，还能找到东西。 */
+  function migrateKeys() {
+    try {
+      if (global.localStorage.getItem(NS + 'characters')) return;
+      var raw = global.localStorage.getItem(NS + 'presets');
+      if (!raw) return;
+      var list = JSON.parse(raw);
+      /* 老存档还有过「套娃」形态：{ presets: [...] } */
+      if (isObj(list) && has(list, 'presets')) list = list.presets;
+      if (!Array.isArray(list) || !list.length) return;
+      global.localStorage.setItem(NS + 'characters', JSON.stringify(list));
+      if (global.console && global.console.log) {
+        global.console.log('[Sleepy] 已把 ' + list.length + ' 个旧预设迁到名片夹');
+      }
+    } catch (e) {
+      /* 迁移失败不能挡住启动，用户下次打开还会再试一遍 */
+    }
+  }
 
   Sleepy.store = {
     NS: NS,

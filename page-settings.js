@@ -149,12 +149,6 @@
     return '已启用 ' + on + ' / ' + list.length + ' 组';
   }
 
-  function presetText() {
-    var list = store.get('presets');
-    var n = Array.isArray(list) ? list.length : 0;
-    return n ? (n + ' 个') : '还没有';
-  }
-
   /* ======================= 页面：设置（一级） ======================= */
 
   Sleepy.register('settings', {
@@ -162,7 +156,7 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var g1 = group('模型连接');
+      var g1 = group('模型与对话');
       var rowModel = row({
         label: '模型连接',
         hint: '主 API · 副 API · 后台任务',
@@ -170,26 +164,19 @@
         onClick: function () { ctx.open('settings-model'); }
       });
       g1.card.appendChild(rowModel);
+      g1.card.appendChild(row({
+        label: '聊天默认参数',
+        hint: '温度 · 上下文条数 · 流式 · 心声',
+        onClick: function () { ctx.open('settings-chatdefaults'); }
+      }));
       body.appendChild(g1.wrap);
 
       var g2 = group('外观与文字');
       g2.card.appendChild(row({ label: '主题与字号', hint: '夜灯 / 浅色 + 字号' }));
       body.appendChild(g2.wrap);
 
-      var g3 = group('人设与预设');
-      var rowPreset = row({
-        label: '人设预设库',
-        hint: '增删改 + 导入导出 txt / md（禁 json）',
-        value: presetText(),
-        onClick: function () { ctx.open('settings-presets'); }
-      });
-      g3.card.appendChild(rowPreset);
-      g3.card.appendChild(row({
-        label: '聊天默认参数',
-        hint: '温度 · 上下文条数 · 流式 · 心声',
-        onClick: function () { ctx.open('settings-chatdefaults'); }
-      }));
-      body.appendChild(g3.wrap);
+      /* 角色相关的入口（原来的「人设预设库」）不在这里 ——
+         它本来就是「新增角色」，已经搬到首页的名片夹。 */
 
       var g4 = group('数据与备份');
       var rowData = row({
@@ -213,7 +200,6 @@
          只改文字、不重建 DOM，从下级页返回时滚动位置不会丢。 */
       ctx.refreshSummary = function () {
         setRowValue(rowModel, mainApiSummary());
-        setRowValue(rowPreset, presetText());
         setRowValue(rowData, usageText());
         foot.textContent = '灰着的行是还没贴好的 · 当前存档 ' + usageText();
       };
@@ -245,7 +231,7 @@
       var g1 = group('生成', '所有对话的默认值。某个接口自己填了生成参数时，以那个为准。');
       f.temperature = numField({
         label: '温度',
-        hint: '越高越发散；想让她的反应更稳就往下调',
+        hint: '越高越发散；想让角色的反应更稳就往下调',
         value: cfg.temperature, min: 0, max: 2, step: 0.05
       });
       g1.card.appendChild(f.temperature.el);

@@ -29,7 +29,7 @@
   }
 
   Sleepy.register('diary', {
-    title: '手账本',
+    title: '日记',
     render: function (ctx) {
       var body = ctx.body;
 
@@ -65,8 +65,12 @@
           if (!written) {
             var remind = h('button', 'diary-remind', '现在写');
             remind.type = 'button';
-            remind.addEventListener('click', function () {
-              var next = prompt('补写这篇：', d.content || '');
+            remind.addEventListener('click', async function () {
+              var next = await ui.prompt({
+                title: '补写这篇',
+                value: d.content || '',
+                ok: '写好了'
+              });
               if (next === null) return;
               next = String(next).trim();
               if (!next) return;
