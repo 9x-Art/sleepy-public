@@ -77,9 +77,13 @@
     /* 手账本 */
     diaries: [],
 
-    /* B 模块 世界书：[{ id, name, keys, content, enabled, createdAt, updatedAt }]
-       keys 是关键词字符串（导入/编辑时按逗号顿号切开）。
-       世界书是「世界的设定资料」，跟角色分开存，F 模块按触发词召回。 */
+    /* B 模块 世界书（两级）：worldbooks = [{ id, name, scope, characterId,
+       createdAt, updatedAt, entries: [{ id, name, keys, content, enabled, ... }] }]
+       scope: 'global' 全局 | 'personal' 个人（挂 characterId 指向的角色）。
+       旧的平铺 worldbook 键由 migrateWorldbookToBooks 搬进来，旧键保留。 */
+    worldbooks: [],
+
+    /* 世界书改成两级结构之前平铺条目的旧键，只用于迁移，不再直接读写 */
     worldbook: []
   };
 
@@ -330,8 +334,38 @@
     persist('meta');
   }
 
-  /* 顺序有意如此：先搬旧键，再初始化 meta */
+  /* 世界书改成两级结构（书 → 条目）之前，条目是平铺在 worldbook 键里的。
+     平铺的老数据整包搬进一本「默认世界书」（全局），旧键保留不删。 */
+  function migrateWorldbookToBooks() {
+    try {
+      if (global.localStorage.getItem(NS + 'worldbooks')) return;
+      var raw = global.localStorage.getItem(NS + 'worldbook');
+      if (!raw) return;
+      var list = JSON.parse(raw);
+      if (!Array.isArray(list) || !list.length) return;
+      var book = {
+        id: 'wbmig' + Date.now().toString(36),
+        name: '默认世界书',
+        scope: 'global',
+        characterId: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        entries: list
+      };
+      global.localStorage.setItem(NS + 'worldbooks', JSON.stringify([book]));
+      if (global.console && global.console.log) {
+        global.console.log('[Sleepy] 已把 ' + list.length + ' 个旧条目迁进「默认世界书」');
+      }
+    } catch (e) {
+      /* 迁移失败不能挡住启动 */
+    }
+  }
+
+
+
+  /* 顺序有意如此：先搬旧键，再初始化 meta（函数声明有提升，放这里没问题） */
   migrateKeys();
+  migrateWorldbookToBooks();
   ensureInstalled();
 
   /* ------------------------- 一次性迁移 ------------------------- */
