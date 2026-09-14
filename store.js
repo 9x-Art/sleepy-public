@@ -75,7 +75,12 @@
     characters: [],
 
     /* 手账本 */
-    diaries: []
+    diaries: [],
+
+    /* B 模块 世界书：[{ id, name, keys, content, enabled, createdAt, updatedAt }]
+       keys 是关键词字符串（导入/编辑时按逗号顿号切开）。
+       世界书是「世界的设定资料」，跟角色分开存，F 模块按触发词召回。 */
+    worldbook: []
   };
 
   /* ---------------------------- 工具 ---------------------------- */

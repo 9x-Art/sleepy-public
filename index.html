@@ -151,6 +151,8 @@
 <script src="page-backup.js"></script>
 <script src="page-subapi.js"></script>
 <script src="page-contacts.js"></script>
+<!-- 世界书（模块 B）：设置里挂入口，排在 contacts 后面无所谓，但必须在 page-chat 之前没什么依赖，放这里保持「先资料后聊天」的顺序 -->
+<script src="page-worldbook.js"></script>
 <!-- 心声是模块 E，page-chat 要用它的 overlay，所以排在 page-chat 之前 -->
 <script src="page-heartbeat.js"></script>
 <script src="page-diary.js"></script>

@@ -149,6 +149,14 @@
     return '已启用 ' + on + ' / ' + list.length + ' 组';
   }
 
+  function worldbookSummary() {
+    var list = store.get('worldbook');
+    if (!Array.isArray(list) || !list.length) return '空的';
+    var on = 0;
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].enabled !== false) on++;
+    return on + ' / ' + list.length + ' 条启用';
+  }
+
   /* ======================= 页面：设置（一级） ======================= */
 
   Sleepy.register('settings', {
@@ -170,6 +178,16 @@
         onClick: function () { ctx.open('settings-chatdefaults'); }
       }));
       body.appendChild(g1.wrap);
+
+      /* 世界书（B 模块）：世界的设定资料，跟接口一样是「引擎的输入」，
+         所以挂模型与对话这一组，而不是做成首页 App。 */
+      var rowWorldbook = row({
+        label: '世界书',
+        hint: '带触发词的设定条目 · 导入导出',
+        value: worldbookSummary(),
+        onClick: function () { ctx.open('worldbook'); }
+      });
+      g1.card.appendChild(rowWorldbook);
 
       var g2 = group('外观与文字');
       g2.card.appendChild(row({ label: '主题与字号', hint: '夜灯 / 浅色 + 字号' }));
@@ -201,6 +219,7 @@
       ctx.refreshSummary = function () {
         setRowValue(rowModel, mainApiSummary());
         setRowValue(rowData, usageText());
+        setRowValue(rowWorldbook, worldbookSummary());
         foot.textContent = '灰着的行是还没贴好的 · 当前存档 ' + usageText();
       };
       ctx.refreshSummary();
