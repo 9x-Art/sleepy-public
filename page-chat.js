@@ -39,9 +39,8 @@
 
   var ICON_PLUS = '<svg ' + SVG_HEAD + '><path d="M12 5.5v13"/><path d="M5.5 12h13"/></svg>';
 
-  var ICON_STAR = '<svg ' + SVG_HEAD +
-    '><path d="M12 4.2l2.4 5 5.4.75-3.9 3.7.95 5.35L12 16.45 7.15 19l.95-5.35-3.9-3.7 ' +
-    '5.4-.75z"/></svg>';
+  var ICON_SEARCH = '<svg ' + SVG_HEAD +
+    '><circle cx="11" cy="11" r="6.2"/><path d="M15.6 15.6L20 20"/></svg>';
 
   var ICON_GEAR = '<svg ' + SVG_HEAD +
     '><circle cx="12" cy="12" r="3.1"/>' +
@@ -389,21 +388,92 @@
         ctx.back();
         return;
       }
-      ctx.setTitle(getChat(chatId).name);
+      /* 顶栏：头像居中、不出现名字。点头像＝心声（用户定的交互） */
+      ctx.setTitle('');
       ctx.setActions([
-        { label: '收藏夹', svg: ICON_STAR, onClick: function () { ctx.open('favorites'); } },
+        { label: '搜索聊天记录', svg: ICON_SEARCH, onClick: function () { openSearch(); } },
         { label: '对话设置', svg: ICON_GEAR, onClick: function () { ctx.open('chat-settings', { chatId: chatId }); } }
       ]);
 
-      /* 角色的头像挂在顶栏右侧 —— 未读心声的光点需要一个固定可见的位置，
-         挂气泡头像上会随消息列表滚走。setActions 会清空右侧插槽，
-         所以这里做成「缺了就补」的幂等形式。 */
+      /* 角色头像挂在顶栏正中 —— 未读心声的光点也跟着它走。
+         setActions 会清空右侧插槽，所以这里做成「缺了就补」的幂等形式。 */
       function ensureHeadAvatar() {
-        var side = ctx.el.querySelector('.app-head-side');
-        if (!side || side.querySelector('.avatar-slot')) return;
-        side.insertBefore(Sleepy.heartbeat.mountAvatar(ctx, chatId), side.firstChild);
+        var headEl = ctx.el.querySelector('.app-head');
+        if (!headEl || headEl.querySelector('.avatar-slot')) return;
+        headEl.classList.add('head-ava-mode');
+        var slot = Sleepy.heartbeat.mountAvatar(ctx, chatId);
+        slot.classList.add('head-ava-center');
+        headEl.appendChild(slot);
       }
       ensureHeadAvatar();
+
+      /* ---------------- 搜索聊天记录（顶栏放大镜） ---------------- */
+      /* 面板盖在页面上，输入即筛当前对话的消息；点结果跳到那条气泡。
+         （收藏以后是独立的 App，这里只管找。） */
+      var searchPanel = null;
+      function openSearch() {
+        if (searchPanel) { searchPanel.classList.add('is-open'); return; }
+        searchPanel = h('div', 'chat-search');
+        var bar = h('div', 'chat-search-bar');
+        var input = h('input', 'chat-search-input');
+        input.type = 'text';
+        input.placeholder = '搜聊天记录';
+        var closeBtn = h('button', 'chat-search-close', '完成');
+        closeBtn.type = 'button';
+        bar.appendChild(input);
+        bar.appendChild(closeBtn);
+        var results = h('div', 'chat-search-results');
+        searchPanel.appendChild(bar);
+        searchPanel.appendChild(results);
+        /* 挂到 #phone 上而不是页面里：页面自身会滚动，
+           absolute 的面板要锚在手机框上才不会跟着内容跑 */
+        var phone = document.getElementById('phone');
+        (phone || ctx.el).appendChild(searchPanel);
+        /* 下一帧再聚焦，避免盖面板的过渡吃掉键盘 */
+        setTimeout(function () { input.focus(); }, 60);
+
+        closeBtn.addEventListener('click', function () {
+          searchPanel.classList.remove('is-open');
+        });
+
+        input.addEventListener('input', function () {
+          var q = String(input.value || '').trim().toLowerCase();
+          results.innerHTML = '';
+          if (!q) return;
+          var c = getChat(chatId);
+          var msgs = (c && c.messages) || [];
+          var hits = [];
+          for (var i = 0; i < msgs.length && hits.length < 50; i++) {
+            var text = String(msgs[i].content || '');
+            if (text.toLowerCase().indexOf(q) >= 0) hits.push(msgs[i]);
+          }
+          if (!hits.length) {
+            results.appendChild(h('p', 'chat-search-empty', '没找到'));
+            return;
+          }
+          hits.forEach(function (m) {
+            var r = h('button', 'chat-search-hit');
+            r.type = 'button';
+            var text = String(m.content || '');
+            var pos = text.toLowerCase().indexOf(q);
+            var start = Math.max(0, pos - 18);
+            var snippet = (start > 0 ? '…' : '') + text.slice(start, pos + q.length + 30) +
+                          (start + q.length + 30 < text.length ? '…' : '');
+            r.appendChild(h('span', 'chat-search-role', m.role === 'user' ? '我' : (c.name || '角色')));
+            r.appendChild(h('span', 'chat-search-text', snippet));
+            r.addEventListener('click', function () {
+              searchPanel.classList.remove('is-open');
+              var bubble = msgWrap.querySelector('[data-id="' + m.id + '"]');
+              if (bubble) {
+                bubble.scrollIntoView({ block: 'center' });
+                bubble.classList.add('is-flash');
+                setTimeout(function () { bubble.classList.remove('is-flash'); }, 1600);
+              }
+            });
+            results.appendChild(r);
+          });
+        });
+      }
 
       var body = ctx.body;
 
@@ -1111,7 +1181,7 @@
       ctx.reload = function () {
         var c = getChat(chatId);
         if (!c) { ctx.back(); return; }
-        ctx.setTitle(c.name);
+        ctx.setTitle('');
         ensureHeadAvatar();          /* 顶栏头像被 setActions 清掉时补回来 */
         Sleepy.heartbeat.syncDots(chatId);
         autoGrow();                  /* 这时候才真的挂进文档，高度算得准 */

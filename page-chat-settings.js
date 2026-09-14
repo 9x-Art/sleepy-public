@@ -183,220 +183,26 @@
 
   /* ==================== 页面：对话设置 ==================== */
 
+  /* 对话设置页：暂时占位。
+     用户反馈这一页的内容不是想要的方向，先清空，等定稿再贴回实现。
+     （旧实现存放在 git 历史里，commit 5c5f484 之前都能翻到。）
+     注意：这个文件还暴露着 Sleepy.chatSettings.openPicker —— 
+     世界书的「挂角色」浮层在用它，不能删。 */
   Sleepy.register('chat-settings', {
     title: '对话设置',
     render: function (ctx) {
       var chatId = ctx.params.chatId;
       var c = cs();
       var chat = c.getChat(chatId);
-
       if (!chat) {
         ctx.toast('找不到这个对话', 'err');
         ctx.back();
         return;
       }
-      ctx.setTitle((chat.name || '对话') + ' · 设置');
-
-      var body = ctx.body;
-      var ov = c.overridesOf(chat);
-      var def = store.get('chatDefaults') || {};
-
-      /* ---------------------- 跟谁聊 ---------------------- */
-
-      var g0 = group('跟谁聊', '从名片夹里挑一个人。这点决定了它在跟谁说话。');
-
-      function paintChar() {
-        g0.card.innerHTML = '';
-        g0.card.appendChild(row({
-          label: '角色',
-          value: charLabel(chat),
-          onClick: function () {
-            openPicker(ctx, {
-              title: '这段对话跟谁聊',
-              onPick: function (pageCtx, picked) {
-                c.mutate(chatId, function (x) { x.characterId = picked.id; });
-                chat = c.getChat(chatId);
-                paintChar();
-                if (pageCtx) pageCtx.toast('已换成「' + picked.name + '」', 'ok');
-              }
-            });
-          }
-        }));
-      }
-      paintChar();
-      body.appendChild(g0.wrap);
-
-      /* ------------------ 这个对话的参数 ------------------ */
-
-      var g1 = group('这个对话的参数',
-        '留空就是跟随全局默认（设置 → 聊天默认参数）。填了就以这里为准。');
-
-      var defTemp = (def.temperature != null) ? def.temperature : 0.85;
-      var defCtx = (def.contextMessages != null) ? def.contextMessages : 20;
-
-      var f = {};
-      f.temp = numField({
-        label: '温度',
-        hint: '留空跟随全局（现在 ' + defTemp + '）；越高越发散',
-        value: ov.temperature,
-        min: 0, max: 2, step: 0.05
-      });
-      g1.card.appendChild(f.temp.el);
-
-      f.context = numField({
-        label: '携带上下文条数',
-        hint: '留空跟随全局（现在 ' + defCtx + ' 条）；越多越记得住，也越贵',
-        value: ov.contextMessages,
-        min: 2, max: 200, step: 2
-      });
-      g1.card.appendChild(f.context.el);
-
-      /* 流式是个开关，但这里需要三态（跟随 / 开 / 关），
-         所以拆成「跟随全局」+「流式输出」两个开关，
-         前者开着时后者置灰 */
-      f.follow = switchField({
-        label: '流式跟随全局',
-        hint: '关掉之后，下面这个开关才是这段对话专用的',
-        value: ov.stream == null
-      });
-      g1.card.appendChild(f.follow.el);
-
-      f.stream = switchField({
-        label: '流式输出',
-        hint: '打字机效果，一个字一个字往外蹦',
-        value: (ov.stream == null) ? (def.stream !== false) : ov.stream
-      });
-      g1.card.appendChild(f.stream.el);
-
-      function syncStream() {
-        var follow = f.follow.get();
-        f.stream.input.disabled = follow;
-        f.stream.el.style.opacity = follow ? '.45' : '';
-      }
-      f.follow.input.addEventListener('change', syncStream);
-      syncStream();
-
-      body.appendChild(g1.wrap);
-
-      /* -------------------- 这个对话 -------------------- */
-
-      var g2 = group('这个对话');
-
-      function paintChatRows() {
-        g2.card.innerHTML = '';
-        var cur = c.getChat(chatId);
-        if (!cur) return;
-
-        g2.card.appendChild(row({
-          label: '改名字',
-          hint: '现在叫「' + cur.name + '」',
-          onClick: async function () {
-            var name = await ui.prompt({
-              title: '给这段对话改个名字',
-              value: cur.name || '',
-              ok: '保存'
-            });
-            if (name === null) return;
-            var next = String(name).trim();
-            if (!next) { ctx.toast('名字不能是空的', 'warn'); return; }
-            c.mutate(chatId, function (x) { x.name = next; });
-            chat = c.getChat(chatId);
-            ctx.setTitle(next + ' · 设置');
-            paintChatRows();
-            ctx.toast('已改名', 'ok');
-          }
-        }));
-
-        g2.card.appendChild(row({
-          label: '清空聊天记录',
-          hint: '对话留着，说过的话清掉',
-          onClick: async function () {
-            var yes = await ui.confirm({
-              title: '清空这段对话的记录？',
-              note: '清掉就找不回来了，对话和角色会留着。',
-              ok: '清空',
-              danger: true
-            });
-            if (!yes) return;
-            c.mutate(chatId, function (x) {
-              x.messages = [];
-              /* 心声是跟着消息来的，消息没了它也没有存在的理由 */
-              x.heartbeats = [];
-            });
-            chat = c.getChat(chatId);
-            ctx.toast('已清空', 'ok');
-          }
-        }));
-
-        g2.card.appendChild(row({
-          label: '导出成文本',
-          hint: '存一份 txt，方便留个念或者搬到别处',
-          onClick: function () { doExport(); }
-        }));
-
-        g2.card.appendChild(row({
-          label: '删除这段对话',
-          hint: '连人带记录一起从列表里去掉',
-          onClick: async function () {
-            var yes = await ui.confirm({
-              title: '删除「' + cur.name + '」？',
-              note: '聊天记录会一起没掉。',
-              ok: '删除',
-              danger: true
-            });
-            if (!yes) return;
-            c.saveChats(c.getChats().filter(function (x) { return x.id !== chatId; }));
-            ctx.toast('已删除', 'ok');
-            ctx.back();
-          }
-        }));
-      }
-      paintChatRows();
-      body.appendChild(g2.wrap);
-
-      body.appendChild(h('p', 'set-foot',
-        '这里的参数只影响这一段对话。想改所有对话的默认值，去 设置 → 聊天默认参数。'));
-
-      ctx.setActions([{
-        label: '保存',
-        kind: 'primary',
-        onClick: function () { doSave(); }
-      }]);
-
-      function doSave() {
-        var ctxVal = f.context.get();
-        var next = {
-          temperature: f.temp.get(),
-          contextMessages: (ctxVal == null) ? null : Math.round(ctxVal),
-          stream: f.follow.get() ? null : f.stream.get()
-        };
-
-        c.mutate(chatId, function (x) {
-          var o = x.overrides || {};
-          o.temperature = next.temperature;
-          o.contextMessages = next.contextMessages;
-          o.stream = next.stream;
-          /* maxTokens 这个页面暂时没露出来，但不能在保存时把它抹掉 */
-          if (o.maxTokens === undefined) o.maxTokens = null;
-          x.overrides = o;
-        });
-
-        ctx.toast('已保存', 'ok');
-        ctx.back();
-      }
-
-      function doExport() {
-        var cur = c.getChat(chatId);
-        if (!cur) return;
-        if (!(cur.messages || []).length) {
-          ctx.toast('这段对话还没有内容', 'warn');
-          return;
-        }
-        var safe = String(cur.name || '对话').replace(/[\\/:*?"<>|]/g, '_');
-        var ok = ui.downloadText(safe + '.txt', chatToText(cur), 'text/plain');
-        if (ok) ctx.toast('已导出', 'ok');
-        else ctx.toast('导出失败：浏览器拦下了下载', 'err');
-      }
+      ctx.setTitle('对话设置');
+      var p = h('p', 'set-foot', '这一页先占个位 —— 要放什么，定了再贴上。');
+      p.style.padding = '48px 0';
+      ctx.body.appendChild(p);
     }
   });
 
