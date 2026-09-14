@@ -714,7 +714,14 @@ body{
 .plus-item:active{transform:scale(.95);background:var(--bg-2);}
 .plus-item.is-soon{opacity:.45;cursor:default;}
 .plus-item.is-soon:active{transform:none;background:var(--bg-3);}
-.plus-ic{font-size:17px;line-height:1;}
+/* 图标位统一成 22 见方，里面放线性 SVG。
+   （原来是 emoji 文字，各系统渲染不一样，摆一排像拼的） */
+.plus-ic{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;
+  font-size:17px;line-height:1;
+}
+.plus-ic svg{display:block;width:100%;height:100%;}
 .plus-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
 
 /* 图标改用 .plus-ic 文字字形。
@@ -1677,3 +1684,59 @@ body{
 .contact-empty-hint{
   margin:8px 0 0;font-size:11.5px;color:var(--text-faint);
 }
+
+/* ============================================================
+   「挑个人来聊」浮层（page-chat-settings）
+   和心声面板同一套材质：居中卡片 + 遮罩，一行一个角色。
+   新建对话从此是「挑人」而不是「起名字」。
+   ============================================================ */
+.pk-mask{
+  position:absolute;inset:0;
+  background:rgba(20,17,34,.62);
+  z-index:74;
+  display:none;
+}
+.pk-mask.is-open{display:block;}
+
+.pk-panel{
+  position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  width:min(340px, 84%);
+  max-height:72%;
+  z-index:75;
+  display:none;flex-direction:column;
+  padding:16px 14px 14px;
+  background:var(--bg-2);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 18px 44px rgba(0,0,0,.5);
+}
+/* 复用弹层的入场关键帧（同样是 -50%,-50% 定位） */
+.pk-panel.is-open{display:flex;animation:dl-in .16s var(--ease) both;}
+
+.pk-head{flex:none;display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.pk-title{
+  flex:1;min-width:0;margin:0;
+  font-family:var(--ff-serif);
+  font-size:15px;color:var(--text);
+}
+.pk-close{
+  flex:none;width:26px;height:26px;
+  border:0;border-radius:50%;
+  background:var(--bg-3);color:var(--text-dim);
+  font-size:15px;line-height:1;font-family:inherit;cursor:pointer;
+}
+
+.pk-list{
+  flex:1;min-height:0;overflow-y:auto;
+  display:flex;flex-direction:column;gap:8px;
+  padding-right:2px;
+}
+.pk-list .btn{width:100%;}
+
+.pk-empty{padding:18px 0 14px;text-align:center;}
+.pk-empty-text{
+  margin:0;font-family:var(--ff-serif);
+  font-size:13.5px;color:var(--text-dim);
+}
+.pk-empty-hint{margin:8px 0 0;font-size:11.5px;color:var(--text-faint);}

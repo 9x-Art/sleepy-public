@@ -31,6 +31,70 @@
 
   var AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237A5C4A'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z'/%3E%3C/svg%3E";
 
+  /* 顶栏那排图标。原来用的是 ★ / ⚙ 这种文字符号 —— 不同系统字体长得不一样，
+     大小和基线也飘，看着就不像一套。这里统一换成和加号面板同一套线性 SVG。 */
+  var SVG_HEAD = 'viewBox="0 0 24 24" width="18" height="18" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"';
+
+  var ICON_PLUS = '<svg ' + SVG_HEAD + '><path d="M12 5.5v13"/><path d="M5.5 12h13"/></svg>';
+
+  var ICON_STAR = '<svg ' + SVG_HEAD +
+    '><path d="M12 4.2l2.4 5 5.4.75-3.9 3.7.95 5.35L12 16.45 7.15 19l.95-5.35-3.9-3.7 ' +
+    '5.4-.75z"/></svg>';
+
+  var ICON_GEAR = '<svg ' + SVG_HEAD +
+    '><circle cx="12" cy="12" r="3.1"/>' +
+    '<path d="M12 3.4v2.3M12 18.3v2.3M20.6 12h-2.3M5.7 12H3.4"/>' +
+    '<path d="M18.1 5.9l-1.6 1.6M7.5 16.5l-1.6 1.6M18.1 18.1l-1.6-1.6M7.5 7.5L5.9 5.9"/></svg>';
+
+  /* 加号面板的图标。原来是 emoji —— 每个系统渲染得都不一样，
+     大小、颜色、粗细全看各自字体，摆成一排像拼的。
+     这里统一换成线性 SVG：同样 24 格、同样线宽、同样圆角。 */
+  var SVG_BODY = 'viewBox="0 0 24 24" width="22" height="22" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"';
+
+  var PLUS_ICON = {
+    photo: '<svg ' + SVG_BODY + '>' +
+      '<rect x="3.4" y="5" width="17.2" height="14" rx="2.6"/>' +
+      '<circle cx="9" cy="10" r="1.5"/>' +
+      '<path d="M4.6 16.6l4.4-3.9 3.4 3 3-2.5 4 3.4"/></svg>',
+
+    file: '<svg ' + SVG_BODY + '>' +
+      '<path d="M6.2 3.6h6.3l5.3 5.3v10.5a1.2 1.2 0 0 1-1.2 1.2H6.2A1.2 1.2 0 0 1 5 19.4V4.8a1.2 1.2 0 0 1 1.2-1.2z"/>' +
+      '<path d="M12.4 3.6v5.3h5.4"/></svg>',
+
+    transfer: '<svg ' + SVG_BODY + '>' +
+      '<rect x="2.8" y="6.6" width="18.4" height="10.8" rx="2.2"/>' +
+      '<circle cx="12" cy="12" r="2.5"/>' +
+      '<path d="M6.2 9.8v4.4M17.8 9.8v4.4"/></svg>',
+
+    pat: '<svg ' + SVG_BODY + '>' +
+      '<path d="M10 12V6.3a1.5 1.5 0 0 1 3 0V12"/>' +
+      '<path d="M13 11.6V5a1.5 1.5 0 0 1 3 0v7"/>' +
+      '<path d="M16 12V8a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-1.6a5 5 0 0 1-3.5-1.4l-2.6-2.6a1.5 1.5 0 0 1 2.1-2.1L10 16"/></svg>',
+
+    genimg: '<svg ' + SVG_BODY + '>' +
+      '<path d="M4.6 19.4l8.6-8.6"/>' +
+      '<path d="M15.6 4.4l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z"/>' +
+      '<path d="M6 4.8l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4L4 6.8l1.4-.6z"/></svg>',
+
+    checkin: '<svg ' + SVG_BODY + '>' +
+      '<path d="M12 20.8s6.4-5.6 6.4-10.4a6.4 6.4 0 1 0-12.8 0c0 4.8 6.4 10.4 6.4 10.4z"/>' +
+      '<circle cx="12" cy="10.4" r="2.4"/></svg>',
+
+    diary: '<svg ' + SVG_BODY + '>' +
+      '<rect x="5" y="3.6" width="14" height="16.8" rx="2.2"/>' +
+      '<path d="M9.2 3.6v16.8"/>' +
+      '<path d="M12.4 8.4h4M12.4 11.8h4"/></svg>',
+
+    sticker: '<svg ' + SVG_BODY + '>' +
+      '<circle cx="12" cy="12" r="8.6"/>' +
+      '<path d="M8.8 14.2a4.2 4.2 0 0 0 6.4 0"/>' +
+      '<path d="M9.2 9.6h.01M14.8 9.6h.01"/></svg>'
+  };
+
   /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管 */
   var PROACTIVE_HINT = '（我这边安静着，没打字，你主动开口说一句吧。）';
 
@@ -43,15 +107,35 @@
 
   function saveChats(list) { store.set('chats', list); }
 
+  /* 名片夹里的角色。对话列表、「挑个人来聊」的浮层、对话设置都要读它 */
+  function getCharacters() {
+    var list = store.get('characters');
+    return Array.isArray(list) ? list : [];
+  }
+
+  function findCharacter(id) {
+    if (!id) return null;
+    var list = getCharacters();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
   function newId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
 
-  function createChat(name) {
+  /* 新建对话＝把名片夹里的某个角色拉进聊天列表。
+     characterId 记住「这是跟谁聊」，name 默认取角色名（之后可以在对话设置里改）。
+     overrides 是这个对话专属的生成参数，null 一律表示「跟随全局默认」。 */
+  function createChat(name, characterId) {
     var chats = getChats();
     var chat = {
       id: newId(),
       name: name || '新对话',
+      characterId: characterId || '',
+      overrides: { temperature: null, maxTokens: null, contextMessages: null, stream: null },
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: []
@@ -59,6 +143,12 @@
     chats.unshift(chat);
     saveChats(chats);
     return chat;
+  }
+
+  /* 老对话没有 overrides 字段，读的时候统一兜一层，
+     免得每个调用点都写 `chat.overrides && chat.overrides.temperature` */
+  function overridesOf(chat) {
+    return (chat && chat.overrides) || {};
   }
 
   function getChat(id) {
@@ -199,6 +289,17 @@
     return Date.now() - (el.__lpAt || 0) < 700;
   }
 
+  /* 打开「挑个人来聊」的浮层。面板本身在 page-chat-settings.js ——
+     它要读名片夹、还要建对话，跟「对话设置」共用一套角色读取。 */
+  function pickCharacter(ctx) {
+    var cs = Sleepy.chatSettings;
+    if (!cs || !cs.openPicker) {
+      ctx.toast('选角色的面板没加载出来，刷新一下试试', 'err');
+      return;
+    }
+    cs.openPicker(ctx);
+  }
+
   /* ======================= 页面：会话列表 ======================= */
 
   Sleepy.register('chat-list', {
@@ -208,33 +309,29 @@
 
       var emptyWrap = h('div', 'empty');
       emptyWrap.appendChild(h('div', 'empty-paper'));
-      emptyWrap.appendChild(h('p', 'empty-text', '还没有写过任何字条'));
-      emptyWrap.appendChild(h('p', 'empty-hint', '点右下角的 + 新建一个对话'));
+      emptyWrap.appendChild(h('p', 'empty-text', '还没有任何对话'));
+      var emptyHint = h('p', 'empty-hint', '');
+      emptyWrap.appendChild(emptyHint);
       body.appendChild(emptyWrap);
 
       var listWrap = h('div', 'chat-list-wrap');
       body.appendChild(listWrap);
 
-      var fab = h('button', 'fab-btn', '+');
-      fab.type = 'button';
-      fab.title = '新建对话';
-      fab.addEventListener('click', async function () {
-        var name = await ui.prompt({
-          title: '给这个对话起个名字',
-          value: '新对话',
-          ok: '创建'
-        });
-        if (name === null) return;
-        var chat = createChat(String(name).trim() || '新对话');
-        ctx.toast('已新建 · ' + chat.name, 'ok');
-        ctx.open('chat-detail', { chatId: chat.id });
-      });
-      body.appendChild(fab);
+      /* 新建对话的入口放在右上角。
+         它本质是「从名片夹里挑个人拉进来」，不是随便起个名字，
+         所以点开给的是角色列表，而不是一个输入框。 */
+      ctx.setActions([
+        { label: '新建对话', svg: ICON_PLUS, onClick: function () { pickCharacter(ctx); } }
+      ]);
 
       function rebuild() {
         var chats = getChats();
+        var people = getCharacters();
         listWrap.innerHTML = '';
         emptyWrap.style.display = chats.length ? 'none' : 'flex';
+        emptyHint.textContent = people.length
+          ? '点右上角的 + 从名片夹里挑一个人'
+          : '名片夹里还空着 · 先去加一个角色';
 
         chats.forEach(function (chat) {
           var item = h('div', 'chat-item');
@@ -294,8 +391,8 @@
       }
       ctx.setTitle(getChat(chatId).name);
       ctx.setActions([
-        { label: '\u2605', onClick: function () { ctx.open('favorites'); } },
-        { label: '\u2699', onClick: function () { ctx.open('settings'); } }
+        { label: '收藏夹', svg: ICON_STAR, onClick: function () { ctx.open('favorites'); } },
+        { label: '对话设置', svg: ICON_GEAR, onClick: function () { ctx.open('chat-settings', { chatId: chatId }); } }
       ]);
 
       /* 角色的头像挂在顶栏右侧 —— 未读心声的光点需要一个固定可见的位置，
@@ -730,7 +827,10 @@
         var c = getChat(chatId);
         if (!c) return [];
 
-        var limit = store.get('chatDefaults.contextMessages') || 20;
+        /* 上下文条数：这个对话自己设了就用它的，否则跟随全局 */
+        var ov = overridesOf(c);
+        var limit = (ov.contextMessages != null) ? ov.contextMessages
+                  : (store.get('chatDefaults.contextMessages') || 20);
         var out = [];
 
         c.messages.forEach(function (m) {
@@ -780,7 +880,11 @@
         renderMessages();
         updateSendUI();
 
-        var useStream = store.get('chatDefaults.stream') !== false;
+        /* 流式开关：这个对话自己设了就用它的，否则跟随全局。
+           false 是有效值，所以判断必须用 != null，不能 || 兜底 */
+        var ovNow = overridesOf(getChat(chatId));
+        var useStream = (ovNow.stream != null) ? ovNow.stream
+                      : (store.get('chatDefaults.stream') !== false);
 
         handle = api.runChat(msgs, {
           onDelta: function (delta) {
@@ -832,7 +936,7 @@
             renderMessages();
             updateSendUI();
           }
-        }, useStream);
+        }, useStream, ovNow);
       }
 
       function stopReply() {
@@ -941,14 +1045,14 @@
       }
 
       var PLUS_ITEMS = [
-        { id: 'photo', ic: '📷', name: '发照片', run: function () { pickAttachment('image/*', 'photo'); } },
-        { id: 'file', ic: '📎', name: '发文件', run: function () { pickAttachment('', 'file'); } },
-        { id: 'transfer', ic: '💰', name: '转账' },
-        { id: 'pat', ic: '👋', name: '拍一拍' },
-        { id: 'genimg', ic: '🎨', name: '生图' },
-        { id: 'checkin', ic: '📍', name: '查岗' },
-        { id: 'diary', ic: '📓', name: '日记' },
-        { id: 'sticker', ic: '😄', name: '表情包' }
+        { id: 'photo', svg: PLUS_ICON.photo, name: '发照片', run: function () { pickAttachment('image/*', 'photo'); } },
+        { id: 'file', svg: PLUS_ICON.file, name: '发文件', run: function () { pickAttachment('', 'file'); } },
+        { id: 'transfer', svg: PLUS_ICON.transfer, name: '转账' },
+        { id: 'pat', svg: PLUS_ICON.pat, name: '拍一拍' },
+        { id: 'genimg', svg: PLUS_ICON.genimg, name: '生图' },
+        { id: 'checkin', svg: PLUS_ICON.checkin, name: '查岗' },
+        { id: 'diary', svg: PLUS_ICON.diary, name: '日记' },
+        { id: 'sticker', svg: PLUS_ICON.sticker, name: '表情包' }
       ];
 
       function buildPanel() {
@@ -957,7 +1061,9 @@
           var b = h('button', 'plus-item' + (it.run ? '' : ' is-soon'));
           b.type = 'button';
           b.setAttribute('data-id', it.id);
-          b.appendChild(h('span', 'plus-ic', it.ic));
+          var ic = h('span', 'plus-ic');
+          ic.innerHTML = it.svg;
+          b.appendChild(ic);
           b.appendChild(h('span', 'plus-name', it.name));
           b.addEventListener('click', function () {
             if (!it.run) {
@@ -1097,8 +1203,12 @@
     getChats: getChats,
     saveChats: saveChats,
     getChat: getChat,
+    createChat: createChat,
     mutate: mutate,
     addMessage: addMessage,
+    overridesOf: overridesOf,
+    getCharacters: getCharacters,
+    findCharacter: findCharacter,
     newId: newId
   };
 

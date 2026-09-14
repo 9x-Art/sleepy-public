@@ -30,15 +30,28 @@
     return u + '/chat/completions';
   }
 
-  /* 生成参数：单个接口的配置优先，缺省回落聊天默认值 */
-  function genParams(cfg) {
+  /* 生成参数：三层回落 —— 对话级覆盖 > 单个接口的配置 > 聊天默认值。
+     最上面那层是用户在「某个对话的设置」里专门填的（chat.overrides）。
+     它必须赢，否则又是那种「在对话里改了温度，请求里还是老值」的隐形失效。
+     null / undefined 都表示「这一层没设，往下找」—— 0 和 false 是有效值。 */
+  function genParams(cfg, ov) {
     var def = store.get('chatDefaults') || {};
+    ov = ov || {};
+    cfg = cfg || {};
+
+    function pick(key, fallback) {
+      if (ov[key] !== null && ov[key] !== undefined) return ov[key];
+      if (cfg[key] !== null && cfg[key] !== undefined) return cfg[key];
+      if (def[key] !== null && def[key] !== undefined) return def[key];
+      return fallback;
+    }
+
     return {
-      temperature: cfg.temperature != null ? cfg.temperature : (def.temperature != null ? def.temperature : 0.85),
-      maxTokens: cfg.maxTokens || def.maxTokens || 1024,
-      contextMessages: cfg.contextMessages || def.contextMessages || 20,
-      timeoutSec: cfg.timeoutSec || def.timeoutSec || 60,
-      stream: cfg.stream != null ? cfg.stream : (def.stream != null ? def.stream : true)
+      temperature: pick('temperature', 0.85),
+      maxTokens: pick('maxTokens', 1024),
+      contextMessages: pick('contextMessages', 20),
+      timeoutSec: pick('timeoutSec', 60),
+      stream: pick('stream', true)
     };
   }
 
@@ -66,8 +79,8 @@
     return headers;
   }
 
-  function bodyFor(cfg, messages, stream) {
-    var p = genParams(cfg);
+  function bodyFor(cfg, messages, stream, ov) {
+    var p = genParams(cfg, ov);
     return JSON.stringify({
       model: cfg.model,
       messages: messages,
@@ -79,9 +92,9 @@
 
   /* ------------------------- 非流式单次请求 ------------------------- */
   /* resolve({ok, stage, status, ms, data, content, error, detail, text}) */
-  function requestOnce(cand, messages) {
+  function requestOnce(cand, messages, ov) {
     return new Promise(function (resolve) {
-      var p = genParams(cand.cfg);
+      var p = genParams(cand.cfg, ov);
       var url = normalizeEndpoint(cand.cfg.baseUrl);
       if (!url) { resolve({ ok: false, stage: 'config', error: '接口地址是空的' }); return; }
       if (!cand.cfg.model) { resolve({ ok: false, stage: 'config', error: '还没填模型名' }); return; }
@@ -96,7 +109,7 @@
         headers: requestHeaders(cand.cfg),
         mode: 'cors',
         signal: ctrl ? ctrl.signal : undefined,
-        body: bodyFor(cand.cfg, messages, false)
+        body: bodyFor(cand.cfg, messages, false, ov)
       }).then(function (r) {
         return r.text().then(function (txt) {
           var ms = Date.now() - t0;
@@ -134,8 +147,8 @@
   /* 手写 SSE 解析：逐行读 data: 块，把 delta.content 交给 handlers.onDelta。
      handlers: { onDelta(delta, more), onDone(text), onError(err) }
      返回 { abort() } 用于用户手动停止。 */
-  function streamOnce(cand, messages, handlers) {
-    var p = genParams(cand.cfg);
+  function streamOnce(cand, messages, handlers, ov) {
+    var p = genParams(cand.cfg, ov);
     var url = normalizeEndpoint(cand.cfg.baseUrl);
     var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
     var timer = null;
@@ -163,7 +176,7 @@
       headers: requestHeaders(cand.cfg),
       mode: 'cors',
       signal: ctrl ? ctrl.signal : undefined,
-      body: bodyFor(cand.cfg, messages, true)
+      body: bodyFor(cand.cfg, messages, true, ov)
     }).then(function (r) {
       if (!r.ok) {
         fail({ stage: 'http', status: r.status, error: 'HTTP ' + r.status });
@@ -235,7 +248,7 @@
      而不是让接口字段白写在那里当死开关。
      handlers: { onTry, onDelta, onDone(cand, text, info), onFail(list, lastErr) }
      返回 handle（流式时有 abort） */
-  function runChat(messages, handlers, useStream) {
+  function runChat(messages, handlers, useStream, ov) {
     var c = candidates();
     handlers = handlers || {};
     if (!c.length) {
@@ -272,9 +285,9 @@
             if (!started) tryNext();
             else if (handlers.onFail) handlers.onFail(c, err);
           }
-        });
+        }, ov);
       } else {
-        requestOnce(cand, messages).then(function (res) {
+        requestOnce(cand, messages, ov).then(function (res) {
           if (res.ok) {
             if (handlers.onDone) handlers.onDone(cand, res.content, res);
           } else {

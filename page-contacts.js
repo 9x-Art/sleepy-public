@@ -436,7 +436,11 @@
   Sleepy.characters = {
     toFileText: toFileText,
     parseFileText: parseFileText,
-    importItems: importItems
+    importItems: importItems,
+    /* 显示用的两个小工具：聊天列表的「挑个人来聊」浮层也要画名片，
+       一份逻辑两处用，免得两边长相跑偏 */
+    initialOf: initialOf,
+    summaryOf: summaryOf
   };
 
 })(window);
