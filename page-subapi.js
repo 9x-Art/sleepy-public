@@ -138,6 +138,56 @@
     return '已启用 ' + enabledCount + ' / ' + list.length + ' 组';
   }
 
+  /* 拉取模型列表：用表单里当前的地址和 Key，点返回的模型名直接填进输入框 */
+  function attachModelPicker(f, pickBtn, pickBox) {
+    pickBtn.addEventListener('click', function () {
+      pickBtn.disabled = true;
+      pickBox.innerHTML = '';
+      pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
+      Sleepy.api.fetchModels({
+        baseUrl: f.baseUrl.get(),
+        apiKey: f.apiKey.get()
+      }).then(function (res) {
+        pickBtn.disabled = false;
+        pickBox.innerHTML = '';
+        if (!res.ok) {
+          pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message));
+          if (res.detail) pickBox.appendChild(h('p', 'test-detail', res.detail));
+          return;
+        }
+        if (!res.models.length) {
+          pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表'));
+          return;
+        }
+        pickBox.appendChild(h('p', 'test-tip',
+          '拉到 ' + res.models.length + ' 个，点一个填进模型名'));
+        res.models.slice(0, 60).forEach(function (id) {
+          var r = h('button', 'set-row model-pick-row');
+          r.type = 'button';
+          r.appendChild(h('span', 'set-row-label', id));
+          r.addEventListener('click', function () {
+            f.model.input.value = id;
+          });
+          pickBox.appendChild(r);
+        });
+      });
+    });
+  }
+
+  /* 模型名输入框 + 拉取按钮 + 结果盒，插进 g.card。返回拼好的结构 */
+  function modelFieldWithPicker(gCard, value) {
+    var f = {};
+    f.model = textField({ label: '模型名', value: value || '', placeholder: '' });
+    gCard.appendChild(f.model.el);
+    var pickRow = h('div', 'btn-row');
+    var pickBtn = button('拉取模型列表', 'ghost');
+    pickRow.appendChild(pickBtn);
+    gCard.appendChild(pickRow);
+    var pickBox = h('div', 'model-pick');
+    gCard.appendChild(pickBox);
+    return { f: f, pickBtn: pickBtn, pickBox: pickBox };
+  }
+
   /* ==================== 页面：副 API 列表（二级） ==================== */
 
 
@@ -146,17 +196,25 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var g = group('API 列表', '当主 API 不可用时，按顺序轮询这些备用接口。');
+      var g = group('API 列表', '用于其他功能：后台任务、总结等，也可以当备用通道。');
       var listCard = g.card;
 
       var g2 = group('轮询规则', '请求失败时自动跳下一个；全部失败则报错。');
       var rowCount = row({ label: '已配置副 API', plain: true });
       g2.card.appendChild(rowCount);
-      g2.card.appendChild(row({
-        label: '重试次数',
-        value: '每组最多尝试 2 次',
-        plain: true
-      }));
+      /* 重试次数可调：改动即落盘（1~5） */
+      var fRetry = numField({
+        label: '每组重试次数',
+        hint: '每组失败后最多再试这么多次，再不行就轮下一组',
+        value: Math.max(1, Math.min(5, Math.round(Number(store.get('subRetry'))) || 2)),
+        min: 1, max: 5, step: 1
+      });
+      g2.card.appendChild(fRetry.el);
+      fRetry.input.addEventListener('change', function () {
+        var v = Math.max(1, Math.min(5, Math.round(Number(fRetry.get())) || 2));
+        store.set('subRetry', v);
+        fRetry.input.value = String(v);
+      });
 
       /* 页面是缓存复用的（app.js 只在第一次 open 时 render），
          所以增删之后必须靠这里重建列表，不能指望重新 render。 */
@@ -211,7 +269,7 @@
       var def = store.get('chatDefaults') || {};
 
       var g = group('接口');
-      f.name = textField({ label: '备注名', placeholder: '例如 副1 / 备用GPT' });
+      f.name = textField({ label: '备注名', placeholder: '' });
       g.card.appendChild(f.name.el);
 
       f.baseUrl = textField({
@@ -230,11 +288,9 @@
       });
       g.card.appendChild(f.apiKey.el);
 
-      f.model = textField({
-        label: '模型名',
-        placeholder: '例如 gpt-4o-mini / deepseek-chat'
-      });
-      g.card.appendChild(f.model.el);
+      var mp = modelFieldWithPicker(g.card, '');
+      f.model = mp.f;
+      attachModelPicker(f, mp.pickBtn, mp.pickBox);
       body.appendChild(g.wrap);
 
       var g2 = group('生成参数');
@@ -344,7 +400,7 @@
       var f = {};
 
       var g = group('接口');
-      f.name = textField({ label: '备注名', value: item.name, placeholder: '例如 副1 / 备用GPT' });
+      f.name = textField({ label: '备注名', value: item.name, placeholder: '' });
       g.card.appendChild(f.name.el);
 
       f.baseUrl = textField({
@@ -365,12 +421,9 @@
       });
       g.card.appendChild(f.apiKey.el);
 
-      f.model = textField({
-        label: '模型名',
-        value: item.model,
-        placeholder: '例如 gpt-4o-mini / deepseek-chat'
-      });
-      g.card.appendChild(f.model.el);
+      var mp = modelFieldWithPicker(g.card, item.model);
+      f.model = mp.f;
+      attachModelPicker(f, mp.pickBtn, mp.pickBox);
       body.appendChild(g.wrap);
 
       var g2 = group('生成参数');

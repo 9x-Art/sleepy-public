@@ -530,6 +530,9 @@ body{
   overflow:auto;
 }
 .test-tip{margin:8px 0 0;font-size:11px;line-height:1.6;color:var(--text-faint);}
+/* 拉取模型列表：结果盒 + 可点的模型名行 */
+.model-pick{margin-top:8px;display:flex;flex-direction:column;gap:6px;}
+.model-pick .set-row-label{font-size:12px;}
 
 .set-foot{
   margin:4px 4px 0;

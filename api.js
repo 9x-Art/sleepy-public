@@ -240,6 +240,51 @@
     };
   }
 
+  /* ---------------------------- 拉取模型列表 ---------------------------- */
+  /* GET {base}/models，OpenAI 兼容接口的标配。
+     base 可能被填成 /v1 也可能整条 /chat/completions 都带上了，都要认。 */
+  function modelsUrl(baseUrl) {
+    var u = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (!u) return '';
+    u = u.replace(/\/chat\/completions$/i, '');
+    return u + '/models';
+  }
+
+  function fetchModels(cfg) {
+    return new Promise(function (resolve) {
+      var url = modelsUrl(cfg.baseUrl);
+      if (!url) { resolve({ ok: false, message: '先填接口地址' }); return; }
+
+      var headers = {};
+      if (cfg.apiKey) headers['Authorization'] = 'Bearer ' + cfg.apiKey;
+
+      global.fetch(url, { method: 'GET', headers: headers, mode: 'cors' })
+        .then(function (r) {
+          return r.text().then(function (txt) {
+            if (!r.ok) {
+              resolve({ ok: false, message: 'HTTP ' + r.status, detail: txt.slice(0, 200) });
+              return;
+            }
+            var data = null;
+            try { data = JSON.parse(txt); } catch (e) { /* 落到下面 */ }
+            var arr = data && (data.data || data.models || data.model_list);
+            if (!Array.isArray(arr)) {
+              resolve({ ok: false, message: '返回里没有模型列表', detail: txt.slice(0, 200) });
+              return;
+            }
+            var ids = arr.map(function (x) {
+              return (typeof x === 'string') ? x : (x && (x.id || x.name));
+            }).filter(Boolean);
+            resolve({ ok: true, models: ids });
+          });
+        })
+        ['catch'](function (err) {
+          resolve({ ok: false, message: '连不上：网络错误，或这个接口没有开 CORS',
+            detail: (err && err.message) || String(err) });
+        });
+    });
+  }
+
   /* ---------------------------- 轮询编排 ---------------------------- */
   /* candidates 依次尝试；单次失败自动切下一个。
      流式只在「还没产出任何字」之前才切换，已经开口就不重试（避免内容重复）。
@@ -249,7 +294,14 @@
      handlers: { onTry, onDelta, onDone(cand, text, info), onFail(list, lastErr) }
      返回 handle（流式时有 abort） */
   function runChat(messages, handlers, useStream, ov) {
-    var c = candidates();
+    /* 重试次数（设置 → 副 API → 每组重试次数）：每个候选连续尝试 N 次
+       再轮到下一个。1~5，存档坏了/没填兜底 2。 */
+    var retryN = Math.max(1, Math.min(5, Math.round(Number(store.get('subRetry'))) || 2));
+    var base = candidates();
+    var c = [];
+    base.forEach(function (cand) {
+      for (var i = 0; i < retryN; i++) c.push(cand);
+    });
     handlers = handlers || {};
     if (!c.length) {
       var e0 = { stage: 'config', error: '还没有可用的模型连接，去 设置 → 模型连接 填 API' };
@@ -306,6 +358,8 @@
 
   Sleepy.api = {
     normalizeEndpoint: normalizeEndpoint,
+    modelsUrl: modelsUrl,
+    fetchModels: fetchModels,
     candidates: candidates,
     requestOnce: requestOnce,
     streamOnce: streamOnce,

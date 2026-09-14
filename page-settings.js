@@ -321,7 +321,7 @@
       var subText = subApiSummary();
       var rowSub = row({
         label: '副 API',
-        hint: '主 API 挂了就按顺序轮询这些',
+        hint: '用于其他功能（后台任务 · 备用通道）',
         badge: subText,
         badgeKind: (subText === '未配置') ? 'dim' : 'ok',
         onClick: function () { ctx.open('settings-subapi'); }
@@ -352,123 +352,375 @@
     onShow: function (ctx) { if (ctx.refreshSummary) ctx.refreshSummary(); }
   });
 
-  /* ==================== 页面：主 API（三级） ==================== */
+  /* ==================== 主 API：多预设公共部分 ====================
+     主 API 可以存好几套预设，切换＝换「当前使用」的那套。
+     mainApi 键始终镜像当前使用的配置（api.js 只读它），所以
+     每次切当前/改当前配置，都要顺手把 mainApi 同步一遍。 */
+
+  function mainApiPresets() {
+    var l = store.get('mainApis');
+    return Array.isArray(l) ? l : [];
+  }
+
+  function activeMainId() {
+    var v = store.get('mainApiId');
+    return v ? String(v) : '';
+  }
+
+  function saveMainPresets(list) { return store.set('mainApis', list); }
+
+  /* 把预设镜像进 mainApi（api.js 的候选列表只认 mainApi） */
+  function syncActiveMainApi(preset) {
+    if (!preset) return false;
+    return store.set('mainApi', {
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      apiKey: preset.apiKey,
+      model: preset.model,
+      temperature: preset.temperature,
+      maxTokens: preset.maxTokens,
+      contextMessages: preset.contextMessages,
+      timeoutSec: preset.timeoutSec,
+      stream: preset.stream,
+      enabled: preset.enabled
+    });
+  }
+
+  /* 接口表单的公共字段（主 API 新增/编辑共用，只管「接口」这一组）。
+     拉取模型列表：调 {base}/models，点返回的模型名直接填进模型名输入框。 */
+  function buildApiFields(gCard, cfg) {
+    var f = {};
+
+    f.name = textField({ label: '备注名', value: cfg.name, placeholder: '' });
+    gCard.appendChild(f.name.el);
+
+    f.baseUrl = textField({
+      label: '接口地址 Base URL',
+      hint: '填到 /v1 就行，测试时会自动补 /chat/completions',
+      value: cfg.baseUrl,
+      placeholder: 'https://api.example.com/v1',
+      inputmode: 'url'
+    });
+    gCard.appendChild(f.baseUrl.el);
+
+    f.apiKey = textField({
+      label: 'API Key',
+      hint: '明文存在本机浏览器，换设备不会跟着走',
+      value: cfg.apiKey,
+      placeholder: 'sk-...',
+      password: true
+    });
+    gCard.appendChild(f.apiKey.el);
+
+    f.model = textField({
+      label: '模型名',
+      value: cfg.model,
+      placeholder: ''
+    });
+    gCard.appendChild(f.model.el);
+
+    /* 拉取模型：用表单里当前的地址和 Key，不用先保存 */
+    var pickRow = h('div', 'btn-row');
+    var pickBtn = button('拉取模型列表', 'ghost');
+    pickRow.appendChild(pickBtn);
+    gCard.appendChild(pickRow);
+
+    var pickBox = h('div', 'model-pick');
+    gCard.appendChild(pickBox);
+
+    pickBtn.addEventListener('click', function () {
+      pickBtn.disabled = true;
+      pickBox.innerHTML = '';
+      pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
+      Sleepy.api.fetchModels({
+        baseUrl: f.baseUrl.get(),
+        apiKey: f.apiKey.get()
+      }).then(function (res) {
+        pickBtn.disabled = false;
+        pickBox.innerHTML = '';
+        if (!res.ok) {
+          pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message));
+          if (res.detail) pickBox.appendChild(h('p', 'test-detail', res.detail));
+          return;
+        }
+        if (!res.models.length) {
+          pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表'));
+          return;
+        }
+        pickBox.appendChild(h('p', 'test-tip',
+          '拉到 ' + res.models.length + ' 个，点一个填进模型名'));
+        res.models.slice(0, 60).forEach(function (id) {
+          var r = h('button', 'set-row model-pick-row');
+          r.type = 'button';
+          r.appendChild(h('span', 'set-row-label', id));
+          r.addEventListener('click', function () {
+            f.model.input.value = id;
+          });
+          pickBox.appendChild(r);
+        });
+      });
+    });
+
+    return f;
+  }
+
+  /* ==================== 页面：主 API（预设列表） ==================== */
 
   Sleepy.register('settings-mainapi', {
     title: '主 API',
     render: function (ctx) {
       var body = ctx.body;
-      var cfg = store.get('mainApi');
-      var f = {};
 
-      var g = group('接口');
-      f.name = textField({ label: '备注名', value: cfg.name, placeholder: '主模型' });
-      g.card.appendChild(f.name.el);
+      var g = group('主 API 预设',
+        '可以存好几套，随时切换当前使用的那套。点一个进去改。');
+      var listCard = g.card;
 
-      f.baseUrl = textField({
-        label: '接口地址 Base URL',
-        hint: '填到 /v1 就行，测试时会自动补 /chat/completions',
-        value: cfg.baseUrl,
-        placeholder: 'https://api.example.com/v1',
-        inputmode: 'url'
-      });
-      g.card.appendChild(f.baseUrl.el);
+      function refresh() {
+        listCard.innerHTML = '';
+        var list = mainApiPresets();
+        var act = activeMainId();
 
-      f.apiKey = textField({
-        label: 'API Key',
-        hint: '明文存在本机浏览器，换设备不会跟着走',
-        value: cfg.apiKey,
-        placeholder: 'sk-...',
-        password: true
-      });
-      g.card.appendChild(f.apiKey.el);
+        if (!list.length) {
+          listCard.appendChild(row({ label: '还没有预设', plain: true }));
+        } else {
+          list.forEach(function (p) {
+            var isCur = p.id === act;
+            listCard.appendChild(row({
+              label: p.name || '未命名预设',
+              hint: p.model || '还没填模型名',
+              badge: isCur ? '当前使用' : (p.enabled ? '备用' : '已停用'),
+              badgeKind: isCur ? 'ok' : 'dim',
+              onClick: function () { ctx.open('settings-mainapi-edit', { id: p.id }); }
+            }));
+          });
+        }
 
-      f.model = textField({
-        label: '模型名',
-        value: cfg.model,
-        placeholder: '例如 gpt-4o-mini / deepseek-chat'
-      });
-      g.card.appendChild(f.model.el);
+        listCard.appendChild(row({
+          label: '添加新预设',
+          onClick: function () { ctx.open('settings-mainapi-add'); }
+        }));
+      }
+
+      refresh();
       body.appendChild(g.wrap);
 
-      var g2 = group('生成参数', '留空就是跟随「聊天默认参数」。只有这一个接口想特殊化时才填，填了就以这里为准。');
-      f.temperature = numField({ label: '温度', hint: '留空＝跟随默认 · 越高越发散', value: cfg.temperature, min: 0, max: 2, step: 0.05 });
-      g2.card.appendChild(f.temperature.el);
-      f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝跟随默认', value: cfg.maxTokens, min: 64, max: 32768, step: 64 });
-      g2.card.appendChild(f.maxTokens.el);
-      f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝跟随默认 · 越多越记得住，也越贵', value: cfg.contextMessages, min: 2, max: 200, step: 2 });
-      g2.card.appendChild(f.contextMessages.el);
-      f.timeoutSec = numField({ label: '超时（秒）', value: cfg.timeoutSec, min: 5, max: 300, step: 5 });
-      g2.card.appendChild(f.timeoutSec.el);
-      body.appendChild(g2.wrap);
+      var foot = h('p', 'set-foot', '所有 Key 只存在这台设备的浏览器里，不经过我的服务器。');
+      body.appendChild(foot);
 
-      var g3 = group('开关');
-      f.stream = switchField({
-        label: '流式输出',
-        hint: '打字机效果。总开关在「聊天默认参数」，这里关掉＝这个接口不走流式',
-        value: cfg.stream
+      ctx.rebuild = refresh;
+    },
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
+  });
+
+  /* 主 API 表单页的公共渲染（新增 / 编辑共用）。 */
+  function renderMainApiForm(ctx, preset, isNew) {
+    var body = ctx.body;
+    var def = store.defaults().chatDefaults;
+    var f = {};
+
+    var g = group('接口');
+    f = buildApiFields(g.card, preset);
+
+    var g2 = group('生成参数', '留空就是跟随「聊天默认参数」（灰字是建议值）。只有这一个接口想特殊化时才填，填了就以这里为准。');
+    f.temperature = numField({ label: '温度', hint: '留空＝跟随默认 · 越高越发散', value: preset.temperature, min: 0, max: 2, step: 0.05 });
+    f.temperature.input.placeholder = String(def.temperature);
+    g2.card.appendChild(f.temperature.el);
+    f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝跟随默认', value: preset.maxTokens, min: 64, max: 32768, step: 64 });
+    f.maxTokens.input.placeholder = String(def.maxTokens);
+    g2.card.appendChild(f.maxTokens.el);
+    f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝跟随默认 · 越多越记得住，也越贵', value: preset.contextMessages, min: 2, max: 200, step: 2 });
+    f.contextMessages.input.placeholder = String(def.contextMessages);
+    g2.card.appendChild(f.contextMessages.el);
+    f.timeoutSec = numField({ label: '超时（秒）', value: preset.timeoutSec, min: 5, max: 300, step: 5 });
+    f.timeoutSec.input.placeholder = '60';
+    g2.card.appendChild(f.timeoutSec.el);
+    body.appendChild(g.wrap);
+    body.appendChild(g2.wrap);
+
+    var g3 = group('开关');
+    f.stream = switchField({
+      label: '流式输出',
+      hint: '打字机效果。总开关在「聊天默认参数」，这里关掉＝这个接口不走流式',
+      value: preset.stream
+    });
+    g3.card.appendChild(f.stream.el);
+    f.enabled = switchField({ label: '启用这个接口', value: preset.enabled });
+    g3.card.appendChild(f.enabled.el);
+    /* 「当前使用」：同一时间只有一套在干活。新增时不给（存完自动成为当前） */
+    f.isCurrent = null;
+    if (!isNew) {
+      f.isCurrent = switchField({
+        label: '当前使用这套',
+        hint: '关掉会自动把「当前」让给列表里的第一套别的',
+        value: preset.id === activeMainId()
       });
-      g3.card.appendChild(f.stream.el);
-      f.enabled = switchField({ label: '启用这个接口', value: cfg.enabled });
-      g3.card.appendChild(f.enabled.el);
-      body.appendChild(g3.wrap);
+      g3.card.appendChild(f.isCurrent.el);
+    }
+    body.appendChild(g3.wrap);
 
-      /* 测试区 */
-      var g4 = group('测试连接');
-      var testBox = h('div', 'test-result is-idle');
-      testBox.appendChild(h('p', 'test-title', '还没测过'));
-      testBox.appendChild(h('p', 'test-tip',
-        '测试用表单里当前的值，不需要先保存；发一条 ping，非流式。'));
-      g4.card.appendChild(testBox);
+    /* 测试区 */
+    var g4 = group('测试连接');
+    var testBox = h('div', 'test-result is-idle');
+    testBox.appendChild(h('p', 'test-title', '还没测过'));
+    testBox.appendChild(h('p', 'test-tip',
+      '测试用表单里当前的值，不需要先保存；发一条 ping，非流式。'));
+    g4.card.appendChild(testBox);
 
-      var btnRow = h('div', 'btn-row');
-      var testBtn = button('测试连接', 'ghost', function () { doTest(); });
-      var saveBtn = button('保存', 'primary', function () { doSave(); });
-      btnRow.appendChild(testBtn);
-      btnRow.appendChild(saveBtn);
-      g4.card.appendChild(btnRow);
-      body.appendChild(g4.wrap);
+    var btnRow = h('div', 'btn-row');
+    var testBtn = button('测试连接', 'ghost', function () { doTest(); });
+    var saveBtn = button('保存', 'primary', function () { doSave(); });
+    var delBtn = null;
+    if (!isNew) {
+      delBtn = button('删除', 'danger', function () { doDelete(); });
+      btnRow.appendChild(delBtn);
+    }
+    btnRow.appendChild(testBtn);
+    btnRow.appendChild(saveBtn);
+    g4.card.appendChild(btnRow);
+    body.appendChild(g4.wrap);
 
-      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
+    ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
 
-      function collect() {
-        return {
-          name: f.name.get() || '主模型',
-          baseUrl: f.baseUrl.get(),
-          apiKey: f.apiKey.get(),
-          model: f.model.get(),
-          temperature: f.temperature.get(),
-          maxTokens: Math.round(f.maxTokens.get()),
-          contextMessages: Math.round(f.contextMessages.get()),
-          timeoutSec: Math.round(f.timeoutSec.get()),
-          stream: f.stream.get(),
-          enabled: f.enabled.get()
-        };
+    function collect() {
+      return {
+        id: preset.id,
+        name: f.name.get() || '主模型',
+        baseUrl: f.baseUrl.get(),
+        apiKey: f.apiKey.get(),
+        model: f.model.get(),
+        temperature: f.temperature.get(),
+        maxTokens: Math.round(f.maxTokens.get()),
+        contextMessages: Math.round(f.contextMessages.get()),
+        timeoutSec: Math.round(f.timeoutSec.get()),
+        stream: f.stream.get(),
+        enabled: f.enabled.get()
+      };
+    }
+
+    function doSave() {
+      var next = collect();
+      var list = mainApiPresets();
+      var idx = -1;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === next.id) { idx = i; break; }
+      }
+      if (idx >= 0) list[idx] = next; else list.push(next);
+
+      /* 「当前使用」落定：开了开关就用这套；关掉且原来是当前 → 让给第一套别的 */
+      var act = activeMainId();
+      var wantCurrent = isNew ? true : !!(f.isCurrent && f.isCurrent.get());
+      if (wantCurrent) {
+        store.set('mainApiId', next.id);
+      } else if (next.id === act) {
+        var other = '';
+        for (var j = 0; j < list.length; j++) {
+          if (list[j].id !== next.id) { other = list[j].id; break; }
+        }
+        store.set('mainApiId', other);
       }
 
-      function doSave() {
-        var next = collect();
-        var ok = store.set('mainApi', next);
-        if (ok) ctx.toast('已保存', 'ok');
-        else ctx.toast((store.lastError() || {}).message || '保存失败', 'err');
+      var ok = saveMainPresets(list);
+      /* mainApi 镜像：指向谁就同步谁；没有当前了就按停用处理，别让旧配置偷偷还在干活 */
+      var actNow = activeMainId();
+      var cur = null;
+      for (var k = 0; k < list.length; k++) {
+        if (list[k].id === actNow) { cur = list[k]; break; }
       }
+      if (cur) syncActiveMainApi(cur);
+      else store.set('mainApi', { enabled: false });
 
-      function doTest() {
-        var next = collect();
-        testBtn.disabled = true;
-        saveBtn.disabled = true;
-        testBox.className = 'test-result is-loading';
-        testBox.innerHTML = '';
-        testBox.appendChild(h('p', 'test-title', '正在连…'));
-        testBox.appendChild(h('p', 'test-tip', normalizeEndpoint(next.baseUrl) || '接口地址是空的'));
-
-        runTest(next).then(function (res) {
-          renderTestResult(testBox, res);
-          testBtn.disabled = false;
-          saveBtn.disabled = false;
-          if (res.ok) ctx.toast('连上了 · ' + res.ms + 'ms', 'ok');
-        });
+      if (ok) {
+        ctx.toast(wantCurrent ? '已保存并设为当前' : '已保存', 'ok');
+        ctx.back();
+      } else {
+        ctx.toast((store.lastError() || {}).message || '保存失败', 'err');
       }
+    }
+
+    function doDelete() {
+      var list = mainApiPresets().filter(function (x) { return x.id !== preset.id; });
+      var wasActive = preset.id === activeMainId();
+      var ok = saveMainPresets(list);
+      if (wasActive) {
+        var other = null;
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].enabled) { other = list[i]; break; }
+        }
+        if (other) {
+          store.set('mainApiId', other.id);
+          syncActiveMainApi(other);
+        } else {
+          store.set('mainApiId', '');
+          store.set('mainApi', { enabled: false });
+        }
+      }
+      if (ok) {
+        ctx.toast('已删除', 'ok');
+        ctx.back();
+      } else {
+        ctx.toast('删除失败', 'err');
+      }
+    }
+
+    function doTest() {
+      var next = collect();
+      testBtn.disabled = true;
+      saveBtn.disabled = true;
+      if (delBtn) delBtn.disabled = true;
+      testBox.className = 'test-result is-loading';
+      testBox.innerHTML = '';
+      testBox.appendChild(h('p', 'test-title', '正在连…'));
+      testBox.appendChild(h('p', 'test-tip', normalizeEndpoint(next.baseUrl) || '接口地址是空的'));
+
+      runTest(next).then(function (res) {
+        renderTestResult(testBox, res);
+        testBtn.disabled = false;
+        saveBtn.disabled = false;
+        if (delBtn) delBtn.disabled = false;
+        if (res.ok) ctx.toast('连上了 · ' + res.ms + 'ms', 'ok');
+      });
+    }
+  }
+
+  /* ==================== 页面：新增主 API 预设 ==================== */
+
+  Sleepy.register('settings-mainapi-add', {
+    title: '新增主 API',
+    render: function (ctx) {
+      var def = store.defaults().chatDefaults;
+      var preset = {
+        id: 'map' + Date.now().toString(36),
+        name: '',
+        baseUrl: '',
+        apiKey: '',
+        model: '',
+        temperature: null,
+        maxTokens: null,
+        contextMessages: null,
+        timeoutSec: null,
+        stream: def.stream !== false,
+        enabled: true
+      };
+      renderMainApiForm(ctx, preset, true);
+    }
+  });
+
+  /* ==================== 页面：编辑主 API 预设 ==================== */
+
+  Sleepy.register('settings-mainapi-edit', {
+    title: '编辑主 API',
+    render: function (ctx) {
+      var id = ctx.params.id;
+      var preset = null;
+      mainApiPresets().forEach(function (p) {
+        if (p.id === id) preset = p;
+      });
+      if (!preset) {
+        ctx.toast('找不到这套预设', 'err');
+        ctx.back();
+        return;
+      }
+      renderMainApiForm(ctx, preset, false);
     }
   });
 

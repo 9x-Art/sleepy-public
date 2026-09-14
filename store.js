@@ -84,7 +84,16 @@
     worldbooks: [],
 
     /* 世界书改成两级结构之前平铺条目的旧键，只用于迁移，不再直接读写 */
-    worldbook: []
+    worldbook: [],
+
+    /* 主 API 可存多套预设，切换＝换 mainApiId 指向的那套。
+       mainApi 键保留：它始终镜像「当前使用」的配置，api.js 只读它，
+       这样候选逻辑不用动。 */
+    mainApis: [],
+    mainApiId: null,
+
+    /* 副 API 每组重试次数（1~5） */
+    subRetry: 2
   };
 
   /* ---------------------------- 工具 ---------------------------- */
@@ -363,9 +372,43 @@
 
 
 
+  /* 主 API 改成多预设之前只有单个 mainApi。老配置整包变成第一套预设
+     并设为当前使用，mainApi 键继续镜像当前配置，api.js 无感。 */
+  function migrateMainApiPresets() {
+    try {
+      if (global.localStorage.getItem(NS + 'mainApis')) return;
+      var raw = global.localStorage.getItem(NS + 'mainApi');
+      if (!raw) return;
+      var cfg = JSON.parse(raw);
+      if (!cfg || !cfg.baseUrl || !cfg.model) return;
+      var id = 'map' + Date.now().toString(36);
+      var list = [{
+        id: id,
+        name: cfg.name || '主模型',
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        temperature: cfg.temperature,
+        maxTokens: cfg.maxTokens,
+        contextMessages: cfg.contextMessages,
+        timeoutSec: cfg.timeoutSec,
+        stream: cfg.stream,
+        enabled: cfg.enabled
+      }];
+      global.localStorage.setItem(NS + 'mainApis', JSON.stringify(list));
+      global.localStorage.setItem(NS + 'mainApiId', JSON.stringify(id));
+      if (global.console && global.console.log) {
+        global.console.log('[Sleepy] 已把原主 API 存为第一套预设');
+      }
+    } catch (e) {
+      /* 迁移失败不能挡住启动 */
+    }
+  }
+
   /* 顺序有意如此：先搬旧键，再初始化 meta（函数声明有提升，放这里没问题） */
   migrateKeys();
   migrateWorldbookToBooks();
+  migrateMainApiPresets();
   ensureInstalled();
 
   /* ------------------------- 一次性迁移 ------------------------- */
