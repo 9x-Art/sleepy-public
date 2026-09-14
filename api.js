@@ -230,7 +230,9 @@
   /* ---------------------------- 轮询编排 ---------------------------- */
   /* candidates 依次尝试；单次失败自动切下一个。
      流式只在「还没产出任何字」之前才切换，已经开口就不重试（避免内容重复）。
-     useStream=false 走非流式。
+     useStream 是「聊天默认参数」里的总开关；单个接口还能用自己的 stream
+     把它关掉（中转不支持 SSE 时用得上）—— 所以是「与」的关系，
+     而不是让接口字段白写在那里当死开关。
      handlers: { onTry, onDelta, onDone(cand, text, info), onFail(list, lastErr) }
      返回 handle（流式时有 abort） */
   function runChat(messages, handlers, useStream) {
@@ -251,9 +253,10 @@
         return null;
       }
       var cand = c[idx++];
+      var streamThis = !!useStream && cand.cfg.stream !== false;
       if (handlers.onTry) handlers.onTry(cand, idx, c.length);
 
-      if (useStream) {
+      if (streamThis) {
         var started = false;
         handle = streamOnce(cand, messages, {
           onDelta: function (delta, more) {

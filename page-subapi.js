@@ -249,7 +249,11 @@
       body.appendChild(g2.wrap);
 
       var g3 = group('开关');
-      f.stream = switchField({ label: '流式输出', hint: '打字机效果，聊天页用', value: def.stream !== false });
+      f.stream = switchField({
+        label: '流式输出',
+        hint: '打字机效果。总开关在「聊天默认参数」，这里关掉＝这个接口不走流式',
+        value: def.stream !== false
+      });
       g3.card.appendChild(f.stream.el);
       f.enabled = switchField({ label: '启用这个接口', value: true });
       g3.card.appendChild(f.enabled.el);
@@ -381,7 +385,11 @@
       body.appendChild(g2.wrap);
 
       var g3 = group('开关');
-      f.stream = switchField({ label: '流式输出', hint: '打字机效果，聊天页用', value: item.stream });
+      f.stream = switchField({
+        label: '流式输出',
+        hint: '打字机效果。总开关在「聊天默认参数」，这里关掉＝这个接口不走流式',
+        value: item.stream
+      });
       g3.card.appendChild(f.stream.el);
       f.enabled = switchField({ label: '启用这个接口', value: item.enabled });
       g3.card.appendChild(f.enabled.el);

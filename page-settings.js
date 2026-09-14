@@ -172,7 +172,11 @@
 
       var g3 = group('人设与预设');
       g3.card.appendChild(row({ label: '人设预设库', hint: '增删改 + 导入导出 txt / md（禁 json）' }));
-      g3.card.appendChild(row({ label: '聊天默认参数', hint: '2.12 温度 · 流式开关' }));
+      g3.card.appendChild(row({
+        label: '聊天默认参数',
+        hint: '温度 · 上下文条数 · 流式 · 心声',
+        onClick: function () { ctx.open('settings-chatdefaults'); }
+      }));
       body.appendChild(g3.wrap);
 
       var g4 = group('数据与备份');
@@ -203,6 +207,103 @@
       ctx.refreshSummary();
     },
     onShow: function (ctx) { if (ctx.refreshSummary) ctx.refreshSummary(); }
+  });
+
+  /* ================ 页面：聊天默认参数（二级） ================
+     A6。这里的值是所有对话的默认；单个接口自己填了生成参数时以接口为准
+     （api.js 的 genParams 就是这个优先级）。
+
+     验收要的是「改了这里，实际请求里真的带上」，所以改完必须真发一条消息
+     去核请求体 —— 页面显示对了不算过。 */
+  Sleepy.register('settings-chatdefaults', {
+    title: '聊天默认参数',
+    render: function (ctx) {
+      var body = ctx.body;
+      var cfg = store.get('chatDefaults') || {};
+      var f = {};
+
+      /* 这里的值不能留空：它就是最下面那一层兜底，留空等于什么都没设。
+         所以空输入一律填回默认值，而不是往下传一个 null。 */
+      function num(field, fallback) {
+        var v = field.get();
+        return v == null ? fallback : v;
+      }
+
+      var g1 = group('生成', '所有对话的默认值。某个接口自己填了生成参数时，以那个为准。');
+      f.temperature = numField({
+        label: '温度',
+        hint: '越高越发散；想让她的反应更稳就往下调',
+        value: cfg.temperature, min: 0, max: 2, step: 0.05
+      });
+      g1.card.appendChild(f.temperature.el);
+      f.maxTokens = numField({ label: '单次回复上限', value: cfg.maxTokens, min: 64, max: 32768, step: 64 });
+      g1.card.appendChild(f.maxTokens.el);
+      f.contextMessages = numField({
+        label: '携带上下文条数',
+        hint: '越多越记得住，也越贵',
+        value: cfg.contextMessages, min: 2, max: 200, step: 2
+      });
+      g1.card.appendChild(f.contextMessages.el);
+      body.appendChild(g1.wrap);
+
+      var g2 = group('开关');
+      f.stream = switchField({
+        label: '流式输出',
+        hint: '打字机效果。关掉就会等整段一起出现',
+        value: cfg.stream
+      });
+      g2.card.appendChild(f.stream.el);
+      body.appendChild(g2.wrap);
+
+      var g3 = group('心声', '跟着每次回复一起产出，不额外占一次生成额度。');
+      f.heartbeatAuto = switchField({ label: '回复时附带心声', value: cfg.heartbeatAuto });
+      g3.card.appendChild(f.heartbeatAuto.el);
+      f.heartbeatCount = numField({
+        label: '每条回复最多收几条', hint: '留空按 2 条算',
+        value: cfg.heartbeatCount, min: 1, max: 4, step: 1
+      });
+      g3.card.appendChild(f.heartbeatCount.el);
+      body.appendChild(g3.wrap);
+
+      var btnRow = h('div', 'btn-row');
+      btnRow.appendChild(button('填回默认值', 'ghost', function () { restore(); }));
+      btnRow.appendChild(button('保存', 'primary', function () { save(); }));
+      body.appendChild(btnRow);
+
+      body.appendChild(h('p', 'set-foot',
+        '改完点保存。下一个请求就会带上新参数。'));
+
+      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { save(); } }]);
+
+      function collect() {
+        return {
+          temperature: num(f.temperature, 0.85),
+          maxTokens: Math.round(num(f.maxTokens, 1024)),
+          contextMessages: Math.round(num(f.contextMessages, 20)),
+          stream: f.stream.get(),
+          heartbeatAuto: f.heartbeatAuto.get(),
+          heartbeatCount: Math.round(num(f.heartbeatCount, 2))
+        };
+      }
+
+      function save() {
+        var ok = store.set('chatDefaults', collect());
+        if (ok) ctx.toast('已保存，下一条消息就生效', 'ok');
+        else ctx.toast((store.lastError() || {}).message || '保存失败', 'err');
+      }
+
+      /* 填回默认值但不直接落盘 —— 让用户看见改了什么，再自己按保存 */
+      function restore() {
+        var def = store.defaults().chatDefaults;
+        f.temperature.input.value = String(def.temperature);
+        f.maxTokens.input.value = String(def.maxTokens);
+        f.contextMessages.input.value = String(def.contextMessages);
+        f.stream.input.checked = !!def.stream;
+        f.heartbeatAuto.input.checked = !!def.heartbeatAuto;
+        f.heartbeatCount.input.value = String(def.heartbeatCount);
+        ctx.toast('已填回默认值，记得保存', 'ok');
+      }
+    }
   });
 
   /* ==================== 页面：模型连接（二级） ==================== */
@@ -295,19 +396,23 @@
       g.card.appendChild(f.model.el);
       body.appendChild(g.wrap);
 
-      var g2 = group('生成参数');
-      f.temperature = numField({ label: '温度', hint: '越高越发散', value: cfg.temperature, min: 0, max: 2, step: 0.05 });
+      var g2 = group('生成参数', '留空就是跟随「聊天默认参数」。只有这一个接口想特殊化时才填，填了就以这里为准。');
+      f.temperature = numField({ label: '温度', hint: '留空＝跟随默认 · 越高越发散', value: cfg.temperature, min: 0, max: 2, step: 0.05 });
       g2.card.appendChild(f.temperature.el);
-      f.maxTokens = numField({ label: '单次回复上限', value: cfg.maxTokens, min: 64, max: 32768, step: 64 });
+      f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝跟随默认', value: cfg.maxTokens, min: 64, max: 32768, step: 64 });
       g2.card.appendChild(f.maxTokens.el);
-      f.contextMessages = numField({ label: '携带上下文条数', hint: '越多越记得住，也越贵', value: cfg.contextMessages, min: 2, max: 200, step: 2 });
+      f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝跟随默认 · 越多越记得住，也越贵', value: cfg.contextMessages, min: 2, max: 200, step: 2 });
       g2.card.appendChild(f.contextMessages.el);
       f.timeoutSec = numField({ label: '超时（秒）', value: cfg.timeoutSec, min: 5, max: 300, step: 5 });
       g2.card.appendChild(f.timeoutSec.el);
       body.appendChild(g2.wrap);
 
       var g3 = group('开关');
-      f.stream = switchField({ label: '流式输出', hint: '打字机效果，聊天页用', value: cfg.stream });
+      f.stream = switchField({
+        label: '流式输出',
+        hint: '打字机效果。总开关在「聊天默认参数」，这里关掉＝这个接口不走流式',
+        value: cfg.stream
+      });
       g3.card.appendChild(f.stream.el);
       f.enabled = switchField({ label: '启用这个接口', value: cfg.enabled });
       g3.card.appendChild(f.enabled.el);

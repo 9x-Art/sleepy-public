@@ -119,8 +119,12 @@
       el: wrap,
       input: input,
       get: function () {
-        var v = parseFloat(input.value);
-        if (isNaN(v)) return o.value;
+        var raw = String(input.value).trim();
+        /* 空输入返回 null，语义是「不设置这一项，交给上层兜底」。
+           以前会回落到初始值，于是「清空输入框」这个动作等于没做。 */
+        if (raw === '') return null;
+        var v = parseFloat(raw);
+        if (isNaN(v)) return o.value == null ? null : o.value;
         if (o.min !== undefined && v < o.min) v = o.min;
         if (o.max !== undefined && v > o.max) v = o.max;
         return v;

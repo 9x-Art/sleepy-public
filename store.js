@@ -24,15 +24,19 @@
       lastOpenAt: null
     },
 
-    /* 2.2 主 API */
+    /* 2.2 主 API
+       注意：temperature / maxTokens / contextMessages 默认是 null，
+       意思是「跟随『聊天默认参数』」。单个接口想特殊化再填，填了就以它为准
+       （见 api.js 的 genParams）。如果这里给死一个 0.85，
+       用户在聊天默认参数页里怎么改都不会生效 —— 那种「改了没反应」最难查。 */
     mainApi: {
       name: '主模型',
       baseUrl: '',
       apiKey: '',
       model: '',
-      temperature: 0.85,
-      maxTokens: 1024,
-      contextMessages: 20,
+      temperature: null,
+      maxTokens: null,
+      contextMessages: null,
       stream: true,
       timeoutSec: 60,
       enabled: true
