@@ -83,6 +83,37 @@
     return null;
   }
 
+  /* 重要：store.get 每次返回深拷贝！findBook 拿到的对象是「副本」，
+     在副本上改完再 saveBooks(getBooks()) ＝ 改动全丢
+     （条目保存后消失就是这个坑）。凡是「改了要存」的路径，
+     必须用这个助手：在一次 getBooks() 的同一份数组里找到书、
+     改完、把这份数组原样存回去。 */
+  function withBook(bookId, fn) {
+    var list = getBooks();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === bookId) {
+        fn(list[i], list);
+        return saveBooks(list);
+      }
+    }
+    return false;
+  }
+
+  /* 卡片右侧的小开关：点它只切换状态，不触发卡片本身的点击。
+     contact-card 现在是 div（button 里不能套开关），点击开页面靠 JS。 */
+  function miniSwitch(on, onChange) {
+    var lab = h('label', 'set-switch card-switch');
+    var input = h('input');
+    input.type = 'checkbox';
+    input.checked = !!on;
+    input.addEventListener('click', function (e) { e.stopPropagation(); });
+    input.addEventListener('change', function () { onChange(input.checked); });
+    lab.appendChild(input);
+    lab.appendChild(h('span', 'set-switch-track'));
+    lab.addEventListener('click', function (e) { e.stopPropagation(); });
+    return lab;
+  }
+
   function stamp() {
     var d = new Date();
     function p(n) { return n < 10 ? '0' + n : '' + n; }
@@ -115,6 +146,7 @@
 
   /* 书卡片上的那行小字 */
   function bookSummary(b) {
+    if (b.enabled === false) return '已停用 · ' + (b.entries || []).length + ' 条';
     var n = (b.entries || []).length;
     var scope = b.scope === 'personal'
       ? ('个人 · 挂在 ' + (charName(b.characterId) || '（还没选角色）'))
@@ -125,6 +157,7 @@
   /* ------------------------- 纯函数：序列化 / 解析 ------------------------- */
 
   function entryHead(it) {
+    if (it.always) return '===== 条目：' + (it.name || '未命名') + ' | 常驻 =====';
     var ks = splitKeys(it.keys).join('，');
     return '===== 条目：' + (it.name || '未命名') +
            (ks ? ' | 关键词：' + ks : '') + ' =====';
@@ -149,19 +182,21 @@
     return out;
   }
 
-  /* 头里的「名字 | 关键词：a，b」拆开 */
+  /* 头里的「名字 | 关键词：a，b」或「名字 | 常驻」拆开 */
   function parseHead(rest) {
     var name = rest;
     var keys = '';
+    var always = false;
     var bar = String(rest).split('|');
     if (bar.length > 1) {
       name = bar[0];
       for (var i = 1; i < bar.length; i++) {
+        if (/^\s*(?:常驻|常駐|always)\s*$/i.test(bar[i])) { always = true; continue; }
         var m = bar[i].match(/^\s*(?:关键词|触发词|keys)\s*[：:]\s*(.+)$/i);
         if (m) keys = m[1];
       }
     }
-    return { name: String(name).trim(), keys: keys.trim() };
+    return { name: String(name).trim(), keys: keys.trim(), always: always };
   }
 
   /* 解析一本书内的条目段。lines 里遇到书头要停（调用方负责切片，
@@ -175,7 +210,7 @@
       if (m) {
         if (cur) blocks.push(cur);
         var hd = parseHead(m[1]);
-        cur = { name: hd.name, keys: hd.keys, lines: [] };
+        cur = { name: hd.name, keys: hd.keys, always: hd.always, lines: [] };
         return;
       }
       /* 第一个条目之前的「关键词：」行不算任何条目的正文 */
@@ -188,7 +223,7 @@
     });
     if (cur) blocks.push(cur);
     return blocks.map(function (b) {
-      return { name: b.name, keys: b.keys, content: b.lines.join('\n') };
+      return { name: b.name, keys: b.keys, always: b.always, content: b.lines.join('\n') };
     });
   }
 
@@ -268,6 +303,7 @@
           id: newId('e'),
           name: it.name,
           keys: it.keys,
+          always: !!it.always,
           content: it.content,
           enabled: true,
           createdAt: Date.now(),
@@ -314,6 +350,7 @@
       }
       if (hit) {
         hit.keys = it.keys;
+        hit.always = !!it.always;
         hit.content = it.content;
         hit.updatedAt = Date.now();
         updated++;
@@ -322,6 +359,7 @@
           id: newId('e'),
           name: it.name,
           keys: it.keys,
+          always: !!it.always,
           content: it.content,
           enabled: true,
           createdAt: Date.now(),
@@ -370,13 +408,20 @@
         }
 
         list.forEach(function (b) {
-          var card = h('button', 'contact-card');
-          card.type = 'button';
+          var card = h('div', 'contact-card' + (b.enabled === false ? ' is-off' : ''));
+
           card.appendChild(h('span', 'contact-av', (b.name || '?').charAt(0)));
           var main = h('div', 'contact-main');
           main.appendChild(h('div', 'contact-name', b.name || '未命名'));
           main.appendChild(h('div', 'contact-line', bookSummary(b)));
           card.appendChild(main);
+
+          /* 开关直接反映这本书开还是关，点了立刻生效并落盘 */
+          card.appendChild(miniSwitch(b.enabled !== false, function (on) {
+            withBook(b.id, function (x) { x.enabled = on; });
+            card.classList.toggle('is-off', !on);
+          }));
+
           card.addEventListener('click', function () {
             ctx.open('worldbook-open', { bookId: b.id });
           });
@@ -478,13 +523,23 @@
         }
 
         entries.forEach(function (it) {
-          var card = h('button', 'contact-card' + (it.enabled === false ? ' is-off' : ''));
-          card.type = 'button';
+          var card = h('div', 'contact-card' + (it.enabled === false ? ' is-off' : ''));
           card.appendChild(h('span', 'contact-av', it.enabled === false ? '✕' : '✓'));
           var main = h('div', 'contact-main');
           main.appendChild(h('div', 'contact-name', it.name || '未命名'));
           main.appendChild(h('div', 'contact-line', summaryOf(it)));
           card.appendChild(main);
+
+          card.appendChild(miniSwitch(it.enabled !== false, function (on) {
+            withBook(bookId, function (bk) {
+              var list = bk.entries = bk.entries || [];
+              for (var i = 0; i < list.length; i++) {
+                if (list[i].id === it.id) { list[i].enabled = on; break; }
+              }
+            });
+            card.classList.toggle('is-off', !on);
+          }));
+
           card.addEventListener('click', function () {
             ctx.open('worldbook-entry-edit', { bookId: bookId, id: it.id });
           });
@@ -499,6 +554,8 @@
   });
 
   function summaryOf(it) {
+    if (it.enabled === false) return '已停用';
+    if (it.always) return '常驻 · 一直生效';
     var ks = splitKeys(it.keys);
     if (!ks.length) return '没设关键词 · 不会自动触发';
     var shown = ks.slice(0, 4).join('、');
@@ -535,10 +592,12 @@
         ctx.toast('这个文件里没有条目', 'err');
         return;
       }
-      var b = findBook(bookId);
-      if (!b) return;
-      var res = importEntries(b, items);
-      saveBooks(getBooks());
+      /* 必须在 withBook 的同一份数组里改，否则 store.get 的深拷贝会把改动吞掉 */
+      var res = null;
+      withBook(bookId, function (bk) {
+        res = importEntries(bk, items);
+      });
+      res = res || { added: 0, updated: 0 };
       var parts = [];
       if (res.added) parts.push('新增 ' + res.added + ' 条');
       if (res.updated) parts.push('覆盖 ' + res.updated + ' 条');
@@ -724,6 +783,15 @@
       g0.card.appendChild(f.enabled.el);
       body.appendChild(g0.wrap);
 
+      /* 常驻 / 关键词触发 二选一：常驻 = 不看关键词，一直生效 */
+      f.always = ui.switchField({
+        label: '常驻',
+        hint: '开＝这条一直在上下文里；关＝靠关键词触发',
+        value: existing ? !!existing.always : false
+      });
+      g0.card.appendChild(f.always.el);
+      body.appendChild(g0.wrap);
+
       var g1 = ui.group('名字', '导入导出时靠它对号入座，同名会覆盖。');
       f.name = textField({
         label: '条目名',
@@ -742,6 +810,9 @@
       });
       g2.card.appendChild(f.keys.el);
       body.appendChild(g2.wrap);
+      function paintKeysGroup() { g2.wrap.style.display = f.always.get() ? 'none' : ''; }
+      f.always.el.querySelector('input').addEventListener('change', paintKeysGroup);
+      paintKeysGroup();
 
       var g3 = ui.group('正文', '原样存、原样导出，不解析 —— 带什么格式都行。');
       f.content = textArea({
@@ -782,8 +853,9 @@
           return;
         }
         resetArm();
-        book.entries = (book.entries || []).filter(function (x) { return x.id !== existing.id; });
-        saveBooks(getBooks());
+        withBook(bookId, function (bk) {
+          bk.entries = (bk.entries || []).filter(function (x) { return x.id !== existing.id; });
+        });
         ctx.toast('已删除', 'ok');
         ctx.back();
       });
@@ -792,6 +864,7 @@
         return {
           name: String(f.name.get() || '').trim() || '未命名条目',
           keys: String(f.keys.get() || '').trim(),
+          always: f.always.get(),
           content: f.content.get(),
           enabled: f.enabled.get()
         };
@@ -799,26 +872,36 @@
 
       function doSave() {
         var next = collect();
-        var entries = book.entries = book.entries || [];
-        if (existing) {
-          existing.name = next.name;
-          existing.keys = next.keys;
-          existing.content = next.content;
-          existing.enabled = next.enabled;
-          existing.updatedAt = Date.now();
-        } else {
-          entries.push({
-            id: newId('e'),
-            name: next.name,
-            keys: next.keys,
-            content: next.content,
-            enabled: next.enabled,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          });
-        }
-        book.updatedAt = Date.now();
-        var ok = saveBooks(getBooks());
+        /* 必须在 withBook 的同一份数组里改 —— 在 findBook 的副本上改，
+           存的时候会被 store.get 的新拷贝整个覆盖（条目消失 bug 的根因） */
+        var ok = withBook(bookId, function (bk) {
+          var entries = bk.entries = bk.entries || [];
+          if (existing) {
+            for (var i = 0; i < entries.length; i++) {
+              if (entries[i].id === existing.id) {
+                entries[i].name = next.name;
+                entries[i].keys = next.keys;
+                entries[i].always = next.always;
+                entries[i].content = next.content;
+                entries[i].enabled = next.enabled;
+                entries[i].updatedAt = Date.now();
+                break;
+              }
+            }
+          } else {
+            entries.push({
+              id: newId('e'),
+              name: next.name,
+              keys: next.keys,
+              always: next.always,
+              content: next.content,
+              enabled: next.enabled,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            });
+          }
+          bk.updatedAt = Date.now();
+        });
         if (ok) {
           ctx.toast('已保存', 'ok');
           ctx.back();
