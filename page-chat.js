@@ -328,16 +328,31 @@
       textarea.setAttribute('autocorrect', 'off');
       textarea.setAttribute('spellcheck', 'false');
 
-      var sendBtn = h('button', 'send-btn', '发');
+      /* 发送键是个图形（小猫爪），所以文字要放在 aria-label / title 里，
+         否则读屏软件只能念出一个按钮。爪印用 currentColor 取色，
+         底色换了它自己会跟着变。 */
+      var PAW_SVG =
+        '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor" aria-hidden="true">' +
+          '<ellipse cx="12" cy="15.9" rx="5.8" ry="4.5"/>' +
+          '<ellipse cx="4.7" cy="11.7" rx="2.1" ry="2.7"/>' +
+          '<ellipse cx="9.3" cy="6.7" rx="2.2" ry="2.9"/>' +
+          '<ellipse cx="14.7" cy="6.7" rx="2.2" ry="2.9"/>' +
+          '<ellipse cx="19.3" cy="11.7" rx="2.1" ry="2.7"/>' +
+        '</svg>';
+
+      var sendBtn = h('button', 'send-btn');
       sendBtn.type = 'button';
+      sendBtn.innerHTML = PAW_SVG;
+      sendBtn.setAttribute('aria-label', '发送');
 
       var plusBtn = h('button', 'plus-btn', '+');
       plusBtn.type = 'button';
       plusBtn.title = '更多';
 
+      /* 加号在左、输入框居中、爪印在右 */
+      inputArea.appendChild(plusBtn);
       inputArea.appendChild(textarea);
       inputArea.appendChild(sendBtn);
-      inputArea.appendChild(plusBtn);
       foot.appendChild(inputArea);
       body.appendChild(foot);
 
@@ -490,7 +505,10 @@
       function updateSendUI() {
         var busy = !!pending;
         sendBtn.disabled = busy;
-        sendBtn.textContent = busy ? '…' : '发';
+        /* 别用 textContent 改发送键——那会把爪印 SVG 抹掉。
+           忙碌状态只加 class，靠 CSS 的呼吸动画表达「在等她回话」。 */
+        sendBtn.classList[busy ? 'add' : 'remove']('is-busy');
+        sendBtn.title = busy ? '还在等她回话' : '发送（输入框留空，就是让她主动开口）';
       }
 
       /* ======================== 多选 ======================== */

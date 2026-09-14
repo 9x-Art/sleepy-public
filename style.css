@@ -652,12 +652,19 @@ body{
   width:44px;height:44px;
   border-radius:50%;border:0;
   background:var(--amber);color:#2A2118;
-  font-size:15px;font-weight:600;
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;flex:none;
-  transition:transform .12s var(--ease);
+  transition:transform .12s var(--ease), background .2s var(--ease);
 }
 .send-btn:active{transform:scale(.94);}
+/* 忙碌状态：爪印变淡呼吸，比单纯置灰更像「她在打字」 */
+.send-btn.is-busy{
+  background:var(--bg-3);color:var(--text-faint);
+  cursor:default;
+  animation:paw-wait 1.15s ease-in-out infinite;
+}
+.send-btn.is-busy:active{transform:none;}
+@keyframes paw-wait{0%,100%{opacity:.4}50%{opacity:.95}}
 
 /* 加号面板（+）v0.2 — UI 微调 */
 /* 加号按钮：输入区里的普通按钮。
@@ -1076,7 +1083,8 @@ body{
 
 
 
-.send-btn:disabled{opacity:.5;cursor:not-allowed;}
+/* 发送键的置灰交给 .is-busy 的呼吸动画表达，这里只管光标 */
+.send-btn:disabled{cursor:not-allowed;}
 
 /* FAB 新建按钮 */
 .fab-btn{
