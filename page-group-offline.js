@@ -225,6 +225,12 @@
     if (n.styleWords) rules.push('文风词（必须遵守）：' + n.styleWords);
     else if (styleHintOf(n.style)) rules.push('文风：' + styleHintOf(n.style));
     rules.push(lengthHintOf(n));
+    /* 叙事焦点（场景操作里调）：自动是默认，ensemble 铺群像，角色名给特写 */
+    if (n.focus === 'ensemble') {
+      rules.push('叙事焦点：群像。多个在场角色平均着墨，铺开场面，不要只围着一个人转。');
+    } else if (n.focus) {
+      rules.push('叙事焦点：这一轮以「' + n.focus + '」为中心——TA 的动作、神态或台词是这一段的主体，但不必独占全场。');
+    }
     if (n.showCharInner === false) rules.push('不要直接写出角色内心，只写外部可见的言行。');
     parts.push(rules.join('\n'));
 
@@ -512,9 +518,7 @@
       pill.appendChild(h('span', 'off-api-dot'));
       pill.appendChild(h('span', 'off-api-label',
         session.apiModel || (choices[0] || {}).label || '未配置'));
-      pill.addEventListener('click', function () {
-        ctx.toast('多人场景先沿用线下默认模型，会话级切换下一轮接');
-      });
+      pill.addEventListener('click', function () { openSheet('api'); });
       right.appendChild(pill);
       var setBtn = h('button', 'off-settings-btn');
       setBtn.type = 'button';
@@ -713,7 +717,8 @@
       if (th) th.classList.toggle('show', !!b);
     }
 
-    function requestTurn(userInput) {
+    function requestTurn(userInput, opts) {
+      opts = opts || {};
       if (session.status === 'ended') return;
       if (pending) { ctx.toast('现场还在继续，等一下', 'warn'); return; }
 
@@ -722,7 +727,7 @@
         session = find(id);
         var input = body.querySelector('.off-input-field');
         if (input) { input.value = ''; input.style.height = 'auto'; }
-      } else if (!presentParts(session).length) {
+      } else if (!opts.rewriteNote && !presentParts(session).length) {
         ctx.toast('现场只有你一个人 —— 等人到场，或去状态里叫人进来', 'warn');
         return;
       }
@@ -734,7 +739,10 @@
       var messages = [{ role: 'system', content: built }].concat(
         historyMessages(session, userInput == null ? null : userInput));
       if (userInput == null) {
-        messages.push({ role: 'user', content: '（开场。请先铺开场景，再让在场的人自然开始。）' });
+        messages.push({ role: 'user', content: opts.rewriteNote
+          ? '（重写刚才那一轮。' + opts.rewriteNote +
+            '。直接输出重写后的这一轮，不要解释自己在重写。）'
+          : '（开场。请先铺开场景，再让在场的人自然开始。）' });
       }
 
       pending = true;
@@ -786,6 +794,9 @@
       else if (kind === 'status') sheetBox = buildStatusSheet();
       else if (kind === 'invite') sheetBox = buildInviteSheet();
       else if (kind === 'tools') sheetBox = buildToolsSheet();
+      else if (kind === 'api') sheetBox = buildApiSheet();
+      else if (kind === 'focus') sheetBox = buildFocusSheet();
+      else if (kind === 'rewrite') sheetBox = buildRewriteSheet();
       else sheetBox = buildSettingsSheet();
       root.appendChild(sheetBox);
       requestAnimationFrame(function () { sheetBox.classList.add('show'); });
@@ -1024,8 +1035,13 @@
       var box = h('div', 'off-leave-options');
       [
         { name: '生成当前场景图片', desc: '根据地点、时段与在场者生成画面', run: genScenePhoto },
-        { name: '调整叙事焦点', desc: '自动、群像或指定某位角色（下一轮接线）' },
-        { name: '局部重写上一轮', desc: '标记忽略角色、重复描写或抢写（下一轮接线）' }
+        { name: '调整叙事焦点', desc: focusDesc() + ' · 自动、群像或指定某位角色',
+          run: function () { openSheet('focus'); } },
+        { name: '局部重写上一轮', desc: '标记不满意的原因，重演最后一段叙事',
+          run: function () {
+            if (!lastNarrative()) { ctx.toast('还没有可以重写的轮次', 'warn'); return; }
+            openSheet('rewrite');
+          } }
       ].forEach(function (o) {
         var b = h('button', 'off-leave-option');
         b.type = 'button';
@@ -1041,6 +1057,204 @@
         box.appendChild(b);
       });
       return sheetShell('场景操作', box, '取消');
+    }
+
+    /* ---- 会话级模型切换（数据层早通：candForSession 消费 session.apiModel，
+       这里只补 UI；照私聊线下的 buildApiSheet，去掉「设为默认」档——
+       群线下的默认模型在创建页选，场景页改的只是本场） ---- */
+    function buildApiSheet() {
+      var wrap = h('div', 'off-api-wrap');
+      var list = h('div', 'off-api-list');
+      var choices = Sleepy.offlineStore ? Sleepy.offlineStore.apiChoices() : [];
+      var current = {
+        label: session.apiModel || (choices[0] || {}).label || '',
+        model: session.apiModelName || ''
+      };
+      function cfgOf(label) {
+        for (var i = 0; i < choices.length; i++) {
+          if (choices[i].label === label) return choices[i].cand.cfg;
+        }
+        return choices.length ? choices[0].cand.cfg : null;
+      }
+      if (!choices.length) {
+        wrap.appendChild(h('p', 'off-entry-empty', '还没有配置模型，去 设置 → 主 API'));
+      }
+
+      var modelSec = h('div', 'off-field-col');
+      modelSec.appendChild(h('span', 'off-field-label', '模型名（留空 = 用接口里配的）'));
+      var modelInput = h('input', 'off-settings-input');
+      modelInput.value = current.model;
+      modelInput.placeholder = '可手填，或点右边圆钮拉取';
+      var modelLine = h('div', 'off-model-line');
+      modelLine.appendChild(modelInput);
+      var mini = h('button', 'set-mini-ic');
+      mini.type = 'button';
+      mini.title = '拉取模型列表';
+      mini.setAttribute('aria-label', '拉取模型列表');
+      mini.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
+      modelLine.appendChild(mini);
+      var pickBox = h('div', 'model-pick');
+      modelSec.appendChild(modelLine);
+      modelSec.appendChild(pickBox);
+      mini.addEventListener('click', function () {
+        var cfg = cfgOf(current.label);
+        if (!cfg || !cfg.baseUrl) { pickBox.innerHTML = ''; pickBox.appendChild(h('p', 'test-tip', '先选一个接口')); return; }
+        mini.disabled = true;
+        pickBox.innerHTML = '';
+        pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
+        Sleepy.api.fetchModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey }).then(function (res) {
+          mini.disabled = false;
+          pickBox.innerHTML = '';
+          if (!res.ok) { pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message)); return; }
+          if (!res.models.length) { pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表')); return; }
+          pickBox.appendChild(h('p', 'test-tip', '拉到 ' + res.models.length + ' 个，点一个选用'));
+          res.models.slice(0, 40).forEach(function (mid) {
+            var r = h('button', 'set-row model-pick-row');
+            r.type = 'button';
+            r.appendChild(h('span', 'set-row-label', mid));
+            r.addEventListener('click', function () {
+              modelInput.value = mid;
+              pickBox.innerHTML = '';
+            });
+            pickBox.appendChild(r);
+          });
+        });
+      });
+      modelInput.addEventListener('change', function () { current.model = modelInput.value.trim(); });
+
+      choices.forEach(function (c) {
+        var opt = h('button', 'off-api-option' + (c.label === current.label ? ' active' : ''));
+        opt.type = 'button';
+        var left = h('span', 'off-api-opt-left');
+        left.appendChild(h('span', 'off-api-opt-name', c.label));
+        left.appendChild(h('span', 'off-api-opt-desc', c.desc));
+        opt.appendChild(left);
+        var check = h('span', 'off-api-check');
+        check.appendChild(h('span', 'off-api-check-dot'));
+        opt.appendChild(check);
+        opt.addEventListener('click', function () {
+          current.label = c.label;
+          current.model = '';              /* 换接口，模型名回到该接口自己配的 */
+          modelInput.value = '';
+          pickBox.innerHTML = '';
+          [].forEach.call(list.children, function (x) { x.classList.remove('active'); });
+          opt.classList.add('active');
+        });
+        list.appendChild(opt);
+      });
+      wrap.appendChild(list);
+      wrap.appendChild(modelSec);
+
+      var okBtn = h('button', 'off-sheet-cancel off-ok-btn', '本场就用这个');
+      okBtn.type = 'button';
+      okBtn.addEventListener('click', function () {
+        if (!choices.length) { closeSheet(); return; }
+        current.model = modelInput.value.trim();
+        mutate(id, function (s) { s.apiModel = current.label; s.apiModelName = current.model; });
+        session = find(id);
+        closeSheet();
+        refreshHeader();
+        ctx.toast('本场改用 ' + current.label + (current.model ? ' · ' + current.model : ''), 'ok');
+      });
+      wrap.appendChild(okBtn);
+      return sheetShell('本场用哪个模型', wrap, '取消');
+    }
+
+    /* ---- 调整叙事焦点：自动 / 群像 / 指定在场角色。
+       存 narrativeSettings.focus，buildSystem 注入 [PRESENCE RULES]。 ---- */
+    function focusDesc() {
+      var n = session.narrativeSettings || {};
+      if (n.focus === 'ensemble') return '当前：群像';
+      if (n.focus) return '当前：' + n.focus;
+      return '当前：自动';
+    }
+    function buildFocusSheet() {
+      var box = h('div', 'off-leave-options');
+      var cur = (session.narrativeSettings || {}).focus || '';
+      function focusRow(key, name, desc) {
+        var b = h('button', 'off-leave-option' + (cur === key ? ' primary' : ''));
+        b.type = 'button';
+        var main = h('span', 'off-opt-main');
+        main.appendChild(h('span', 'off-opt-name', name + (cur === key ? ' · 用着' : '')));
+        main.appendChild(h('span', 'off-opt-desc', desc));
+        b.appendChild(main);
+        b.addEventListener('click', function () {
+          mutate(id, function (s) {
+            s.narrativeSettings = s.narrativeSettings || {};
+            s.narrativeSettings.focus = key;
+          });
+          session = find(id);
+          closeSheet();
+          ctx.toast(key === 'ensemble' ? '下一轮起镜头铺给全场'
+            : key ? '下一轮起多给「' + key + '」镜头' : '焦点回到自动', 'ok');
+        });
+        box.appendChild(b);
+      }
+      focusRow('', '自动', '按现场张力自然分配镜头');
+      focusRow('ensemble', '群像', '在场者平均着墨，铺开场面');
+      presentParts(session).forEach(function (p) {
+        var m = partMeta(session, p);
+        focusRow(m.name, m.name + (m.npc ? '（NPC）' : ''), '下一轮以 TA 的动作与台词为中心');
+      });
+      return sheetShell('叙事焦点给谁', box, '取消');
+    }
+
+    /* ---- 局部重写上一轮：把最后一段叙事移出时间线，带着不满意的原因重跑。
+       移出的轮次不进总结（结算只看剩下的时间线）。 ---- */
+    function lastNarrative() {
+      var ms = session.messages || [];
+      for (var i = ms.length - 1; i >= 0; i--) {
+        if (ms[i].role === 'turn' || ms[i].role === 'scene') return { msg: ms[i], idx: i };
+      }
+      return null;
+    }
+    function buildRewriteSheet() {
+      var last = lastNarrative();
+      if (!last) return sheetShell('局部重写上一轮', h('p', 'off-entry-empty', '还没有可以重写的轮次'), '取消');
+      var box = h('div', 'off-rewrite');
+      box.intro = '最后一轮会从时间线上拿掉（总结不再算它），按下面的意见重新演一段。';
+      var picked = {};
+      var REASONS = [
+        { key: 'focus', label: '镜头分配不对', note: '重新分配镜头，按现场张力来，别围着不相关的人绕' },
+        { key: 'repeat', label: '内容重复了', note: '换新的推进，不要重复已经写过的动作和台词' },
+        { key: 'userpower', label: '抢了 user 的戏', note: '不要替 user 做决定或编造台词，只回应已给出的行动' },
+        { key: 'pace', label: '推进太快 / 越界', note: '放慢节奏，一次别推进太多' }
+      ];
+      var chips = h('div', 'gof-chips');
+      REASONS.forEach(function (r) {
+        var c = h('button', 'gof-chip');
+        c.type = 'button';
+        c.textContent = r.label;
+        c.addEventListener('click', function () {
+          picked[r.key] = !picked[r.key];
+          c.classList.toggle('is-on', !!picked[r.key]);
+        });
+        chips.appendChild(c);
+      });
+      box.appendChild(chips);
+      box.appendChild(h('span', 'off-field-label', '还有什么要改的（可留空）'));
+      var note = h('textarea', 'gof-rewrite-note');
+      note.placeholder = '比如：店长不该知道那件事…';
+      box.appendChild(note);
+
+      var okBtn = h('button', 'off-sheet-cancel off-ok-btn', '重写这一轮');
+      okBtn.type = 'button';
+      okBtn.addEventListener('click', function () {
+        var bits = [];
+        REASONS.forEach(function (r) { if (picked[r.key]) bits.push(r.note); });
+        var extra = String(note.value || '').trim();
+        if (extra) bits.push('特别注意：' + extra);
+        mutate(id, function (s) { s.messages.splice(last.idx, 1); });
+        session = find(id);
+        closeSheet();
+        fillMessages(body.querySelector('.off-chat-scroll'));
+        ctx.toast('重演这一轮…', 'ok');
+        requestTurn(null, { rewriteNote: bits.join('；') });
+      });
+      box.appendChild(okBtn);
+      return sheetShell('局部重写上一轮', box, '取消');
     }
 
     function genScenePhoto() {

@@ -9017,6 +9017,23 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 }
 .gof-sheet-intro{font-size:9.5px;line-height:1.55;color:var(--text-faint);margin:0 2px 12px;}
 
+/* 局部重写：原因 chips + 补充说明（chips 无选中态不加框色，选中才描边） */
+.gof-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 2px 12px;}
+.gof-chip{
+  border:1px solid var(--line);border-radius:999px;background:none;
+  font:inherit;font-size:11px;color:var(--text-dim);
+  padding:5px 12px;cursor:pointer;
+  transition:border-color .15s,color .15s;
+}
+.gof-chip.is-on{border-color:var(--amber);color:var(--amber);}
+.gof-rewrite-note{
+  width:100%;min-height:56px;resize:none;
+  border:1px solid var(--line);border-radius:10px;background:none;
+  font:inherit;font-size:12px;color:var(--text);line-height:1.6;
+  padding:9px 11px;margin:6px 0 14px;box-sizing:border-box;
+}
+.gof-rewrite-note:focus{outline:none;border-color:var(--amber);}
+
 /* 「现场正在继续」呼吸点 */
 .gof-thinking{
   display:none;align-items:center;gap:7px;

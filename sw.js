@@ -21,7 +21,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v36';
+var CACHE = 'sleepy-v37';
 var CORE = [
   './',
   './index.html',
