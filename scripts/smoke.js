@@ -2394,6 +2394,462 @@ t('闸门：过闸 / 未回复不追问 / 每日上限 / 开关关闭', () => {
   S.proactiveEngine.saveSettings({ quietStart: savedSt.quietStart, quietEnd: savedSt.quietEnd });
   return { 过闸: true, 未回复拦: true, 上限拦: true, 开关拦: true };
 });
+t('gateWhyText：实时文案（暂缓/冷却带分钟）+ deferMin 可配', () => {
+  const c = S.core.upsertChar({ name: '文案测试', kind: 'main' }).id;
+  const isle = S.core.createSandbox('isle', '文案测试岛').id;
+  S.core.setSandboxChars(isle, [c]);
+  S.core.setActiveSandbox(isle);
+  const chat = {
+    id: 'c_why', sandboxId: isle, characterId: c, name: '文案测试',
+    messages: [{ id: 'm1', role: 'user', content: '嗯', timestamp: Date.now() }]
+  };
+  S.store.set('chats', [chat]);
+  const saved = S.proactiveEngine.settings();
+  S.proactiveEngine.saveSettings({ quietStart: '', quietEnd: '' });
+
+  /* 暂缓中 → 文案带「暂缓」和分钟数 */
+  S.store.set('proactiveState:' + c,
+    { lastAt: 0, day: '', count: 0, handled: [], deferredUntil: Date.now() + 30 * 60000 });
+  const w1 = S.proactiveEngine.gateWhyText(c, {});
+  if (typeof w1 !== 'string' || w1.indexOf('暂缓') < 0 || w1.indexOf('分钟') < 0) {
+    throw new Error('defer 文案不对：' + w1);
+  }
+  /* 冷却中 */
+  S.store.set('proactiveState:' + c,
+    { lastAt: Date.now(), day: '', count: 0, handled: [], deferredUntil: 0 });
+  const w2 = S.proactiveEngine.gateWhyText(c, {});
+  if (w2.indexOf('冷却') < 0) throw new Error('cooldown 文案不对：' + w2);
+
+  /* deferMin 进设置且可保存 */
+  if (S.proactiveEngine.settings().deferMin === undefined) throw new Error('deferMin 没进设置');
+  S.proactiveEngine.saveSettings({ deferMin: 45 });
+  if (S.proactiveEngine.settings().deferMin !== 45) throw new Error('deferMin 保存失败');
+
+  /* 过闸 → 「现在就有合适的时机」 */
+  S.store.set('proactiveState:' + c,
+    { lastAt: 0, day: '', count: 0, handled: [], deferredUntil: 0 });
+  S.store.set('attentionInbox:' + c, { items: ['新候选'], updatedAt: '' });
+  const w3 = S.proactiveEngine.gateWhyText(c, {});
+  if (w3.indexOf('合适') < 0) throw new Error('过闸文案不对：' + w3);
+
+  S.proactiveEngine.saveSettings({
+    quietStart: saved.quietStart, quietEnd: saved.quietEnd,
+    deferMin: saved.deferMin !== undefined ? saved.deferMin : 90
+  });
+  S.store.set('chats', []);
+  S.core.removeChar(c);
+  S.core.removeSandbox(isle);
+  return { 暂缓: w1, 冷却: w2, 过闸: true };
+});
+
+/* ---------------- core-group：线上群聊数据层 ----------------
+   本体/账号两层、消息单列表、撤回不删原文、按房隔离 ——
+   这些是总纲的地基，地基松动后面全塌，所以逐条断言。 */
+
+console.log('\n--- core-group：群聊数据层 ---');
+
+/* 前面的沙盒隔离段 clearAll() 之后早期角色已死（见该段注释），
+   这里自带一整套夹具：两个大号 + 皮套 + NPC + 马甲 + 群群岛，
+   并把 activeSandbox 指过去 —— scopeId 为 null 时 tagScope 不盖章，
+   群会变成「不属于任何房」的幽灵数据。 */
+const gFix = (() => {
+  const m = S.core.upsertChar({ name: '青屿', kind: 'main', content: '群聊测试大号A' }).id;
+  const s = S.core.upsertChar({ name: '晚灯', kind: 'sub', parentId: m, content: '群聊测试皮套' }).id;
+  const n = S.core.upsertChar({ name: '店长', kind: 'npc', parentId: m, content: '群聊测试NPC' }).id;
+  const u = S.core.upsertUser({ name: '梦梦' }).id;
+  const sb = S.core.createSandbox('archipelago', '群聊测试群岛');
+  S.core.setSandboxChars(sb.id, [m]);
+  S.core.setActiveSandbox(sb.id);
+  return { m, s, n, u, arch: sb.id };
+})();
+
+t('群聊：测试群岛就位（自带角色 + activeSandbox 指过去）', () => {
+  if (!S.core.scopeId()) throw new Error('activeSandbox 没指过去');
+  if (!S.core.findChar(gFix.m) || !S.core.findChar(gFix.s)) throw new Error('角色没建出来');
+  return '就位';
+});
+
+t('createGroup 校验：空名 / 没有角色成员 / 重复账号都拒绝', () => {
+  const bad1 = S.groupStore.createGroup({ name: '', ownerAccountId: gFix.u, members: [{ kind: 'char', ownerId: gFix.m, accountId: gFix.m }] });
+  if (bad1.ok) throw new Error('空名应拒');
+  const bad2 = S.groupStore.createGroup({ name: '只有我', ownerAccountId: gFix.u, members: [{ kind: 'user', ownerId: 'user', accountId: gFix.u }] });
+  if (bad2.ok) throw new Error('纯 user 群应拒');
+  const bad3 = S.groupStore.createGroup({
+    name: '重复', ownerAccountId: gFix.u,
+    members: [
+      { kind: 'char', ownerId: gFix.m, accountId: gFix.m },
+      { kind: 'char', ownerId: gFix.m, accountId: gFix.m }
+    ]
+  });
+  if (bad3.ok) throw new Error('重复账号应拒');
+  return '三种都拒';
+});
+
+const gGrp = t('createGroup 正常建群', () => {
+  const r = S.groupStore.createGroup({
+    name: '周末出门群',
+    ownerAccountId: gFix.u,
+    members: [
+      { kind: 'char', ownerId: gFix.m, accountId: gFix.m },
+      { kind: 'char', ownerId: gFix.m, accountId: gFix.s },
+      { kind: 'npc', ownerId: gFix.n, accountId: gFix.n }
+    ],
+    opening: 'user'
+  });
+  if (!r.ok) throw new Error(r.message);
+  return r.group.id;
+});
+
+t('建群后：owner 自动入群 + 系统消息 + 设置默认', () => {
+  const ms = S.groupStore.membersOf(gGrp);
+  if (ms.length !== 4) throw new Error('成员应 4 个账号，实 ' + ms.length);
+  const owner = S.groupStore.findMember(gGrp, gFix.u);
+  if (!owner || owner.role !== 'owner' || owner.kind !== 'user') throw new Error('群主账号不对');
+  const sys = S.groupStore.messagesOf(gGrp);
+  if (sys.length !== 1 || sys[0].type !== 'system') throw new Error('系统消息没落');
+  const g = S.groupStore.findGroup(gGrp);
+  if (g.settings.opening !== 'user' || g.settings.rhythm !== 'light') throw new Error('设置默认不对');
+  return { 成员: ms.length, 开场: g.settings.opening };
+});
+
+t('addMessage：皮套发言的本体归一到 rootId', () => {
+  const msg = S.groupStore.addMessage(gGrp, {
+    senderKind: 'char', senderAccountId: gFix.s, content: '小和替大号说话'
+  });
+  if (msg.senderEntityId !== gFix.m) throw new Error('本体应归到 ' + gFix.m + '，实 ' + msg.senderEntityId);
+  const um = S.groupStore.addMessage(gGrp, {
+    senderKind: 'user', senderAccountId: gFix.u, content: '我说的'
+  });
+  if (um.senderEntityId !== 'user') throw new Error('user 本体恒为 user');
+  return { 皮套: msg.senderEntityId, user: um.senderEntityId };
+});
+
+ok('accountsOfEntity：同一本体在群里查到两个账号（调度去重的原料）',
+  S.groupStore.accountsOfEntity(gGrp, gFix.m).length === 2);
+
+t('recallMessage：撤回打戳不删原文；系统消息拒撤', () => {
+  const msgs = S.groupStore.messagesOf(gGrp);
+  const text = msgs.filter((x) => x.type === 'text')[0];
+  const r = S.groupStore.recallMessage(gGrp, text.id);
+  if (!r.ok || !r.message.recalledAt) throw new Error('没打戳');
+  if (r.message.content !== '小和替大号说话') throw new Error('原文不该删');
+  const sys = msgs.filter((x) => x.type === 'system')[0];
+  if (S.groupStore.recallMessage(gGrp, sys.id).ok) throw new Error('系统消息应拒撤');
+  return '戳在、文在';
+});
+
+t('addMembers 去重 + setMemberStatus 退群', () => {
+  const again = S.groupStore.addMembers(gGrp, [{ kind: 'char', ownerId: gFix.m, accountId: gFix.m }]);
+  if (again.added.length !== 0) throw new Error('已在本群的应跳过');
+  const r = S.groupStore.setMemberStatus(gGrp, gFix.n, 'left');
+  if (!r.ok) throw new Error(r.message);
+  if (S.groupStore.membersOf(gGrp).length !== 3) throw new Error('退群后应 3 个活跃');
+  if (S.groupStore.membersOf(gGrp, true).length !== 4) throw new Error('留档行不能物理删');
+  return { 重复邀: 0, 退群: 'left 留档' };
+});
+
+t('updateGroup：settings 白名单合并，不是整体替换', () => {
+  const r = S.groupStore.updateGroup(gGrp, {
+    name: '周末出门群（改）',
+    settings: { rhythm: 'active', mute: true }
+  });
+  if (!r.ok) throw new Error(r.message);
+  if (r.group.settings.opening !== 'user') throw new Error('settings 整体替换会冲掉别的键');
+  if (r.group.settings.rhythm !== 'active') throw new Error('rhythm 没改到');
+  return { 名: r.group.name, 节奏: r.group.settings.rhythm };
+});
+
+t('群按房隔离：换房看不见 + removeSandbox 连带清三张表', () => {
+  const other = S.core.createSandbox('isle', '别的房');
+  S.core.setActiveSandbox(other.id);
+  const seen = S.groupStore.listGroups();
+  if (seen.length !== 0) throw new Error('别的房不该看见这个群，实 ' + seen.length);
+  S.core.setActiveSandbox(gFix.arch);
+  S.core.removeSandbox(other.id);
+  /* 删群测试群岛：三张表都应该清掉 */
+  const before = {
+    groups: S.store.get('groups').length,
+    members: S.store.get('groupMembers').length,
+    msgs: S.store.get('groupMessages').length
+  };
+  if (!before.groups) throw new Error('测试前置不对：群里没数据');
+  S.core.removeSandbox(gFix.arch);
+  const after = {
+    groups: S.store.get('groups').length,
+    members: S.store.get('groupMembers').length,
+    msgs: S.store.get('groupMessages').length
+  };
+  if (after.groups + after.members + after.msgs !== 0) {
+    throw new Error('removeSandbox 没清干净：' + JSON.stringify(after));
+  }
+  return '三表全清';
+});
+
+/* ---------------- page-group-ai：群聊调度引擎（纯函数部分） ----------------
+   装配、本体归并、输出校验是程序正确性的核心 —— 串脑的账不能记一半。
+   runRound 的网络路径打不了桩，这里只测程序裁决的部分。 */
+
+console.log('\n--- page-group-ai：群调度 ---');
+
+const aiFix = (() => {
+  const m = S.core.upsertChar({ name: '纪言', kind: 'main', content: '群调度测试大号。' }).id;
+  const s = S.core.upsertChar({ name: '夜灯', kind: 'sub', parentId: m, content: '群调度测试皮套。' }).id;
+  const n = S.core.upsertChar({ name: '店长', kind: 'npc', parentId: m, content: 'NPC 人设', knownBy: [] }).id;
+  const u = S.core.upsertUser({ name: '梦梦' }).id;
+  const sb = S.core.createSandbox('archipelago', '群调度测试');
+  S.core.setActiveSandbox(sb.id);
+  const g = S.groupStore.createGroup({
+    name: '调度测试群', ownerAccountId: u,
+    members: [
+      { kind: 'char', ownerId: m, accountId: m },
+      { kind: 'char', ownerId: m, accountId: s },
+      { kind: 'npc', ownerId: n, accountId: n }
+    ]
+  });
+  if (!g.ok) throw new Error(g.message);
+  S.groupStore.addMessage(g.group.id, { senderKind: 'user', senderAccountId: u, content: '@全体成员 明晚有空吗？' });
+  return { m, s, n, u, gid: g.group.id };
+})();
+
+t('entitiesOf：大号+皮套归并成本体、NPC 独立（调度去重的原料）', () => {
+  const es = S.groupAI.entitiesOf(aiFix.gid);
+  if (es.length !== 2) throw new Error('应 2 个本体，实 ' + es.length);
+  const charE = es.find((e) => e.kind === 'char');
+  if (charE.accounts.length !== 2) throw new Error('同一本体应 2 个账号');
+  return { 本体: es.length, 账号: charE.accounts.length };
+});
+
+t('composeRound：卡/成员/知识/历史/预算五段齐', () => {
+  const r = S.groupAI.composeRound(aiFix.gid, { stimulus: '（测试）', budget: { actors: 2, msgs: 5 } });
+  if (!r) throw new Error('没装配出来');
+  const sys = r.messages[0].content;
+  const usr = r.messages[1].content;
+  if (sys.indexOf('群聊里的多个角色') < 0) throw new Error('调度卡没进 system');
+  if (sys.indexOf('[ENTITY_KNOWLEDGE]') < 0) throw new Error('知识切片没进');
+  if (sys.indexOf('纪言') < 0) throw new Error('本体人设没进');
+  if (usr.indexOf('[RECENT_GROUP]') < 0 || usr.indexOf('明晚有空吗') < 0) throw new Error('群历史没进');
+  if (usr.indexOf('[BUDGET]') < 0) throw new Error('预算没进');
+  if (r.entities.length !== 2) throw new Error('候选本体不对');
+  return { 段: 5, 本体: r.entities.length };
+});
+
+t('parseRoundJSON：围栏 JSON 能剥', () => {
+  const raw = '```json\n{"plans":[],"messages":[],"suggestContinue":false}\n```';
+  const d = S.groupAI.parseRoundJSON(raw);
+  if (!d || !Array.isArray(d.plans)) throw new Error('围栏没剥掉');
+  return 'ok';
+});
+
+t('validateRound：合法输出全通过，delay 收进 300~4000', () => {
+  const round = S.groupAI.composeRound(aiFix.gid, { budget: { actors: 2, msgs: 5 } });
+  const v = S.groupAI.validateRound(round, {
+    plans: [
+      { entityId: aiFix.m, action: 'group_reply', accountId: aiFix.s, intent: '接话' },
+      { entityId: aiFix.n, action: 'observe', internalUpdate: '先看着' }
+    ],
+    messages: [
+      { senderAccountId: aiFix.s, content: '我可以。', delayMs: 9000 },
+      { senderAccountId: aiFix.s, content: '地点也没问题。', delayMs: 300 }
+    ],
+    suggestContinue: true
+  }, aiFix.gid);
+  if (!v.ok) throw new Error('应通过：' + JSON.stringify(v.errors));
+  if (v.messages.length !== 2) throw new Error('两条都该落地');
+  if (v.messages[0].delayMs !== 4000) throw new Error('delay 应夹到 4000');
+  if (v.messages[1].delayMs !== 300) throw new Error('下限 300');
+  return { 落地: v.messages.length, 夹取: v.messages[0].delayMs };
+});
+
+t('validateRound：未获准的账号 / 群外账号 / 超预算消息全部拒收', () => {
+  const round = S.groupAI.composeRound(aiFix.gid, { budget: { actors: 1, msgs: 1 } });
+  /* observe 的本体发消息 → 拒 */
+  const v1 = S.groupAI.validateRound(round, {
+    plans: [{ entityId: aiFix.n, action: 'observe' }],
+    messages: [{ senderAccountId: aiFix.n, content: '我不该说话' }]
+  }, aiFix.gid);
+  if (v1.ok) throw new Error('observe 本体的发言应拒');
+  /* 群外账号 → 拒 */
+  const v2 = S.groupAI.validateRound(round, {
+    plans: [{ entityId: aiFix.m, action: 'group_reply', accountId: aiFix.m }],
+    messages: [{ senderAccountId: 'ghost-account', content: '幽灵' }]
+  }, aiFix.gid);
+  if (v2.ok) throw new Error('群外账号应拒');
+  /* 超预算 → 截断 */
+  const v3 = S.groupAI.validateRound(round, {
+    plans: [{ entityId: aiFix.m, action: 'group_reply', accountId: aiFix.m }],
+    messages: [
+      { senderAccountId: aiFix.m, content: '一' },
+      { senderAccountId: aiFix.m, content: '二' }
+    ]
+  }, aiFix.gid);
+  if (v3.messages.length !== 1) throw new Error('超预算应截到 1 条');
+  return { observe拒: true, 幽灵拒: true, 截断: v3.messages.length };
+});
+
+t('同本体未授权双账号表演被拦（总纲 7.3/12.3）', () => {
+  const round = S.groupAI.composeRound(aiFix.gid, { budget: { actors: 1, msgs: 5 } });
+  const v = S.groupAI.validateRound(round, {
+    plans: [{ entityId: aiFix.m, action: 'group_reply', accountId: aiFix.m }],
+    messages: [
+      { senderAccountId: aiFix.m, content: '大号说' },
+      { senderAccountId: aiFix.s, content: '小号也说' }
+    ]
+  }, aiFix.gid);
+  if (v.ok) throw new Error('换账号应拦');
+  return '拦住';
+});
+
+t('延迟补回：defer 落账 → 下一轮注入 [PENDING]，注入即清', () => {
+  S.groupAI.saveDefer(aiFix.gid, [
+    { entityId: aiFix.m, action: 'defer', internalUpdate: '在开会，晚点回' },
+    { entityId: 'ghost-entity', action: 'defer', internalUpdate: '幽灵不该记' }
+  ]);
+  const r = S.groupAI.composeRound(aiFix.gid, { stimulus: '（测试）' });
+  const usr = r.messages[1].content;
+  if (usr.indexOf('[PENDING]') < 0) throw new Error('pending 没注入');
+  if (usr.indexOf('在开会，晚点回') < 0) throw new Error('念头没带上');
+  if (usr.indexOf('幽灵不该记') >= 0) throw new Error('群外本体不该入账');
+  const r2 = S.groupAI.composeRound(aiFix.gid, { stimulus: '（测试2）' });
+  if (r2.messages[1].content.indexOf('[PENDING]') >= 0) throw new Error('注入后应清空');
+  return '落账→注入→清';
+});
+
+t('内心注记跨波连续：saveInner → 下一轮还到同一个本体', () => {
+  S.groupAI.saveInner(aiFix.gid, [
+    { entityId: aiFix.m, internalUpdate: '对这家店的印象变差了' }
+  ]);
+  const r = S.groupAI.composeRound(aiFix.gid, { stimulus: '（测试）' });
+  const sys = r.messages[0].content;
+  if (sys.indexOf('对这家店的印象变差了') < 0) throw new Error('注记没进切片');
+  if (sys.indexOf('夜灯') < 0) throw new Error('注记该跟在人身上');
+  return '注记还上了';
+});
+
+
+/* ---------------- 群聊记忆：线上阈值 + about 拆库 ----------------
+   （放在最后：自带夹具，不依赖前面任何存活角色。） */
+console.log('\n--- page-group-offline：群聊记忆 ---');
+
+const gmFix = (() => {
+  const a = S.core.upsertChar({ name: '阿澈', kind: 'main', content: '群记忆测试大号' }).id;
+  const n2 = S.core.upsertChar({ name: '柜台', kind: 'npc', parentId: a, content: '群记忆测试NPC' }).id;
+  const u2 = S.core.upsertUser({ name: '测试员' }).id;
+  const sb = S.core.createSandbox('archipelago', '群记忆测试群岛');
+  S.core.setSandboxChars(sb.id, [a]);
+  S.core.setActiveSandbox(sb.id);
+  const g = S.groupStore.createGroup({
+    name: '记忆测试群', ownerAccountId: u2,
+    members: [{ kind: 'char', ownerId: a, accountId: a }, { kind: 'npc', ownerId: n2, accountId: n2 }]
+  });
+  return { gid: g.group.id, a, n2, arch: sb.id };
+})();
+
+t('groupMemory.shouldRun：新群不跑，30 条触发', () => {
+  if (S.groupMemory.shouldRun(gmFix.gid) !== false) throw new Error('空群不应触发');
+  for (let i = 0; i < 30; i++) {
+    S.groupStore.addMessage(gmFix.gid, { senderKind: 'char', senderAccountId: gmFix.a, content: '闲聊 ' + i });
+  }
+  if (S.groupMemory.shouldRun(gmFix.gid) !== true) throw new Error('30 条应触发');
+  return '0 否 / 30 是';
+});
+
+t('groupMemory.settle：about 拆库入库，about 对不上名单的跳过', async () => {
+  const fakeJson = JSON.stringify({
+    changes: [
+      { op: 'add', about: '阿澈', kind: 'shared_event', evidence: 'confirmed_event', text: '群里约好周末一起做饭' },
+      { op: 'observe', about: '柜台', kind: 'character_inference', evidence: 'character_inference', text: '柜台觉得这群人吃饭很准时' },
+      { op: 'add', about: '不存在的角色', kind: 'custom', evidence: 'uncertain', text: '这条应被跳过' },
+      { op: 'add', about: '测试员', kind: 'user_fact', evidence: 'user_explicit', text: 'user 不建库，也应跳过' }
+    ]
+  });
+  const r = await S.groupMemory.settle(
+    [gmFix.a, gmFix.n2],
+    '阿澈：周末一起做饭吧\n柜台：行，人齐就行',
+    '群「记忆测试群」线上累计 测试', 'online',
+    { source: 'main', label: '假API', cfg: {} },
+    () => Promise.resolve({ ok: true, text: fakeJson })
+  );
+  if (!r.ok) throw new Error('settle 失败：' + r.error);
+  if (r.added !== 2) throw new Error('应入库 2 条，实 ' + r.added);
+  const M = S.memoryStore;
+  const fa = M.loadCharMemory(gmFix.a);
+  const hitA = fa.memories.find((m) => m.content === '群里约好周末一起做饭');
+  if (!hitA) throw new Error('阿澈的记忆没进库');
+  if (hitA.source !== 'ai_summary') throw new Error('线上来源应为 ai_summary');
+  if (hitA.status !== 'active') throw new Error('confirmed_event 应 active');
+  const fn = M.loadCharMemory(gmFix.n2);
+  const hitN = fn.memories.find((m) => m.content === '柜台觉得这群人吃饭很准时');
+  if (!hitN || hitN.status !== 'pending') throw new Error('NPC 的观察记忆应 pending 入库');
+  return { 入库: r.added, 跳过: r.skipped };
+});
+
+t('groupMemory.settle：解析失败老实报错不炸', async () => {
+  const r = await S.groupMemory.settle(
+    [gmFix.a], '阿澈：在吗', '测试', 'online',
+    { source: 'main', label: '假API', cfg: {} },
+    () => Promise.resolve({ ok: true, text: '这不是 JSON' })
+  );
+  if (r.ok !== false) throw new Error('坏输出应报失败');
+  return '报错正常';
+});
+
+/* ---------------- v5 12.1 + 确认流补课 ----------------
+   独立记忆模型、autoAnchorMoments 消费端、留痕批量确认。 */
+
+console.log('\n--- 记忆模型 / 锚定沉淀 / 批量确认 ---');
+t('summaryEngine.candFor：memoryApiCfg 指定副 API，被删回落主 API', () => {
+  S.store.set('mainApi', { enabled: true, baseUrl: 'https://m.test', model: 'm1', name: '主API' });
+  S.store.set('subApis', [{ enabled: true, baseUrl: 'https://s.test', model: 's1', name: '副API' }]);
+  S.store.set('memoryApiCfg', null);
+  if (S.summaryEngine.candFor().source !== 'main') throw new Error('默认应跟随主 API');
+  S.store.set('memoryApiCfg', { mode: 'pick', label: '副API' });
+  const c1 = S.summaryEngine.candFor();
+  if (c1.source !== 'sub' || c1.cfg.model !== 's1') throw new Error('应选副 API');
+  S.store.set('memoryApiCfg', { mode: 'pick', label: '不存在的模型' });
+  if (S.summaryEngine.candFor().source !== 'main') throw new Error('被删应回落主 API');
+  S.store.set('memoryApiCfg', null);
+  S.store.set('subApis', []);
+  return '指定→副 / 缺失→主';
+});
+t('ingest：autoAnchor 开 → priority=high 入库即锚定；批量确认 pending', () => {
+  const ch = S.core.upsertChar({ name: '锚定测试', kind: 'main' }).id;
+  const parsed = { changes: [
+    { op: 'add', kind: 'shared_event', evidence: 'confirmed_event', text: '高优先时刻', priority: 'high' },
+    { op: 'add', kind: 'custom', evidence: 'confirmed_event', text: '普通条目', priority: 'low' }
+  ] };
+  const s1 = S.summaryEngine.ingest(ch, parsed, { source: 'offline', ref: '测试', autoAnchor: true });
+  if (s1.added !== 2) throw new Error('应入库 2 条，实 ' + s1.added);
+  const f1 = S.memoryStore.loadCharMemory(ch);
+  const hi = f1.memories.find((m) => m.content === '高优先时刻');
+  const lo = f1.memories.find((m) => m.content === '普通条目');
+  if (!hi || !hi.isAnchor) throw new Error('priority=high 应被自动锚定');
+  if (!lo || lo.isAnchor) throw new Error('low 不应锚定');
+
+  /* 开关没开（meta 不带 autoAnchor）→ 不锚 */
+  const ch2 = S.core.upsertChar({ name: '锚定测试2', kind: 'main' }).id;
+  S.summaryEngine.ingest(ch2, parsed, { source: 'offline', ref: '测试' });
+  const f2 = S.memoryStore.loadCharMemory(ch2);
+  if (f2.memories.some((m) => m.isAnchor)) throw new Error('没开开关不应锚定');
+
+  /* 批量确认：observe 入库两条 pending → 一次全确认 */
+  S.summaryEngine.ingest(ch, { changes: [
+    { op: 'observe', kind: 'custom', evidence: 'uncertain', text: '待确认A' },
+    { op: 'observe', kind: 'custom', evidence: 'uncertain', text: '待确认B' }
+  ] }, { source: 'offline', ref: '测试' });
+  const f3 = S.memoryStore.loadCharMemory(ch);
+  const pendIds = f3.memories.filter((m) => m.status === 'pending').map((m) => m.id);
+  if (pendIds.length !== 2) throw new Error('应有 2 条 pending，实 ' + pendIds.length);
+  const n = S.memoryStore.confirmMemoryItems(ch, pendIds);
+  if (n !== 2) throw new Error('批量确认数不对：' + n);
+  const f4 = S.memoryStore.loadCharMemory(ch);
+  if (f4.memories.some((m) => m.status === 'pending')) throw new Error('还有 pending 残留');
+
+  S.store.set('charMem:' + ch, null);
+  S.store.set('charMem:' + ch2, null);
+  S.core.removeChar(ch);
+  S.core.removeChar(ch2);
+  return { 锚定: true, 关不锚: true, 批量确认: n };
+});
 
 /* 收尾：有异步断言挂着时不能提前打总结 ——
    beforeExit 在事件循环清空（Promise 全部落定）时才触发，正好。 */

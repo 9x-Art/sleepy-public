@@ -255,12 +255,14 @@
       child = renderPanel(cur, panel, ctx);
     }
 
-    /* 朋友圈那一屏的返回不退回桌面，先切到消息 tab
-       （用户：「返回需要默认返回到 chat 的首页而不是桌面」）。
+    /* 停在朋友圈 / 我 这两屏时，返回先切回消息 tab（= 聊天列表页），
        已经在消息 tab 就放行，让壳子照常退回桌面。
-       右滑返回和左上角返回键都走 app.js 的 requestBack，都会经过这里。 */
+       右滑返回和左上角返回键都走 app.js 的 requestBack，都会经过这里。
+       2026-09-19：原来只挂在 moments 入口上 —— 从「聊天」图标进来
+       （chat-list 入口）切到朋友圈再返回，会直接退回桌面
+       （用户：「要返回聊天列表页」）。现在三个入口统一挂。 */
     ctx.__backGuard = function () {
-      if (cur !== 'moments') return false;
+      if (cur === 'chat') return false;
       go('chat');
       return true;
     };
@@ -298,13 +300,10 @@
          从配置台改完东西回来，都靠它。 */
       onShow: function (ctx) { if (ctx.__appRefresh) ctx.__appRefresh(); }
     };
-    /* 只有朋友圈入口接管返回：停在朋友圈 tab 时先切回消息 tab，
-       已经是消息 tab 就交还给壳子（退回桌面）。 */
-    if (id === 'moments') {
-      def.onBack = function (ctx) {
-        return ctx.__backGuard ? ctx.__backGuard() : false;
-      };
-    }
+    /* 三个入口统一接管返回：非消息 tab 先切回消息 tab（见 mount 里的守卫）。 */
+    def.onBack = function (ctx) {
+      return ctx.__backGuard ? ctx.__backGuard() : false;
+    };
     Sleepy.register(id, def);
   });
 

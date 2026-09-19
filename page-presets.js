@@ -90,7 +90,8 @@
         [
           { id: 'f2', name: '线下普通回复', hint: '线下模式 · 已接' },
           { id: 'summary', name: '总结（线上累计 / 线下大）', hint: '记忆系统 v5 · 已接' },
-          { id: 'proactive', name: '主动消息', hint: '主动消息引擎 · 已接' }
+          { id: 'proactive', name: '主动消息', hint: '主动消息引擎 · 已接' },
+          { id: 'groupRound', name: '群聊一轮编排', hint: '线上群聊 · 已接' }
         ].forEach(function (t) {
           var lockedCard = !!(E.cardMeta(t.id) && E.cardMeta(t.id).locked) && !dev;
           var r = h('button', 'pp-row pp-row-active');

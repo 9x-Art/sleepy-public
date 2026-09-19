@@ -664,7 +664,7 @@
       {
         label: '新建', svg: ICON_PLUS, onClick: function () {
           openPlusSheet(ctx, [
-            { label: '发起群聊', run: function () { ctx.open('contact-group'); } },
+            { label: '发起群聊', run: function () { ctx.open('group-create'); } },
             { label: '新的对话', run: function () { pickCharacter(ctx); } }
           ]);
         }
@@ -676,14 +676,70 @@
       var people = getCharacters();
       var inRoom = getChats();          /* 全屋的（不分马甲），只用来写空态文案 */
       listWrap.innerHTML = '';
-      emptyWrap.style.display = chats.length ? 'none' : 'flex';
-      emptyHint.textContent = !inRoom.length
+      var groups = Sleepy.groupStore ? Sleepy.groupStore.listGroups() : [];
+      emptyWrap.style.display = (chats.length || groups.length) ? 'none' : 'flex';
+      emptyHint.textContent = !(inRoom.length || groups.length)
         ? (people.length
           ? '点右上角的 + 从这间房里挑一个角色'
           : '这间房里还没有角色 · 先去浮岛的配置台放一个')
         /* 屋里明明有对话、这一屏是空的 —— 只能是「换了张脸」。
            不说清楚的话看着就像聊天记录丢了。 */
         : '换张脸试试 · 或者点右上角的 + 找个人聊';
+
+      /* ---- 群聊区（线上群聊 v1）：拼图头像 + 群名 + 最新一条 ----
+         在私聊列表之上。解散走二次确认；群里的人不受影响（成员只是退群）。 */
+      if (groups.length && Sleepy.groupUI) {
+        var gHead = h('p', 'chat-list-sect', '群聊');
+        listWrap.appendChild(gHead);
+        groups.forEach(function (g) {
+          var item = h('div', 'chat-item chat-item-group');
+          item.appendChild(Sleepy.groupUI.collageEl(g.id, 'list'));
+
+          var main = h('div', 'chat-item-main');
+          main.appendChild(h('span', 'chat-item-name', g.name));
+          var meta = h('div', 'chat-item-meta');
+          meta.appendChild(h('span', 'chat-item-time', relativeTime(g.updatedAt)));
+          var last = Sleepy.groupStore.lastMessage(g.id);
+          var preview = '';
+          if (last) {
+            if (last.type === 'system') preview = last.content;
+            else if (last.recalledAt) preview = '撤回了一条消息';
+            else {
+              var lm = Sleepy.groupStore.findMember(g.id, last.senderAccountId);
+              preview = (lm ? Sleepy.groupStore.accountMeta(lm).name : '?') +
+                '：' + String(last.content || '').slice(0, 24);
+            }
+          }
+          meta.appendChild(h('span', 'chat-item-preview', preview));
+          main.appendChild(meta);
+          item.appendChild(main);
+
+          var del = h('button', 'chat-item-del', '删');
+          del.type = 'button';
+          del.title = '解散并删除这个群';
+          del.addEventListener('click', async function (e) {
+            e.stopPropagation();
+            var yes = await ui.confirm({
+              title: '解散「' + g.name + '」？',
+              note: '群的聊天记录和成员记录会一起没掉，角色那边不会收到任何通知。',
+              ok: '解散',
+              danger: true
+            });
+            if (!yes) return;
+            Sleepy.groupStore.removeGroup(g.id);
+            rebuild();
+            ctx.toast('已解散', 'ok');
+          });
+          item.appendChild(del);
+
+          item.addEventListener('click', function () {
+            ctx.open('group-chat', { groupId: g.id });
+          });
+          listWrap.appendChild(item);
+        });
+
+        listWrap.appendChild(h('p', 'chat-list-sect', '私聊'));
+      }
 
       chats.forEach(function (chat) {
         var item = h('div', 'chat-item');

@@ -24,7 +24,7 @@
 
   /* ---------------------------- 设置 ---------------------------- */
 
-  var DEF = { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120 };
+  var DEF = { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120, deferMin: 90 };
 
   function settings() {
     var s = store.get('proactiveSettings') || {};
@@ -225,8 +225,10 @@
 
       /* skip / defer / blocked：候选记为已处理，别让它每轮卷土重来；
          defer 额外给一段冷却（卡里说「保留后续触发条件」——
-         MVP 用 90 分钟的暂缓期表达这件事） */
-      if (d.decision === 'defer') ps.deferredUntil = Date.now() + 90 * 60000;
+         暂缓期时长可在「主动消息安排」里配，默认 90 分钟） */
+      if (d.decision === 'defer') {
+        ps.deferredUntil = Date.now() + (st.deferMin || 90) * 60000;
+      }
       saveState(charId, ps);
       return done({ ok: true, decision: d.decision || 'skip',
         reason: d.reasonCode || '' });
@@ -266,10 +268,30 @@
 
   /* ---------------------------- 对外 ---------------------------- */
 
+  /* 实时闸门文案（给设置行注用）：不发起请求，纯本地判断。
+     defer / cooldown 带剩余分钟数，比 GATE_WHY 的静态文案更可读。 */
+  function gateWhyText(charId, opts) {
+    var g = gateFor(charId, opts);
+    if (g.ok) return '现在就有合适的时机';
+    if (g.why === 'defer') {
+      var ps = stateOf(charId);
+      var min = Math.max(1, Math.ceil(((ps.deferredUntil || 0) - Date.now()) / 60000));
+      return 'TA 暂缓了，约 ' + min + ' 分钟后再看';
+    }
+    if (g.why === 'cooldown') {
+      var st = settings();
+      var ps2 = stateOf(charId);
+      var min2 = Math.max(1, Math.ceil(((ps2.lastAt || 0) + st.cooldownMin * 60000 - Date.now()) / 60000));
+      return '冷却中，约 ' + min2 + ' 分钟后';
+    }
+    return GATE_WHY[g.why] || g.why;
+  }
+
   Sleepy.proactiveEngine = {
     sweep: sweep,
     evaluate: evaluate,
     gateFor: gateFor,
+    gateWhyText: gateWhyText,
     candidatesFor: candidatesFor,
     settings: settings,
     saveSettings: saveSettings,

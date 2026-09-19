@@ -370,6 +370,46 @@
       ].join('\n')
     },
 
+    /* 群聊一轮编排（线上群聊 v1）。调度 + 普通轮次发言在同一调用里完成
+       （总纲 11.5：普通轮次可一次模型调用生成本波多人消息，结构化约束限制各自知识）。
+       高风险轮次（掉马/泄密/同本体多账号表演）后续拆独立调用。 */
+    groupRound: {
+      title: '群聊一轮编排',
+      locked: true,
+      body: [
+        '你负责让一个群聊里的多个角色各自「像自己」地行动。',
+        '群里的成员是公开账号；同一角色的多个账号共享意识与记忆，但以不同身份出现在群里。',
+        '',
+        '【调用任务】',
+        '根据群成员、每个角色的设定与关系、本轮触发消息和近期群聊，先给每个候选本体一个行动计划（plans），再为行动者写出实际消息（messages）。',
+        '调度与发言分开想，但一次输出。',
+        '',
+        '【先调度：每个本体独立判断】',
+        '- availability：此刻有没有空、会不会刚看到消息',
+        '- interest：这件事跟 TA 的相关度（被 @ / 被引用 / 事件相关 / 关系紧密 / 立场受影响 / 性格主动，都会提高；正忙 / 最近发言多 / 有更合适的人 / 话题无关，都会降低）',
+        '- action：group_reply（说话）/ observe（看在眼里，不说话，internalUpdate 记一笔）/ defer（现在忙，稍后处理）',
+        '- 同一本体有多个账号在群里时，选一个当下最合适的账号发言；多个账号同时行动必须有明确目的（伪装、掩护、用小号说大号不便说的话），没有就不这么干',
+        '- 允许没有人回复：所有人都没理由开口时，messages 为空是正确结果',
+        '',
+        '【再发言】',
+        '- 只给 action=group_reply 的本体写消息；账号必须用该本体的、在 plans 里选定的账号',
+        '- 每条消息 1~2 句，短，像真的群聊；一个本体可以连发 1~3 条',
+        '- 每个角色保持自己的语言习惯和立场；角色之间可以直接接话、抬杠、打趣，不要所有人围着最后一条消息转',
+        '- 严格遵守知识边界：本体只知道 TA 看得见的群消息和 [ENTITY_KNOWLEDGE] 里 TA 自己的内容；别人的私聊、别的账号背后的归属、TA 没看见的事，一概不知、不提、不暗示',
+        '- plans 里写了 forbiddenDisclosures 的内容，绝不进入 messages',
+        '- 不新增 plans 之外的发言者；不替 user 说话或代写 user 的反应',
+        '',
+        '【输出结构 · 硬约束】',
+        '只输出一个 JSON 对象：',
+        '{"plans":[{"entityId":"...","action":"group_reply|observe|defer","accountId":"...","intent":"一句话","publicPosture":"想表现出什么","internalUpdate":"observe/defer 时的心理注记","forbiddenDisclosures":["..."]}],"messages":[{"senderAccountId":"...","content":"...","delayMs":800}],"suggestContinue":false}',
+        '- plans 覆盖全部候选本体（包括不说话的）',
+        '- messages 里每条消息的 senderAccountId 必须属于某个 action=group_reply 的本体；同一本体只用一个账号',
+        '- delayMs 是这条消息发出前的自然停顿毫秒数（300~4000）',
+        '- suggestContinue：这波之后群里是否还有真实的接话动机（true=有，false=没有或只剩重复附和）',
+        '- 只输出 JSON 本体，不要 Markdown 代码块，不要 JSON 以外的文字'
+      ].join('\n')
+    },
+
     /* 总结模块（线上累计 + 线下大总结共用）。数据槽（SOURCE_RANGE /
        原文块 / 旧记忆摘要）未接。 */
     summary: {
@@ -1131,6 +1171,7 @@
     /* 装配与解析 */
     assembleOnline: assembleOnline,
     assembleOffline: assembleOffline,
+    cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,
     parseReply: parseReply,

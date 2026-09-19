@@ -985,7 +985,9 @@
           mutateSession(id, function (s) { s.summary = r.summary; s.summaryError = false; });
           if (r.summary.data && Sleepy.summaryEngine) {
             var stat = Sleepy.summaryEngine.ingest(session.charId, r.summary.data,
-              { source: 'offline', ref: '见面 #' + pad2(session.sceneCount) });
+              { source: 'offline', ref: '见面 #' + pad2(session.sceneCount),
+                /* 「自动沉淀重要时刻」开 → priority=high 的条目入库即锚定 */
+                autoAnchor: (session.systemSettings || {}).autoAnchorMoments !== false });
             var scene = r.summary.data.scene;
             if (scene && scene.continuationPoint) {
               mutateSession(id, function (s) { s.continuationPoint = scene.continuationPoint; });
@@ -1526,7 +1528,7 @@
         p.appendChild(itSec);
 
         var memSec = section('记忆');
-        memSec.appendChild(rowToggle('自动沉淀重要时刻', '系统判断后推荐写入长期记忆（记忆系统上线后生效）',
+        memSec.appendChild(rowToggle('自动沉淀重要时刻', '总结时把模型标为「重要」的时刻自动锚定，永远优先召回',
           sys.autoAnchorMoments !== false, function (v) { updateSystem(id, { autoAnchorMoments: v }); }));
         memSec.appendChild(rowToggle('线下内容独立存档', '不流入线上聊天记录，单独归档',
           sys.offlineArchive !== false, function (v) { updateSystem(id, { offlineArchive: v }); }));
@@ -1697,7 +1699,11 @@
     updateSystem: updateSystem,
     updateEnv: updateEnv,
     setApiModel: setApiModel,
-    defaultApiModel: defaultApiModel
+    defaultApiModel: defaultApiModel,
+    /* 群聊线下场景复用同一套接口选择与调用（page-group-offline 用） */
+    apiChoices: apiChoices,
+    candForSession: candForSession,
+    callModel: callModel
   };
 
   /* 门弹窗：page-chat 的门图标直接调这个，不再经过入口页 */

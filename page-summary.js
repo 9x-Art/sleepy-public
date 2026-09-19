@@ -120,6 +120,9 @@
         createdAt: nowIso(),
         updatedAt: nowIso()
       };
+      /* 「自动沉淀重要时刻」消费端：线下设置开着时，模型标了 priority=high
+         的条目自动锚定（锚定条目注入时不受 maxItems 限制且永远优先） */
+      if (meta.autoAnchor === true && c.priority === 'high') item.isAnchor = true;
       if (replaces.length) item.supersededBy = replaces[0];
       /* 第三梯队 5「查看原文定位到气泡」：sourceIds 是整理范围内的序号
          （1 起），transcript 是按消息顺序拼的，所以能反查回真实消息 id。
@@ -171,13 +174,25 @@
   }
 
   /* ---------------------------- 模型 ----------------------------
-     MVP 跟随主 API（v5 12.1 的独立记忆模型留给设置轮）。 */
-  function candFor() {
+     v5 12.1：可在「对话设置 → 记忆整理用的模型」指定独立模型
+     （memoryApiCfg = {mode:'pick', label}），没指定 / 模型被删 → 回落主 API。 */
+  function mainCand() {
     var main = store.get('mainApi');
     if (main && main.enabled && main.baseUrl && main.model) {
       return { source: 'main', label: main.name || '主 API', cfg: main };
     }
     return null;
+  }
+  function candFor() {
+    if (store.get('memoryApiCfg') && store.get('memoryApiCfg').mode === 'pick' &&
+        Sleepy.offlineStore && Sleepy.offlineStore.apiChoices) {
+      var label = store.get('memoryApiCfg').label;
+      var list = Sleepy.offlineStore.apiChoices();
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].label === label) return list[i].cand;
+      }
+    }
+    return mainCand();   /* 没指定或指定的模型不在了 → 主 API */
   }
 
   function callOnce(cand, messages) {
@@ -291,6 +306,7 @@
         })()
       });
       store.set(cursorKey(chatId), { startIdx: msgs.length, at: Date.now() });
+      store.set('sumRawFail:' + chatId, null);   /* 成功了就摘掉失败记录（重试入口随之消失） */
       return { ok: true, stat: stat };
     });
   }
@@ -333,7 +349,8 @@
     parseSummaryJson: parseSummaryJson,
     summarizeOnline: summarizeOnline,
     onChatTurn: onChatTurn,
-    runNow: runNow
+    runNow: runNow,
+    candFor: candFor
   };
 
 })(window);

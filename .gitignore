@@ -19,3 +19,4 @@ _shots/
 
 # WorkBuddy 助手工作区（记忆文件，不上传）
 .workbuddy/
+.wrangler/

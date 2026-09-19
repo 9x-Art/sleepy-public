@@ -115,7 +115,7 @@
 
   function renderPickerList() {
     var els = ensurePicker();
-    var people = cs().getCharacters();
+    var people = scopeToRoom(cs().getCharacters());
     var names = Sleepy.characters || {};
     els.list.innerHTML = '';
 
@@ -157,6 +157,28 @@
 
       els.list.appendChild(card);
     });
+  }
+
+  /* 选人面板按岛隔离（2026-09-19 用户抓的 bug：别的孤岛的角色混了进来）。
+     在某间房里时只给：房内大号+皮套 / 房内 NPC（沙盒归属+老数据兜底）/
+     当前 user 的 NPC。没进任何房才回落全量（老存档兼容）。 */
+  function scopeToRoom(list) {
+    var core = Sleepy.core;
+    if (!core || !core.scopeId || !core.scopeId()) return list;
+    var sid = core.scopeId();
+    var ok = {};
+    core.charsOfSandbox(sid).forEach(function (c) {
+      ok[c.id] = true;
+      var kids = (Sleepy.island ? Sleepy.island.offspringOf(sid, c.id, 'char') : []);
+      kids.forEach(function (k) { ok[k.id] = true; });
+    });
+    if (Sleepy.island && Sleepy.island.npcsOfRoom) {
+      var sb = core.findSandbox(sid);
+      Sleepy.island.npcsOfRoom(sb || { id: sid }).forEach(function (n) { ok[n.id] = true; });
+    }
+    var me = core.activeUser && core.activeUser();
+    if (me) (core.userNpcs ? core.userNpcs(me.id) : []).forEach(function (n) { ok[n.id] = true; });
+    return list.filter(function (c) { return ok[c.id]; });
   }
 
   /* opts: { title, onPick(ctx, character) }
@@ -250,7 +272,7 @@
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
     var st = Sleepy.proactiveEngine ? Sleepy.proactiveEngine.settings()
-      : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120 };
+      : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120, deferMin: 90 };
 
     var wrap = h('div', 'iol-drawer');
     var panel = h('div', 'iol-drawer-panel');
@@ -272,6 +294,7 @@
     var qe = field('免打扰结束（HH:MM）', st.quietEnd, '08:00');
     var mx = field('每天最多主动几次', String(st.maxPerDay), '2');
     var cd = field('两次主动之间的冷却（分钟）', String(st.cooldownMin), '120');
+    var df = field('TA 暂缓后再开口的间隔（分钟）', String(st.deferMin !== undefined ? st.deferMin : 90), '90');
 
     var actions = h('div', 'iol-drawer-actions');
     var cancel = h('button', 'iol-drawer-cancel', '先不改');
@@ -305,12 +328,78 @@
           quietStart: mm(qs.value, '23:00'),
           quietEnd: mm(qe.value, '08:00'),
           maxPerDay: num(mx.value, 2, 0, 12),
-          cooldownMin: num(cd.value, 120, 5, 1440)
+          cooldownMin: num(cd.value, 120, 5, 1440),
+          deferMin: num(df.value, 90, 5, 1440)
         });
         ctx.toast('主动消息节奏已更新', 'ok');
       }
       close();
     });
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
+  }
+
+  /* 记忆模型选择抽屉（v5 12.1）：总结/整理走哪个模型。
+     候选 = 跟随主 API + 主/副 API 里已启用的（复用线下的 apiChoices）。 */
+  function openMemoryApiDrawer(ctx) {
+    var host = ctx.el;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var cfg = store.get('memoryApiCfg') || { mode: 'main' };
+    var choices = (Sleepy.offlineStore && Sleepy.offlineStore.apiChoices)
+      ? Sleepy.offlineStore.apiChoices() : [];
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', '记忆整理用的模型'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '总结引擎和群记忆结算用的模型。没指定或指定的模型被删掉时，回落主 API。'));
+
+    function optionRow(label, desc, active, onPick) {
+      var r = h('button', 'iol-drawer-cancel' + (active ? ' is-active' : ''));
+      r.type = 'button';
+      r.style.cssText += 'display:block;width:100%;text-align:left;margin-top:8px;';
+      r.appendChild(h('span', '', label));
+      if (desc) r.appendChild(h('small', '', '　' + desc));
+      r.addEventListener('click', onPick);
+      panel.appendChild(r);
+      return r;
+    }
+
+    optionRow('跟随主 API', '', cfg.mode !== 'pick', function () {
+      store.set('memoryApiCfg', { mode: 'main' });
+      ctx.toast('记忆整理将使用主 API', 'ok');
+      close();
+      ctx.rebuild();
+    });
+    choices.forEach(function (c) {
+      optionRow(c.label, c.desc, cfg.mode === 'pick' && cfg.label === c.label, function () {
+        store.set('memoryApiCfg', { mode: 'pick', label: c.label });
+        ctx.toast('记忆整理将使用「' + c.label + '」', 'ok');
+        close();
+        ctx.rebuild();
+      });
+    });
+    if (!choices.length) {
+      panel.appendChild(h('p', 'iol-drawer-desc', '还没有可用的模型连接 —— 先去 设置 → 主 API 填一个。'));
+    }
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不改');
+    actions.appendChild(cancel);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
 
     wrap.appendChild(panel);
     host.appendChild(wrap);
@@ -368,16 +457,22 @@
       }));
       /* 主动消息引擎（第二梯队 4）：节奏设置 + 手动评估入口 */
       var st = Sleepy.proactiveEngine ? Sleepy.proactiveEngine.settings()
-        : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120 };
+        : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120, deferMin: 90 };
+      /* GATE_WHY 实时行注：本地判断不发请求，defer / 冷却带剩余分钟 */
+      var gateNow = (Sleepy.proactiveEngine && Sleepy.proactiveEngine.gateWhyText && chat.characterId)
+        ? Sleepy.proactiveEngine.gateWhyText(chat.characterId, {}) : '';
       secChat.appendChild(demoRow({
         label: '主动消息安排',
         note: '免打扰 ' + st.quietStart + '~' + st.quietEnd +
-          ' · 每天最多 ' + st.maxPerDay + ' 次 · 冷却 ' + st.cooldownMin + ' 分钟',
+          ' · 每天最多 ' + st.maxPerDay + ' 次 · 冷却 ' + st.cooldownMin + ' 分钟' +
+          ' · 暂缓 ' + (st.deferMin !== undefined ? st.deferMin : 90) + ' 分钟',
         onClick: function () { openProactiveDrawer(ctx); }
       }));
       secChat.appendChild(demoRow({
         label: '现在评估一次',
-        note: '忽略免打扰和冷却，让 TA 想想有没有要说的',
+        note: gateNow
+          ? '现在：' + gateNow + '（手动评估会忽略免打扰和冷却）'
+          : '忽略免打扰和冷却，让 TA 想想有没有要说的',
         onClick: function () {
           if (!Sleepy.proactiveEngine || !chat.characterId) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
           ctx.toast('正在问 ' + chName + '…', 'ok');
@@ -407,8 +502,12 @@
         switched: csRow.memory,
         onSwitch: function (v) { csRow.set('memory', v); }
       }));
+      /* 记忆模型（v5 12.1）：总结/整理可以走独立模型，默认跟随主 API */
+      var memCfg = store.get('memoryApiCfg') || { mode: 'main' };
       secMem.appendChild(demoRow({
-        label: '记忆方式', note: '跟随全局 · 等记忆系统 v5 开工'
+        label: '记忆整理用的模型',
+        note: memCfg.mode === 'pick' ? (memCfg.label || '指定模型') + '（没配置会回落主 API）' : '跟随主 API',
+        onClick: function () { openMemoryApiDrawer(ctx); }
       }));
       secMem.appendChild(demoRow({
         label: '整理聊天记忆', note: '把上次整理之后的新内容过一遍总结',
@@ -420,6 +519,7 @@
               ctx.toast(r.stat.added
                 ? '整理出 ' + r.stat.added + ' 条记忆，去「留痕」确认'
                 : '这段时间没有值得留的新东西', 'ok');
+              ctx.rebuild();
             } else if (r.error === 'noapi') {
               ctx.toast('先去 设置 → 主 API 配一个模型', 'warn');
             } else if (r.error !== 'empty') {
@@ -428,6 +528,32 @@
           });
         }
       }));
+      /* sumRawFail 重试入口：上次解析失败时给出真按钮，成功后自动消失 */
+      var sumFail = store.get('sumRawFail:' + chatId);
+      if (sumFail && sumFail.at) {
+        var ft = new Date(sumFail.at);
+        var ftText = ('0' + ft.getHours()).slice(-2) + ':' + ('0' + ft.getMinutes()).slice(-2);
+        secMem.appendChild(demoRow({
+          label: '上次整理没解析成功（' + ftText + '）',
+          note: '原文已存下来 · 点按再整理一次',
+          onClick: function () {
+            if (!Sleepy.summaryEngine) { ctx.toast('总结引擎没加载', 'err'); return; }
+            ctx.toast('正在重试…', 'ok');
+            Sleepy.summaryEngine.runNow(chatId).then(function (r) {
+              if (r.ok && r.stat) {
+                ctx.toast(r.stat.added
+                  ? '重试成功，整理出 ' + r.stat.added + ' 条记忆'
+                  : '重试成功（这次没有新条目）', 'ok');
+                ctx.rebuild();
+              } else if (r.error === 'noapi') {
+                ctx.toast('先去 设置 → 主 API 配一个模型', 'warn');
+              } else if (r.error !== 'empty') {
+                ctx.toast('✗ ' + (r.error || '还是没成'), 'err');
+              }
+            });
+          }
+        }));
+      }
       secMem.appendChild(demoRow({
         label: '前往留痕', note: '查看属于 ' + chName + ' 的记忆',
         onClick: function () { ctx.open('memory', { charId: charId }); }

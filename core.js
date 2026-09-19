@@ -241,7 +241,9 @@
     var removed = {};
     var scoped = ['chats', 'memories', 'links', 'photos', 'diaries',
                   'todos', 'favorites', 'userMasks', 'characters', 'moments',
-                  'wallet', 'stickers', 'offlineSessions'];
+                  'wallet', 'stickers', 'offlineSessions',
+                  'groups', 'groupMembers', 'groupMessages', 'offlineHandoffs',
+                  'groupOfflineSessions'];
     scoped.forEach(function (key) {
       var all = arr(store.get(key));
       if (!all.length) return;

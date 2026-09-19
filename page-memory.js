@@ -242,6 +242,23 @@
   function confirmMemoryItem(charId, memoryId) {
     updateMemoryItem(charId, memoryId, { status: 'active' });
   }
+  /* 批量确认（确认流升级）：一次落库，pendingCount 只同步一次 */
+  function confirmMemoryItems(charId, memoryIds) {
+    if (!Array.isArray(memoryIds) || !memoryIds.length) return 0;
+    var file = loadCharMemory(charId);
+    var want = {};
+    memoryIds.forEach(function (id) { want[id] = 1; });
+    var n = 0;
+    file.memories.forEach(function (m) {
+      if (want[m.id] && m.status === 'pending') {
+        m.status = 'active';
+        m.updatedAt = nowIso();
+        n++;
+      }
+    });
+    if (n) saveCharMemory(file);
+    return n;
+  }
   function invalidateMemoryItem(charId, memoryId) {
     updateMemoryItem(charId, memoryId, { status: 'invalid' });
   }
@@ -401,6 +418,7 @@
     addMemoryItem: addMemoryItem,
     deleteMemoryItem: deleteMemoryItem,
     confirmMemoryItem: confirmMemoryItem,
+    confirmMemoryItems: confirmMemoryItems,
     invalidateMemoryItem: invalidateMemoryItem,
     toggleAnchor: toggleAnchor,
     updateUnderstandingItem: updateUnderstandingItem,
@@ -772,6 +790,30 @@
 
         var list = h('div', 'lh-mem-list');
         fillList(list, computeRows(file), cfg);
+        /* 待确认筛选下的批量确认（fillList 会 innerHTML=''，所以放在它后面插）：
+           确认流不用一条条点进详情 */
+        if (fStatus === 'pending' && pendN > 0) {
+          var batch = h('button', 'lh-batch-confirm');
+          batch.type = 'button';
+          batch.textContent = '全部确认（' + pendN + ' 条都有效）';
+          batch.addEventListener('click', function () {
+            ui.confirm({
+              title: '全部确认？',
+              note: pendN + ' 条待确认记忆将全部转为当前有效。拿不准的先去详情页看原文。',
+              ok: '全部确认'
+            }).then(function (yes) {
+              if (!yes) return;
+              var fresh = loadCharMemory(charId);
+              var ids = fresh.memories
+                .filter(function (m) { return m.status === 'pending'; })
+                .map(function (m) { return m.id; });
+              var n = confirmMemoryItems(charId, ids);
+              ctx.toast(n ? '已确认 ' + n + ' 条' : '没有可确认的条目', 'ok');
+              build();
+            });
+          });
+          list.insertBefore(batch, list.firstChild);
+        }
         searchInput.addEventListener('input', function () {
           fQuery = searchInput.value;
           fillList(list, computeRows(file), cfg);
