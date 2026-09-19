@@ -6591,6 +6591,51 @@ span.msg-avatar-initial{
 .lk-save-sub{font-size:10.5px;color:var(--text-faint);}
 .lk-save.is-dirty .lk-save-sub{color:rgba(244,252,243,.75);}
 
+/* ---- 正文字颜色：行 + 色板抽屉（WPS 式点开可选） ---- */
+.lk-ink-row{
+  display:flex;align-items:center;justify-content:space-between;
+  width:calc(100% - 26px);margin:10px 13px 12px;
+  padding:10px 12px;border-radius:11px;
+  border:1px solid var(--g-glass-line);background:var(--g-glass-2);
+  font-family:inherit;cursor:pointer;text-align:left;
+}
+.lk-ink-label{font-size:13px;color:var(--text);}
+.lk-ink-right{display:flex;align-items:center;gap:7px;}
+.lk-ink-dot{
+  width:16px;height:16px;border-radius:50%;
+  border:1px solid rgba(0,0,0,.14);flex-shrink:0;
+}
+.lk-ink-dot.is-auto{
+  background:linear-gradient(140deg,#B08A5E33,#FFFFFF);
+}
+.lk-ink-value{font-size:11px;color:var(--text-faint);}
+.lk-ink-arrow{font-size:15px;color:var(--text-faint);}
+
+.lk-pal-auto{
+  display:block;width:100%;margin-bottom:10px;padding:9px 10px;
+  border-radius:10px;border:1px solid var(--g-glass-line);
+  background:var(--g-glass);font:inherit;font-size:13px;
+  color:var(--text-dim);cursor:pointer;text-align:left;
+}
+.lk-pal-auto.is-on{
+  border-color:var(--g-accent);color:var(--text);
+  background:rgba(176,128,80,.10);
+}
+.lk-pal-row{display:flex;gap:9px;margin-bottom:9px;}
+.lk-pal-cell{
+  flex:1;aspect-ratio:1;min-width:0;
+  border-radius:9px;border:1px solid rgba(0,0,0,.10);
+  cursor:pointer;padding:0;
+  transition:transform .12s var(--ease);
+}
+.lk-pal-cell:active{transform:scale(.9);}
+.lk-pal-cell.is-on{
+  border:2px solid var(--g-accent);
+  box-shadow:0 0 0 2px #FFFFFF,0 0 0 3.5px var(--g-accent);
+}
+.lk-pal-more{display:flex;justify-content:flex-end;margin-top:4px;}
+.lk-pal-more-btn{width:auto;min-width:150px;margin:0;padding:8px 11px;}
+
 /* ---- 单独修改 App：列表 + 编辑卡 ---- */
 .lk-app-row{
   display:flex;align-items:center;gap:11px;width:100%;

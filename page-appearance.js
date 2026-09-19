@@ -73,8 +73,18 @@
     { id: 'night', name: '夜色', hint: '深底浅线' }
   ];
 
-  var DEFAULTS = { theme: 'grape', fontScale: 1, motion: 'on', fontUrl: '' };
+  var DEFAULTS = { theme: 'grape', fontScale: 1, motion: 'on', fontUrl: '', textColor: '' };
   var DDEF = { wall: 'auto', wallMediaId: '', icons: 'glass', large: false };
+
+  /* 正文字颜色色板（WPS 那种点开可选的调色盘；'' = 跟随主题）。
+     落点 = #phone 的 --g-ink（inline 覆盖主题块定义，--text 是它的别名，
+     聊天气泡/朋友圈/日记的正文字色跟着换）。 */
+  var INK_PALETTE = [
+    ['#26231E', '#43382C', '#5A554D', '#8A7A67', '#B5A78F'],
+    ['#A85840', '#C0392B', '#D9832B', '#C9A227', '#B08A5E'],
+    ['#4A9068', '#3E8E83', '#3A6898', '#2E6E9E', '#7868A0'],
+    ['#C97B8E', '#8A6B48', '#6B5842', '#D9CBB6', '#E8E2D6']
+  ];
 
   /* ------------------------ 存档（保存按钮的落点） ------------------------ */
 
@@ -111,6 +121,7 @@
       fontScale: a.fontScale === undefined ? 1 : a.fontScale,
       motion: a.motion || 'on',
       fontUrl: a.fontUrl || '',
+      textColor: a.textColor || '',
       scope: d.scope === 'island' ? 'island' : 'global',
       selIsland: d.selIsland || '',
       desktop: {
@@ -192,6 +203,7 @@
     a.fontScale = draft.fontScale;
     a.motion = draft.motion;
     a.fontUrl = draft.fontUrl;
+    a.textColor = draft.textColor;
     a.desktop = {
       scope: draft.scope,
       selIsland: draft.selIsland,
@@ -259,6 +271,10 @@
       phone.setAttribute('data-theme', a.theme);
       phone.setAttribute('data-motion', a.motion === 'off' ? 'off' : 'on');
       phone.style.setProperty('--fs-scale', String(a.fontScale));
+      /* 正文字颜色：inline 覆盖主题块的 --g-ink（--text 是它的别名）；
+         空 = 跟随主题，把覆盖摘掉 */
+      if (a.textColor) phone.style.setProperty('--g-ink', a.textColor);
+      else phone.style.removeProperty('--g-ink');
     }
     applyFont(a.fontUrl);
     applyDesktop();
@@ -501,6 +517,91 @@
     return pv;
   }
 
+  /* ---- 正文字颜色色板（WPS 式：点开底部抽屉选，不平铺） ----
+     onPick：选完色后的回调（重画主页面）—— paint 在 render 闭包里，
+     这里不能直接引用。 */
+  function openInkPalette(ctx, onPick) {
+    var host = ctx.el;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', '正文字颜色'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '换的是聊天气泡、朋友圈、日记这些正文的字色，改完在预览里看效果，保存才生效。'));
+
+    /* 跟随主题 */
+    var autoRow = h('button', 'lk-pal-auto' + (draft.textColor ? '' : ' is-on'));
+    autoRow.type = 'button';
+    autoRow.textContent = '跟随主题';
+    autoRow.addEventListener('click', function () {
+      draft.textColor = '';
+      markDirty();
+      close();
+      onPick();
+    });
+    panel.appendChild(autoRow);
+
+    /* 色格（6 列排布由 CSS 管，这里按行给） */
+    INK_PALETTE.forEach(function (row) {
+      var line = h('div', 'lk-pal-row');
+      row.forEach(function (c) {
+        var cell = h('button', 'lk-pal-cell' + (draft.textColor === c ? ' is-on' : ''));
+        cell.type = 'button';
+        cell.style.background = c;
+        cell.title = c.toUpperCase();
+        cell.setAttribute('aria-label', c.toUpperCase());
+        cell.addEventListener('click', function () {
+          draft.textColor = c;
+          markDirty();
+          close();
+          onPick();
+        });
+        line.appendChild(cell);
+      });
+      panel.appendChild(line);
+    });
+
+    /* 更多颜色（系统取色器） */
+    var moreRow = h('div', 'lk-pal-more');
+    var moreLab = h('label', 'lk-upload lk-pal-more-btn');
+    moreLab.appendChild(h('span', 'lk-upload-main', '更多颜色…'));
+    var cIn = h('input');
+    cIn.type = 'color';
+    cIn.value = draft.textColor || '#43382C';
+    cIn.style.cssText = 'width:34px;height:28px;border:0;background:none;padding:0;cursor:pointer;';
+    moreLab.appendChild(cIn);
+    moreRow.appendChild(moreLab);
+    panel.appendChild(moreRow);
+    cIn.addEventListener('input', function () {
+      draft.textColor = cIn.value;
+      markDirty();
+    });
+    cIn.addEventListener('change', function () {
+      close();
+      onPick();
+    });
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不改');
+    actions.appendChild(cancel);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
+  }
+
   Sleepy.register('appearance', {
     title: '外观',
     render: function (ctx) {
@@ -705,8 +806,29 @@
         var demoText = h('p', 'look-demo-text',
           '她说明天要下雨，让我记得带伞。其实伞一直放在门口那把 —— 她只是想说点什么。');
         demoText.style.fontSize = 'calc(14px * ' + Number(draft.fontScale || 1) + ')';
+        /* 字色草稿实时上预览（保存前不动全局） */
+        if (draft.textColor) demoText.style.color = draft.textColor;
         demo.appendChild(demoText);
         g5.card.appendChild(demo);
+        /* 正文字颜色（WPS 式点开色板，不平铺） */
+        var inkRow = h('button', 'lk-ink-row');
+        inkRow.type = 'button';
+        inkRow.appendChild(h('span', 'lk-ink-label', '正文字颜色'));
+        var inkRight = h('span', 'lk-ink-right');
+        var dot = h('span', 'lk-ink-dot');
+        if (draft.textColor) {
+          dot.style.background = draft.textColor;
+          inkRight.appendChild(dot);
+          inkRight.appendChild(h('span', 'lk-ink-value', draft.textColor.toUpperCase()));
+        } else {
+          dot.classList.add('is-auto');
+          inkRight.appendChild(dot);
+          inkRight.appendChild(h('span', 'lk-ink-value', '跟随主题'));
+        }
+        inkRight.appendChild(h('span', 'lk-ink-arrow', '›'));
+        inkRow.appendChild(inkRight);
+        inkRow.addEventListener('click', function () { openInkPalette(ctx, paint); });
+        g5.card.appendChild(inkRow);
         /* 自定义字体 URL（字体文件直链） */
         g5.card.appendChild(h('label', 'off-field-label lk-field-label',
           '自定义字体（字体文件直链 · .woff2 / .ttf / .otf，留空 = 默认字体）'));
