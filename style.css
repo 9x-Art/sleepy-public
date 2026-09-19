@@ -6418,6 +6418,209 @@ span.msg-avatar-initial{
 }
 
 /* ============================================================
+   桌面外观系统（2026-09-19，照 Demo「桌面外观系统 v1」重排外观 App）
+   ------------------------------------------------------------
+   结构照 Demo（范围 / 预览 / 壁纸 / 图标 / 体验 / 单 App 编辑），
+   视觉走项目自己的 --g-* 体系 —— Demo 的米白大圆角卡不搬
+   （审美规则：底色纯白、谨慎圆角和框）。
+   ============================================================ */
+
+/* ---- 应用范围 ---- */
+.lk-notice{
+  margin:11px 13px 14px;padding:9px 11px;border-radius:10px;
+  background:var(--g-glass);border:1px solid var(--g-glass-line);
+  font-size:11px;line-height:1.55;color:var(--text-dim);
+}
+.lk-notice b{color:var(--g-accent-deep,#8A6B48);}
+
+/* ---- 壁纸 / 图标选择格：swatch 拉高一点，看得出性格 ---- */
+.lk-choice .lk-swatch{height:52px;}
+.lk-src{font-size:10px;color:var(--text-faint);}
+
+/* ---- 自定义图上传行 ---- */
+.lk-upload{
+  display:flex;align-items:center;gap:8px;
+  margin:11px 13px 14px;padding:11px 12px;border-radius:12px;
+  border:1px dashed var(--g-glass-line);background:var(--g-glass);
+  font-family:inherit;cursor:pointer;
+}
+.lk-upload-main{flex:1;font-size:12.5px;color:var(--text-dim);}
+.lk-upload-clear{
+  font-size:11px;color:var(--g-accent-deep,#8A6B48);
+  border-bottom:1px solid currentColor;padding-bottom:1px;
+}
+
+/* ---- 「单独修改 App」入口行 ---- */
+.lk-enter{
+  display:flex;align-items:center;gap:10px;width:calc(100% - 26px);
+  margin:11px 13px 14px;padding:12px 13px;border-radius:12px;
+  border:1px solid var(--g-glass-line);background:var(--g-glass-2);
+  font-family:inherit;cursor:pointer;text-align:left;
+}
+.lk-enter-main{flex:1;display:flex;flex-direction:column;gap:2px;}
+.lk-enter-name{font-size:13px;color:var(--text);}
+.lk-enter-sub{font-size:10.5px;color:var(--text-faint);}
+.lk-enter-arrow{font-size:17px;color:var(--text-faint);}
+
+/* ---- 桌面缩微预览（真实类名渲染，所见即所得） ---- */
+.lk-preview{
+  margin:12px 13px 15px;padding:12px 14px 14px;border-radius:18px;
+  min-height:168px;position:relative;overflow:hidden;
+  border:1px solid var(--g-glass-line);
+}
+.lk-preview.is-dark{border-color:rgba(255,255,255,.08);}
+.lk-preview-top{
+  display:flex;justify-content:space-between;
+  font-size:10px;color:var(--g-ink-2);
+  text-shadow:var(--ink-halo);
+}
+.lk-preview-hello{margin:16px 0 18px;display:flex;flex-direction:column;gap:3px;}
+.lk-preview-hello b{
+  font-family:var(--serif,'Georgia',serif);font-size:17px;font-weight:600;
+  color:var(--g-ink);text-shadow:var(--ink-halo);
+}
+.lk-preview-hello span{
+  font-size:10px;color:var(--g-ink-2);text-shadow:var(--ink-halo);
+}
+.lk-preview-apps{
+  display:flex;gap:16px;
+}
+.lk-preview-app{display:flex;flex-direction:column;align-items:center;gap:0;}
+.lk-preview-ic svg{width:15px;height:15px;}
+.lk-preview-tag{
+  position:absolute;right:11px;bottom:9px;
+  font-size:9px;letter-spacing:.4px;color:var(--g-ink-2);
+  text-shadow:var(--ink-halo);
+}
+
+/* ---- 桌面体验：动效行 ---- */
+.lk-mt{margin-top:4px;padding-top:2px;}
+.lk-motion-row{
+  display:flex;flex-direction:column;gap:1px;
+  padding:6px 13px 12px;
+}
+.lk-motion-row .set-row-label{font-size:13px;}
+.lk-motion-row .set-row-hint{font-size:10.5px;}
+.lk-motion-row .look-seg{padding:8px 0 0;}
+
+/* ---- 恢复本岛 ---- */
+.lk-restore{
+  display:block;width:calc(100% - 26px);margin:4px 13px 8px;
+  padding:11px;border-radius:12px;
+  border:1px solid var(--g-glass-line);background:var(--g-glass-2);
+  font-family:inherit;font-size:13px;color:var(--text-dim);cursor:pointer;
+}
+.lk-restore:active{background:rgba(176,128,80,.10);}
+
+/* ---- 单独修改 App：列表 + 编辑卡 ---- */
+.lk-app-row{
+  display:flex;align-items:center;gap:11px;width:100%;
+  padding:9px 13px;border:0;background:none;
+  font-family:inherit;text-align:left;cursor:pointer;
+  border-bottom:1px solid var(--g-glass-line);
+}
+.lk-app-row:last-child{border-bottom:0;}
+.lk-app-row.is-on{background:rgba(176,128,80,.08);}
+.lk-app-ic{flex-shrink:0;}
+.lk-app-main{flex:1;display:flex;flex-direction:column;gap:1px;}
+.lk-app-name{font-size:13px;color:var(--text);}
+.lk-app-sub{font-size:10.5px;color:var(--text-faint);}
+
+.lk-editor-hero{display:flex;align-items:center;gap:13px;padding:4px 13px 12px;}
+.lk-editor-main{display:flex;flex-direction:column;gap:3px;}
+.lk-editor-main b{font-size:14.5px;color:var(--text);}
+.lk-editor-main small{font-size:10.5px;color:var(--text-faint);}
+.lk-field-label{
+  display:block;padding:4px 13px 6px;
+  font-size:11px;color:var(--text-faint);
+}
+.lk-text-input{
+  display:block;width:calc(100% - 26px);margin:0 13px 10px;
+  padding:10px 12px;border-radius:11px;
+  border:1px solid var(--g-glass-line);background:var(--g-glass);
+  font:inherit;font-size:13.5px;color:var(--text);
+}
+.lk-text-input:focus{outline:none;border-color:var(--g-accent);}
+.lk-soft-btn,.lk-danger-btn{
+  display:block;margin:0 13px 10px;padding:10px;border-radius:11px;
+  border:1px solid var(--g-glass-line);background:var(--g-glass-2);
+  font-family:inherit;font-size:13px;cursor:pointer;color:var(--text);
+}
+.lk-danger-btn{color:#A85840;border-color:rgba(168,88,64,.28);}
+
+/* ---- 单 App 自定义图标：塞满玻璃格 ---- */
+.w-app-ic-img{
+  position:relative;z-index:1;
+  width:100%;height:100%;object-fit:cover;
+  border-radius:inherit;
+}
+
+/* ---- 图标整套风格（#phone 级开关；换填充，不加光） ----
+   glass 是默认（见 .w-app-ic 本体那段的注释，别在那边加东西）。
+   其余三款只在 data-icstyle 命中时覆盖填充/边框/字色，
+   backdrop 一律关掉 —— 线框/纸片/夜色都不该有玻璃的折射。 */
+#phone[data-icstyle="line"] .w-app-ic,
+#phone[data-icstyle="line"] .dt-dock-ic,
+#phone[data-icstyle="line"] .lk-preview-ic{
+  background:rgba(255,255,255,.34);
+  border:1.2px solid var(--g-ink-3,#B7AC9C);
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+  color:var(--g-ink);
+}
+#phone[data-icstyle="paper"] .w-app-ic,
+#phone[data-icstyle="paper"] .dt-dock-ic,
+#phone[data-icstyle="paper"] .lk-preview-ic{
+  background:linear-gradient(160deg,#F3EADC,#E9DBC4);
+  border:1px solid rgba(122,96,66,.22);
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+  color:#6B5842;
+}
+#phone[data-icstyle="night"] .w-app-ic,
+#phone[data-icstyle="night"] .dt-dock-ic,
+#phone[data-icstyle="night"] .lk-preview-ic{
+  background:linear-gradient(160deg,#2E3A3C,#3D4B4A);
+  border:1px solid rgba(255,255,255,.12);
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+  color:#EDE7DC;
+}
+/* 线框款在深壁纸上：描边和字跟着翻浅，不然看不见 */
+.page[data-page="home"].is-dark-wall .w-app-ic,
+.page[data-page="home"].is-dark-wall .dt-dock-ic{
+  color:#EFE9DE;
+}
+#phone[data-icstyle="line"] .page[data-page="home"].is-dark-wall .w-app-ic,
+#phone[data-icstyle="line"] .page[data-page="home"].is-dark-wall .dt-dock-ic{
+  border-color:rgba(255,255,255,.42);
+}
+
+/* ---- 深色壁纸（暮色 / 自定义深图）：桌面裸字翻浅 + 光晕翻黑 ----
+   复用夜灯主题那套 --ink-halo（见 :root 与 6255 行那组的说明）。 */
+.page[data-page="home"].is-dark-wall{
+  --ink-halo:0 1px 3px rgba(0,0,0,.62),0 0 2px rgba(0,0,0,.45);
+}
+.page[data-page="home"].is-dark-wall .w-hdr-kicker,
+.page[data-page="home"].is-dark-wall .w-hdr-day,
+.page[data-page="home"].is-dark-wall .w-hdr-date,
+.page[data-page="home"].is-dark-wall .w-hdr-greet,
+.page[data-page="home"].is-dark-wall .w-hdr-pull-label,
+.page[data-page="home"].is-dark-wall .w-app-name,
+.page[data-page="home"].is-dark-wall .dt-dock-name{
+  color:#F2EDE3;
+  text-shadow:var(--ink-halo);
+}
+.page[data-page="home"].is-dark-wall .w-hdr-pull .w-hdr-knob{
+  background:rgba(242,237,227,.24);
+  border-color:rgba(255,255,255,.30);
+}
+
+/* ---- 较大桌面文字：只放 App 名和日期头（demo 的 large） ---- */
+.page[data-page="home"].dt-large .w-app-name{
+  font-size:12.5px;letter-spacing:.4px;
+}
+.page[data-page="home"].dt-large .w-hdr-date{font-size:12.5px;}
+.page[data-page="home"].dt-large .w-hdr-greet{font-size:15px;}
+
+/* ============================================================
    朋友圈：发布弹层微信化（2026-09-17）
    ------------------------------------------------------------
    用户：「解释的太多了，而且绿色很丑」「仿照微信的页面」。

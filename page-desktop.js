@@ -662,10 +662,19 @@
     app: function (cell, ctx) {
       var box = h('button', 'widget w-app');
       box.type = 'button';
+      /* 桌面外观系统：单 App 的名称/图标覆盖（外观 App 里改）优先于默认 */
+      var ov = (Sleepy.appearance && Sleepy.appearance.appOverride)
+        ? Sleepy.appearance.appOverride(cell.app) : null;
       var icEl = h('span', 'w-app-ic');
-      icEl.innerHTML = ICONS[cell.app] || ICONS.chat;
+      if (ov && ov.iconMediaId && Sleepy.media) {
+        var oimg = h('img', 'w-app-ic-img');
+        Sleepy.media.url(ov.iconMediaId).then(function (u) { if (u) oimg.src = u; });
+        icEl.appendChild(oimg);
+      } else {
+        icEl.innerHTML = ICONS[cell.app] || ICONS.chat;
+      }
       box.appendChild(icEl);
-      box.appendChild(h('span', 'w-app-name', cell.label || ''));
+      box.appendChild(h('span', 'w-app-name', (ov && ov.name) || cell.label || ''));
       box.addEventListener('click', function () { ctx.open(cell.app); });
       return box;
     },
@@ -2255,10 +2264,19 @@
       ].forEach(function (it) {
         var b = h('button', 'dt-dock-btn');
         b.type = 'button';
+        b.setAttribute('data-app', it.app);   /* 桌面外观系统按它刷新 dock 显示 */
+        var ov = (Sleepy.appearance && Sleepy.appearance.appOverride)
+          ? Sleepy.appearance.appOverride(it.app) : null;
         var i = h('span', 'dt-dock-ic');
-        i.innerHTML = it.icon;
+        if (ov && ov.iconMediaId && Sleepy.media) {
+          var oimg = h('img', 'w-app-ic-img');
+          Sleepy.media.url(ov.iconMediaId).then(function (u) { if (u) oimg.src = u; });
+          i.appendChild(oimg);
+        } else {
+          i.innerHTML = it.icon;
+        }
         b.appendChild(i);
-        b.appendChild(h('span', 'dt-dock-name', it.name));
+        b.appendChild(h('span', 'dt-dock-name', (ov && ov.name) || it.name));
         b.addEventListener('click', function () { ctx.open(it.app); });
         dock.appendChild(b);
       });
@@ -2309,6 +2327,12 @@
       }
       goHome();
       syncDots();
+
+      /* 桌面外观系统：壁纸/大字落在 .page 上 —— render 完成后铺一次
+        （启动时外观的 apply 跑得比这早，那时 .page 还不存在）。 */
+      if (Sleepy.appearance && Sleepy.appearance.applyDesktop) {
+        Sleepy.appearance.applyDesktop();
+      }
 
       /* 切号后整屏重画。户型（base）不动，只有里面的数据和皮肤换掉 ——
          这正是总纲要的「原位替换」。 */
