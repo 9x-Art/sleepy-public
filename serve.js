@@ -20,6 +20,7 @@ var http = require('http');
 var fs = require('fs');
 var path = require('path');
 var spawn = require('child_process').spawn;
+var zlib = require('zlib');
 
 var ROOT = __dirname;
 
@@ -126,13 +127,43 @@ function serveFile(res, file, urlPath, isFallback) {
   fs.readFile(file, function (err, buf) {
     if (err) return sendText(res, 500, '500 读文件失败：' + err.message);
     var ext = path.extname(file).toLowerCase();
-    send(res, isFallback ? 200 : 200, {
+    var headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Content-Length': buf.length,
       /* 开发服务器一律不缓存：改完直接刷新就能看到，不用清缓存 */
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'Pragma': 'no-cache'
-    }, buf);
+    };
+
+    /* ---- gzip ----
+       2026-09-18 加的。起因是接了亚克力灯之后用户说「加载时间有点长了qwq」——
+       那次要现下 three.module.js，**671 KB 明文**。
+       压完只剩 166 KB，本地上基本感觉不到等待了。
+
+       这件事还有个更重要的理由：**真实的线上主机一定是开 gzip/brotli 的**。
+       开发服务器不压，就等于我们在本地测出来的加载时间比线上难看得多，
+       很容易为了一个不存在的问题去做优化（或者反过来，以为线上也这么慢）。
+       本地尽量贴着线上的表现，判断才准。
+
+       只压文本类。图片/字体已经压过了，再压一遍白费 CPU 还大一点点。 */
+    var canZip = /^(text\/|application\/(javascript|json|manifest))/.test(headers['Content-Type']) ||
+                 /\.(js|css|html|json|svg|mjs|map|txt|md)$/i.test(file);
+    var accept = (res.req && res.req.headers && res.req.headers['accept-encoding']) || '';
+    if (canZip && /\bgzip\b/.test(accept) && buf.length > 1024) {
+      return zlib.gzip(buf, function (e, gz) {
+        if (e || !gz || gz.length >= buf.length) {
+          headers['Content-Length'] = buf.length;
+          return send(res, 200, headers, buf);
+        }
+        headers['Content-Encoding'] = 'gzip';
+        headers['Content-Length'] = gz.length;
+        headers['Vary'] = 'Accept-Encoding';
+        send(res, 200, headers, gz);
+        log('200', urlPath, kb(buf.length) + ' → ' + kb(gz.length) + ' (gzip)');
+      });
+    }
+
+    headers['Content-Length'] = buf.length;
+    send(res, 200, headers, buf);
     log('200', urlPath, buf.length);
   });
 }
@@ -141,9 +172,13 @@ function serveFile(res, file, urlPath, isFallback) {
 /* 只打状态码、路径、大小。不打 user-agent，太吵 */
 
 function log(code, urlPath, size) {
-  var n = size == null ? '' : (' ' + (size < 1024 ? size + 'B' : (size / 1024).toFixed(1) + 'K'));
+  var n = '';
+  if (typeof size === 'string') n = ' ' + size;          /* 已经排好版的（带 → 的压缩比） */
+  else if (size != null) n = ' ' + kb(size);
   process.stdout.write('  ' + code + '  ' + urlPath + n + '\n');
 }
+
+function kb(n) { return n < 1024 ? n + 'B' : (n / 1024).toFixed(1) + 'K'; }
 
 /* ---------------------------- 启动 ---------------------------- */
 

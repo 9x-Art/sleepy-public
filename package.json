@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node serve.js --open",
     "serve": "node serve.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "smoke": "node scripts/smoke.js",
+    "test": "node scripts/check.js && node scripts/smoke.js"
   },
   "engines": {
     "node": ">=18"

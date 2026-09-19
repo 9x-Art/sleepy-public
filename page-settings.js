@@ -2,8 +2,13 @@
    page-settings.js — 设置
    依赖：store.js、ui.js、app.js（必须在它们之后加载）
    覆盖 ROADMAP：2.1 设置页框架 / 2.2 主 API 配置 + 测试连接 / 2.4 本地存储
-   页面：settings → settings-model → settings-mainapi
+   页面：settings → settings-mainapi / settings-subapi
          （settings-backup 在 page-backup.js 里注册）
+
+   **进设置就是那些接口本身**：主 API / 副 API / TTS / 向量 / 总结 / 生图 /
+   天气搜索 WebDAV 直接列在一级页上，点一行就是那一项的配置。
+   中间那层「模型连接」已经拿掉 —— 用户：「进入设置 app，直接就是：主 api、
+   副 api、tts、向量 api、总结 api 和其他原本那几个」。
 
    这里只放「业务」：读写哪个字段、调用哪个接口。
    按钮/输入框/卡片一律来自 Sleepy.ui，本文件不再自己造 DOM 组件。
@@ -19,6 +24,7 @@
   var group = ui.group;
   var row = ui.row;
   var setRowValue = ui.setRowValue;
+  var setRowBadge = ui.setRowBadge;
   var textField = ui.textField;
   var numField = ui.numField;
   var switchField = ui.switchField;
@@ -156,20 +162,50 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var g1 = group('模型与对话');
-      var rowModel = row({
-        label: '模型连接',
-        hint: '主 API · 副 API · 后台任务',
-        value: mainApiSummary(),
-        onClick: function () { ctx.open('settings-model'); }
+      /* ============ 对话：主 / 副 ============
+         这两行以前藏在「模型连接」里（设置 → 模型连接 → 主 API → 配置），
+         点三层才摸到自己的 Key。现在**进设置就看得见** ——
+         用户：「进入设置 app，直接就是：主 api、副 api、tts、向量 api、
+         总结 api 和其他原本那几个」。 */
+      var gTalk = group('对话');
+      var rowMain = row({
+        label: '主 API',
+        hint: '日常对话走这一个',
+        badge: mainApiSummary(),
+        badgeKind: (mainApiSummary() === '已配置') ? 'ok' : 'dim',
+        onClick: function () { ctx.open('settings-mainapi'); }
       });
-      g1.card.appendChild(rowModel);
-      g1.card.appendChild(row({
-        label: '聊天默认参数',
-        hint: '温度 · 上下文条数 · 流式 · 心声',
-        onClick: function () { ctx.open('settings-chatdefaults'); }
-      }));
-      body.appendChild(g1.wrap);
+      gTalk.card.appendChild(rowMain);
+
+      var subText = subApiSummary();
+      var rowSub = row({
+        label: '副 API',
+        hint: '用于其他功能（后台任务 · 备用通道）',
+        badge: subText,
+        badgeKind: (subText === '未配置') ? 'dim' : 'ok',
+        onClick: function () { ctx.open('settings-subapi'); }
+      });
+      gTalk.card.appendChild(rowSub);
+      body.appendChild(gTalk.wrap);
+
+      /* ============ 其他能力 ============
+         还没接的那些也摆在这儿 —— 占位要摆在对的位置，
+         不然用户根本不知道这 App 以后能长成什么样。灰着的行点不动。 */
+      var gCap = group('其他能力', '这几项还没接上，编号是它在计划里的位置。');
+      gCap.card.appendChild(row({ label: '语音 TTS', hint: '2.15 让角色把回复读出来' }));
+      gCap.card.appendChild(row({ label: '向量记忆 API', hint: '2.13 填 embedding 模型，不是对话模型' }));
+      gCap.card.appendChild(row({ label: '总结 API', hint: '2.14 便宜模型跑记忆抽取' }));
+      /* 生图已经接上了（page-imggen.js）—— 用户：「不开独立 App，从设置进」 */
+      var rowImg = row({
+        label: '生图',
+        hint: '接口 · 提示词库 · 试一张',
+        badge: Sleepy.imggen ? Sleepy.imggenSummary() : '未配置',
+        badgeKind: (Sleepy.imggen && Sleepy.imggenSummary() !== '未配置') ? 'ok' : 'dim',
+        onClick: function () { ctx.open('settings-imggen'); }
+      });
+      gCap.card.appendChild(rowImg);
+      gCap.card.appendChild(row({ label: '天气 / 搜索 / WebDAV', hint: '2.17' }));
+      body.appendChild(gCap.wrap);
 
       /* 世界书（B 模块）是首页 App，不挂设置 —— 它跟名片夹一样，
          是「用户自己往里加东西」的地方，设置里只放引擎怎么连。 */
@@ -193,7 +229,26 @@
 
       var g5 = group('其他');
       g5.card.appendChild(row({ label: '激活与设备', hint: '2.19 激活码 · QQ 绑定' }));
-      g5.card.appendChild(row({ label: '关于 Sleepy', hint: '2.18 版本 · 更新日志' }));
+      /* 「关于 Sleepy」背着隐蔽开关：3 秒内连点 5 次 = 切开发者模式。
+         面向用户后内置 prompt 上锁，这个开关是唯一的解锁口 ——
+         所以它不能像普通开关一样摆在明面上（用户：「隐蔽一些qwq」）。
+         row() 不带 onClick 会把自己 disabled 掉，这里手动解开再挂事件。 */
+      var aboutRow = row({ label: '关于 Sleepy', hint: '2.18 版本 · 更新日志' });
+      aboutRow.disabled = false;
+      aboutRow.classList.remove('is-soon');
+      var devTaps = 0, devTimer = null;
+      aboutRow.addEventListener('click', function () {
+        devTaps++;
+        if (devTimer) clearTimeout(devTimer);
+        devTimer = setTimeout(function () { devTaps = 0; }, 3000);
+        if (devTaps < 5) return;
+        devTaps = 0;
+        if (devTimer) { clearTimeout(devTimer); devTimer = null; }
+        var next = !(store.get('presetEngine') || {}).developerMode;
+        Sleepy.promptEngine.setDev(next);
+        ctx.toast(next ? '开发者模式已开启' : '开发者模式已关闭', 'ok');
+      });
+      g5.card.appendChild(aboutRow);
       body.appendChild(g5.wrap);
 
       var foot = h('p', 'set-foot', '');
@@ -202,7 +257,14 @@
       /* 刷新闭包挂在 ctx 上，onShow 直接调。
          只改文字、不重建 DOM，从下级页返回时滚动位置不会丢。 */
       ctx.refreshSummary = function () {
-        setRowValue(rowModel, mainApiSummary());
+        var m = mainApiSummary();
+        /* 主 / 副 API 用的是 **badge**（小胶囊），不是 value ——
+           别拿 setRowValue 去改它，那会在右边再多出一份文字。 */
+        setRowBadge(rowMain, m, m === '已配置' ? 'ok' : 'dim');
+        var s = subApiSummary();
+        setRowBadge(rowSub, s, s === '未配置' ? 'dim' : 'ok');
+        var im = Sleepy.imggen ? Sleepy.imggenSummary() : '未配置';
+        setRowBadge(rowImg, im, im === '未配置' ? 'dim' : 'ok');
         setRowValue(rowData, usageText());
         foot.textContent = '灰着的行是还没贴好的 · 当前存档 ' + usageText();
       };
@@ -211,146 +273,20 @@
     onShow: function (ctx) { if (ctx.refreshSummary) ctx.refreshSummary(); }
   });
 
-  /* ================ 页面：聊天默认参数（二级） ================
-     A6。这里的值是所有对话的默认；单个接口自己填了生成参数时以接口为准
-     （api.js 的 genParams 就是这个优先级）。
+  /* 这里原来注册过一页「聊天默认参数」（settings-chatdefaults）。
+     已删：温度 / 上限 / 上下文条数 / 流式 都是**每个接口自己的生成参数**，
+     在接口配置页（settings-api）里各有一份，改的是同一批值；
+     两处都能改，迟早出现「在这里改了、请求里还是老值」。
+     「回复时附带心声」的开关也没丢 —— 心跳 App 里有它自己的入口。
+     store 的 chatDefaults 仍然在（api.js 拿它做第三层兜底），只是不再有 UI 去改它。 */
 
-     验收要的是「改了这里，实际请求里真的带上」，所以改完必须真发一条消息
-     去核请求体 —— 页面显示对了不算过。 */
-  Sleepy.register('settings-chatdefaults', {
-    title: '聊天默认参数',
-    render: function (ctx) {
-      var body = ctx.body;
-      var cfg = store.get('chatDefaults') || {};
-      var f = {};
-
-      /* 这里的值不能留空：它就是最下面那一层兜底，留空等于什么都没设。
-         所以空输入一律填回默认值，而不是往下传一个 null。 */
-      function num(field, fallback) {
-        var v = field.get();
-        return v == null ? fallback : v;
-      }
-
-      var g1 = group('生成', '所有对话的默认值。某个接口自己填了生成参数时，以那个为准。');
-      f.temperature = numField({
-        label: '温度',
-        hint: '越高越发散；想让角色的反应更稳就往下调',
-        value: cfg.temperature, min: 0, max: 2, step: 0.05
-      });
-      g1.card.appendChild(f.temperature.el);
-      f.maxTokens = numField({ label: '单次回复上限', value: cfg.maxTokens, min: 64, max: 32768, step: 64 });
-      g1.card.appendChild(f.maxTokens.el);
-      f.contextMessages = numField({
-        label: '携带上下文条数',
-        hint: '越多越记得住，也越贵',
-        value: cfg.contextMessages, min: 2, max: 200, step: 2
-      });
-      g1.card.appendChild(f.contextMessages.el);
-      body.appendChild(g1.wrap);
-
-      var g2 = group('开关');
-      f.stream = switchField({
-        label: '流式输出',
-        hint: '打字机效果。关掉就会等整段一起出现',
-        value: cfg.stream
-      });
-      g2.card.appendChild(f.stream.el);
-      body.appendChild(g2.wrap);
-
-      var g3 = group('心声', '跟着每次回复一起产出，一轮一条，不额外占一次生成额度。');
-      f.heartbeatAuto = switchField({ label: '回复时附带心声', value: cfg.heartbeatAuto });
-      g3.card.appendChild(f.heartbeatAuto.el);
-      body.appendChild(g3.wrap);
-
-      var btnRow = h('div', 'btn-row');
-      btnRow.appendChild(button('填回默认值', 'ghost', function () { restore(); }));
-      btnRow.appendChild(button('保存', 'primary', function () { save(); }));
-      body.appendChild(btnRow);
-
-      body.appendChild(h('p', 'set-foot',
-        '改完点保存。下一个请求就会带上新参数。'));
-
-      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { save(); } }]);
-
-      function collect() {
-        return {
-          temperature: num(f.temperature, 0.85),
-          maxTokens: Math.round(num(f.maxTokens, 1024)),
-          contextMessages: Math.round(num(f.contextMessages, 20)),
-          stream: f.stream.get(),
-          heartbeatAuto: f.heartbeatAuto.get()
-        };
-      }
-
-      function save() {
-        var ok = store.set('chatDefaults', collect());
-        if (ok) ctx.toast('已保存，下一条消息就生效', 'ok');
-        else ctx.toast((store.lastError() || {}).message || '保存失败', 'err');
-      }
-
-      /* 填回默认值但不直接落盘 —— 让用户看见改了什么，再自己按保存 */
-      function restore() {
-        var def = store.defaults().chatDefaults;
-        f.temperature.input.value = String(def.temperature);
-        f.maxTokens.input.value = String(def.maxTokens);
-        f.contextMessages.input.value = String(def.contextMessages);
-        f.stream.input.checked = !!def.stream;
-        f.heartbeatAuto.input.checked = !!def.heartbeatAuto;
-        ctx.toast('已填回默认值，记得保存', 'ok');
-      }
-    }
-  });
-
-  /* ==================== 页面：模型连接（二级） ==================== */
-
-  Sleepy.register('settings-model', {
-    title: '模型连接',
-    render: function (ctx) {
-      var body = ctx.body;
-
-      var g = group('对话');
-      var rowMain = row({
-        label: '主 API',
-        hint: '日常对话走这一个',
-        badge: mainApiSummary(),
-        badgeKind: (mainApiSummary() === '已配置') ? 'ok' : 'dim',
-        onClick: function () { ctx.open('settings-mainapi'); }
-      });
-      g.card.appendChild(rowMain);
-
-      var subText = subApiSummary();
-      var rowSub = row({
-        label: '副 API',
-        hint: '用于其他功能（后台任务 · 备用通道）',
-        badge: subText,
-        badgeKind: (subText === '未配置') ? 'dim' : 'ok',
-        onClick: function () { ctx.open('settings-subapi'); }
-      });
-      g.card.appendChild(rowSub);
-      body.appendChild(g.wrap);
-
-      var g2 = group('后台任务');
-      g2.card.appendChild(row({ label: '向量记忆 API', hint: '2.13 填 embedding 模型，不是对话模型' }));
-      g2.card.appendChild(row({ label: '总结 API', hint: '2.14 便宜模型跑记忆抽取' }));
-      body.appendChild(g2.wrap);
-
-      var g3 = group('以后再说');
-      g3.card.appendChild(row({ label: '语音 TTS', hint: '2.15' }));
-      g3.card.appendChild(row({ label: '生图', hint: '2.16' }));
-      g3.card.appendChild(row({ label: '天气 / 搜索 / WebDAV', hint: '2.17' }));
-      body.appendChild(g3.wrap);
-
-      body.appendChild(h('p', 'set-foot',
-        '所有 Key 只存在这台设备的浏览器里，不经过我的服务器。'));
-
-      /* 从副 API 页返回时刷新徽标：只改文字，不重建 DOM */
-      ctx.refreshSummary = function () {
-        setRowValue(rowMain, mainApiSummary());
-        setRowValue(rowSub, subApiSummary());
-      };
-    },
-    onShow: function (ctx) { if (ctx.refreshSummary) ctx.refreshSummary(); }
-  });
+  /* 这里原来注册过一页「模型连接」（settings-model）。
+     已删：它就是主 API / 副 API / 后台任务的一个**中转列表**，
+     结果是「设置 → 模型连接 → 主 API → 配置」点三层才摸到自己的 Key。
+     现在这些行直接摆在设置一级页上（见本文件顶部的说明）。
+     顺带：那页的 refreshSummary 用 setRowValue 去改 badge，
+     而 badge 是另一个元素 —— 返回时会在那一行多出一份文字。
+     ui 里补了 setRowBadge()，这次的刷新走它。 */
 
   /* ==================== 主 API：多预设公共部分 ====================
      主 API 可以存好几套预设，切换＝换「当前使用」的那套。
@@ -419,24 +355,30 @@
     });
     gCard.appendChild(f.model.el);
 
-    /* 拉取模型：用表单里当前的地址和 Key，不用先保存 */
-    var pickRow = h('div', 'btn-row');
-    var pickBtn = button('拉取模型列表', 'ghost');
-    pickRow.appendChild(pickBtn);
-    gCard.appendChild(pickRow);
+    /* 拉取模型：模型名旁边的小圆钮（和生图设置同款交互），
+       用表单里当前的地址和 Key，不用先保存。
+       点返回的模型名填进输入框，列表随即收起（用户：选完别杵着）。 */
+    var mini = h('button', 'set-mini-ic');
+    mini.type = 'button';
+    mini.title = '拉取模型列表';
+    mini.setAttribute('aria-label', '拉取模型列表');
+    mini.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+      'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
+    f.model.el.querySelector('.set-line').appendChild(mini);
 
     var pickBox = h('div', 'model-pick');
     gCard.appendChild(pickBox);
 
-    pickBtn.addEventListener('click', function () {
-      pickBtn.disabled = true;
+    mini.addEventListener('click', function () {
+      mini.disabled = true;
       pickBox.innerHTML = '';
       pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
       Sleepy.api.fetchModels({
         baseUrl: f.baseUrl.get(),
         apiKey: f.apiKey.get()
       }).then(function (res) {
-        pickBtn.disabled = false;
+        mini.disabled = false;
         pickBox.innerHTML = '';
         if (!res.ok) {
           pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message));
@@ -455,6 +397,7 @@
           r.appendChild(h('span', 'set-row-label', id));
           r.addEventListener('click', function () {
             f.model.input.value = id;
+            pickBox.innerHTML = '';      /* 选完即收起 */
           });
           pickBox.appendChild(r);
         });
@@ -521,14 +464,14 @@
     var g = group('接口');
     f = buildApiFields(g.card, preset);
 
-    var g2 = group('生成参数', '留空就是跟随「聊天默认参数」（灰字是建议值）。只有这一个接口想特殊化时才填，填了就以这里为准。');
-    f.temperature = numField({ label: '温度', hint: '留空＝跟随默认 · 越高越发散', value: preset.temperature, min: 0, max: 2, step: 0.05 });
+    var g2 = group('生成参数', '这个接口自己的。留空就用内置默认值（灰字就是它）。');
+    f.temperature = numField({ label: '温度', hint: '留空＝用内置默认 · 越高越发散', value: preset.temperature, min: 0, max: 2, step: 0.05 });
     f.temperature.input.placeholder = String(def.temperature);
     g2.card.appendChild(f.temperature.el);
-    f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝跟随默认', value: preset.maxTokens, min: 64, max: 32768, step: 64 });
+    f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝用内置默认', value: preset.maxTokens, min: 64, max: 32768, step: 64 });
     f.maxTokens.input.placeholder = String(def.maxTokens);
     g2.card.appendChild(f.maxTokens.el);
-    f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝跟随默认 · 越多越记得住，也越贵', value: preset.contextMessages, min: 2, max: 200, step: 2 });
+    f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝用内置默认 · 越多越记得住，也越贵', value: preset.contextMessages, min: 2, max: 200, step: 2 });
     f.contextMessages.input.placeholder = String(def.contextMessages);
     g2.card.appendChild(f.contextMessages.el);
     f.timeoutSec = numField({ label: '超时（秒）', value: preset.timeoutSec, min: 5, max: 300, step: 5 });
@@ -540,7 +483,7 @@
     var g3 = group('开关');
     f.stream = switchField({
       label: '流式输出',
-      hint: '打字机效果。总开关在「聊天默认参数」，这里关掉＝这个接口不走流式',
+      hint: '打字机效果。关掉＝这个接口不走流式（默认开）',
       value: preset.stream
     });
     g3.card.appendChild(f.stream.el);

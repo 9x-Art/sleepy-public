@@ -8,11 +8,33 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#1E1B2E">
 <title>Sleepy</title>
+<!-- PWA：加到主屏后全屏独立窗口跑；SW 只在 http(s) 下注册（file:// 天然全离线） -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
+
+<!-- 亚克力挂件灯的引擎映射。
+     灯的核心（vendor/acrylic-lamp-core.js）是 ES module，里面写的是
+     `import * as THREE from 'three'`，靠这张表把裸名 "three" 指到本地文件。
+     **路径是相对页面（index.html）的，不是相对 core 的** —— 以后把文件挪走，
+     这里要跟着改。
+
+     为什么用本地文件而不是 CDN：这个项目从第一天起就是「离线优先」，
+     学校网络里外网也不稳；671 KB 的文件放本地，断网、内网都照跑。
+     gzip 之后只有 166 KB。
+
+     注意 importmap 必须出现在**任何 module 加载之前**，所以它放在 head 里。 -->
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
 </head>
 <body>
 
 <div id="phone">
+
+  <!-- 青提玻璃的极光底色。放在所有层最下面，不跟着页面滚动 -->
+  <div class="ambient" aria-hidden="true"><div class="ambient-3"></div></div>
 
   <div id="statusbar">
     <span id="sb-time">--:--</span>
@@ -23,147 +45,107 @@
 
   <div id="stack">
 
-    <section class="page page-home is-active" data-page="home">
-      <header class="greet">
-        <p class="greet-title">晚安，睡睡</p>
-        <p class="greet-sub">今天的本子已经贴好了</p>
-      </header>
-
-      <div class="grid">
-
-        <!-- 图标统一线性 SVG：24 格、currentColor、线宽 1.6，和聊天页顶栏/加号面板同一套 -->
-        <button class="icon" data-app="chat-list">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4.5 6.8A2.3 2.3 0 0 1 6.8 4.5h10.4a2.3 2.3 0 0 1 2.3 2.3v7.4a2.3 2.3 0 0 1-2.3 2.3H10l-4.2 3.2a.55.55 0 0 1-.88-.44z"/>
-              <path d="M8.5 9.3h7M8.5 12.3h4.5"/>
-            </svg>
-          </span>
-          <span class="ic-name">聊天</span>
-        </button>
-
-        <button class="icon" data-app="moments">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3.5" y="7.5" width="12" height="10" rx="1.5"/>
-              <path d="M8 7.5V6A1.5 1.5 0 0 1 9.5 4.5h9A1.5 1.5 0 0 1 20 6v8a1.5 1.5 0 0 1-1.5 1.5H16"/>
-              <path d="M6.5 14.5l2.5-2.5 2 2 1.5-1.5 2 2"/>
-            </svg>
-          </span>
-          <span class="ic-name">朋友圈</span>
-        </button>
-
-        <button class="icon" data-app="diary">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="5" y="4" width="14.5" height="16" rx="2"/>
-              <path d="M9 4v16"/>
-              <path d="M12.5 8.5H16M12.5 12h3.5"/>
-            </svg>
-          </span>
-          <span class="ic-name">日记</span>
-        </button>
-
-        <button class="icon" data-app="memory">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="4" y="5" width="16" height="14" rx="2"/>
-              <circle cx="9" cy="9.5" r="1.4"/>
-              <path d="M6.5 16l3.5-3.5 2.5 2.5 2-2 3 3"/>
-            </svg>
-          </span>
-          <span class="ic-name">记忆</span>
-        </button>
-
-        <button class="icon" data-app="music">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3.5" y="6" width="17" height="12" rx="2"/>
-              <circle cx="9" cy="12" r="1.7"/>
-              <circle cx="15" cy="12" r="1.7"/>
-              <path d="M9 15.5h6"/>
-            </svg>
-          </span>
-          <span class="ic-name">音乐</span>
-        </button>
-
-        <button class="icon" data-app="contacts">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="4" y="5.5" width="16" height="13" rx="2"/>
-              <circle cx="9" cy="10.5" r="1.8"/>
-              <path d="M13.5 9h3.5M13.5 12h3.5M7 15.5h10"/>
-            </svg>
-          </span>
-          <span class="ic-name">名片夹</span>
-        </button>
-
-        <button class="icon" data-app="worldbook">
-          <span class="ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 6.6C10.6 5.2 8.6 4.6 5.5 4.6v13.2c3.1 0 5.1.6 6.5 2 1.4-1.4 3.4-2 6.5-2V4.6c-3.1 0-5.1.6-6.5 2z"/>
-              <path d="M12 6.6v13.2"/>
-            </svg>
-          </span>
-          <span class="ic-name">世界书</span>
-        </button>
-
-      </div>
-
-      <nav class="dock">
-        <button class="dock-btn" data-app="chat-list">
-          <span class="dock-ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4.5 6.8A2.3 2.3 0 0 1 6.8 4.5h10.4a2.3 2.3 0 0 1 2.3 2.3v7.4a2.3 2.3 0 0 1-2.3 2.3H10l-4.2 3.2a.55.55 0 0 1-.88-.44z"/>
-              <path d="M8.5 9.3h7M8.5 12.3h4.5"/>
-            </svg>
-          </span>
-          <span class="dock-name">聊天</span>
-        </button>
-        <button class="dock-btn" data-app="settings">
-          <span class="dock-ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="3.1"/>
-              <path d="M12 3.4v2.3M12 18.3v2.3M20.6 12h-2.3M5.7 12H3.4"/>
-              <path d="M18.1 5.9l-1.6 1.6M7.5 16.5l-1.6 1.6M18.1 18.1l-1.6-1.6M7.5 7.5L5.9 5.9"/>
-            </svg>
-          </span>
-          <span class="dock-name">设置</span>
-        </button>
-        <button class="dock-btn" data-app="support">
-          <span class="dock-ic">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 19.5C7.2 15.7 4.2 12.7 4.2 9.6c0-2.2 1.7-3.9 3.8-3.9 1.5 0 2.9.8 4 2.2 1.1-1.4 2.5-2.2 4-2.2 2.1 0 3.8 1.7 3.8 3.9 0 3.1-3 6.1-7.8 9.9z"/>
-            </svg>
-          </span>
-          <span class="dock-name">反馈</span>
-        </button>
-      </nav>
-    </section>
+    <!-- 首页＝桌面（模块 H）。4 屏网格由 page-desktop.js 渲染，
+         这里只留一个空壳 —— 位置数据在 store 的 desktop 里，
+         不在 HTML 里写死（C2 要求：App 位置必须数据化）。 -->
+    <section class="page page-home is-active" data-page="home"></section>
 
   </div>
 
-  <div id="edge-hint"></div>
-
 </div>
 
-<!-- 加载顺序即依赖顺序，不要调换：store → ui（组件层）→ app（壳子/页面栈）→ 各页面 -->
+<!-- 加载顺序即依赖顺序，不要调换：store → core（世界观数据层）→ ui（组件层）→ app（壳子/页面栈）→ 各页面 -->
 <script src="store.js"></script>
+<script src="core.js"></script>
 <script src="ui.js"></script>
 <script src="app.js"></script>
 <script src="api.js"></script>
+<!-- 二进制仓库（IndexedDB）：照片 / 附件 / 表情包的图片本体都存这儿，
+     localStorage 里只留一个 mediaId。必须排在 photos.js 前面。 -->
+<script src="media.js"></script>
+<!-- 照片数据层：负一屏的照片墙和相册 App 共用同一份数据。
+     必须排在 page-desktop.js 之前，因为后者的 wall 组件要调它 -->
+<script src="photos.js"></script>
+<!-- 桌面（模块 H）。它注册的是 'home'，所以要在 app.js 之后、别的页面之前 -->
+<script src="page-desktop.js"></script>
+<!-- 系统级切号 / 面具轮盘 / 记忆认知层。它要给 'home' 的 render 包一层，
+     所以必须排在 page-desktop.js 后面；chat 页要调它的 API，也要排在 page-chat 前 -->
+<script src="page-switch.js"></script>
+<!-- 预设注入引擎（第一轮）：prompt-engine 是数据与装配核心，
+     page-presets 是它的配置 app。都排在 page-chat 前 —— 后者要调引擎。 -->
+<script src="prompt-engine.js"></script>
+<script src="page-presets.js"></script>
 <script src="page-settings.js"></script>
+<!-- 外观（配色 / 字号 / 动效）：数据在 appearance 键里，这里负责落到 DOM。
+     排在哪都行，但 app 启动时会调一次 Sleepy.appearance.apply()，
+     所以它得排在 app.js 的启动流程之前 —— 也就是在 body 里、app.js 之后。 -->
+<script src="page-appearance.js"></script>
+<!-- 组件商城：读 desktop 的默认户型当目录，读 desktopRemoved 当「你删过的」。
+     必须在 page-desktop.js 之后（要用它的 defaultDesktop / COLS / ROWS）。 -->
+<script src="page-widgetstore.js"></script>
 <script src="page-backup.js"></script>
 <script src="page-subapi.js"></script>
-<script src="page-contacts.js"></script>
-<!-- 世界书（模块 B）：设置里挂入口，排在 contacts 后面无所谓，但必须在 page-chat 之前没什么依赖，放这里保持「先资料后聊天」的顺序 -->
+<!-- 生图（2.16）：imggen 是引擎（数据 + 拼提示词 + 调接口），
+     要用 store 和 media（图库收图）；page-imggen 是设置页，
+     依赖 imggen 的出口，必须排在它后面 -->
+<script src="imggen.js"></script>
+<script src="page-imggen.js"></script>
+<!-- 名片夹（模块 I）：树状层级 + 认知矩阵。必须排在 page-chat 之前，
+     因为后者要读它的角色数据 -->
+<script src="page-idcard.js"></script>
+<!-- 浮岛（造物主层）：名片夹的进化版，已取代名片夹的树状列表页。
+     它要用 page-idcard 暴露的 Sleepy.charIO（导入导出的入口在配置台），
+     所以排在后面 -->
+<script src="page-island.js"></script>
+<!-- 世界书（模块 B）：设置里挂入口，排在 contacts 后面无所谓 -->
 <script src="page-worldbook.js"></script>
 <!-- 心声是模块 E，page-chat 要用它的 overlay，所以排在 page-chat 之前 -->
 <script src="page-heartbeat.js"></script>
 <script src="page-diary.js"></script>
 <script src="page-moments.js"></script>
+<!-- 朋友圈里「角色自己动」：自己发动态 / 回来评论 / 回我发的那条。
+     排在 page-moments 后面（它要用 momentsTab 的 add / addComment / canSee），
+     也排在 api.js 后面（要打模型）。 -->
+<script src="moments-ai.js"></script>
+<!-- 相册（模块 J）：和负一屏照片墙共用 Sleepy.photos -->
+<script src="page-gallery.js"></script>
 <script src="page-chat.js"></script>
-<!-- 对话设置 / 挑角色的浮层：要用 page-chat 暴露的 chatStore，所以排在它后面 -->
+<!-- 线下模式（Chat 内的第二空间）：数据层 + 入口页 + 场景页。
+     Prompt 装配走 prompt-engine.assembleOffline，所以排在它后面。 -->
+<script src="page-offline.js"></script>
+<!-- 钱包（流水从对话消息里扫）与表情包管理（聊天 App「我」那一屏的两个入口） -->
+<script src="page-wallet.js"></script>
+<script src="page-stickers.js"></script>
+<!-- 聊天 App 容器（4 Tab：消息 / 通讯录 / 朋友圈 / 我）。
+     它是壳，内容由 page-chat（消息）、page-moments（朋友圈）、
+     page-switch（我）各自提供，所以必须排在它们后面。
+     另外它注册 chat-list / moments / me 三个入口 id ——
+     这三个页面 id 在别的文件里**已经不再注册**了，别加回去。 -->
+<script src="page-app.js"></script>
+<!-- 对话设置 / 挑角色的浮层：要用 page-chat 暴露的 chatStore，所以排在它后面。
+     文件末尾还有一段「点火」（Sleepy.bootHome），要保持最后加载。 -->
 <script src="page-chat-settings.js"></script>
+<script src="page-char-appearance.js"></script>
+<script src="page-memory.js"></script>
+<script src="page-summary.js"></script>
+<script src="page-proactive.js"></script>
+
+<script>
+/* PWA：只在 http(s) 下注册 SW。file:// 双击打开本来就是全离线的，
+   注册反而报错；装到主屏（走 serve.js 或托管）之后这里才生效。
+
+**本地开发服务器（127.0.0.1 / localhost）跳过注册** —— 这是一条
+2026-09-17 加上的护栏，起因是改样式时反复「改了没反应」：
+sw.js 是「缓存优先 + 后台更新」，所以刷新拿到的永远是**上一版**
+style.css，改十次也只在第二次刷新后才看见，白白怀疑了半天缓存、
+选择器、优先级。指向 127.0.0.1 的页面本来也装不了 PWA（手机打开
+127.0.0.1 是手机自己），所以跳过它没有任何代价。 */
+var devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !devHost) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js')['catch'](function () { /* 静默失败 */ });
+  });
+}
+</script>
 </body>
 </html>

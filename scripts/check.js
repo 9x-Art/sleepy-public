@@ -151,6 +151,29 @@ function checkLoads() {
     if (!exists(m[1])) cssGone.push(m[1]);
   }
   if (cssGone.length) bad('样式表引用失效：' + cssGone.join(', '));
+  else ok('样式表引用正常');
+
+  /* importmap 指向的引擎文件。
+     单独查这一条，是因为它**不在 <script src> 里** —— 上面那个反向检查
+     扫不到它。而它一旦缺失，用户在控制台看到的是
+     "Failed to resolve module specifier three"，
+     跟「文件根本没拷进来」差着十万八千里，能查半天。 */
+  var imRe = /<script[^>]+type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi;
+  var specs = [];
+  while ((m = imRe.exec(html))) {
+    var mapRe = /["']([^"']+)["']\s*:\s*["']([^"']+)["']/g;
+    var mm;
+    while ((mm = mapRe.exec(m[1]))) {
+      if (/^\.?\//.test(mm[2])) specs.push(mm[2]);
+    }
+  }
+  if (!specs.length) {
+    ok('没有 importmap（三维组件用不到就无所谓）');
+  } else {
+    var specGone = specs.filter(function (s) { return !exists(s.replace(/^\.\//, '')); });
+    if (specGone.length) bad('importmap 指向的文件不存在：' + specGone.join(', '));
+    else ok('importmap 的引擎文件都在（' + specs.join(', ') + '）');
+  }
 }
 
 /* ---------------------------- 汇总 ---------------------------- */

@@ -1,0 +1,1181 @@
+/* ============================================================
+   page-idcard.js — 名片夹（全局后台造物主）
+   依赖：store.js、core.js、ui.js、app.js
+   页面：contacts（树状列表）→ contact-edit（编辑）
+         → contact-bind（绑定 User 马甲 / 认知矩阵）
+         → contact-group（群聊）
+         → mask-edit（User 马甲编辑）
+
+   ---- 它到底是什么（《聊天 App》骨架第 1 节）----
+   名片夹不在聊天 App 内，它是全局的「捏人台」与数据库。保持极简：
+     1. 建 Char：创建核心大角色，挂载专属世界书。
+     2. 马甲 Tab：在一个 Char 面板内分 Tab 管理他的不同身份（大号/小号）。
+        底层共享同一个大脑，但每个皮套有独立的头像、昵称和表面设定。
+
+   ---- 树状层级（《终极架构总纲》第 2 节）----
+   放弃扁平的联系人列表，改成：
+     大号 Char A ──┬── 皮套 Char a
+                   ├── 皮套 Char a2
+                   └── NPC 1
+   皮套对外展示不同的设定和 UI 皮肤，但**底层与大号同源**
+   （记忆/大脑挂在根节点上，见 core.js 的 rootOf）。
+
+   ---- 双向掉马矩阵（《聊天 App》「初始状态矩阵」）----
+   在通讯录建立联系的初始，由 User 决定双方的认知状态。
+   三种场景（A:1C2U / B:1U2C / C:2U2C）的六个状态，
+   在代码里其实就是两个布尔维度的组合，不需要六个分支：
+     link.cognition  aware / unaware
+     link.barrier    true / false
+   界面上给的是「人话标签 + 结果描述」，底层只有这两个值。
+   ============================================================ */
+(function (global) {
+  'use strict';
+
+  var Sleepy = (global.Sleepy = global.Sleepy || {});
+  var store = Sleepy.store;
+  var core = Sleepy.core;
+  var ui = Sleepy.ui;
+
+  var h = ui.h;
+  var group = ui.group;
+  var row = ui.row;
+  var textField = ui.textField;
+  var textArea = ui.textArea;
+  var button = ui.button;
+  var downloadText = ui.downloadText;
+  var pickTextFile = ui.pickTextFile;
+
+  var SVG_ICON = 'viewBox="0 0 24 24" width="17" height="17" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"';
+
+  var ICON_IMPORT = '<svg ' + SVG_ICON + '><path d="M12 4v11"/><path d="M8 11l4 4 4-4"/>' +
+    '<path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>';
+  var ICON_EXPORT = '<svg ' + SVG_ICON + '><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/>' +
+    '<path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>';
+
+  /* 分隔头。宽松一点：等号三个以上、冒号中英文都认。
+     「预设」是 A5 时期的旧头，留着向后兼容。 */
+  var HEAD_RE = /^={3,}\s*(?:角色|预设)\s*[：:]\s*(.+?)\s*={3,}$/;
+
+  /* ------------------------- 导出 / 解析 ------------------------- */
+
+  function toFileText(items) {
+    var out = '';
+    items.forEach(function (it) {
+      out += '===== 角色：' + it.name + ' =====\n' + (it.content || '') + '\n';
+    });
+    return out;
+  }
+
+  function parseFileText(text) {
+    var lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+
+    var blocks = [];
+    var cur = null;
+    lines.forEach(function (line) {
+      var m = line.match(HEAD_RE);
+      if (m) {
+        if (cur) blocks.push(cur);
+        cur = { name: m[1], lines: [] };
+        return;
+      }
+      if (cur) cur.lines.push(line);
+    });
+    if (cur) blocks.push(cur);
+
+    if (!blocks.length) {
+      return [{ name: '', content: String(text || '').replace(/\n$/, '') }];
+    }
+    return blocks.map(function (b) {
+      return { name: b.name.trim(), content: b.lines.join('\n') };
+    });
+  }
+
+  function nameFromFile(fileName) {
+    var n = String(fileName || '').replace(/\.[^.]+$/, '');
+    n = n.replace(/^sleepy[-_]?(contacts?|presets?)[-_]?/i, '').replace(/^sleepy[-_]?/i, '');
+    return n.trim() || '导入的角色';
+  }
+
+  function isJsonish(text) {
+    var t = String(text || '').trim();
+    if (!t) return false;
+    if (t.charAt(0) !== '{' && t.charAt(0) !== '[') return false;
+    try { JSON.parse(t); return true; } catch (e) { return false; }
+  }
+
+  /* 导入的角色一律作为**大号**进来（导入文件里没有层级信息）。
+     同名覆盖，新名新增。 */
+  function importItems(items) {
+    var list = core.allChars();
+    var added = 0;
+    var updated = 0;
+    /* 把碰到过的角色 id 一起返回 —— 调用方（配置台）要拿它把导进来的
+       角色放进当前这间房，光知道「加了几个」没用。 */
+    var ids = [];
+
+    items.forEach(function (it) {
+      var hit = null;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].name === it.name && (list[i].kind || 'main') === 'main') {
+          hit = list[i];
+          break;
+        }
+      }
+      if (hit) {
+        hit.content = it.content;
+        hit.updatedAt = Date.now();
+        updated++;
+        ids.push(hit.id);
+      } else {
+        var created = {
+          id: core.newId('ch'),
+          name: it.name,
+          kind: 'main',
+          parentId: null,
+          boundUserId: null,
+          content: it.content,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        list.push(created);
+        added++;
+        ids.push(created.id);
+      }
+    });
+
+    core.saveChars(list);
+    return { added: added, updated: updated, ids: ids };
+  }
+
+  function stamp() {
+    var d = new Date();
+    function p(n) { return n < 10 ? '0' + n : '' + n; }
+    return String(d.getFullYear()) + p(d.getMonth() + 1) + p(d.getDate()) +
+           '-' + p(d.getHours()) + p(d.getMinutes());
+  }
+
+  /* ==================== 名片夹已下线（由浮岛接管） ====================
+
+     原「名片夹（树状列表）」整页删除：它被《小手机 App · 浮岛》取代 ——
+     浮岛就是名片夹的进化版，两者不是并存关系。
+
+       高层导航（哪几间房）  →  page-island.js 的 island
+       房内捏人（谁在这间房）→  page-island.js 的 island-config
+       角色骨架（六字段）    →  本文件的 contact-edit（保留，配置台从它进入）
+       群聊 / 马甲           →  contact-group / mask-list（入口改由配置台与 4 Tab 给）
+
+     导入 / 导出没跟着删 —— 它是「往这间房加人」的动作，改由配置台调用
+     （见文件末尾的 Sleepy.charIO）。
+     ============================================================ */
+
+  function exportAll(ctx) {
+    var list = core.mainChars();
+    if (!list.length) { ctx.toast('还没有任何角色', 'warn'); return; }
+
+    /* 导出带上层级：大号 + 它的皮套/NPC 一起，缩进表示归属。
+       这样导出的文件再导回来，树还能立起来。 */
+    var text = '';
+    list.forEach(function (m) {
+      text += '===== 角色：' + m.name + ' =====\n' + (m.content || '') + '\n';
+      core.subChars(m.id).forEach(function (s) {
+        text += '===== 皮套：' + s.name + ' | 属于：' + m.name + ' =====\n' + (s.content || '') + '\n';
+      });
+      core.npcChars(m.id).forEach(function (s) {
+        text += '===== NPC：' + s.name + ' | 属于：' + m.name + ' =====\n' + (s.content || '') + '\n';
+      });
+    });
+
+    var ok = downloadText('sleepy-characters-' + stamp() + '.md', text, 'text/markdown');
+    if (ok) ctx.toast('已导出 ' + list.length + ' 个大号（含皮套 / NPC）', 'ok');
+    else ctx.toast('导出失败：浏览器拦下了下载', 'err');
+  }
+
+  /* 导入角色文件。**导入进来的角色会直接进这间房** ——
+     这是配置台的动作（「往这间房加人」），不是全局导数据。
+     sandboxId 为空时只入库、不进房（留给以后的总库视图用）。 */
+  function importInto(ctx, sandboxId) {
+    pickTextFile('.txt,.md,.markdown,text/plain,text/markdown', function (text, fileName) {
+      if (/\.json$/i.test(fileName) || isJsonish(text)) {
+        ctx.toast('这是 json 格式，只收 txt / md 纯文本', 'err');
+        return;
+      }
+      var items = parseFileText(text);
+      items = items.filter(function (it) {
+        return String(it.content || '').trim() || it.name;
+      });
+      if (!items.length) { ctx.toast('这个文件里没有内容', 'err'); return; }
+      items.forEach(function (it, i) {
+        if (!it.name) it.name = items.length === 1 ? nameFromFile(fileName) : ('导入的角色 ' + (i + 1));
+      });
+
+      var res = importItems(items);
+
+      /* 把导进来的角色放进这间房。
+         孤岛只能装一个（这是硬约束，core 会拒），所以先自己判断一下，
+         给出人话提示而不是把 core 的报错直接糊到用户脸上。 */
+      var note = '';
+      if (sandboxId && res.ids && res.ids.length) {
+        var sb = core.findSandbox(sandboxId);
+        if (sb) {
+          if (sb.kind === core.KIND_ISLE && (sb.charIds || []).length >= 1) {
+            note = ' · 孤岛只能装一个角色，导进来的留在库里没放进去';
+          } else {
+            var next = (sb.charIds || []).slice();
+            var take = sb.kind === core.KIND_ISLE ? res.ids.slice(0, 1) : res.ids;
+            take.forEach(function (cid) { if (next.indexOf(cid) < 0) next.push(cid); });
+            var r = core.setSandboxChars(sandboxId, next);
+            note = r.ok ? ' · 已放进这间房' : (' · ' + r.message);
+            if (r.ok && sb.kind === core.KIND_ISLE && res.ids.length > 1) {
+              note = ' · 孤岛只收下了第一个，其余留在库里';
+            }
+          }
+        }
+      }
+
+      var parts = [];
+      if (res.added) parts.push('新增 ' + res.added + ' 个');
+      if (res.updated) parts.push('覆盖 ' + res.updated + ' 个');
+      ctx.toast('导入完成：' + (parts.join('，') || '没变化') + note, 'ok');
+      if (ctx.redraw) ctx.redraw();
+      else if (ctx.rebuild) ctx.rebuild();
+    }, function (msg) {
+      ctx.toast(msg || '读取文件失败', 'err');
+    });
+  }
+
+  /* ==================== 页面：加人设 / 加 NPC ====================
+
+     关系树上所有「+」都进这一页，但**一次只问这一件事**
+     （用户原话：「点击加 char 就是只加 char，里面有个可选项是是否有小号，
+     有小号就展开设置，没有就关掉那个开关。然后点击 char 下面的加 npc，
+     里面就是 npc 的设置」）：
+
+       main  加人设  → 名字 / 头像 / 人设，外加一个「有小号吗」开关；
+                      打开才**展开**小号的设置，关着就整个收起来
+       sub   加皮套  → 名字 / 头像 / 人设
+       npc   加 NPC  → 名字 / 头像 / 人设
+
+     为什么不复用下面那个完整页：完整页是「角色骨架总面板」——
+     有身份三选一切换器、所在城市、状态签名、绑定马甲、记忆库。
+     从关系树上点一个虚线圆圈加个人却掉进这么一页，会以为走错了地方
+     （用户原话：「这个不对呀」「不要这样！！！」）。
+     完整页没删，从本页最底下那个入口进。
+
+     归属（挂在谁名下、算皮套还是 NPC）由**点进来的位置**决定，
+     通过 params 传进来，这一页不再问。 */
+  function renderSimple(ctx, existing, kind, parentId, parentType, sandboxId) {
+    var body = ctx.body;
+    var isMain = kind === 'main';
+    var sb = sandboxId ? core.findSandbox(sandboxId) : null;
+
+    /* 大号名下已有的小号 —— 有的话开关默认就是打开的 */
+    var mySub = null;
+    if (isMain && existing) {
+      var subs = core.subChars(existing.id);
+      for (var si = 0; si < subs.length; si++) {
+        if (!sb || !subs[si].sandboxId || subs[si].sandboxId === sb.id) {
+          mySub = subs[si];
+          break;
+        }
+      }
+    }
+
+    ctx.setTitle(existing
+      ? (isMain ? '改人设' : (kind === 'sub' ? '改这张脸' : '改这个人'))
+      : (isMain ? '加一个人设' : (kind === 'sub' ? '加一个皮套' : '加一个 NPC')));
+
+    /* 顶部一句交代「他会落在哪儿」，省得用户自己琢磨 */
+    var line;
+    if (isMain) {
+      if (!sb) {
+        line = '他会成为这间房里的人';
+      } else if (sb.kind === core.KIND_ISLE) {
+        var occupied = !existing && core.charsOfSandbox(sb.id).length >= 1;
+        line = occupied
+          ? '这座孤岛已经住了人 —— 他还是会被存下来，但进不了这间房'
+          : (existing ? '这座孤岛上唯一的那个人'
+                      : '孤岛只住得下一个人 · 他会是唯一的那一个');
+      } else {
+        line = '他会成为这片群岛上的一个人';
+      }
+    } else {
+      var parentIsMe = parentType === 'user';
+      var parent = parentIsMe ? core.findUser(parentId) : core.findChar(parentId);
+      line = (existing ? '挂在' : '会挂在') + '「' +
+        (parent ? parent.name : (parentIsMe ? '我' : '？')) + '」名下 · ' +
+        (parentIsMe ? '这是「我」这边的人，跟角色无关'
+                    : (kind === 'sub' ? '这是对方的另一张脸' : '这是对方那边的人'));
+    }
+    body.appendChild(h('p', 'simple-parent', line));
+
+    var f = {};
+    f.name = textField({
+      label: '名字',
+      value: existing ? existing.name : '',
+      hint: '聊天记录里出现的名字就是它'
+    });
+    body.appendChild(f.name.el);
+
+    f.avatar = textField({
+      label: '头像地址',
+      hint: '留空就用名字首字。别存本地图片，5MB 配额会被撑爆',
+      value: existing ? (existing.avatar || '') : '',
+      placeholder: 'https://…',
+      inputmode: 'url'
+    });
+    body.appendChild(f.avatar.el);
+
+    f.content = textArea({
+      label: '人设',
+      value: existing ? existing.content : '',
+      rows: 10,
+      counter: true,
+      placeholder: '是谁、怎么说话、和你什么关系……'
+    });
+    body.appendChild(f.content.el);
+
+    /* ---- 「有小号吗」开关 + 展开的小号设置 ----
+       只有大号才有这个开关：皮套本来就是「大号对外用的另一张脸」，
+       NPC 不存在小号这回事。 */
+    var sw = null;
+    var fs = null;
+    var subBox = null;
+
+    if (isMain) {
+      sw = ui.switchField({
+        label: '有小号吗',
+        hint: '打开就能顺手给他建一张皮套 —— 对外用的另一张脸',
+        value: !!mySub
+      });
+      /* 开关在字段区下方：先看「他是谁」，再决定要不要顺手加一张脸 */
+      body.appendChild(sw.el);
+
+      subBox = h('div', 'simple-sub');
+      fs = {};
+      fs.name = textField({
+        label: '小号的名字',
+        value: mySub ? mySub.name : '',
+        hint: '留空就自动叫「（大号名）的小号」'
+      });
+      subBox.appendChild(fs.name.el);
+      fs.content = textArea({
+        label: '小号人设',
+        value: mySub ? mySub.content : '',
+        rows: 6,
+        counter: true,
+        placeholder: '这张脸对外是什么样、别人眼里的他是谁……'
+      });
+      subBox.appendChild(fs.content.el);
+      body.appendChild(subBox);
+
+      subBox.style.display = sw.get() ? '' : 'none';
+      sw.input.addEventListener('change', function () {
+        subBox.style.display = sw.get() ? '' : 'none';
+      });
+    }
+
+    var btnRow = h('div', 'btn-row');
+    btnRow.appendChild(button('保存', 'primary', function () { doSave(); }));
+    body.appendChild(btnRow);
+
+    if (existing) {
+      var more = h('button', 'simple-more', '要更完整的设定（锁脸 / 红线 / 记忆）→');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        ctx.open('contact-edit', { id: existing.id, sandboxId: sandboxId });
+      });
+      body.appendChild(more);
+    }
+
+    ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
+
+    function doSave() {
+      var name = String(f.name.get() || '').trim() || '未命名';
+      var payload = {
+        id: existing ? existing.id : core.newId('ch'),
+        kind: kind,
+        parentId: parentId || null,
+        name: name,
+        avatar: String(f.avatar.get() || '').trim(),
+        content: f.content.get()
+      };
+      /* 皮套 / NPC 按房建；parentType 决定挂在谁名下。
+         大号本体（kind='main'）不带 sandboxId —— 它是全局共用的。 */
+      if (kind !== 'main') {
+        payload.parentType = parentType || 'char';
+        if (sandboxId) payload.sandboxId = sandboxId;
+      }
+      var saved = core.upsertChar(payload);
+      if (!saved) { ctx.toast('保存失败', 'err'); return; }
+
+      /* 大号**必须进房**：光建角色、没写进 sandbox.charIds 的话，
+         关系树 / 通讯录 / 切号器里全都看不见它（等于白建）。
+         这一步以前是漏的 —— 只有 charIO 的导入走 setSandboxChars，
+         手工「加人设」建出来的大号是悬空的（房型校验也顺带被绕过了，
+         孤岛能悄悄住进第三个人）。 */
+      if (isMain && sb) {
+        var ids = (sb.charIds || []).slice();
+        if (ids.indexOf(saved.id) < 0) {
+          var r = core.setSandboxChars(sb.id, ids.concat([saved.id]));
+          if (!r.ok) ctx.toast(r.message, 'warn');
+        }
+      }
+
+      /* 小号：开关关着就**不动**它。
+         已有小号不会因为开关被关掉就消失 —— 删角色是破坏性动作，
+         不该藏在一个开关的背面。 */
+      if (isMain && sw && sw.get()) {
+        var subName = String(fs.name.get() || '').trim() || (name + '的小号');
+        core.upsertChar({
+          id: mySub ? mySub.id : core.newId('ch'),
+          kind: 'sub',
+          parentId: saved.id,
+          parentType: 'char',
+          sandboxId: sandboxId || null,
+          name: subName,
+          content: fs.content.get()
+        });
+      }
+
+      ctx.toast('已保存', 'ok');
+      ctx.back();
+    }
+  }
+
+  /* ==================== 页面：编辑角色（含马甲 Tab） ==================== */
+
+  Sleepy.register('contact-edit', {
+    title: '角色骨架',
+    render: function (ctx) {
+      var body = ctx.body;
+      var id = ctx.params.id || '';
+      var existing = id ? core.findChar(id) : null;
+
+      if (id && !existing) {
+        ctx.toast('找不到这个角色', 'err');
+        ctx.back();
+        return;
+      }
+
+      var kind = existing ? (existing.kind || 'main') : (ctx.params.kind || 'main');
+      var parentId = existing ? existing.parentId : (ctx.params.parentId || null);
+
+      /* 这间房 —— 配置台带进来的。皮套和 NPC **按房建**（决策 3），
+         所以新建时得知道是哪间房，否则它们不属于任何房、在哪都看不见。
+         大号本体是全局共用的，**绝对不能**带 sandboxId。 */
+      var sandboxId = ctx.params.sandboxId || (existing ? existing.sandboxId : null) || null;
+
+      /* 父亲是「人」还是「角色」。关系树里「我」下面也能挂 NPC，
+         所以不能只看 parentId 去猜（两种 id 在不同命名空间）。 */
+      var parentType = ctx.params.parentType
+        || (existing ? (existing.parentType || 'char') : 'char');
+
+      /* 简化路径：从关系树的虚线位进来的，只问名字 / 头像 / 人设。
+         走独立的渲染函数而不是在这里加一堆 if —— 那样两个模式会互相
+         污染（改简单页的排版会碰坏完整页）。 */
+      if (ctx.params.simple) {
+        renderSimple(ctx, existing, kind, parentId, parentType, sandboxId);
+        return;
+      }
+
+      if (!existing) {
+        ctx.setTitle(kind === 'sub' ? '新建皮套'
+                    : (kind === 'npc' ? '新建 NPC' : '新建大号'));
+      }
+
+      var f = {};
+
+      /* ---- 身份 ---- */
+      var gKind = group('身份',
+        '大号是根，有独立记忆库；皮套挂在大号名下，对外是另一张脸，底层同源；' +
+        'NPC 只在该大号的宇宙里出场。');
+
+      var kindRow = h('div', 'seg');
+      [['main', '大号'], ['sub', '皮套'], ['npc', 'NPC']].forEach(function (k) {
+        var b = h('button', 'seg-btn' + (kind === k[0] ? ' is-on' : ''), k[1]);
+        b.type = 'button';
+        /* 已经是皮套的不能再改成大号 —— 它下面可能挂着别的引用 */
+        if (existing && (existing.kind || 'main') !== 'main' && k[0] === 'main') b.disabled = true;
+        b.addEventListener('click', function () {
+          kind = k[0];
+          var sib = kindRow.querySelectorAll('.seg-btn');
+          for (var i = 0; i < sib.length; i++) sib[i].classList.remove('is-on');
+          b.classList.add('is-on');
+        });
+        kindRow.appendChild(b);
+      });
+      gKind.card.appendChild(kindRow);
+
+      /* 归属大号：只有皮套和 NPC 需要 */
+      var parentSel = null;
+      if (kind !== 'main' || parentId) {
+        parentSel = h('select', 'set-input set-select');
+        core.mainChars().forEach(function (m) {
+          if (existing && m.id === existing.id) return;
+          var o = h('option', '', m.name);
+          o.value = m.id;
+          if (m.id === parentId) o.selected = true;
+          parentSel.appendChild(o);
+        });
+        var pw = ui.fieldShell('属于哪个大号', '皮套和 NPC 必须挂在一个大号名下，不能独立存在。');
+        pw.appendChild(parentSel);
+        gKind.card.appendChild(pw);
+      }
+
+      f.name = textField({
+        label: '名字',
+        value: existing ? existing.name : '',
+        hint: '聊天记录里出现的名字就是它'
+      });
+      gKind.card.appendChild(f.name.el);
+
+      /* 头像：存 URL 而不是二进制 —— localStorage 只有 5MB，
+         塞一张原图就可能撑爆配额（施工卡里踩过这个坑）。 */
+      f.avatar = textField({
+        label: '头像地址',
+        hint: '留空就用名字首字。别存本地图片，5MB 配额会被撑爆',
+        value: existing ? (existing.avatar || '') : '',
+        placeholder: 'https://…',
+        inputmode: 'url'
+      });
+      gKind.card.appendChild(f.avatar.el);
+
+      f.city = textField({
+        label: '所在城市',
+        hint: '用在桌面的双城时间',
+        value: existing ? (existing.city || '') : '',
+        placeholder: '伦敦'
+      });
+      gKind.card.appendChild(f.city.el);
+
+      f.status = textField({
+        label: '状态签名',
+        hint: '显示在桌面角色卡上',
+        value: existing ? (existing.status || '') : '',
+        placeholder: '开会中…'
+      });
+      gKind.card.appendChild(f.status.el);
+
+      body.appendChild(gKind.wrap);
+
+      /* ---- 绑定 User 马甲（1:1 对称）---- */
+      var gBind = group('绑定 User 马甲',
+        '总纲要求「极致的 1:1 对称」：建 Char 时必须绑定一个 User 马甲。');
+      var users = core.userMasks();
+      var boundId = existing ? existing.boundUserId : null;
+
+      var uSel = h('select', 'set-input set-select');
+      var noneOpt = h('option', '', '（暂不绑定）');
+      noneOpt.value = '';
+      uSel.appendChild(noneOpt);
+      users.forEach(function (u) {
+        var o = h('option', '', u.name + (u.persona ? ' · ' + u.persona.slice(0, 18) : ''));
+        o.value = u.id;
+        if (u.id === boundId) o.selected = true;
+        uSel.appendChild(o);
+      });
+      var uw = ui.fieldShell('对应的 User 马甲', '切号时，这一对会一起被选中。');
+      uw.appendChild(uSel);
+      gBind.card.appendChild(uw);
+
+      var maskLink = h('div', 'btn-row');
+      maskLink.appendChild(button('管理我的马甲', 'ghost', function () { ctx.open('mask-list'); }));
+      gBind.card.appendChild(maskLink);
+      body.appendChild(gBind.wrap);
+
+      /* ---- 认知矩阵（只有已建交才显示）---- */
+      if (existing && id) {
+        var uNow = boundId || (users[0] && users[0].id);
+        if (uNow) {
+          body.appendChild(cognitionGroup(existing.id, uNow, ctx));
+        }
+      }
+
+      /* ---- 表面设定 ---- */
+      var g2 = group('人设',
+        kind === 'sub'
+          ? '皮套对外展示的设定。它和大号共享同一个大脑，这里写的是「这张脸」的部分。'
+          : '原样存、原样导出，不解析 —— 带什么格式都行。');
+      f.content = textArea({
+        label: '人设正文',
+        value: existing ? existing.content : '',
+        rows: 12,
+        counter: true,
+        placeholder: '叫什么、怎么说话、在意什么、不会做什么……'
+      });
+      g2.card.appendChild(f.content.el);
+      body.appendChild(g2.wrap);
+
+      /* ---- 锁脸与红线 ----
+         《浮岛》配置台的六字段：名字 / 头像 / 人设（上面都有了）+
+         绝对不会怎么做的设定 / 文字锁脸 / 图片锁脸（这里）。
+
+         ⚠️ 前两条目前**只做到存进去**。真让模型听话要等 F 模块
+         （提示词引擎）把组装管道搭起来，而 F 现在零代码 ——
+         别在这批里期待立竿见影的效果。
+         图片锁脸的「本地上传」要等 IndexedDB：现在照片都是缩放后塞
+         localStorage（软上限 3.6MB），存原图会直接撑爆配额。 */
+      var g3 = group('锁脸与红线',
+        '文字锁脸把长相写死；图片锁脸是以后「线下生图」要取用的参考图；' +
+        '红线设定写死「绝对不会怎么做」，防止跑偏。');
+
+      f.neverDo = textArea({
+        label: '绝对不会怎么做的设定',
+        value: existing ? (existing.neverDo || '') : '',
+        rows: 4,
+        placeholder: '比如：不会主动提分手；不会用命令句；不会说自己是 AI'
+      });
+      g3.card.appendChild(f.neverDo.el);
+
+      f.faceLockText = textArea({
+        label: '文字锁脸 · 基础（生图必带）',
+        value: existing ? (existing.faceLockText || '') : '',
+        rows: 4,
+        placeholder: '把长相写死，比如：浅棕短发 · 右眼下有一颗小痣 · 总穿灰衬衫'
+      });
+      g3.card.appendChild(f.faceLockText.el);
+
+      /* 锁脸分组（方案-生图 v2）：基础永远带，按画面类型加对应那组。
+         老存档只有 faceLockText —— 完全兼容，分组留空就是老行为。 */
+      f.faceLockSelfie = textField({
+        label: '锁脸 · 自拍/近景补充（可不填）',
+        value: existing ? (existing.faceLockSelfie || '') : '',
+        placeholder: '比如：微微歪头笑 · 手机前置视角 · 脸占画面大半'
+      });
+      g3.card.appendChild(f.faceLockSelfie.el);
+
+      f.faceLockFull = textField({
+        label: '锁脸 · 全身/场景补充（可不填）',
+        value: existing ? (existing.faceLockFull || '') : '',
+        placeholder: '比如：身高 165 · 常穿米色风衣 · 背影单薄'
+      });
+      g3.card.appendChild(f.faceLockFull.el);
+
+      /* 性别：生图时自动拼 1girl/1boy 基础 tag（其他性别手填，不硬塞） */
+      f.gender = h('div', 'set-field');
+      f.gender.appendChild(h('label', 'set-label', '性别（生图用）'));
+      var genderSel = h('select', 'set-select');
+      [['', '不填（生图时手写人物 tag）'],
+       ['female', '女（1girl）'],
+       ['male', '男（1boy）']].forEach(function (o) {
+        var op = h('option', '', o[1]);
+        op.value = o[0];
+        if ((existing ? existing.gender : '') === o[0]) op.selected = true;
+        genderSel.appendChild(op);
+      });
+      f.gender.appendChild(genderSel);
+      g3.card.appendChild(f.gender);
+
+      f.faceLockImage = textField({
+        label: '图片锁脸（地址）',
+        value: existing ? (existing.faceLockImage || '') : '',
+        hint: '先只收网址。本地上传要等 IndexedDB —— 现在塞本地图会撑爆 5MB 配额',
+        placeholder: 'https://…',
+        inputmode: 'url'
+      });
+      g3.card.appendChild(f.faceLockImage.el);
+      body.appendChild(g3.wrap);
+
+      /* ---- 记忆（只对大号显示）---- */
+      if (existing && kind !== 'npc') {
+        body.appendChild(memoryGroup(existing, ctx));
+      }
+
+      var btnRow = h('div', 'btn-row');
+      var delBtn = button('删除', 'danger');
+      if (!existing) delBtn.disabled = true;
+      btnRow.appendChild(delBtn);
+      btnRow.appendChild(button('导出这个', 'ghost', function () { doExportOne(); }));
+      btnRow.appendChild(button('保存', 'primary', function () { doSave(); }));
+      body.appendChild(btnRow);
+
+      if (existing && kind === 'main') {
+        var foot = h('p', 'set-foot',
+          '删除大号会把它名下的皮套和 NPC 一起删掉。');
+        body.appendChild(foot);
+      }
+
+      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
+
+      /* 删除用「再点一次确认」，和「清除全部数据」保持同一套手感 */
+      var armed = false;
+      var armTimer = null;
+      function resetArm() {
+        if (armTimer) { clearTimeout(armTimer); armTimer = null; }
+        armed = false;
+        delBtn.textContent = '删除';
+        delBtn.classList.remove('is-armed');
+      }
+      delBtn.addEventListener('click', function () {
+        if (!existing) return;
+        if (!armed) {
+          armed = true;
+          var subs = core.subChars(existing.id).length + core.npcChars(existing.id).length;
+          delBtn.textContent = subs
+            ? ('再点一次，连同 ' + subs + ' 个下属一起删')
+            : '再点一次，确认删除';
+          delBtn.classList.add('is-armed');
+          armTimer = setTimeout(resetArm, 4000);
+          return;
+        }
+        resetArm();
+        core.removeChar(existing.id);
+        ctx.toast('已删除', 'ok');
+        ctx.back();
+      });
+
+      function doSave() {
+        var name = String(f.name.get() || '').trim() || '未命名角色';
+        var parent = kind === 'main' ? null
+          : (parentSel && parentSel.value ? parentSel.value : parentId);
+
+        if (kind !== 'main' && !parent) {
+          ctx.toast('皮套和 NPC 得挂在某个大号名下', 'err');
+          return;
+        }
+
+        var payload = {
+          id: existing ? existing.id : core.newId('ch'),
+          kind: kind,
+          parentId: parent,
+          name: name,
+          avatar: String(f.avatar.get() || '').trim(),
+          city: String(f.city.get() || '').trim(),
+          status: String(f.status.get() || '').trim() || (kind === 'sub' ? '小号' : '在线'),
+          boundUserId: uSel.value || null,
+          content: f.content.get(),
+          neverDo: String(f.neverDo.get() || '').trim(),
+          faceLockText: String(f.faceLockText.get() || '').trim(),
+          faceLockSelfie: String(f.faceLockSelfie.get() || '').trim(),
+          faceLockFull: String(f.faceLockFull.get() || '').trim(),
+          gender: genderSel.value || '',
+          faceLockImage: String(f.faceLockImage.get() || '').trim()
+        };
+
+        /* 皮套 / NPC 按房建（决策 3）：新建时必须带上房 id。
+           大号本体全局共用，**不带** —— core 的更新分支是按「键在不在」
+           覆盖的，给大号塞一个 sandboxId 会让它变成某一间房的私有角色。
+           parentType 同理：它只在「不是大号」时有意义。 */
+        if (kind !== 'main') {
+          payload.parentType = parentType || 'char';
+          if (sandboxId) payload.sandboxId = sandboxId;
+        }
+
+        core.upsertChar(payload);
+
+        ctx.toast('已保存', 'ok');
+        ctx.back();
+      }
+
+      function doExportOne() {
+        var one = {
+          name: String(f.name.get() || '').trim() || '未命名',
+          content: f.content.get()
+        };
+        if (!String(one.content).trim()) {
+          ctx.toast('设定是空的，先写点东西', 'warn');
+          return;
+        }
+        var safe = one.name.replace(/[\\/:*?"<>|]/g, '_');
+        var ok = downloadText(safe + '.md', one.content, 'text/markdown');
+        if (ok) ctx.toast('已导出「' + one.name + '」', 'ok');
+        else ctx.toast('导出失败：浏览器拦下了下载', 'err');
+      }
+    }
+  });
+
+  /* ------------------- 认知矩阵 / 掉马 ------------------- */
+
+  /* 六个状态都收敛成两个布尔维度（cognition × barrier）。
+     界面上给的是人话标签 —— 用户不需要知道底下只有两个值。 */
+  function cognitionGroup(charId, userId, ctx) {
+    var g = group('认知状态（掉马矩阵）',
+      '在建立联系的初始由你决定双方的认知状态。这决定模型此刻「知道多少」。');
+
+    var card = g.card;
+    var cur = core.cognitionOf(charId, userId);
+    var user = core.findUser(userId);
+
+    var box = h('div', 'cog-box');
+
+    function paint() {
+      box.innerHTML = '';
+      var c = core.cognitionOf(charId, userId);
+
+      /* 两个可点切换的「档位」，比一堆单选更直观 */
+      var s1 = h('button', 'cog-opt' + (!c.barrier && c.cognition === 'unaware' ? ' is-on' : ''));
+      s1.type = 'button';
+      s1.appendChild(h('span', 'cog-opt-title', '不知情 · 拼图局'));
+      s1.appendChild(h('span', 'cog-opt-desc',
+        '对方不知道这是你的小号。靠全量记忆的碰撞产生既视感和机缘巧合。'));
+      s1.addEventListener('click', function () {
+        core.setCognition(charId, userId, 'unaware');
+        core.setBarrier(charId, userId, false);
+        paint();
+        ctx.toast('已设为「不知情」', 'ok');
+      });
+      box.appendChild(s1);
+
+      var s2 = h('button', 'cog-opt' + (!c.barrier && c.cognition === 'aware' ? ' is-on' : ''));
+      s2.type = 'button';
+      s2.appendChild(h('span', 'cog-opt-title', '已知情 · 调情局'));
+      s2.appendChild(h('span', 'cog-opt-desc',
+        '对方知道这是你的小号，选择陪着演戏或者故意逗弄。'));
+      s2.addEventListener('click', function () {
+        core.setCognition(charId, userId, 'aware');
+        core.setBarrier(charId, userId, false);
+        paint();
+        ctx.toast('已设为「已知情」', 'ok');
+      });
+      box.appendChild(s2);
+
+      var s3 = h('button', 'cog-opt is-danger' + (c.barrier ? ' is-on' : ''));
+      s3.type = 'button';
+      s3.appendChild(h('span', 'cog-opt-title', '记忆完全隔离 · 平行宇宙'));
+      s3.appendChild(h('span', 'cog-opt-desc',
+        '检索层直接拦掉非当前马甲组合的记忆。连既视感都没有，纯粹的平行宇宙。'));
+      s3.addEventListener('click', function () {
+        core.setBarrier(charId, userId, true);
+        paint();
+        ctx.toast('已开启记忆隔离', 'ok');
+      });
+      box.appendChild(s3);
+
+      var state = h('p', 'cog-state');
+      var name = core.findChar(charId);
+      state.textContent = '当前：' +
+        (c.barrier ? '平行宇宙（无既视感）'
+                   : (c.cognition === 'aware' ? '已知情（明牌）' : '不知情（保护中）')) +
+        ' · 面对「' + (user ? user.name : '对方') + '」的这张脸是「' + (name ? name.name : '?') + '」';
+      box.appendChild(state);
+
+      card.appendChild(box);
+
+      var acts = h('div', 'btn-row');
+      acts.appendChild(button('⚠️ 记忆互通（掉马）', 'danger', function () { doUnmask(); }));
+      card.appendChild(acts);
+
+      card.appendChild(h('p', 'set-foot',
+        '掉马 = 撤销记忆障壁 + 认知推到「已知情」+ 注入一条系统事件。' +
+        '下一轮模型会同时读到两份反差极大的记忆。'));
+    }
+
+    async function doUnmask() {
+      var yes = await ui.confirm({
+        title: '让大小号记忆互通？',
+        note: '撤销记忆障壁，双方的身份反差会被直接摊到台面上。这一步之后不好收回。',
+        ok: '掉马',
+        danger: true
+      });
+      if (!yes) return;
+      var extra = await ui.prompt({
+        title: '要额外注入什么事件？',
+        note: '留空就用默认的「身份反差暴露」。这条会作为系统事件进上下文。',
+        value: '',
+        ok: '确认'
+      });
+      if (extra === null) return;
+      var ev = core.unmask(charId, userId, String(extra).trim());
+      paint();
+      if (ev) ctx.toast('掉马事件已注入', 'ok');
+    }
+
+    paint();
+    return g.wrap;
+  }
+
+  /* ------------------- 记忆（全量 + 四元组） ------------------- */
+
+  function memoryGroup(char, ctx) {
+    var rootId = core.rootIdOf(char.id);
+    var g = group('记忆库',
+      '不管切什么马甲，所有记忆全量存进这个角色的唯一大脑。' +
+      '每条都带 [U → C] 四元组标签，保证绝对可溯源 —— 掉马时才对得上号。');
+
+    var box = h('div', 'mem-box');
+    var list = core.memoriesOfRoot(rootId).slice().sort(function (a, b) {
+      return (b.at || 0) - (a.at || 0);
+    });
+
+    if (!list.length) {
+      box.appendChild(h('p', 'mem-empty',
+        '还没有记忆。聊过天之后，这里会按 [User 马甲 → Char 皮套] 归档。'));
+    } else {
+      list.slice(0, 30).forEach(function (m) {
+        var item = h('div', 'mem-item');
+        item.appendChild(h('span', 'mem-tag', core.tagOf(m)));
+        item.appendChild(h('span', 'mem-text', m.text));
+        box.appendChild(item);
+      });
+      if (list.length > 30) {
+        box.appendChild(h('p', 'mem-empty', '…… 共 ' + list.length + ' 条'));
+      }
+
+      /* 清空是「再点一次」，跟别处的危险动作保持同一手感 */
+      var clr = button('清空这个角色的记忆', 'danger');
+      var armed = false;
+      var t = null;
+      clr.addEventListener('click', function () {
+        if (!armed) {
+          armed = true;
+          clr.textContent = '再点一次，确认清空';
+          clr.classList.add('is-armed');
+          t = setTimeout(function () {
+            armed = false;
+            clr.textContent = '清空这个角色的记忆';
+            clr.classList.remove('is-armed');
+          }, 4000);
+          return;
+        }
+        clearTimeout(t);
+        core.dropMemories(function (m) { return m.rootId === rootId; });
+        ctx.toast('记忆已清空', 'ok');
+        if (ctx.refresh) ctx.refresh();
+      });
+      box.appendChild(clr);
+    }
+
+    g.card.appendChild(box);
+    return g.wrap;
+  }
+
+  /* ==================== 页面：群聊（跨宇宙投影） ==================== */
+
+  Sleepy.register('contact-group', {
+    title: '发起群聊',
+    render: function (ctx) {
+      var body = ctx.body;
+      var picked = {};
+
+      var g = group('勾选要拉进群的大号',
+        '群聊会作为「分身」同时投影到各角色的聊天列表里。' +
+        '在不同角色的桌面看，视觉氛围完全不同。');
+
+      var mains = core.mainChars();
+      if (mains.length < 1) {
+        g.card.appendChild(row({ label: '名片夹里还没有大号', plain: true }));
+      }
+
+      mains.forEach(function (m) {
+        var line = h('button', 'pick-line');
+        line.type = 'button';
+        line.appendChild(h('span', 'pick-box'));
+        line.appendChild(h('span', 'pick-av', core.initialOf(m.name)));
+        line.appendChild(h('span', 'pick-name', m.name));
+        line.addEventListener('click', function () {
+          if (picked[m.id]) delete picked[m.id];
+          else picked[m.id] = true;
+          line.classList.toggle('is-on', !!picked[m.id]);
+        });
+        g.card.appendChild(line);
+      });
+
+      body.appendChild(g.wrap);
+
+      var btnRow = h('div', 'btn-row');
+      btnRow.appendChild(button('建群', 'primary', function () { create(); }));
+      body.appendChild(btnRow);
+
+      function create() {
+        var ids = Object.keys(picked);
+        if (ids.length < 2) {
+          ctx.toast('至少勾两个大号才叫群', 'warn');
+          return;
+        }
+        var key = core.groupKeyOf(ids);
+        var name = core.makeGroupName(ids);
+
+        /* 群聊对每个成员各有一条对话记录 —— 这就是「分身投影」：
+           同一个群，在每个角色的聊天列表里都是独立的一条。
+           写入方：拿**全量**（store.get 的原始数组）改完再整表落盘，
+           不能拿过滤过的列表，否则别的存档的对话会被冲掉。 */
+        var chats = Array.isArray(store.get('chats')) ? store.get('chats') : [];
+        var made = 0;
+        ids.forEach(function (cid) {
+          var exist = false;
+          chats.forEach(function (c) {
+            if (c.groupKey === key && c.characterId === cid) exist = true;
+          });
+          if (exist) return;
+          var rec = {
+            id: core.newId('ct'),
+            name: name,
+            characterId: cid,
+            userId: store.get('activeUserId'),
+            groupKey: key,
+            groupIds: ids,
+            overrides: { temperature: null, maxTokens: null, contextMessages: null, stream: null },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: []
+          };
+          if (core.tagScope) core.tagScope(rec);   /* 盖上当前房的章 */
+          chats.unshift(rec);
+          made++;
+        });
+
+        store.set('chats', chats);
+        if (ctx.toast) ctx.toast(made ? ('已建群，投影到 ' + made + ' 个角色') : '这个群已经在了', made ? 'ok' : 'warn');
+        ctx.back();
+      }
+    }
+  });
+
+  /* ==================== 页面：我的马甲 ==================== */
+
+  Sleepy.register('mask-list', {
+    title: '我的马甲',
+    render: function (ctx) {
+      var body = ctx.body;
+
+      var g = group('User 马甲',
+        '「极致的 1:1 对称」：Char 有几个皮套，你就该有几件马甲。' +
+        '切号时，选中的马甲决定整个 OS 里「我」是谁。');
+
+      var card = g.card;
+
+      function rebuild() {
+        card.innerHTML = '';
+        var list = core.userMasks();
+        var activeId = store.get('activeUserId');
+        var real = core.activeUser();
+        if (!activeId || !core.findUser(activeId)) {
+          store.set('activeUserId', real.id);
+          activeId = real.id;
+        }
+
+        list.forEach(function (u) {
+          var line = h('button', 'pick-line' + (u.id === activeId ? ' is-on' : ''));
+          line.type = 'button';
+          line.appendChild(h('span', 'pick-av', core.initialOf(u.name)));
+          var b = h('span', 'pick-name', u.name);
+          if (u.id === activeId) b.appendChild(h('span', 'pick-cur', '进行中'));
+          line.appendChild(b);
+          line.addEventListener('click', function () {
+            core.switchTo(undefined, u.id);
+            ctx.toast('已切换到「' + u.name + '」', 'ok');
+            if (ctx.rebuild) ctx.rebuild();
+          });
+          card.appendChild(line);
+        });
+
+        var add = h('button', 'pick-line');
+        add.type = 'button';
+        add.appendChild(h('span', 'pick-box pick-box-plus', '+'));
+        add.appendChild(h('span', 'pick-name', '新建一件马甲'));
+        add.addEventListener('click', function () { ctx.open('mask-edit', { id: '' }); });
+        card.appendChild(add);
+      }
+
+      rebuild();
+      body.appendChild(g.wrap);
+
+      body.appendChild(h('p', 'set-foot',
+        '马甲决定「我是谁」。Char 侧的皮套和它是 1:1 对应的。'));
+    },
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
+  });
+
+  Sleepy.register('mask-edit', {
+    title: '编辑马甲',
+    render: function (ctx) {
+      var body = ctx.body;
+      var id = ctx.params.id || '';
+      var existing = id ? core.findUser(id) : null;
+      if (id && !existing) { ctx.toast('找不到这件马甲', 'err'); ctx.back(); return; }
+
+      var f = {};
+      var g = group('马甲');
+      f.name = textField({
+        label: '名字',
+        value: existing ? existing.name : '',
+        placeholder: '小号 A'
+      });
+      g.card.appendChild(f.name.el);
+
+      f.persona = textField({
+        label: '一句话人设',
+        hint: '给模型看的「你在这个身份下是什么样」',
+        value: existing ? (existing.persona || '') : '',
+        placeholder: '比大号话少，喜欢用句号'
+      });
+      g.card.appendChild(f.persona.el);
+
+      f.city = textField({
+        label: '城市',
+        value: existing ? (existing.city || '') : '',
+        placeholder: '北京'
+      });
+      g.card.appendChild(f.city.el);
+
+      f.avatar = textField({
+        label: '头像地址',
+        value: existing ? (existing.avatar || '') : '',
+        placeholder: 'https://…',
+        inputmode: 'url'
+      });
+      g.card.appendChild(f.avatar.el);
+      body.appendChild(g.wrap);
+
+      var btnRow = h('div', 'btn-row');
+      var delBtn = button('删除', 'danger');
+      if (!existing) delBtn.disabled = true;
+      btnRow.appendChild(delBtn);
+      btnRow.appendChild(button('保存', 'primary', function () { doSave(); }));
+      body.appendChild(btnRow);
+
+      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
+
+      delBtn.addEventListener('click', async function () {
+        if (!existing) return;
+        var yes = await ui.confirm({
+          title: '删掉「' + existing.name + '」？',
+          note: '用它建的对话会留下来，但会找不到对应的马甲。',
+          ok: '删除',
+          danger: true
+        });
+        if (!yes) return;
+        var r = core.removeUser(existing.id);
+        if (!r.ok) { ctx.toast(r.message, 'err'); return; }
+        ctx.toast('已删除', 'ok');
+        ctx.back();
+      });
+
+      function doSave() {
+        var name = String(f.name.get() || '').trim() || '未命名马甲';
+        var item = core.upsertUser({
+          id: existing ? existing.id : core.newId('um'),
+          name: name,
+          persona: String(f.persona.get() || '').trim(),
+          city: String(f.city.get() || '').trim(),
+          avatar: String(f.avatar.get() || '').trim()
+        });
+        /* 第一件马甲自动成为当前使用，否则切号器会指向不存在的 id */
+        if (!store.get('activeUserId')) core.switchTo(undefined, item.id);
+        ctx.toast('已保存', 'ok');
+        ctx.back();
+      }
+    }
+  });
+
+  /* ---------------------------- 对外 ---------------------------- */
+
+  Sleepy.characters = {
+    toFileText: toFileText,
+    parseFileText: parseFileText,
+    importItems: importItems,
+    initialOf: core.initialOf,
+    summaryOf: core.summaryOf
+  };
+
+  /* 角色文件的导入导出出口。名片夹下线之后，这两个动作的入口在
+     **岛屿配置台**（「往这间房加人」），所以由它来调。 */
+  Sleepy.charIO = {
+    importInto: importInto,
+    exportAll: exportAll
+  };
+
+})(window);

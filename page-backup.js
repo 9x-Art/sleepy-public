@@ -74,7 +74,9 @@
 
       /* ---------------------------- 备份 ---------------------------- */
 
-      var g1 = group('备份', '导出的是 Sleepy 自己的存档格式（.json），换设备时用它搬家。');
+      var g1 = group('备份',
+        '导出的是 Sleepy 自己的存档格式（.json），换设备时用它搬家。' +
+        '**图片不在里面** —— 那些存在图库里（IndexedDB），换设备要重新传一次。');
       g1.card.appendChild(row({
         label: '导出备份',
         hint: '含设置、Key 和以后的所有聊天记录',
@@ -99,6 +101,56 @@
       g2.card.appendChild(rowState);
       body.appendChild(g2.wrap);
 
+      /* -------------------------- 图库（IndexedDB） --------------------------
+
+         图片本体**不在**上面那三个数里：它们在 IndexedDB，配额是磁盘级的
+         （几百 MB 起），所以这里单独一组。用户要的「方便之后存图」就是这一层。 */
+      var gLib = group('图库',
+        '照片、聊天里发的图存在这里（IndexedDB）。它不占 localStorage 那 5MB，' +
+        '所以上面那几个数字看不见它们。');
+
+      var rowLibSize = row({ label: '图库占用', plain: true });
+      var rowLibCount = row({ label: '图片张数', plain: true });
+      var rowLibState = row({ label: '存放位置', plain: true });
+      gLib.card.appendChild(rowLibSize);
+      gLib.card.appendChild(rowLibCount);
+      gLib.card.appendChild(rowLibState);
+      body.appendChild(gLib.wrap);
+
+      /* 清图库：同样是破坏性操作，走两次点击确认（跟「清除全部数据」一个规矩）。
+         **只清图片本体**，聊天记录 / 相册列表不动 —— 那些记录会显示成
+         「这张图找不到了」，用户至少知道自己删过什么。 */
+      var libArmed = false;
+      var libTimer = null;
+      var libBtn = button('清空图库（只删图片本身）', 'ghost', function () {
+        if (!libArmed) {
+          libArmed = true;
+          libBtn.textContent = '再点一次，确认清空';
+          libBtn.classList.add('is-armed');
+          libTimer = setTimeout(resetLibArm, 4000);
+          return;
+        }
+        resetLibArm();
+        if (!Sleepy.media) return;
+        Sleepy.media.clear().then(function () {
+          ctx.toast('图库已清空', 'ok');
+          refresh();
+        }, function (e) {
+          ctx.toast((e && e.message) || '清不掉', 'err');
+        });
+      });
+
+      function resetLibArm() {
+        if (libTimer) { clearTimeout(libTimer); libTimer = null; }
+        libArmed = false;
+        libBtn.textContent = '清空图库（只删图片本身）';
+        libBtn.classList.remove('is-armed');
+      }
+
+      var libRow = h('div', 'btn-row');
+      libRow.appendChild(libBtn);
+      gLib.card.appendChild(libRow);
+
       /* -------------------------- 危险操作 -------------------------- */
 
       var g3 = group('危险操作', '清除后聊天记录和 API 配置会一起消失，无法恢复。清除前先导出备份。');
@@ -116,6 +168,18 @@
         }
         resetArm();
         store.clearAll();
+        /* 图库也要一起清 —— 只清 localStorage 的话，那些 blob 会永远
+           留在 IndexedDB 里（记录都没了，谁也找不回它们）。 */
+        if (Sleepy.media) {
+          Sleepy.media.clear().then(function () {
+            ctx.toast('已清除，正在刷新…', 'ok');
+            setTimeout(function () { global.location.reload(); }, 700);
+          }, function () {
+            ctx.toast('记录清了，但图库没清干净', 'warn');
+            setTimeout(function () { global.location.reload(); }, 1200);
+          });
+          return;
+        }
         ctx.toast('已清除，正在刷新…', 'ok');
         setTimeout(function () { global.location.reload(); }, 700);
       });
@@ -147,6 +211,27 @@
         } else {
           setRowValue(rowState, '正常');
         }
+
+        /* 图库那三个数是异步查的（要开一次 IndexedDB），先占个位 */
+        var m = Sleepy.media;
+        if (!m) { libUnavailable('这台设备没有 IndexedDB'); return; }
+        setRowValue(rowLibSize, '…');
+        setRowValue(rowLibState, '…');
+        setRowValue(rowLibCount, '…');
+        m.available().then(function (yes) {
+          if (!yes) { libUnavailable('用不了（无痕模式，或浏览器禁了）'); return; }
+          setRowValue(rowLibState, 'IndexedDB（只在本机）');
+          return m.usage().then(function (r) {
+            setRowValue(rowLibSize, fmtBytes(r.bytes));
+            setRowValue(rowLibCount, r.count + ' 张');
+          });
+        });
+      }
+
+      function libUnavailable(why) {
+        setRowValue(rowLibState, why);
+        setRowValue(rowLibSize, '—');
+        setRowValue(rowLibCount, '—');
       }
 
       function doExport() {

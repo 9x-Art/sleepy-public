@@ -138,7 +138,8 @@
     return '已启用 ' + enabledCount + ' / ' + list.length + ' 组';
   }
 
-  /* 拉取模型列表：用表单里当前的地址和 Key，点返回的模型名直接填进输入框 */
+  /* 拉取模型列表：用表单里当前的地址和 Key，点返回的模型名直接填进输入框。
+     点完即收起列表（和生图/主 API 同款交互）。 */
   function attachModelPicker(f, pickBtn, pickBox) {
     pickBtn.addEventListener('click', function () {
       pickBtn.disabled = true;
@@ -167,6 +168,7 @@
           r.appendChild(h('span', 'set-row-label', id));
           r.addEventListener('click', function () {
             f.model.input.value = id;
+            pickBox.innerHTML = '';      /* 选完即收起 */
           });
           pickBox.appendChild(r);
         });
@@ -174,18 +176,23 @@
     });
   }
 
-  /* 模型名输入框 + 拉取按钮 + 结果盒，插进 g.card。返回拼好的结构 */
+  /* 模型名输入框 + 小圆钮拉取（和生图/主 API 同款）+ 结果盒，插进 g.card */
   function modelFieldWithPicker(gCard, value) {
     var f = {};
     f.model = textField({ label: '模型名', value: value || '', placeholder: '' });
     gCard.appendChild(f.model.el);
-    var pickRow = h('div', 'btn-row');
-    var pickBtn = button('拉取模型列表', 'ghost');
-    pickRow.appendChild(pickBtn);
-    gCard.appendChild(pickRow);
+    var mini = h('button', 'set-mini-ic');
+    mini.type = 'button';
+    mini.title = '拉取模型列表';
+    mini.setAttribute('aria-label', '拉取模型列表');
+    mini.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+      'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
+    f.model.el.querySelector('.set-line').appendChild(mini);
     var pickBox = h('div', 'model-pick');
     gCard.appendChild(pickBox);
-    return { f: f, pickBtn: pickBtn, pickBox: pickBox };
+    attachModelPicker(f, mini, pickBox);
+    return { f: f, pickBtn: mini, pickBox: pickBox };
   }
 
   /* ==================== 页面：副 API 列表（二级） ==================== */

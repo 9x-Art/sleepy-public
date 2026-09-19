@@ -18,7 +18,24 @@
   function h(tag, cls, text) {
     var el = document.createElement(tag);
     if (cls) el.className = cls;
-    if (text !== undefined && text !== null) el.textContent = text;
+    /* 第三参不只收字符串：收 DOM 节点就 append，收数组就逐个放进去
+       （字符串转文本节点）。以前只认字符串，谁手滑传了个元素进去，
+       textContent 就变成「[object HTMLElement]」—— 认知地图和「我」页
+       都这么烂过。现在类型本身兜底，这类 bug 整类消失。 */
+    if (text !== undefined && text !== null) {
+      /* 用 nodeType 鸭子判断而不是 instanceof Node ——
+         无头测试的 DOM 桩里没有 Node 这个全局，写 instanceof 会直接炸。 */
+      if (text.nodeType) {
+        el.appendChild(text);
+      } else if (Array.isArray(text)) {
+        text.forEach(function (t) {
+          if (t === undefined || t === null) return;
+          el.appendChild(t && t.nodeType ? t : document.createTextNode(String(t)));
+        });
+      } else {
+        el.textContent = text;
+      }
+    }
     return el;
   }
 
@@ -68,6 +85,24 @@
       return;
     }
     v.textContent = text;
+  }
+
+  /* 更新行右侧那个小胶囊（row({badge, badgeKind}) 造出来的）。
+     传空字符串 = 去掉它。从下级页返回要刷新状态徽标时用这个 ——
+     以前没有这个函数，有人拿 setRowValue 去改 badge，
+     结果 setRowValue 找不到 .set-row-value 就又插了一个，行上出现两个文字。 */
+  function setRowBadge(r, text, kind) {
+    if (!r) return;
+    var right = r.querySelector('.set-row-right');
+    if (!right) return;
+    var b = right.querySelector('.set-badge');
+    if (!text) { if (b && b.parentNode) b.parentNode.removeChild(b); return; }
+    if (!b) {
+      right.appendChild(h('span', 'set-badge set-badge-' + (kind || 'dim'), text));
+      return;
+    }
+    b.textContent = text;
+    b.className = 'set-badge set-badge-' + (kind || 'dim');
   }
 
   /* ---------------------------- 表单 ---------------------------- */
@@ -322,8 +357,11 @@
     acts.appendChild(cancelBtn);
     acts.appendChild(okBtn);
 
+    var fieldsWrap = h('div', 'dl-fields');   /* 多字段模式用（转账的金额 + 备注） */
+
     card.appendChild(title);
     card.appendChild(note);
+    card.appendChild(fieldsWrap);
     card.appendChild(input);
     card.appendChild(acts);
     host.appendChild(mask);
@@ -336,7 +374,15 @@
 
     function submit() {
       if (!dialog) return;
-      closeDialog(dialog.kind === 'input' ? input.value : true);
+      if (dialog.kind === 'confirm') { closeDialog(true); return; }
+      /* 多字段模式：resolve 一个对象（键 = field.key） */
+      if (dialog.fields && dialog.fields.length) {
+        var out = {};
+        dialog.fields.forEach(function (f) { out[f.key] = f.input.value; });
+        closeDialog(out);
+        return;
+      }
+      closeDialog(input.value);
     }
 
     mask.addEventListener('click', function () { closeDialog(cancelValue()); });
@@ -354,7 +400,9 @@
 
     dialogEls = {
       mask: mask, card: card, title: title, note: note,
-      input: input, okBtn: okBtn
+      fieldsWrap: fieldsWrap,
+      input: input, okBtn: okBtn,
+      submit: submit   /* openDialog 的字段输入框也要能触发提交（Enter） */
     };
     return dialogEls;
   }
@@ -372,17 +420,46 @@
     els.note.style.display = o.note ? '' : 'none';
     els.okBtn.textContent = o.ok || (kind === 'confirm' ? '确定' : '保存');
     els.okBtn.className = 'dl-btn dl-btn-ok' + (o.danger ? ' is-danger' : '');
-    els.input.style.display = kind === 'input' ? '' : 'none';
+
+    /* 多字段模式：o.fields = [{key,label,value,placeholder}, ...]。
+       resolve 出来的是对象（键 = key），单输入框路径照旧返回字符串 ——
+       已有的调用点一个都不用改。典型用户：转账的「金额 + 备注」
+       （原来挤在一个框里写「68 买奶茶」，用户说备注该有自己的框）。 */
+    var live = [];
+    var fields = Array.isArray(o.fields) && o.fields.length ? o.fields : null;
+    els.fieldsWrap.innerHTML = '';
+    els.fieldsWrap.style.display = fields ? '' : 'none';
+    els.input.style.display = (kind === 'input' && !fields) ? '' : 'none';
     els.input.value = o.value == null ? '' : String(o.value);
     els.input.placeholder = o.placeholder || '';
+    if (fields) {
+      fields.forEach(function (f) {
+        var lab = h('label', 'dl-field');
+        lab.appendChild(h('span', 'dl-field-label', f.label || ''));
+        var inp = h('input', 'dl-input');
+        inp.type = 'text';
+        inp.value = f.value == null ? '' : String(f.value);
+        inp.placeholder = f.placeholder || '';
+        inp.setAttribute('autocapitalize', 'off');
+        inp.setAttribute('autocorrect', 'off');
+        inp.setAttribute('spellcheck', 'false');
+        inp.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); els.submit(); }
+        });
+        lab.appendChild(inp);
+        els.fieldsWrap.appendChild(lab);
+        live.push({ key: f.key || 'value', input: inp });
+      });
+    }
 
     return new Promise(function (resolve) {
-      dialog = { kind: kind, done: resolve };
+      dialog = { kind: kind, done: resolve, fields: live };
       els.mask.classList.add('is-open');
       els.card.classList.add('is-open');
       if (kind === 'input') {
         /* 等一帧再聚焦，刚 display 出来的元素直接 focus 在部分浏览器上不生效 */
-        setTimeout(function () { els.input.focus(); els.input.select(); }, 30);
+        var first = fields ? live[0].input : els.input;
+        setTimeout(function () { first.focus(); first.select(); }, 30);
       }
     });
   }
@@ -411,6 +488,7 @@
     group: group,
     row: row,
     setRowValue: setRowValue,
+    setRowBadge: setRowBadge,
     fieldShell: fieldShell,
     textField: textField,
     numField: numField,

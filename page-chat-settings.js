@@ -121,14 +121,14 @@
 
     if (!people.length) {
       var empty = h('div', 'pk-empty');
-      empty.appendChild(h('p', 'pk-empty-text', '名片夹里还空着'));
+      empty.appendChild(h('p', 'pk-empty-text', '这间房里还空着'));
       empty.appendChild(h('p', 'pk-empty-hint', '先加一个角色，再回来跟他聊'));
       els.list.appendChild(empty);
 
-      els.list.appendChild(button('去名片夹加一个', 'primary', function () {
+      els.list.appendChild(button('去浮岛放一个', 'primary', function () {
         var ctx = pkCtx;
         closePicker();
-        if (ctx) ctx.open('contacts');
+        if (ctx) ctx.open('island');
       }));
       return;
     }
@@ -188,9 +188,138 @@
      （旧实现存放在 git 历史里，commit 5c5f484 之前都能翻到。）
      注意：这个文件还暴露着 Sleepy.chatSettings.openPicker —— 
      世界书的「挂角色」浮层在用它，不能删。 */
+  /* 角色级小设置（主动消息 / 角色记忆开关）。默认都开。 */
+  function charSettings(charId) {
+    var all = store.get('charSettings') || { byChar: {} };
+    var mine = (charId && all.byChar && all.byChar[charId]) || {};
+    return {
+      get proactive() { return mine.proactive !== false; },
+      get memory() { return mine.memory !== false; },
+      set: function (k, v) {
+        all.byChar = all.byChar || {};
+        all.byChar[charId] = all.byChar[charId] || {};
+        all.byChar[charId][k] = v;
+        store.set('charSettings', all);
+      }
+    };
+  }
+
+  /* demo 的行结构：标签 + 一行小注，右边箭头 / 开关 */
+  function demoRow(o) {
+    var r = h('button', 'set-row cs-row' + (o.danger ? ' cs-danger' : ''));
+    r.type = 'button';
+    var main = h('span', 'set-row-main');
+    main.appendChild(h('span', 'set-row-label', o.label));
+    if (o.note) main.appendChild(h('span', 'set-row-hint', o.note));
+    r.appendChild(main);
+    var right = h('span', 'set-row-right');
+    if (o.switched !== undefined) {
+      var lab = h('label', 'set-switch cs-inline-switch');
+      var input = h('input');
+      input.type = 'checkbox';
+      input.checked = !!o.switched;
+      lab.appendChild(input);
+      lab.appendChild(h('span', 'set-switch-track'));
+      right.appendChild(lab);
+      input.addEventListener('change', function () { o.onSwitch(input.checked); });
+      /* 开关在行里：点行不触发别的（本来也没有 onClick），阻止冒泡即可 */
+      lab.addEventListener('click', function (e) { e.stopPropagation(); });
+    } else if (o.onClick) {
+      right.appendChild(h('span', 'set-row-arrow', '›'));
+      r.addEventListener('click', o.onClick);
+    } else {
+      r.disabled = true;
+      r.classList.add('is-soon');
+    }
+    r.appendChild(right);
+    return r;
+  }
+
+  function sectionOf(body, title) {
+    var sec = h('div', 'cs-section');
+    sec.appendChild(h('p', 'cs-sec-label', title));
+    body.appendChild(sec);
+    return sec;
+  }
+
+  /* 主动消息节奏抽屉（全局设置，iol-drawer 复用浮岛那套样式）。
+     onSaved 里拿不到行内 note（demoRow 自己画的），改完就靠 toast 告知，
+     重进本页会显示新值。 */
+  function openProactiveDrawer(ctx) {
+    var host = ctx.el;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var st = Sleepy.proactiveEngine ? Sleepy.proactiveEngine.settings()
+      : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120 };
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', '主动消息安排'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '这是全局节奏，每个角色自己的开关在上面那行。免打扰时段里 TA 不会来找你。'));
+
+    function field(label, value, ph) {
+      var f = h('div', 'iol-field');
+      f.appendChild(h('label', '', label));
+      var inp = h('input');
+      inp.value = value;
+      inp.placeholder = ph;
+      f.appendChild(inp);
+      panel.appendChild(f);
+      return inp;
+    }
+    var qs = field('免打扰开始（HH:MM）', st.quietStart, '23:00');
+    var qe = field('免打扰结束（HH:MM）', st.quietEnd, '08:00');
+    var mx = field('每天最多主动几次', String(st.maxPerDay), '2');
+    var cd = field('两次主动之间的冷却（分钟）', String(st.cooldownMin), '120');
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不改');
+    var save = h('button', 'iol-drawer-save', '保存');
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
+    save.addEventListener('click', function () {
+      if (Sleepy.proactiveEngine) {
+        var mm = function (v, d) {
+          v = String(v || '').trim();
+          return /^([01]?\d|2[0-3]):[0-5]\d$/.test(v)
+            ? (('0' + parseInt(v, 10)).slice(-2) + v.slice(v.indexOf(':')))
+            : d;
+        };
+        var num = function (v, d, lo, hi) {
+          v = parseInt(v, 10);
+          if (isNaN(v)) return d;
+          return Math.max(lo, Math.min(hi, v));
+        };
+        Sleepy.proactiveEngine.saveSettings({
+          quietStart: mm(qs.value, '23:00'),
+          quietEnd: mm(qe.value, '08:00'),
+          maxPerDay: num(mx.value, 2, 0, 12),
+          cooldownMin: num(cd.value, 120, 5, 1440)
+        });
+        ctx.toast('主动消息节奏已更新', 'ok');
+      }
+      close();
+    });
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
+  }
+
   Sleepy.register('chat-settings', {
     title: '对话设置',
-    render: function (ctx) {
+    render: function chatSettingsRender(ctx) {
       var chatId = ctx.params.chatId;
       var c = cs();
       var chat = c.getChat(chatId);
@@ -199,11 +328,164 @@
         ctx.back();
         return;
       }
-      ctx.setTitle('对话设置');
-      var p = h('p', 'set-foot', '这一页先占个位 —— 要放什么，定了再贴上。');
-      p.style.padding = '48px 0';
-      ctx.body.appendChild(p);
-    }
+      var ch = chat.characterId ? c.findCharacter(chat.characterId) : null;
+      var chName = ch ? ch.name : '未绑定角色';
+      var csRow = charSettings(chat.characterId);
+      /* 防御：SW 的 stale-while-revalidate 会先给一屏旧 index.html，
+         那一屏里 page-char-appearance.js 还没挂上 —— 别让整页崩掉。 */
+      var AP = Sleepy.charAppearance || null;
+      var appearanceCfg = (AP && chat.characterId) ? AP.resolve(chat.characterId) : null;
+
+      ctx.setTitle('角色设置');
+      var body = ctx.body;
+      body.innerHTML = '';
+
+      /* 头部：头像圈 + 名字 */
+      var head = h('div', 'cs-head');
+      var ava = h('div', 'cs-ava');
+      ava.textContent = (chName || '?').slice(0, 1);
+      head.appendChild(ava);
+      var headMain = h('div', 'cs-head-main');
+      headMain.appendChild(h('p', 'cs-head-name', chName));
+      headMain.appendChild(h('p', 'cs-head-sub', ch ? '线上模式 · 日常相处' : '先给这个对话选一个角色'));
+      head.appendChild(headMain);
+      body.appendChild(head);
+
+      /* ---- 聊天 ---- */
+      var secChat = sectionOf(body, '聊天');
+      secChat.appendChild(demoRow({
+        label: '线上聊天预设', note: '注入内容在「预设」App 里管理',
+        onClick: function () { ctx.open('presets'); }
+      }));
+      secChat.appendChild(demoRow({
+        label: '用户身份', note: '以哪个身份和 ' + chName + ' 相处'
+        /* 身份系统还没接进聊天 —— 先不给箭头（灰行占位） */
+      }));
+      secChat.appendChild(demoRow({
+        label: '主动消息', note: '允许他在合适的时候来找你',
+        switched: csRow.proactive,
+        onSwitch: function (v) { csRow.set('proactive', v); }
+      }));
+      /* 主动消息引擎（第二梯队 4）：节奏设置 + 手动评估入口 */
+      var st = Sleepy.proactiveEngine ? Sleepy.proactiveEngine.settings()
+        : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120 };
+      secChat.appendChild(demoRow({
+        label: '主动消息安排',
+        note: '免打扰 ' + st.quietStart + '~' + st.quietEnd +
+          ' · 每天最多 ' + st.maxPerDay + ' 次 · 冷却 ' + st.cooldownMin + ' 分钟',
+        onClick: function () { openProactiveDrawer(ctx); }
+      }));
+      secChat.appendChild(demoRow({
+        label: '现在评估一次',
+        note: '忽略免打扰和冷却，让 TA 想想有没有要说的',
+        onClick: function () {
+          if (!Sleepy.proactiveEngine || !chat.characterId) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
+          ctx.toast('正在问 ' + chName + '…', 'ok');
+          Sleepy.proactiveEngine.evaluate(chat.characterId, { manual: true }).then(function (r) {
+            if (!r.ok) {
+              var whyMap = Sleepy.proactiveEngine.GATE_WHY || {};
+              ctx.toast(r.why === 'noapi' ? '先去 设置 → 主 API 配一个模型'
+                : r.why === 'nocand' ? chName + '目前没有想主动提起的事'
+                : r.why === 'parse' ? 'TA 走神了（解析失败），再试一次'
+                : '这次没发：' + (whyMap[r.why] || r.why || '没有合适的时机'), 'ok');
+              return;
+            }
+            if (r.decision === 'send') {
+              ctx.toast('「' + chName + '」主动发来了消息，去聊天里看', 'ok');
+            } else {
+              ctx.toast(chName + '想了想，决定先不说话（' + (r.decision || 'skip') +
+                (r.reason ? ' · ' + r.reason : '') + '）', 'ok');
+            }
+          });
+        }
+      }));
+
+      /* ---- 记忆 ---- */
+      var secMem = sectionOf(body, '记忆');
+      secMem.appendChild(demoRow({
+        label: '角色记忆', note: '自动整理聊天中值得留下的内容',
+        switched: csRow.memory,
+        onSwitch: function (v) { csRow.set('memory', v); }
+      }));
+      secMem.appendChild(demoRow({
+        label: '记忆方式', note: '跟随全局 · 等记忆系统 v5 开工'
+      }));
+      secMem.appendChild(demoRow({
+        label: '整理聊天记忆', note: '把上次整理之后的新内容过一遍总结',
+        onClick: function () {
+          if (!Sleepy.summaryEngine) { ctx.toast('总结引擎没加载', 'err'); return; }
+          ctx.toast('正在整理…', 'ok');
+          Sleepy.summaryEngine.runNow(chatId).then(function (r) {
+            if (r.ok && r.stat) {
+              ctx.toast(r.stat.added
+                ? '整理出 ' + r.stat.added + ' 条记忆，去「留痕」确认'
+                : '这段时间没有值得留的新东西', 'ok');
+            } else if (r.error === 'noapi') {
+              ctx.toast('先去 设置 → 主 API 配一个模型', 'warn');
+            } else if (r.error !== 'empty') {
+              ctx.toast('✗ ' + (r.error || '整理失败'), 'err');
+            }
+          });
+        }
+      }));
+      secMem.appendChild(demoRow({
+        label: '前往留痕', note: '查看属于 ' + chName + ' 的记忆',
+        onClick: function () { ctx.open('memory', { charId: charId }); }
+      }));
+
+      /* ---- 个性化 ---- */
+      var secPer = sectionOf(body, '个性化');
+      var apNote = '默认 · 雾青';
+      if (appearanceCfg && AP) {
+        var col = (AP.COLORS[appearanceCfg.color] || {}).name || '雾青';
+        var modeName = { wecom: '企微', phone: '捡手机' }[appearanceCfg.mode];
+        apNote = modeName ? (modeName + ' · 整套皮肤')
+                          : ('默认 · ' + col + (appearanceCfg.__scope === 'global' ? ' · 全局' : ''));
+      }
+      secPer.appendChild(demoRow({
+        label: '聊天外观', note: apNote,
+        onClick: function () { ctx.open('char-appearance', { chatId: chatId }); }
+      }));
+      secPer.appendChild(demoRow({ label: '语音', note: '未设置' }));
+      secPer.appendChild(demoRow({ label: '模型与生成', note: '跟随全局' }));
+
+      /* ---- 数据管理 ---- */
+      var secData = sectionOf(body, '数据管理');
+      secData.appendChild(demoRow({
+        label: '导出对话', note: '存成纯文本，留个念想',
+        onClick: function () {
+          var text = chatToText(chat);
+          var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = (chat.name || '对话') + '.txt';
+          a.click();
+          setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+          ctx.toast('已导出', 'ok');
+        }
+      }));
+      secData.appendChild(demoRow({
+        label: '删除角色', danger: true,
+        note: ch ? '连同设置一起，从通讯录移除' : '',
+        onClick: function () {
+          if (!ch) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
+          ui.confirm({
+            title: '删除 ' + ch.name + '？',
+            note: '角色档案会从通讯录移除，对话记录保留。',
+            danger: true, ok: '删除'
+          }).then(function (v) {
+            if (!v) return;   /* confirm 取消 = false */
+            Sleepy.core.removeChar(ch.id);
+            ctx.toast('已删除', 'ok');
+            ctx.back();
+          });
+        }
+      }));
+
+      /* 从外观页改完回来要刷新「聊天外观」的注记 —— 整页重建 */
+      ctx.rebuild = function () { chatSettingsRender(ctx); };
+    },
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
 
   /* ---------------------------- 对外 ---------------------------- */
@@ -211,7 +493,24 @@
   Sleepy.chatSettings = {
     openPicker: openPicker,
     closePicker: closePicker,
-    chatToText: chatToText
+    chatToText: chatToText,
+    charSettings: charSettings   /* 主动消息引擎要读这个开关 */
   };
+
+  /* ---------------------------- 点火 ----------------------------
+
+     首页（桌面）是基底页，不占页面栈，它的 render 必须有人主动调一次，
+     否则 index.html 里那个空的 <section data-page="home"> 会一直空着，
+     整块桌面一个组件都画不出来（见 app.js 的 Sleepy.bootHome）。
+
+     为什么偏偏放在这个文件、且放在最末尾：
+       app.js      定义 bootHome，此时 home 还没注册 → 调了也没用
+       page-desktop.js       注册 home 的 render
+       page-switch.js        给 home 的 render 包一层（存 ctx + 整机重绘）
+       其他 page-*.js        陆续注册
+       page-chat-settings.js  ← 最后一个，所有包装都已完成，在这里点火最稳
+     本文件由 index.html 保证排在最后（见那里的注释）。
+     改脚本顺序时，这一行要跟着一起看。 */
+  if (typeof Sleepy.bootHome === 'function') Sleepy.bootHome();
 
 })(window);

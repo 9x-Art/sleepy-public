@@ -1,0 +1,98 @@
+
+小手机 · 冒烟
+
+加载顺序（解析自 index.html，共 17 个）
+  ✓ store.js
+  ✓ core.js
+  ✓ ui.js
+  ✓ app.js
+  ✓ api.js
+  ✓ page-desktop.js
+  ✓ page-switch.js
+  ✓ page-settings.js
+  ✓ page-backup.js
+  ✓ page-subapi.js
+  ✓ page-idcard.js
+  ✓ page-worldbook.js
+  ✓ page-heartbeat.js
+  ✓ page-diary.js
+  ✓ page-moments.js
+  ✓ page-chat.js
+  ✓ page-chat-settings.js
+  全部脚本加载成功
+
+--- 依赖挂载 ---
+  ✓ Sleepy.store 存在  → "ok"
+  ✓ Sleepy.core 存在  → "ok"
+  ✓ Sleepy.ui 存在  → "ok"
+  ✓ Sleepy.api 存在  → "ok"
+  ✓ Sleepy.switcher 存在  → "ok"
+  ✓ Sleepy.desktop 存在  → "ok"
+  ✓ Sleepy.characters 存在  → "ok"
+
+--- store ---
+  ✓ store.exportAll() 读到 schema 与默认值  → {"schema":2,"theme":"grape","chars":0,"masks":0,"links":0,"memories":0,"dropEvents":0}
+
+--- core:树状模型 ---
+  ✓ upsertChar 建大号  → "chmu2e18zq9y1d"
+  ✓ upsertChar 建皮套（挂大号）  → "chmu2e18zqz0t1"
+  ✓ upsertChar 建 NPC（挂大号）  → "chmu2e18zq6lwb"
+  ✓ 新建角色拿得到 id（回归：id 曾被 for-in 覆盖成 undefined）  → "ok"
+  ✓ 分级计数 main/sub/npc  → {"main":1,"sub":0,"npc":0}
+  ✓ rootOf(皮套) 指回大号  → "ok"
+  ✓ rootIdOf(NPC) 指回大号  → "ok"
+  ✓ universeOf(皮套) 认同一宇宙  → "ok"
+  ✓ kindLabel 三级人话标签  → ["大号","皮套","NPC"]
+  ✓ initialOf / summaryOf  → ["顾","大号设定"]
+  ✓ describeIdentity(皮套)  → "你（顾清和）在「对方」面前的这张脸是「小和」"
+
+--- core:User 马甲与切号 ---
+  ✓ ensureDefaultUser 建默认「我」  → "我"
+  ✓ upsertUser 建小号马甲  → "ummu2e18zsddxn"
+  ✓ userMasks 列表  → ["我","小雨"]
+  ✓ switchTo 系统级切号  → {"activeChar":"顾清和","activeUser":"小雨"}
+  ✓ 切号后 activeUser 是「小雨」  → "ok"
+  ✓ switchableOf 只列可切的皮套（不含 NPC）  → "ok"
+
+--- core:关系与认知矩阵 ---
+  ✓ addLink 建立关系（不知情 + 记忆障壁）  → "lkmu2e18ztph57"
+  ✓ cognitionOf 读回状态  → {"cognition":"unaware","barrier":true}
+  ✓ barrier 真的存成了 true  → "ok"
+  ✓ setBarrier / setCognition 可独立翻转  → {"关掉后":false,"开回后":true}
+  ✓ setBarrier(false) 真的关掉了障壁  → "ok"
+  ✓ linksOfUser / allLinks  → {"ofUser":1,"all":1}
+
+--- core:记忆与四元组标签 ---
+  ✓ addMemory（皮套 × 马甲）  → "ok"
+  ✓ addMemory（大号视角）  → "ok"
+  ✓ memoriesOfRoot(皮套) 归到大号根上  → 2
+  ✓ 根上有 2 条记忆（皮套那条也归上来了）  → "ok"
+  ✓ tagOf 四元组标签 [U小号 → C大号]  → "[小雨 → 小和]"
+  ✓ memoryViewFor：障壁在 → isolated  → {"mode":"isolated","n":1,"cog":{"cognition":"unaware","barrier":true}}
+  ✓ 障壁在时只放行当前马甲的记忆  → "ok"
+
+--- core:掉马 ---
+  ✓ unmask() 撕障壁 + 转已知情 + 落事件  → {"cognition":"aware","barrier":false,"dropEvents":1}
+  ✓ memoryViewFor：掉马后 → full  → {"mode":"full","n":2,"note":"无"}
+  ✓ 掉马后能看到两组记忆  → "ok"
+  ✓ pendingDropEvents / markDropEventsSeen  → {"before":1,"after":0}
+  ✓ 掉马事件已标记为已读  → "ok"
+
+--- core:群聊跨宇宙投影 ---
+  ✓ groupKeyOf / parseGroupKey / makeGroupName  → {"key":"grp:chmu2e18zq9y1d+chmu2e18zqz0t1","parsed":2,"name":"顾清和、小和"}
+  ✓ 群名认得出两个成员的名字  → "ok"
+
+--- switcher:提示词注入 ---
+  ✓ compileSystemContext 拼装身份+认知+记忆  → {"长度":165,"开头":"【你的身份】你此刻以「小和」这张脸，面对「小雨」。 / 你知道对方看穿了你的"}
+  ✓ compileCognition / compileDrop / compileMemory 可单独调用  → {"cog":true,"drop":false,"mem":true}
+
+--- desktop:网格桌面 ---
+  ✓ defaultDesktop() 4 屏网格  → {"屏数":4,"组件数":19}
+  ✓ skin() 按角色出皮肤数据  → {"name":"顾清和","mood":"有点烦","battery":40}
+  ✓ ICONS / icon() 可用  → {"图标数":14,"svg":"string"}
+
+--- page:注册情况 ---
+  ✓ 已注册页面（Sleepy.registered()）  → {"数量":27,"列表":"home,me,settings,settings-chatdefaults,settings-model,settings-mainapi,settings-mainapi-add…
+
+全绿：17 个脚本加载正常，核心 API 走查通过
+
