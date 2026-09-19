@@ -6462,7 +6462,10 @@ span.msg-avatar-initial{
 .lk-enter-sub{font-size:10.5px;color:var(--text-faint);}
 .lk-enter-arrow{font-size:17px;color:var(--text-faint);}
 
-/* ---- 桌面缩微预览（真实类名渲染，所见即所得） ---- */
+/* ---- 桌面缩微预览（真实类名渲染，所见即所得） ----
+   字色全部显式给、不走 --g-ink*：草稿主题可能和当前激活主题不同
+   （改了配色还没保存），预览底跟草稿走，字色必须跟着预览的明暗翻，
+   跟着主题变量翻会两头不讨好。 */
 .lk-preview{
   margin:12px 13px 15px;padding:12px 14px 14px;border-radius:18px;
   min-height:168px;position:relative;overflow:hidden;
@@ -6471,17 +6474,34 @@ span.msg-avatar-initial{
 .lk-preview.is-dark{border-color:rgba(255,255,255,.08);}
 .lk-preview-top{
   display:flex;justify-content:space-between;
-  font-size:10px;color:var(--g-ink-2);
-  text-shadow:var(--ink-halo);
+  font-size:10px;color:#6E6558;
+  text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
 .lk-preview-hello{margin:16px 0 18px;display:flex;flex-direction:column;gap:3px;}
 .lk-preview-hello b{
-  font-family:var(--serif,'Georgia',serif);font-size:17px;font-weight:600;
-  color:var(--g-ink);text-shadow:var(--ink-halo);
+  font-family:var(--ff-serif,Georgia,serif);font-size:17px;font-weight:600;
+  color:#4A4238;
+  text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
 .lk-preview-hello span{
-  font-size:10px;color:var(--g-ink-2);text-shadow:var(--ink-halo);
+  font-size:10px;color:#6E6558;
+  text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
+/* 深底（暮色壁纸 / 夜灯主题）整组翻浅 + 光晕翻黑 */
+.lk-preview.is-dark .lk-preview-top,
+.lk-preview.is-dark .lk-preview-hello span,
+.lk-preview.is-dark .lk-preview-tag{
+  color:#D9D2C5;
+  text-shadow:0 1px 3px rgba(0,0,0,.6),0 0 2px rgba(0,0,0,.4);
+}
+.lk-preview.is-dark .lk-preview-hello b{
+  color:#F2EDE3;
+  text-shadow:0 1px 3px rgba(0,0,0,.6),0 0 2px rgba(0,0,0,.4);
+}
+/* 预览里的图标字色跟预览明暗走（压过 data-icstyle 的主题感知字色；
+   纸片/夜色两款自带底色，被覆盖的色和它们自己的差不多，无碍） */
+.lk-preview .lk-preview-ic{color:#4A4238 !important;}
+.lk-preview.is-dark .lk-preview-ic{color:#EFE9DE !important;}
 .lk-preview-apps{
   display:flex;gap:16px;
 }
@@ -6489,8 +6509,8 @@ span.msg-avatar-initial{
 .lk-preview-ic svg{width:15px;height:15px;}
 .lk-preview-tag{
   position:absolute;right:11px;bottom:9px;
-  font-size:9px;letter-spacing:.4px;color:var(--g-ink-2);
-  text-shadow:var(--ink-halo);
+  font-size:9px;letter-spacing:.4px;color:#6E6558;
+  text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
 
 /* ---- 桌面体验：动效行 ---- */
@@ -6511,6 +6531,65 @@ span.msg-avatar-initial{
   font-family:inherit;font-size:13px;color:var(--text-dim);cursor:pointer;
 }
 .lk-restore:active{background:rgba(176,128,80,.10);}
+
+/* ---- 应用范围的岛 pills（外观是全局性 App：列出全部岛选着改） ---- */
+.lk-islands{
+  display:flex;flex-wrap:wrap;gap:8px;
+  padding:12px 13px 2px;
+}
+.lk-pill{
+  border:1px solid var(--g-glass-line);border-radius:999px;
+  background:var(--g-glass-2);color:var(--text-dim);
+  font:inherit;font-size:12px;padding:6px 13px;cursor:pointer;
+  white-space:nowrap;
+}
+.lk-pill.on{
+  background:var(--g-accent);border-color:var(--g-accent-deep,#8A6B48);
+  color:#F4FCF3;
+}
+
+/* ---- 自定义图加号框（表情包第一个那种）：和壁纸格同尺寸，
+     虚线框居中一个大加号；选了图以后格子里给缩略图 ---- */
+.lk-add .lk-add-swatch{
+  display:flex;align-items:center;justify-content:center;
+  border:1.5px dashed var(--g-glass-line);
+  background:var(--g-glass);overflow:hidden;position:relative;
+}
+.lk-add.is-on .lk-add-swatch{border-color:var(--g-accent);}
+.lk-add-plus{
+  font-size:24px;font-weight:300;line-height:1;
+  color:var(--text-faint);
+}
+.lk-add-thumb{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;
+}
+/* 「移除自定义图」：文字行，不加框 */
+.lk-clear-custom{
+  grid-column:1 / -1;
+  background:none;border:none;font-family:inherit;
+  font-size:11.5px;color:var(--text-faint);cursor:pointer;
+  padding:2px 2px 0;text-align:left;
+  border-bottom:1px solid transparent;
+}
+.lk-clear-custom:hover{color:var(--text-dim);}
+
+/* ---- 保存外观（草稿-保存模型的终点） ----
+   没改动时是安静的灰底；有改动时焦糖底白字，一眼知道「有一嗓子没喊」。 */
+.lk-save{
+  display:flex;flex-direction:column;gap:3px;align-items:center;
+  width:calc(100% - 26px);margin:14px 13px 6px;
+  padding:12px;border-radius:13px;
+  border:1px solid var(--g-glass-line);background:var(--g-glass-2);
+  font-family:inherit;cursor:pointer;
+}
+.lk-save.is-dirty{
+  background:var(--g-accent);border-color:var(--g-accent-deep,#8A6B48);
+}
+.lk-save-main{font-size:14px;font-weight:600;color:var(--text);}
+.lk-save.is-dirty .lk-save-main{color:#F4FCF3;}
+.lk-save-sub{font-size:10.5px;color:var(--text-faint);}
+.lk-save.is-dirty .lk-save-sub{color:rgba(244,252,243,.75);}
 
 /* ---- 单独修改 App：列表 + 编辑卡 ---- */
 .lk-app-row{
@@ -6611,6 +6690,27 @@ span.msg-avatar-initial{
 .page[data-page="home"].is-dark-wall .w-hdr-pull .w-hdr-knob{
   background:rgba(242,237,227,.24);
   border-color:rgba(255,255,255,.30);
+}
+
+/* ---- 浅色壁纸 × 深色主题：反过来强制深字 ----
+   夜灯主题下 --g-ink 是浅色，铺一张奶油壁纸就是浅字压浅底（实测看不清）。
+   壁纸明确是浅款时字跟着壁纸走，不看主题。 */
+.page[data-page="home"].is-light-wall{
+  --ink-halo:0 0 1px rgba(255,255,255,1),0 0 4px rgba(255,255,255,.9),0 1px 9px rgba(255,255,255,.6);
+}
+.page[data-page="home"].is-light-wall .w-hdr-kicker,
+.page[data-page="home"].is-light-wall .w-hdr-day,
+.page[data-page="home"].is-light-wall .w-hdr-date,
+.page[data-page="home"].is-light-wall .w-hdr-greet,
+.page[data-page="home"].is-light-wall .w-hdr-pull-label,
+.page[data-page="home"].is-light-wall .w-app-name,
+.page[data-page="home"].is-light-wall .dt-dock-name{
+  color:#4A4238;
+  text-shadow:var(--ink-halo);
+}
+.page[data-page="home"].is-light-wall .w-app-ic,
+.page[data-page="home"].is-light-wall .dt-dock-ic{
+  color:#4A4238;
 }
 
 /* ---- 较大桌面文字：只放 App 名和日期头（demo 的 large） ---- */
