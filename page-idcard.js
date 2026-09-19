@@ -543,14 +543,8 @@
       });
       gKind.card.appendChild(f.avatar.el);
 
-      f.city = textField({
-        label: '所在城市',
-        hint: '用在桌面的双城时间',
-        value: existing ? (existing.city || '') : '',
-        placeholder: '伦敦'
-      });
-      gKind.card.appendChild(f.city.el);
-
+      /* `city` 不再放这里 —— 它已经升格成「常驻地点」那一组（见下面 gPlace）。
+         原本的 hint 写着「用在桌面的双城时间」，那个组件早撤了。 */
       f.status = textField({
         label: '状态签名',
         hint: '显示在桌面角色卡上',
@@ -560,6 +554,62 @@
       gKind.card.appendChild(f.status.el);
 
       body.appendChild(gKind.wrap);
+
+      /* ---- 常驻地点（2026-09-19 用户提的）----
+         这一个字段喂三个下游：日历用哪国法定节假日、按哪个时区算时间、
+         以及以后要做的「说哪国话 / 翻译」。
+         所以它挂在 **char 身上**，不塞进日历设置 —— 塞进日历的话
+         日历配一份、聊天配一份，早晚打架（用户的顾虑正是这个）。
+         `city` 这个字段本来就有（原本给的 hint 是「用在桌面的双城时间」，
+         那个组件早撤了），现在把它扶正成「常驻城市」。 */
+      var gPlace = group('常驻地点',
+        '他平时待在哪。日历拿它决定用哪国法定节假日、按哪个时区算时间；' +
+        '以后要做的语言 / 翻译也从这里推，所以只填这一处。');
+      f.city = textField({
+        label: '常驻城市',
+        hint: '显示用（比如「东京」）。留空就用时区表里的地名',
+        value: existing ? (existing.city || '') : '',
+        placeholder: '东京'
+      });
+      gPlace.card.appendChild(f.city.el);
+
+      var regionRow = h('div', 'set-field');
+      regionRow.appendChild(h('label', 'set-label', '法定日历'));
+      var regionSel = h('select', 'set-select');
+      var REGS = (Sleepy.calendarData && Sleepy.calendarData.REGIONS) || [];
+      REGS.forEach(function (r) {
+        var op = h('option', '', r.label);
+        op.value = r.id;
+        /* 没有存档 = 跟着默认走（中国大陆），不是「未选择」 */
+        if (((existing ? existing.region : '') || 'CN') === r.id) op.selected = true;
+        regionSel.appendChild(op);
+      });
+      regionRow.appendChild(regionSel);
+      gPlace.card.appendChild(regionRow);
+
+      var tzRow = h('div', 'set-field');
+      tzRow.appendChild(h('label', 'set-label', '常驻时区'));
+      var tzSel = h('select', 'set-select');
+      var TZS = (Sleepy.calendarData && Sleepy.calendarData.TIMEZONES) || [];
+      TZS.forEach(function (tz) {
+        var op = h('option', '', tz);
+        op.value = tz;
+        if (((existing ? existing.timezone : '') || 'Asia/Shanghai') === tz) op.selected = true;
+        tzSel.appendChild(op);
+      });
+      tzRow.appendChild(tzSel);
+      gPlace.card.appendChild(tzRow);
+
+      /* 换地区就顺手把时区带到那个地区的默认值 ——
+         但**只在他没自己挑过时区**时才动，不覆盖手选的。 */
+      regionSel.addEventListener('change', function () {
+        var meta = null;
+        REGS.forEach(function (r) { if (r.id === regionSel.value) meta = r; });
+        if (!meta || !meta.timezone) return;
+        if (tzSel.__touched !== true) tzSel.value = meta.timezone;
+      });
+      tzSel.addEventListener('change', function () { tzSel.__touched = true; });
+      body.appendChild(gPlace.wrap);
 
       /* ---- 绑定 User 马甲（1:1 对称）---- */
       var gBind = group('绑定 User 马甲',
@@ -745,6 +795,9 @@
           avatar: String(f.avatar.get() || '').trim(),
           city: String(f.city.get() || '').trim(),
           status: String(f.status.get() || '').trim() || (kind === 'sub' ? '小号' : '在线'),
+          /* 常驻地点：日历/时区/以后的语言档都从这三个字段推 */
+          region: regionSel.value || 'CN',
+          timezone: tzSel.value || 'Asia/Shanghai',
           boundUserId: uSel.value || null,
           content: f.content.get(),
           neverDo: String(f.neverDo.get() || '').trim(),

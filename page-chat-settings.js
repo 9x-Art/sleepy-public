@@ -406,6 +406,72 @@
     requestAnimationFrame(function () { wrap.classList.add('show'); });
   }
 
+  /* 通用选项抽屉（查手机 · 自主生活档位等）：一列单选，选中即落档并关闭。 */
+  function openPickDrawer(ctx, o) {
+    var host = ctx.el;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', o.title));
+    if (o.desc) panel.appendChild(h('p', 'iol-drawer-desc', o.desc));
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+
+    (o.options || []).forEach(function (op) {
+      var r = h('button', 'iol-drawer-cancel' + (op.v === o.current ? ' is-active' : ''));
+      r.type = 'button';
+      r.style.cssText += 'display:block;width:100%;text-align:left;margin-top:8px;';
+      r.appendChild(h('span', '', op.label));
+      if (op.desc) r.appendChild(h('small', '', '　' + op.desc));
+      r.addEventListener('click', function () {
+        if (o.onPick) o.onPick(op.v);
+        ctx.toast('已更新', 'ok');
+        close();
+        ctx.rebuild();
+      });
+      panel.appendChild(r);
+    });
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不改');
+    actions.appendChild(cancel);
+    panel.appendChild(actions);
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
+  }
+
+  /* 查手机生成用的模型抽屉：语义与记忆模型一致（memoryApiCfg 模式），
+     存 phoneApiCfg，被删回落主 API。 */
+  function openPhoneApiDrawer(ctx) {
+    var cfg = (Sleepy.phone && Sleepy.phone.apiCfg) ? Sleepy.phone.apiCfg() : { mode: 'main' };
+    var choices = (Sleepy.offlineStore && Sleepy.offlineStore.apiChoices)
+      ? Sleepy.offlineStore.apiChoices() : [];
+    openPickDrawer(ctx, {
+      title: '查手机用的模型',
+      desc: '生活结算和初始底片用的模型。没指定或指定的模型被删掉时，回落主 API。',
+      options: [{ v: 'main', label: '跟随主 API', desc: '' }].concat(choices.map(function (c) {
+        return { v: c.label, label: c.label, desc: c.desc || '' };
+      })),
+      current: cfg.mode === 'pick' ? cfg.label : 'main',
+      onPick: function (v) {
+        if (!Sleepy.phone) return;
+        if (v === 'main') Sleepy.phone.setApiCfg({ mode: 'main' });
+        else Sleepy.phone.setApiCfg({ mode: 'pick', label: v });
+      }
+    });
+  }
+
   Sleepy.register('chat-settings', {
     title: '对话设置',
     render: function chatSettingsRender(ctx) {
@@ -557,6 +623,56 @@
       secMem.appendChild(demoRow({
         label: '前往留痕', note: '查看属于 ' + chName + ' 的记忆',
         onClick: function () { ctx.open('memory', { charId: charId }); }
+      }));
+
+      /* ---- 他的手机（查手机系统 · 施工卡-查手机-v1） ---- */
+      var secPh = sectionOf(body, '他的手机');
+      var LIFE_LABEL = { off: '关 · 他只在你们互动时生活', low: '低 · 偶尔留下一点痕迹',
+        mid: '中 · 像普通人一样过日子', high: '高 · 日子过得很满' };
+      var lifeLevel = (Sleepy.phone && Sleepy.phone.autoLifeOf) ? Sleepy.phone.autoLifeOf(charId) : 'off';
+      secPh.appendChild(demoRow({
+        label: '自主生活', note: LIFE_LABEL[lifeLevel] || LIFE_LABEL.off,
+        onClick: function () {
+          openPickDrawer(ctx, {
+            title: '他离屏幕后的生活',
+            desc: '决定他不在你眼前时，会不会继续过日子、在手机里留下痕迹。生成走下面选的模型，一次结算批量写入。',
+            options: [
+              { v: 'off', label: '关', desc: '只在你们互动时生活' },
+              { v: 'low', label: '低', desc: '偶尔留下一点痕迹' },
+              { v: 'mid', label: '中', desc: '像普通人一样过日子' },
+              { v: 'high', label: '高', desc: '日子过得很满（调用更频繁）' }
+            ],
+            current: lifeLevel,
+            onPick: function (v) {
+              if (Sleepy.phone) Sleepy.phone.setAutoLife(charId, v);
+            }
+          });
+        }
+      }));
+      var phCfg = (Sleepy.phone && Sleepy.phone.apiCfg) ? Sleepy.phone.apiCfg() : { mode: 'main' };
+      secPh.appendChild(demoRow({
+        label: '查手机用的模型',
+        note: phCfg.mode === 'pick' ? (phCfg.label || '指定模型') + '（没配置会回落主 API）' : '跟随主 API',
+        onClick: function () { openPhoneApiDrawer(ctx); }
+      }));
+      /* 「他给过你密码」是 user 声明的关系事实（分流定案 §二·C）：
+         知道密码 ≠ 获得允许 —— 打开后查手机多一个「使用你记得的密码」入口，
+         但没被允许时照样算未经允许查看。 */
+      if (Sleepy.phone && core.scopeId()) {
+        var phRec = Sleepy.phone.ensurePhone(core.scopeId(), core.rootIdOf(charId) || charId);
+        secPh.appendChild(demoRow({
+          label: '他给过你密码',
+          note: phRec.knownPin ? '告诉过你 —— 查手机时可以「使用你记得的密码」' : '还没给过（可以试着猜猜看）',
+          switched: !!phRec.knownPin,
+          onSwitch: function (v) {
+            phRec.knownPin = !!v;
+            Sleepy.phone.savePhone(phRec);
+          }
+        }));
+      }
+      secPh.appendChild(demoRow({
+        label: '去翻他的手机', note: '第 2 屏「查手机」也可以进',
+        onClick: function () { ctx.open('phonecheck'); }
       }));
 
       /* ---- 个性化 ---- */

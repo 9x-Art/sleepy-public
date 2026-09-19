@@ -479,6 +479,48 @@
         '【弱模型与解析失败】',
         '优先级：Structured Outputs → JSON Mode → 边界标记包裹 JSON → 本地只修格式 → 缺失字段用空结构（不覆盖旧状态）→ 语义无法可靠解析时保存原文并标记本次未整理。程序可修补格式错误，不得替模型补写语义结论。'
       ].join('\n')
+    },
+
+    /* 查手机 · 离屏生活统一结算（施工卡-查手机-v1 第 2 批）。
+       一次调用产出跨 App 增量，禁止按 App 分别调用（架构 v1 §0.2）。 */
+    phoneLife: {
+      title: '查手机 · 生活结算',
+      locked: true,
+      body: [
+        '生活结算模型只提交手机增量提案，不重写整部手机。程序在校验来源、语义和数量后才写入；非法单项被丢弃，不阻塞其他。',
+        '',
+        '【调用任务】',
+        '对给定时间范围内的角色离屏生活做一次统一结算，产出最多跨五个 App 的少量增量：幕后交流、浏览/搜索、备忘录、健康日记录、购物变化，以及计划的状态变化。',
+        '不是每类都必须输出。没有合理内容时返回空数组——禁止为填满手机而编造。',
+        '',
+        '【输出结构】',
+        '{"v":1,"deltas":[{"app":"messages|browser|notes|health|shop","op":"…","occurredAt":"ISO时间或相对描述","payload":{…}}],"planChanges":[{"title":"…","to":"brewing|preparing|scheduled|done|paused|cancelled|changed","reason":"…"}],"uncertain":[]}',
+        '',
+        '【各 App 的 op 与 payload】',
+        'messages/add_derived：{withName,title,lines:[{who:"char|other",text}]} —— 他和合法联系人的幕后交流，lines 至少一来一回；withName 只能是岛里已登记的人（否则整条会被程序丢弃）。',
+        'messages/add_draft：{text} —— 他打了但没发出去的话。',
+        'browser/add_history：{query,note} —— 他搜索过什么、为什么。',
+        'notes/add_note：{title,content} —— 他用自己的语气记下的事。',
+        'health/add_day：{day,meals:[{meal,time,text,comment}],workoutPlan,workoutResult,workoutName,workoutWhy,comments:["…"]} —— ' +
+        'meal.time 是他吃饭的时间（HH:MM），meal.comment 是他自己对这一顿的一句短评；' +
+        'workoutName 是这次运动的名称，workoutWhy 是他为什么改计划/为什么没去（只写理由，不写检讨）；' +
+        'comments 是这天他随手写下的零到三条话。计划和实际可以不一致；不评分，不把夜宵/休息道德化，不做医学结论。',
+        'shop/add_order：{title,price,purpose} —— purpose 必须写实（自用/送某人的称呼/备用），不能默认都是送 user。',
+        'shop/order_status：{title,status:"shipped|received|refunded|gifted"} —— 只推进已存在订单。',
+        '',
+        '【数量上限（上限不是配额）】',
+        '幕后会话 0～2 段；浏览 0～4 条；备忘录 0～2 条；健康日记录按时间范围合并通常 1 条；购物变化 0～2 条；计划变化 0～1 个。普通结算全部增量合计不超过 12 条。',
+        '',
+        '【语义红线】',
+        '搜索不得写成购买；草稿不得写成已发送；计划不得写成已完成；不得生成未登记的重要亲友；不得替 user 做离屏决定；不得生成未经支持的重大事件、表白、礼物或关系阶段变化。',
+        '计划变化必须有原因并写进 reason；礼物/惊喜类计划在兑现前属于私密（secrecy 由程序按 planType 判定，模型不需要输出）。',
+        '',
+        '【初始底片模式】',
+        '输入带 [MODE]=bootstrap 时是整部手机一生一次的冷启动：只生成低风险的「初始生活底片」——普通联系人的一两段日常、少量浏览、一两篇备忘、最近一两天饮食运动、自用购物。禁止出现 user 相关的重大过去、新亲友、过度深情、礼物与表白计划。',
+        '',
+        '【失败与空态】',
+        'JSON 解析失败由程序保留原文待重试；没有合理内容的结算允许 deltas 为空数组——空手机也是真实的生活。'
+      ].join('\n')
     }
   };
 
@@ -495,6 +537,17 @@
       note: '当前对话用的马甲人设（没写就整块省略）' },
     { id: 'i01', slot: 'I01', name: '马甲标识与认知', kind: 'program', required: true,
       note: '程序生成：大小号 + awareness_mode' },
+    /* 时间事实（2026-09-19 加）：线上以前**完全没有时间** ——
+       char 在聊天里不知道今天几号、也不知道自己那边几点，
+       而线下那条线早就注入了「现实时间」。现在两边都走同一个来源：
+       char 的常驻地点（时区）→ Sleepy.calendar.timeFacts()。
+       总纲 §14：只给「现在」+ 今天的状态 + 极少量近期项，不注入整月。 */
+    { id: 'time', slot: 'I02', name: '时间事实', kind: 'program', required: false,
+      note: '程序生成：当前日期/星期 + 他在自己时区的现在 + 当天公共日期状态（没设时区就不注入）' },
+    /* 语言与翻译（2026-09-19 用户要的）：他说哪国话**从常驻地点推**，
+       不另开设置项。开关只是「我要不要看译文」，不影响他说什么语言。 */
+    { id: 'lang', slot: 'I03', name: '语言与翻译', kind: 'program', required: false,
+      note: '常驻地在国外的角色才有：指定他用哪国话说 + 要不要附中文翻译' },
     { id: 'shell', slot: 'C01-C03', name: '共享外壳', kind: 'card', required: true },
     { id: 'f1', slot: 'C04', name: 'F1 线上规则', kind: 'card', required: true },
     { id: 'pat', slot: 'C04', name: '拍一拍', kind: 'card', required: false },
@@ -502,6 +555,8 @@
       note: '有表情包才注入' },
     { id: 'genimg', slot: 'C04', name: '发图能力', kind: 'program', required: false,
       note: '配置生图接口后才注入（[生图:描述]）' },
+    { id: 'phone', slot: 'C04', name: '手机痕迹', kind: 'program', required: false,
+      note: '岛里有手机的角色才有（[手机] 行搭载，0 新增调用）' },
     /* 心声说明不再单独注入：引擎的输出协议（c05 卡）已经规定了 [WHISPER]，
        模块 E 的 replySpec 教的是旧 <心声> 写法 —— 两份同时进 prompt 会打架。 */
     { id: 'drop', slot: 'K03', name: '掉马事件', kind: 'program', required: false,
@@ -612,6 +667,63 @@
   function accountOfUser(u) {
     if (!u) return '大号';
     return u.isDefault ? '大号' : '小号';
+  }
+
+  /* 时间事实（I02）。**唯一的出处是 Sleepy.calendar.timeFacts** ——
+     线上/线下都走它，不要再在别处手写一份日期字符串；
+     写两份的结果就是「日历按东京算、聊天按北京时间说」。
+     日历没加载 / 没有可说的内容时返回 ''，槽位整块不注入。 */
+  function compileTimeFacts(charId) {
+    var cal = Sleepy.calendar;
+    if (!cal || !cal.timeFacts) return '';
+    try {
+      return cal.timeFacts(charId, {}) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /* 语言档：常驻地在国外才算（拿不到日历、或说中文 → null）。
+     语言与翻译两个下游判据都从这里出发，别各自再写一份。 */
+  function langOfChar(charId) {
+    var cal = Sleepy.calendar;
+    if (!cal || !cal.langOf) return null;
+    try { return cal.langOf(charId) || null; } catch (e) { return null; }
+  }
+
+  /* 「这一轮要不要附译文」= 他在国外 **且** 翻译开关开着。
+     两件事必须分开判：关掉开关他照样说日语，只是不附译文。 */
+  function transAsked(charId) {
+    var lang = langOfChar(charId);
+    if (!lang || lang.same) return false;
+    var cal = Sleepy.calendar;
+    return !!(cal && cal.translateOn && cal.translateOn());
+  }
+
+  /* 语言与翻译（I03）。
+     · 只有常驻地在国外（lang.same 不为真）才注入 —— 说中文的角色不占这段篇幅；
+     · 「说什么语言」与「要不要翻译」是两件事（见 transAsked）；
+     · **译文落在哪，线上线下不一样**：线上是 3~4 条气泡的纯文本，
+       译文另起一行写成 [译]…[/译]（splitBubblesT 按 || 分段配对）；
+       线下是 JSON 协议，译文走 dialogue 段的 trans 字段 —— 塞进 text 里
+       会连标签一起进历史（parasText 直接拼 text 回给模型）。 */
+  function compileLang(charId, mode) {
+    var lang = langOfChar(charId);
+    if (!lang || lang.same) return '';
+    var lines = ['【说话方式】你平时说' + lang.name + '（' + lang.native + '）。' +
+      '跟对方聊天时也用' + lang.name + '说，用你这个人本来会用的说法，' +
+      '不要刻意放慢、拆短或简化成教科书句子。'];
+    if (transAsked(charId)) {
+      if (mode === 'offline') {
+        lines.push('你说出口的每一段（dialogue 段）都带上 trans 字段，' +
+          '写这一段的中文翻译；prose 段不要 trans。' +
+          '译文只翻你说出口的内容，不要加动作、神态或心声；有几段就写几段，一一对应。');
+      } else {
+        lines.push('每段话后面另起一行附上这一段的中文翻译，写成 [译]中文译文[/译]。' +
+          '译文只翻你说的内容，不要加动作、神态或心声；有几段就写几段，一一对应。');
+      }
+    }
+    return lines.join('\n');
   }
 
   function compileI01(charId, userId) {
@@ -735,6 +847,58 @@
 
   /* ============================ 装配 ============================ */
 
+  /* 手机痕迹槽（查手机第 2 批）：聊天搭载 [手机] 行 + 被察觉的痕迹提醒。
+     架构 v1 §5.1 / §11：正常聊天同次搭载 0 新增调用，每轮通常 0 条、至多 1～3 条。 */
+  function compilePhoneDelta(charId) {
+    if (!Sleepy.phone || !charId) return '';
+    var sid = null;
+    try { sid = core.scopeId(); } catch (e) { return ''; }
+    if (!sid) return '';
+    var ownerId = null;
+    try { ownerId = core.rootIdOf(charId); } catch (e) { ownerId = charId; }
+    var ph = Sleepy.phone.phoneOf(sid, ownerId || charId);
+    if (!ph) return '';   /* 还没有手机壳的角色不注入（不在这里建壳） */
+
+    var lines = [
+      '【他的手机】' + '这部手机会持续记录他真实的生活。如果你这一轮说的内容会在他手机里留下痕迹' +
+      '（写了备忘、搜了什么、和 someone 私下商量、记了一笔购物、改了计划），',
+      '可以在回复最后另起一行写一条 [手机] 标签（0～3 条，没有就不写，禁止每轮硬凑）：',
+      '[手机] {"app":"messages","op":"add_derived","payload":{"withName":"联系人名","title":"事由","lines":[{"who":"char","text":"…"},{"who":"other","text":"…"}]}}',
+      '[手机] {"app":"messages","op":"add_draft","payload":{"text":"没发出去的话"}}',
+      '[手机] {"app":"browser","op":"add_history","payload":{"query":"搜索词","note":"起因"}}',
+      '[手机] {"app":"notes","op":"add_note","payload":{"title":"标题","content":"内容"}}',
+      '[手机] {"app":"health","op":"add_day","payload":{"day":"今天","meals":[{"meal":"午餐","time":"12:34","text":"…","comment":"他自己的一句短评"}],' +
+      '"workoutPlan":"…","workoutResult":"…","workoutName":"这次练的是什么","workoutWhy":"为什么改了/为什么没去","comments":["他随手写下的话"]}}',
+      '[手机] {"app":"shop","op":"add_order","payload":{"title":"商品","price":59,"purpose":"写实用途"}}',
+      '[手机] {"app":"permission","op":"grant","payload":{"scope":"all","mode":"long","note":"他递手机时说的话"}}',
+      '[手机] {"app":"permission","op":"set","payload":{"scope":"all","state":"hidden|open|revoked","note":"他的说法"}} —— 他改主意了：' +
+      '为惊喜暂时藏起来、过一阵恢复、或者把手机正式收回。这是权限变化，不是删数据；只在真有理由时用。',
+      '约束：只能记他自己的动作；不得把「想过」写成「已做」；幕后交流对象必须是岛里已存在的人。permission/grant 只在他真心愿意给你看时用（撒娇哄你、证明清白、主动分享），不要每次都授权。'
+    ];
+    /* 他手机上装了工坊自定义 App 的话，教一条对应的记录线（第 4 批） */
+    try {
+      var instNames = (Sleepy.workshop ? Sleepy.workshop.installsOfPhone(ph.id) : [])
+        .map(function (i) { return i.templateName; });
+      if (instNames.length) {
+        lines.push('[手机] {"app":"custom","op":"add_record","payload":{"appName":"模板名","title":"…","content":"…"}} —— 他手机上装着：' +
+          instNames.join('、') + '。有真实合理的内容时偶尔记一条（不是每轮），写他自己的口吻。');
+      }
+    } catch (e) { /* 工坊缺位不拦注入 */ }
+
+    /* 被察觉的偷看痕迹（结算已打 detectedAt、聊天还没消费过的）：
+       只提醒一次（消费后补 addressedAt），char 按人设决定怎么处理 ——
+       不替模型演惩罚戏（总纲 §六：反应不是统一惩罚） */
+    var seen = [];
+    try { seen = Sleepy.phone.detectedUnaddressed(ph.id) || []; } catch (e) { seen = []; }
+    if (seen.length) {
+      try { Sleepy.phone.markAddressed(ph.id); } catch (e) { /* 注入失败不拦聊天 */ }
+      lines.push('[手机痕迹] 他后来翻手机时注意到了这些：' +
+        seen.slice(0, 4).map(function (t) { return t.detail || t.type; }).join('；') +
+        '。这属于他合理可知的事，之后按人设自然处理——可以追问、装不知道、试探或摊开谈，不要立刻对质。');
+    }
+    return lines.join('\n');
+  }
+
   /* 组装一次线上回复调用。
      ctx: { charId, userId, history } —— history 是 buildMessages 收好的
      user/assistant 消息数组（已按对话设置截条数）。
@@ -776,11 +940,14 @@
         case 'character': pushSlot(def, compileCharacter(charId)); break;
         case 'usercore': pushSlot(def, compileUserCore(userId)); break;
         case 'i01': pushSlot(def, compileI01(charId, userId)); break;
+        case 'time': pushSlot(def, compileTimeFacts(charId)); break;
+        case 'lang': pushSlot(def, compileLang(charId)); break;
         case 'shell': pushSlot(def, cardBody('shell')); break;
         case 'f1': pushSlot(def, cardBody('f1')); break;
         case 'pat': pushSlot(def, cardBody('pat')); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
+        case 'phone': pushSlot(def, compilePhoneDelta(charId)); break;
         case 'drop': pushSlot(def, compileDrop(charId)); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'worldbook': {
@@ -831,6 +998,8 @@
       note: '当前马甲的人设（没写就整块省略）' },
     { id: 'i01', slot: 'I01', name: '马甲标识与认知', kind: 'program', required: true,
       note: '大小号与认知设定（马甲从会话/激活马甲接，2026-09-19 补上）' },
+    { id: 'lang', slot: 'I03', name: '语言与翻译', kind: 'program', required: false,
+      note: '国外角色才注入（常驻地点推出来，见 calendar.langOf）' },
     { id: 'shell', slot: 'C01-C03', name: '共享外壳', kind: 'card', required: true },
     { id: 'f2', slot: 'C04', name: 'F2 线下规则', kind: 'card', required: true },
     { id: 'relation', slot: 'K03', name: '关系与记忆', kind: 'program', required: true,
@@ -864,7 +1033,10 @@
     literary: '画面感和物件细节优先；比喻可以有，但每个比喻都要带来新信息；节奏慢、留白多，情绪藏在环境与动作的缝隙里，不堆华丽辞藻。',
     casual: '轻快、打趣、互怼；句子短、来回快；允许玩梗和口语，但不贫嘴不刷屏；认真的时刻要突然收住玩笑——反差才珍贵。'
   };
-  var LENGTH_LABELS = { short: '简短（80~150 字）', medium: '适中（150~300 字）', long: '详尽（300~500 字）' };
+  /* 线下篇幅档位（用户 2026-09-19 定：「字数一般在三百字以上」——
+     线下是一篇连续的叙事，描写与心理是主体，不是几句对话。
+     以前 适中=150~300 偏短，写出来像分镜。 */
+  var LENGTH_LABELS = { short: '简短（150~250 字）', medium: '适中（300~450 字）', long: '详尽（500~800 字）' };
   var NPC_LABELS = { none: '无（不出现 NPC）', occasional: '偶尔点缀', normal: '正常参与' };
 
   function narrativeText(session) {
@@ -889,8 +1061,10 @@
     }
     lines.push('- 回复字数：' + (n.lengthMode === 'custom'
       ? ('不少于 ' + (n.customLengthMin || 300) + ' 字')
-      : (LENGTH_LABELS[n.lengthMode] || LENGTH_LABELS.medium)));
-    lines.push('- 描写 Char 内心：' + (n.showCharInner === false ? '关' : '开'));
+      : (LENGTH_LABELS[n.lengthMode] || LENGTH_LABELS.medium)) +
+      '（一条回复合计，不是「每句对话」的字数）');
+    lines.push('- 描写 Char 内心：' + (n.showCharInner === false
+      ? '关（只写外部可见的言行）' : '开（心理活动写在叙述段里）'));
     lines.push('- Char 主动推进剧情：' + (n.charProactive ? '开（可以引发新事件）' : '关（只回应）'));
     lines.push('- NPC 出现频率：' + (NPC_LABELS[n.npcFrequency] || NPC_LABELS.none));
     lines.push('- 建议选项：' + (n.showSuggests === false ? '不输出 suggests' : '输出 0~3 条'));
@@ -902,15 +1076,28 @@
     var env = session.env || {};
     var n = session.narrativeSettings || {};
     var now = new Date();
-    var week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
     function p2(x) { return x < 10 ? '0' + x : '' + x; }
     var lines = ['【当前场景】'];
     lines.push('「' + (session.sceneName || '未命名场景') + '」· 第 ' + (session.sceneCount || 1) + ' 次见面');
     lines.push('时段 ' + (env.timeOfDay || '—') + ' · 天气 ' + (env.weather || '—') +
       ' · 地点 ' + (env.location || '—') + ' · 时刻 ' + (env.clockTime || '—'));
-    lines.push('【现实时间】' + now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() +
-      '日 ' + week + ' ' + p2(now.getHours()) + ':' + p2(now.getMinutes()) +
-      '（仅作为季节、节令和作息的参考；场景内时间以上面的时刻为准，两者不必一致，不要把现实时间写进叙事）');
+    /* 现实时间要用 **char 常驻时区**算，不是浏览器本地时间 ——
+       「他那边现在几点」是异地恋的核心事实，以前这条一直按 user 的机器时间写。
+       出处与线上同一个（calendar.tzNow），不在别处另算一份。 */
+    var rIso = now.getFullYear() + '-' + p2(now.getMonth() + 1) + '-' + p2(now.getDate());
+    var rTime = p2(now.getHours()) + ':' + p2(now.getMinutes());
+    var approx = false;
+    if (Sleepy.calendar && session.charId) {
+      try {
+        var tcfg = Sleepy.calendar.cfgOf(session.charId);
+        var tnow = Sleepy.calendar.tzNow(tcfg.timezone, now);
+        if (tnow) { rIso = tnow.iso; rTime = tnow.time; approx = !tnow.exact; }
+      } catch (e) { /* 拿不到时区就照旧用本地时间，不影响场景 */ }
+    }
+    var wIdx = new Date(Number(rIso.slice(0, 4)), Number(rIso.slice(5, 7)) - 1, Number(rIso.slice(8, 10))).getDay();
+    lines.push('【现实时间】' + Number(rIso.slice(0, 4)) + '年' + Number(rIso.slice(5, 7)) + '月' +
+      Number(rIso.slice(8, 10)) + '日 ' + ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][wIdx] + ' ' + rTime + (approx ? '（约）' : '') +
+      '（这是他所在地的时间；仅作为季节、节令和作息的参考；场景内时间以上面的时刻为准，两者不必一致，不要把现实时间写进叙事）');
     if ((session.messages || []).length > 0) {
       lines.push('这是一次旧场景的续接：直接从最近的剧情往下写（见下方场景原文），不要重开场景、不要复述背景。');
     } else {
@@ -929,6 +1116,29 @@
     lines.push('你的整段回复必须是一个 JSON 对象，格式如下：');
     lines.push('{"paras":[{"type":"prose","text":"…"},{"type":"dialogue","text":"…"}],"suggests":["…"],"envUpdate":{"clockTime":"17:05"}}');
     lines.push('- paras：描写段（type=prose，叙事文字）与对话段（type=dialogue，char 说出口的话）按顺序混排；char 说出口的话必须用 dialogue 段。');
+    /* 「你写的是一篇连续的叙事」——用户 2026-09-19 的原话：
+       「我以为是他输出一个长文，里面有对话有描写有心理，要是没有想说的就不说，
+       就只有描写和心理这样」。所以这几条要连着看：
+         · 读者看到的是一整篇，paras 的类型只是给程序排版用的标记；
+         · **对话有没有由现场决定**，不许为了凑对话硬写；
+         · 叙述要成段（两三句一起），不要一句一段写成提纲。 */
+    lines.push('- 你写的是一篇连续的叙事：环境、动作、神态与「他」的心理按事情发生的顺序' +
+      '写在一起，对话写在它出现的位置上。读者看到的是连贯的一整篇 —— ' +
+      'paras 的类型只是给程序排版的标记，不要写成一条条一句话的短段。');
+    lines.push('- 有想说的才写 dialogue 段：没有要说的就整轮都是 prose（只有描写与心理），' +
+      '不要为了凑对话硬写；也不要几段对话连着出现而没有落点动作。');
+    lines.push('- 先有动作或神态、再给台词；场面要有具体的物与动静' +
+      '（杯子、雨、灯、椅子的响动），不要只写「气氛很好」这类概括。');
+    /* 译文走 dialogue 段的 trans 字段（**不能塞进 text**：text 会被
+       parasText 原样拼进历史回给模型，标签就跟着进上下文了）。
+       只有「他在国外 + 翻译开关开着」才要求这个字段。 */
+    if (transAsked(session.charId)) {
+      lines.push('- trans：你说出口的每一段（type=dialogue）都要带 trans，值是这一段的中文翻译（' +
+        '只翻说出口的内容，不要加动作、神态或心声）；prose 段不要 trans 字段。' +
+        '它不参与叙事，只是给读的人看的那一层。');
+      lines.push('  {"paras":[{"type":"prose","text":"…"},' +
+        '{"type":"dialogue","text":"…","trans":"这一段的中文译文"}],"suggests":["…"]}');
+    }
     lines.push('- suggests：' + (n.showSuggests === false
       ? '固定返回空数组 []。'
       : '0~3 条可选行动建议，站在 user 的视角写，user 点击后填入输入框；没有合适的就返回空数组。'));
@@ -978,6 +1188,10 @@
         case 'character': pushSlot(def, compileCharacter(charId)); break;
         case 'usercore': pushSlot(def, compileUserCore(userId)); break;
         case 'i01': pushSlot(def, compileI01(charId, userId)); break;
+        /* 线下以前完全没有这一槽 —— 常驻东京的角色在线下会说中文。
+           语言规则与线上同一份（compileLang），译文协议挂在本函数的
+           输出协议里（见 offlineOutProto）。 */
+        case 'lang': pushSlot(def, compileLang(charId, 'offline')); break;
         case 'shell': pushSlot(def, cardBody('shell')); break;
         case 'f2': pushSlot(def, cardBody('f2')); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
@@ -1025,7 +1239,9 @@
   }
 
   function parasText(paras) {
-    return (paras || []).map(function (p) { return p.text || ''; }).join('');
+    /* 段落之间换行，不是直接粘在一起：线下是一篇连续的叙事，「他做了个动作」
+     与「他说了句话」粘成一行之后，回给模型的原文就再也读不出结构了。 */
+    return (paras || []).map(function (p) { return p.text || ''; }).join('\n');
   }
 
   /* 模型返回解析：JSON 优先（剥代码围栏），失败整体降级为一条 prose。
@@ -1045,7 +1261,13 @@
           var paras = obj.paras.filter(function (p) {
             return p && typeof p.text === 'string' && p.text.trim();
           }).map(function (p) {
-            return { type: p.type === 'dialogue' ? 'dialogue' : 'prose', text: String(p.text).trim() };
+            var type = p.type === 'dialogue' ? 'dialogue' : 'prose';
+            /* 译文只认「说出口的那一段」上的 trans（模型偶尔给 prose 也写，
+               那就不收 —— 渲染层也只在 dialogue 下挂）。译文单独成字段，
+               不进 text：text 会被 parasText 拼进历史。 */
+            var tr = (type === 'dialogue' && typeof p.trans === 'string' && p.trans.trim())
+              ? p.trans.trim() : '';
+            return { type: type, text: String(p.text).trim(), trans: tr || null };
           });
           var out = {
             ok: true,
@@ -1062,7 +1284,8 @@
       } catch (e) { /* 落到降级 */ }
     }
     if (!text) return { ok: false, paras: [], suggests: [], envUpdate: null };
-    return { ok: false, paras: [{ type: 'prose', text: text }], suggests: [], envUpdate: null };
+    return { ok: false, paras: [{ type: 'prose', text: text, trans: null }],
+      suggests: [], envUpdate: null };
   }
 
   /* ============================ 回复解析 ============================
@@ -1106,21 +1329,58 @@
       var holdOld = heldTail(text, OPEN_OLD);
       var hold = Math.max(holdNew, holdOld);
       var vis = hold ? text.slice(0, text.length - hold) : text;
-      return { visible: vis, bubbles: splitBubbles(vis), whisper: null, closed: false };
+      var bt0 = splitBubblesT(vis);
+      return { visible: bt0.text, bubbles: bt0.bubbles, trans: bt0.trans, whisper: null, closed: false };
     }
 
-    var visible = text.slice(0, i);
+    var visibleRaw = text.slice(0, i);
     var rest = text.slice(i + OPEN.length);
     var j = rest.indexOf(CLOSE);
     var beat = j >= 0 ? rest.slice(0, j) : rest;
 
     /* 兜底：模型把标签写在最前面，正文空了 —— 宁可还正文，不给空气泡 */
-    if (!visible.trim() && beat.trim()) {
-      visible = rest.replace(CLOSE, '').trim();
+    if (!visibleRaw.trim() && beat.trim()) {
+      visibleRaw = rest.replace(CLOSE, '').trim();
       beat = '';
     }
 
-    return { visible: visible, bubbles: splitBubbles(visible), whisper: beat, closed: j >= 0 };
+    var bt1 = splitBubblesT(visibleRaw);
+    return { visible: bt1.text, bubbles: bt1.bubbles, trans: bt1.trans, whisper: beat, closed: j >= 0 };
+  }
+
+  /* 翻译标记：`[译]中文译文[/译]`（也认没有收尾标签的半截写法）。
+     它**不属于气泡正文** —— 抽出来单独存 msg.trans，这样
+     ① 屏幕上不会杵着一个标签，② 回给模型的上下文里只有原文，
+     不会把他的译文再喂回去一遍。 */
+  var TRANS_OPEN = '[译]';
+  var TRANS_CLOSE = '[/译]';
+
+  /* 抽译文并**顺带产出干净的正文**。
+     返回值三样：
+       bubbles —— 一句话一段（已经剔掉 [译] 标签）
+       trans   —— 与 bubbles **按索引对齐**，没有译文就是 null
+       text    —— 剔干净的整段正文（用 ' || ' 重新接回去），落库用它
+     ⚠️ visible 必须是干净的那份：page-chat 直接把它当 content 落库，
+     带着标签落进去，下一轮就会把 [译] 当原文喂回给模型。冒烟桩抓过。 */
+  function splitBubblesT(text) {
+    var segs = String(text || '').split('||').map(function (x) { return x.trim(); })
+      .filter(function (x) { return !!x; });
+    if (!segs.length) segs = [''];
+    var trans = segs.map(function (seg) {
+      var i = seg.indexOf(TRANS_OPEN);
+      if (i < 0) return null;
+      var rest = seg.slice(i + TRANS_OPEN.length);
+      var j = rest.indexOf(TRANS_CLOSE);
+      return (j >= 0 ? rest.slice(0, j) : rest).trim() || null;
+    });
+    var bubbles = segs.map(function (seg, k) {
+      var i = seg.indexOf(TRANS_OPEN);
+      if (i < 0) return seg;
+      var head = seg.slice(0, i).trim();
+      /* 原文被标签吃空了：宁可把译文当原文，也不给一个空气泡 */
+      return head || trans[k] || seg;
+    });
+    return { bubbles: bubbles, trans: trans, text: bubbles.join(' || ') };
   }
 
   function splitBubbles(text) {
@@ -1168,6 +1428,9 @@
     addCustomCard: addCustomCard,
     saveCustomCard: saveCustomCard,
     removeCustomCard: removeCustomCard,
+    /* 语言与翻译：两个下游判据都从这里出发（翻译页/群线下直接用） */
+    langOfChar: langOfChar,
+    transAsked: transAsked,
     /* 装配与解析 */
     assembleOnline: assembleOnline,
     assembleOffline: assembleOffline,

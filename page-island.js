@@ -1461,6 +1461,21 @@
         hName.appendChild(h('span', 'ipro-pill', isNpc ? 'NPC' : (c.kind === 'sub' ? '身份' : '主要角色')));
         hero.appendChild(hName);
         hero.appendChild(h('p', '', '当前所在 · ' + roomTitle(sb)));
+
+        /* 常驻地点：一个字段喂三个下游（日历法定地区 / 时区 / 以后的语言档），
+           档案页上得看得见 —— 不然用户会以为日历里那个地区是日历自己的设置，
+           改完这里发现日历没跟着动。 */
+        if (Sleepy.calendar) {
+          var cfgP = Sleepy.calendar.cfgOf(charId);
+          var placeP = Sleepy.calendar.placeOf(charId);
+          var regionP = Sleepy.calendar.regionMeta(cfgP.region);
+          if (placeP.city || placeP.region || placeP.timezone) {
+            hero.appendChild(h('p', 'ipro-place',
+              '常驻 · ' + Sleepy.calendar.placeLabel(charId, cfgP) +
+              (regionP ? ' · ' + regionP.label : '') +
+              (cfgP.timezone ? ' · ' + cfgP.timezone : '')));
+          }
+        }
         body.appendChild(hero);
 
         /* 一句话 */

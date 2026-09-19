@@ -29,7 +29,11 @@
     contacts: { title: '浮岛', hint: '你在这部手机里造的那些世界。' },
     island:   { title: '浮岛', hint: '云海之上，你造的那些世界。' },
     settings: { title: '设置',   hint: 'API 配置、数据备份、聊天参数都在这里。' },
-    support:  { title: '反馈',   hint: '有问题随时找我（联系方式待填）。' }
+    support:  { title: '反馈',   hint: '有问题随时找我（联系方式待填）。' },
+    /* 第 2 屏新换的两个 App（2026-09-19）—— 页面本体还没开工，
+       先用占位页接着，等用户发来需求再注册真正的页面。 */
+    phonecheck: { title: '查手机', hint: '角色翻看这部手机的地方，页面还没贴好。' },
+    workshop:   { title: '工坊',   hint: '做小东西的地方，工具还没摆上来。' }
   };
 
   var registry = {};

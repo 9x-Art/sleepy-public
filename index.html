@@ -109,6 +109,10 @@
 <script src="moments-ai.js"></script>
 <!-- 相册（模块 J）：和负一屏照片墙共用 Sleepy.photos -->
 <script src="page-gallery.js"></script>
+<!-- 译文块（组件）：线上私聊 / 线下私聊 / 群线下**共用一份实现**，
+     所以排在三个页面之前。依赖 ui.js 的 h，语言与开关在运行时
+     从 calendar 惰性取（calendar.js 排在后面，不影响）。 -->
+<script src="msg-trans.js"></script>
 <script src="page-chat.js"></script>
 <!-- 线上群聊（实施总纲 v1）：core-group 是群数据层（本体/账号两层模型，
      消息单列一张表），page-group 是建群流程 + 群消息页 + 群详情页。
@@ -140,6 +144,42 @@
 <script src="page-memory.js"></script>
 <script src="page-summary.js"></script>
 <script src="page-proactive.js"></script>
+<!-- 查手机系统：phone.js 只依赖 store/core，page-phone.js 要用 chatStore
+     （镜像真实聊天）和 core-group（群岛群聊），排在它们之后。
+     page-phone-ai.js 是生成链（结算/冷启动），要走 prompt-engine 的卡和
+     offlineStore 的模型候选，排最后。 -->
+<script src="phone.js"></script>
+<script src="page-phone.js"></script>
+<script src="page-phone-ai.js"></script>
+<!-- App 工坊（第 4 批）：要用 phone.ensurePhone（安装时建壳）和 island 的
+     charsOfSandbox，排最后；同名 registry 覆盖 page-phone.js 里的门面。 -->
+<script src="page-workshop.js"></script>
+
+<!-- 日历（《日历系统 · 产品与实施总纲 v1》）：
+     calendar-data.js 是内置离线数据包（必须是 .js —— file:// 下 fetch json
+     会被 CORS 拦死），calendar.js 是数据层（0 模型调用），
+     page-calendar.js 是页面。数据层要读 memoryStore 与 core，
+     两个都只取函数引用、在调用时才解引用，所以排这里也安全；
+     页面排在 page-desktop.js 之后，桌面那格才点得开。 -->
+<script src="calendar-data.js"></script>
+<script src="calendar.js"></script>
+<script src="page-calendar.js"></script>
+
+<!-- 帷境（Veilscape）——《帷境总体设计目标与实施意图总纲 v1》+ 8 张 Demo。
+     wj-data.js 是数据层（**0 模型调用**，对齐 calendar.js 那条红线），
+     wj-prompt.js 装配提示词（0 网络请求）、wj-engine.js 生成状态机（真打模型，
+     必须排在 api.js / prompt-engine.js 之后），
+     页面按依赖排：门厅在最前（详情页与创建页借用它的 wjUI 小工具），
+     阅读页在详情页之后，创建流程最后（它要跳文风设置台，两边的 params 约定写在各自文件头）。
+     入口在桌面主屏第 6 行的通栏卡（defaultDesktop 里 type:'wj'）。 -->
+<script src="wj-data.js"></script>
+<script src="wj-prompt.js"></script>
+<script src="wj-engine.js"></script>
+<script src="page-wj-foyer.js"></script>
+<script src="page-wj-work.js"></script>
+<script src="page-wj-read.js"></script>
+<script src="page-wj-style.js"></script>
+<script src="page-wj-create.js"></script>
 
 <script>
 /* PWA：只在 http(s) 下注册 SW。file:// 双击打开本来就是全离线的，

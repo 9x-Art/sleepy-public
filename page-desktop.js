@@ -84,8 +84,18 @@
     presets: ic('<rect x="4.5" y="3.5" width="12" height="15" rx="1.8"/>' +
       '<path d="M8.5 7.5h4M8.5 10.5h4"/>' +
       '<path d="M19.5 7.2v11.3a1.8 1.8 0 0 1-1.8 1.8H8.9"/>'),
-    clock: ic('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3 1.8"/>', 32),
-    mood: ic('<circle cx="12" cy="12" r="8.6"/><path d="M8.8 14.2a4.2 4.2 0 0 0 6.4 0"/><path d="M9.2 9.6h.01M14.8 9.6h.01"/>', 32)
+    /* 查手机：手机 + 小放大镜（第 2 屏，角色翻看这部手机里的东西） */
+    phonecheck: ic('<rect x="7" y="3" width="10" height="18" rx="2"/>' +
+      '<path d="M10.5 18.3h3"/>' +
+      '<circle cx="11" cy="10.6" r="2.1"/><path d="M13.6 13.6l1.8 1.8"/>'),
+    /* 工坊：扳手（第 2 屏，做小东西的地方） */
+    workshop: ic('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
+    /* 日历（第 3 屏，2026-09-19 接到该格）：一本翻开的台历 + 顶上两个挂环 */
+    calendar: ic('<rect x="3.6" y="5.4" width="16.8" height="14.2" rx="2.2"/>' +
+      '<path d="M3.6 10.2h16.8"/>' +
+      '<path d="M8.6 3.4v3.6M15.4 3.4v3.6"/>' +
+      '<path d="M7.4 13.4h2.2M12.4 13.4h4.2M7.4 16.4h2.2M12.4 16.4h2.4"/>'),
+    clock: ic('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3 1.8"/>', 32),    mood: ic('<circle cx="12" cy="12" r="8.6"/><path d="M8.8 14.2a4.2 4.2 0 0 0 6.4 0"/><path d="M9.2 9.6h.01M14.8 9.6h.01"/>', 32)
   };
 
   /* ---------------------------- 默认布局 ---------------------------- */
@@ -138,13 +148,27 @@
      版本 5：桌面上的「日记」「朋友圈」两个 App 拿掉（它们都并进聊天 App 了），
      格位换成「外观」和「组件商城」。
 
-     版本 12（2026-09-18 晚）：第 2 屏第 5 行「设置」格换成「预设」。
-     见第 2 屏那段注释。
+    版本 12（2026-09-18 晚）：第 2 屏第 5 行「设置」格换成「预设」。
+    见第 2 屏那段注释。
+
+    版本 14（2026-09-19）：第 2 屏第 5 行换两个 App ——
+    「世界书」主屏已有，这份换成「查手机」；「我的」没设计想法，
+    换成「工坊」。两个页面本体都还没开工（占位页），等用户发需求。
+
+    版本 15（2026-09-19 深夜）：第 3 屏第 4 行第 4 列的「设置」格
+    换成「日历」（用户拍板：日历是**单独的桌面 App**，不是查手机里那个；
+    同一轮里查手机侧的日历 App 已经撤掉）。选它是因为设置本来就是
+    桌面上重复度最高的一个 —— 主屏与第 2 屏各有一份（同版本 12 那条理由）。
+    格子 id 仍沿用 p3-settings 不变 —— 那只是格子的名字。
 
      版本 4：名片夹 → 浮岛（`app: 'contacts'` 改成 `app: 'island'`，
      标签跟着改）。占位 id 故意沿用 `p1-idcard` 不变 —— 它只是这个格子的
      名字，改了会让老存档里的位置对不上，白白丢掉用户摆过的坐标。 */
-  var LAYOUT_VERSION = 13;
+  /* 版本 16（2026-09-19）：主屏第 6 行补上「帷境」通栏入口。
+     帷境是**独立的一整个世界**（深夜蓝 / 月光纸本，见 style.css 里
+     `[data-page^="wj-"]` 那一段），所以它不走 app 图标格 ——
+     用新的 'wj' 渲染器做一条通栏：两片幕布 + 一行衬线字。 */
+  var LAYOUT_VERSION = 16;
 
   function defaultDesktop() {
     return {
@@ -168,7 +192,12 @@
           { i: 'p1-look', type: 'app', app: 'appearance', x: 4, y: 4, w: 1, h: 1, label: '外观' },
           { i: 'p1-chat', type: 'app', app: 'chat-list', x: 1, y: 5, w: 1, h: 1, label: '聊天' },
           { i: 'p1-settings', type: 'app', app: 'settings', x: 2, y: 5, w: 1, h: 1, label: '设置' },
-          { i: 'p1-mode', type: 'mode', x: 3, y: 5, w: 2, h: 1, label: '夜间模式' }
+          { i: 'p1-mode', type: 'mode', x: 3, y: 5, w: 2, h: 1, label: '夜间模式' },
+          /* 版本 16：第 6 行一直是空的，补上「帷境」通栏入口。
+             它不是普通 App 图标格 —— 帷境是整套产品里唯一
+             「进 App 就换一个世界」的地方，值得一条通栏的仪式感。
+             type 是新的 'wj'，渲染器在下面 RENDER.wj。 */
+          { i: 'p1-weijing', type: 'wj', x: 1, y: 6, w: 4, h: 1, label: '帷境' }
         ],
         /* 第 2 屏：挂件灯 + 四个 App
            2026-09-18 第七版：**双城时间整个撤掉**（用户：「这个双城时间
@@ -193,8 +222,14 @@
         [
           { i: 'p2-lamp', type: 'lamp', x: 1, y: 1, w: 4, h: 4, label: '挂件灯' },
           { i: 'p2-settings', type: 'app', app: 'presets', x: 1, y: 5, w: 1, h: 1, label: '预设' },
-          { i: 'p2-me', type: 'app', app: 'me', x: 2, y: 5, w: 1, h: 1, label: '我的' },
-          { i: 'p2-book', type: 'app', app: 'worldbook', x: 3, y: 5, w: 1, h: 1, label: '世界书' },
+          /* 版本 14：这两个格子换 App 了（用户 2026-09-19）——
+             「世界书」主屏已经有一个，第 2 屏这份换成「查手机」；
+             「我的」暂时没有设计想法，换成「工坊」。
+             页面本体还没开工，点开是占位页，等用户发下一段需求再填。
+             ⚠️ 格子 id 沿用 p2-me / p2-book 不变 —— 那只是格子的名字，
+             改了老存档里的坐标就对不上了（同版本 4 那条规矩）。 */
+          { i: 'p2-me', type: 'app', app: 'workshop', x: 2, y: 5, w: 1, h: 1, label: '工坊' },
+          { i: 'p2-book', type: 'app', app: 'phonecheck', x: 3, y: 5, w: 1, h: 1, label: '查手机' },
           { i: 'p2-memory', type: 'app', app: 'memory', x: 4, y: 5, w: 1, h: 1, label: '留痕' }
         ],
         /* 第 3 屏：音乐卡 + 待办
@@ -223,8 +258,9 @@
           /* 这里原本放的是「日记」，被冒烟断言挡下来了：
              「日记 / 朋友圈那两个我们都在 chat 里面做了，不需要单独的 app」——
              那是很早定下的一条，不能因为要凑格子就把它放回来。
-             换成设置（第 2 屏有同一个 App，手机上重复出现很正常）。 */
-          { i: 'p3-settings', type: 'app', app: 'settings', x: 4, y: 4, w: 1, h: 1, label: '设置' },
+             版本 15 换成**日历**（原来的「设置」挪走 —— 它在主屏和第 2 屏
+             各有一份，是这里重复度最高的一个）。 */
+          { i: 'p3-settings', type: 'app', app: 'calendar', x: 4, y: 4, w: 1, h: 1, label: '日历' },
           { i: 'p3-book', type: 'app', app: 'worldbook', x: 1, y: 5, w: 1, h: 1, label: '世界书' },
           { i: 'p3-gallery', type: 'app', app: 'gallery', x: 2, y: 5, w: 1, h: 1, label: '相册' },
           { i: 'p3-look', type: 'app', app: 'appearance', x: 3, y: 5, w: 1, h: 1, label: '外观' },
@@ -676,6 +712,25 @@
       box.appendChild(icEl);
       box.appendChild(h('span', 'w-app-name', (ov && ov.name) || cell.label || ''));
       box.addEventListener('click', function () { ctx.open(cell.app); });
+      return box;
+    },
+
+    /* ---------------- 帷境入口（主屏第六行那条通栏） ----------------
+       它跟 app 图标格的区别是有意的：帷境不是「又一个 App」，
+       是手机里唯一一处进了就换世界的地方（深夜蓝 + 幕布）。
+       所以这里画两片幕布的缝，而不是塞一个 24px 的线稿图标 ——
+       在一个纯白暖调的桌面上，这条深色通栏本身就是入口的暗示。
+       样式在 style.css 的 .w-wj 那一段。 */
+    wj: function (cell, ctx) {
+      var box = h('button', 'widget w-wj');
+      box.type = 'button';
+      box.appendChild(h('span', 'w-wj-curtain is-left'));
+      box.appendChild(h('span', 'w-wj-curtain is-right'));
+      var copy = h('span', 'w-wj-copy');
+      copy.appendChild(h('b', 'w-wj-name', '帷境'));
+      copy.appendChild(h('span', 'w-wj-line', '今晚，想读哪一种可能？'));
+      box.appendChild(copy);
+      box.addEventListener('click', function () { ctx.open('wj-foyer'); });
       return box;
     },
 

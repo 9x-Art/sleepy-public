@@ -74,6 +74,12 @@
       '<circle cx="12" cy="12" r="2.5"/>' +
       '<path d="M6.2 9.8v4.4M17.8 9.8v4.4"/></svg>',
 
+    /* 翻译：文 + A + 箭头（经典翻译符号），跟这套线稿同一档粗细 */
+    translate: '<svg ' + SVG_BODY + '>' +
+      '<path d="M4.4 6h7.4M8.1 6V4.4M5.2 10.4c1.7-3.3 3.4-5 5.9-6.2"/>' +
+      '<path d="M9.4 10.2l3.1 3.6"/>' +
+      '<path d="M19.8 20l-3.5-8.6L12.8 20M14.2 17.2h4.2"/></svg>',
+
     pat: '<svg ' + SVG_BODY + '>' +
       '<path d="M10 12V6.3a1.5 1.5 0 0 1 3 0V12"/>' +
       '<path d="M13 11.6V5a1.5 1.5 0 0 1 3 0v7"/>' +
@@ -1031,7 +1037,9 @@
              长按菜单每段都能唤起（操作对象还是整条消息）。 */
           var segs = bubbleSegs(m);
           segs.forEach(function (seg, i) {
-            msgWrap.appendChild(bubbleFor(m, c, { text: seg, idx: i, total: segs.length }));
+            msgWrap.appendChild(bubbleFor(m, c, {
+              text: seg.text, trans: seg.trans, idx: i, total: segs.length
+            }));
           });
         });
         if (pending && !pending.targetId) msgWrap.appendChild(pendingBubble());
@@ -1070,11 +1078,30 @@
       /* 气泡分段。只有 assistant 的纯文字消息参与：正文里的 || 按输出协议
          切开；其他类型（表情 / 转账 / 拍一拍 / 引用外的附件）原样一段。 */
       function bubbleSegs(m) {
-        if (m.role === 'assistant' && !m.type && (m.content || '').indexOf('||') >= 0 &&
-            Sleepy.promptEngine) {
-          return Sleepy.promptEngine.splitBubbles(m.content);
+        if (m.role === 'assistant' && !m.type && Sleepy.promptEngine) {
+          /* 正文按 || 切开；译文在落库时就抽好了（msg.trans），**按索引配对**，
+             这里不再重解析正文 —— 一处解析、一处对齐，谁也不用猜。 */
+          var list = Sleepy.promptEngine.splitBubbles(m.content);
+          var tr = Array.isArray(m.trans) ? m.trans : [];
+          return list.map(function (t, i) {
+            return { text: t, trans: tr[i] || null };
+          });
         }
-        return [m.content || ''];
+        return [{ text: m.content || '', trans: null }];
+      }
+
+      /* ---------------- 译文块（组件：msg-trans） ----------------
+
+         实现在 msg-trans.js（**线上线下共用一份**：线上私聊 / 线下私聊 /
+         群线下三种摆法都走它）。这里只留薄薄一层门面：
+
+           · needsTrans(c) —— 他说的话跟 user 是不是同一种语言
+             （中文角色的气泡永远不长译文块，哪怕模型手滑写了 [译]）
+           · attachTrans —— 两道闸门都过（开关开 + 语言不同）才挂上去
+
+         摆法细节与为什么这么摆，见 msg-trans.js 与 style.css。 */
+      function needsTrans(c) {
+        return Sleepy.msgTrans.needs(c && c.characterId);
       }
 
       function bubbleFor(msg, c, seg) {
@@ -1154,6 +1181,12 @@
             shown = seg ? (seg.text || '（空）') : (msg.content || '（空）');
             textEl.textContent = shown;
             content.appendChild(textEl);
+            /* 译文（组件 msg-trans）：只在 assistant 的气泡上出现，
+               而且只在翻译开关开着的时候挂 —— 关掉就是干干净净一句原文。
+               两道闸门写在 attach 里，这里不自己判开关。 */
+            if (seg && seg.trans && role === 'assistant') {
+              Sleepy.msgTrans.attach(content, msg.id + ':' + seg.idx, seg.trans, c && c.characterId);
+            }
           }
         }
 
@@ -1716,6 +1749,9 @@
                （parseReply 同时认 [WHISPER] 与旧 <心声>，见 splitReplyOf） */
             var split = splitReplyOf(text);
             var finalText = split.visible.trim();
+            /* 译文：解析时已经从气泡里抽出来了（按索引对齐 bubbles）。
+               它**不进 content** —— 正文只留原文，回给模型的上下文才是干净的。 */
+            var transArr = Array.isArray(split.trans) ? split.trans : [];
             var target = pending ? pending.targetId : null;
             pending = null;
             handle = null;
@@ -1733,7 +1769,35 @@
             var gi = extractGenimgs(finalText);
             finalText = gi.text;
 
-            if (!finalText && !st.names.length && !pt.patted && !gi.descs.length) {
+            /* 手机痕迹（查手机第 2 批）：[手机] 行抽出、校验、落库 ——
+               搭载在本次回复上，0 新增调用（架构 v1 §5.1）。
+               手机壳不存在就顺手建（幂等、0 API）。失败不拦聊天。 */
+            var pdApplied = 0;
+            if (Sleepy.phone && Sleepy.core) {
+              try {
+                var SC = Sleepy.core;
+                var phScope = SC.scopeId();
+                if (phScope) {
+                  var phOwner = SC.rootIdOf(chat.characterId) || chat.characterId;
+                  var phRec = Sleepy.phone.ensurePhone(phScope, phOwner);
+                  var pd = Sleepy.phone.extractPhoneDeltas(finalText);
+                  finalText = pd.text;
+                  var granted = null;
+                  pd.list.slice(0, 3).forEach(function (d) {
+                    var v = Sleepy.phone.validateDelta(d);
+                    if (!v) return;
+                    var res = Sleepy.phone.applyDelta(phRec, v, 'delta_' + Date.now().toString(36));
+                    if (res) {
+                      pdApplied++;
+                      /* 授权类 delta：他主动递手机 —— 正文提交后再落邀请卡 */
+                      if (v.app === 'permission') granted = v.data;
+                    }
+                  });
+                }
+              } catch (e) { /* 手机痕迹失败不影响这条回复 */ }
+            }
+
+            if (!finalText && !st.names.length && !pt.patted && !gi.descs.length && !pdApplied) {
               ctx.toast('这次没出声，要不再试一次？', 'warn');
               renderMessages();
               updateSendUI();
@@ -1741,17 +1805,21 @@
             }
 
             if (finalText) {
-              if (target) patchMessage(chatId, target, { content: finalText, timestamp: Date.now() });
+              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now() });
               else addMessage(chatId, {
                 id: newId(),
                 role: 'assistant',
                 content: finalText,
+                trans: transArr,
                 timestamp: Date.now()
               });
               commitMemory(chatId, 'assistant', finalText);
               /* 总结引擎（v5 10.1）：回复落地后检查累计阈值，
                  够了就后台整理，不阻塞聊天（失败静默，游标不动下轮再试） */
               if (Sleepy.summaryEngine) Sleepy.summaryEngine.onChatTurn(chatId);
+              /* 离屏生活结算（查手机第 2 批）：闸门（自主生活档位 + 最短间隔）
+                 通过才后台跑，失败静默 —— 同总结引擎的规矩 */
+              if (Sleepy.phoneAI) Sleepy.phoneAI.onChatTurn(chatId);
               /* 主动消息引擎：回复落地后扫一遍当前岛的其他角色
                  （引擎自带节流和资格闸门，这里只管喊一声） */
               if (Sleepy.proactiveEngine) Sleepy.proactiveEngine.sweep();
@@ -1766,6 +1834,16 @@
             if (pt.patted) charSendPat(pt.suffix);
             /* TA 发的图排在表情后面，一次最多 2 张防刷 */
             gi.descs.slice(0, 2).forEach(function (desc) { charSendPhoto(desc); });
+            /* 他主动递手机的邀请卡排在最后 —— 权限已落 phonePerms，
+               「查手机」入口会显示「已向你开放」（分流定案 §二·B） */
+            if (granted) {
+              addMessage(chatId, {
+                id: newId(), role: 'assistant', type: 'phone-invite',
+                content: granted.note || '他把手机递到了你手里。',
+                permScope: granted.scope, permMode: granted.mode,
+                timestamp: Date.now()
+              });
+            }
             renderMessages();
             updateSendUI();
 
@@ -2020,7 +2098,24 @@
         { id: 'pat', svg: PLUS_ICON.pat, name: '拍一拍', run: function () { patChar(); } },
         { id: 'genimg', svg: PLUS_ICON.genimg, name: '生图', run: function () { openGenSheet(); } },
         { id: 'checkin', svg: PLUS_ICON.checkin, name: '查岗', run: function () { runCheckin(); } },
-        { id: 'diary', svg: PLUS_ICON.diary, name: '日记', run: function () { closePanel(); ctx.open('diary', {}); } }
+        { id: 'diary', svg: PLUS_ICON.diary, name: '日记', run: function () { closePanel(); ctx.open('diary', {}); } },
+        /* 翻译开关（用户 2026-09-19：「翻译开关放在加号面板吧」）。
+           它是 **toggle**，不关面板 —— 想边看译文边点其他的很正常。
+           开关只决定「要不要看译文」；他说不说外语由常驻地点决定。 */
+        { id: 'translate', svg: PLUS_ICON.translate, name: '翻译',
+          toggle: true,
+          get: function () { return !!(Sleepy.calendar && Sleepy.calendar.translateOn()); },
+          /* 他说中文时这一项用不上（语言由常驻地点推，见 calendar.langOf） */
+          naCheck: function () {
+            var cur = getChat(chatId);
+            return !needsTrans(cur);
+          },
+          run: function () {
+            var on = !(Sleepy.calendar && Sleepy.calendar.translateOn());
+            if (Sleepy.calendar) Sleepy.calendar.setTranslateOn(on);
+            ctx.toast(on ? '译文打开了' : '不看译文了', on ? 'ok' : '');
+            renderMessages();
+          } }
         /* 表情包挪到了输入框左下角的笑脸 —— 不在加号面板里了 */
       ];
 
@@ -2443,19 +2538,42 @@
       function buildPanel() {
         panel.innerHTML = '';
         PLUS_ITEMS.forEach(function (it) {
-          var b = h('button', 'plus-item' + (it.run ? '' : ' is-soon'));
+          var on = it.toggle && it.get ? !!it.get() : false;
+          /* 他说中文 → 这一项用不上。**不隐藏**：面板每屏的条目数量应该稳定，
+             藏一个会让别的项跳舞；改成灰掉 + 点一下给一句解释。 */
+          var na = !!(it.toggle && it.naCheck && it.naCheck());
+          var b = h('button', 'plus-item' + (it.run ? '' : ' is-soon') +
+            (it.toggle ? ' is-toggle' : '') + (on ? ' is-on' : '') + (na ? ' is-na' : ''));
           b.type = 'button';
           b.setAttribute('data-id', it.id);
+          if (it.toggle) {
+            b.setAttribute('role', 'switch');
+            b.setAttribute('aria-checked', on ? 'true' : 'false');
+            b.title = it.name + (on ? '：开' : '：关');
+          }
           var ic = h('span', 'plus-ic');
           ic.innerHTML = it.svg;
           b.appendChild(ic);
           b.appendChild(h('span', 'plus-name', it.name));
+          if (it.toggle) b.appendChild(h('span', 'plus-state', on ? '开' : '关'));
           b.addEventListener('click', function () {
             if (!it.run) {
               ctx.toast(it.name + ' 留到软装阶段再做', 'warn');
               return;
             }
+            if (na) {
+              ctx.toast('他跟你说的是一种语言，用不上翻译', 'warn');
+              return;
+            }
             it.run();
+            /* toggle 类就地刷新它自己的状态，**不关面板** */
+            if (it.toggle) {
+              var nowOn = it.get ? !!it.get() : false;
+              b.classList.toggle('is-on', nowOn);
+              b.setAttribute('aria-checked', nowOn ? 'true' : 'false');
+              var st = b.querySelector('.plus-state');
+              if (st) st.textContent = nowOn ? '开' : '关';
+            }
           });
           panel.appendChild(b);
         });

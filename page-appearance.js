@@ -136,7 +136,19 @@
     }
   }
 
-  function markDirty() { if (draft) draft.dirty = true; }
+  function markDirty() {
+    if (!draft) return;
+    draft.dirty = true;
+    /* 保存按钮就地翻亮 —— 不整页重画（外观页很长，paint 一次肉眼可见的卡，
+       用户点色板「卡住半天不出来」就是这么来的） */
+    if (draft.__saveEl) {
+      draft.__saveEl.classList.add('is-dirty');
+      var m = draft.__saveEl.querySelector('.lk-save-main');
+      var s = draft.__saveEl.querySelector('.lk-save-sub');
+      if (m) m.textContent = '保存外观';
+      if (s) s.textContent = '预览满意了就保存 —— 存档、桌面、主题一起换';
+    }
+  }
 
   function activeIslandId() {
     try {
@@ -517,33 +529,22 @@
     return pv;
   }
 
-  /* ---- 正文字颜色色板（WPS 式：点开底部抽屉选，不平铺） ----
-     onPick：选完色后的回调（重画主页面）—— paint 在 render 闭包里，
-     这里不能直接引用。 */
-  function openInkPalette(ctx, onPick) {
-    var host = ctx.el;
-    var old = host.querySelector('.iol-drawer');
-    if (old && old.parentNode) old.parentNode.removeChild(old);
+  /* ---- 正文字颜色色板（WPS 式：点行就在行下方展开，选完即收） ----
+     不用底部抽屉：桌面窗口上抽屉弹在手机壳底部，视线还停在行上，
+     看起来就像「点了没反应」。内联展开 = 点哪里哪里有反应。 */
+  function buildInkPanel(onPick) {
+    var panel = h('div', 'lk-pal-panel');
 
-    var wrap = h('div', 'iol-drawer');
-    var panel = h('div', 'iol-drawer-panel');
-    panel.appendChild(h('h2', '', '正文字颜色'));
-    panel.appendChild(h('p', 'iol-drawer-desc',
-      '换的是聊天气泡、朋友圈、日记这些正文的字色，改完在预览里看效果，保存才生效。'));
-
-    /* 跟随主题 */
     var autoRow = h('button', 'lk-pal-auto' + (draft.textColor ? '' : ' is-on'));
     autoRow.type = 'button';
     autoRow.textContent = '跟随主题';
     autoRow.addEventListener('click', function () {
       draft.textColor = '';
       markDirty();
-      close();
       onPick();
     });
     panel.appendChild(autoRow);
 
-    /* 色格（6 列排布由 CSS 管，这里按行给） */
     INK_PALETTE.forEach(function (row) {
       var line = h('div', 'lk-pal-row');
       row.forEach(function (c) {
@@ -555,7 +556,6 @@
         cell.addEventListener('click', function () {
           draft.textColor = c;
           markDirty();
-          close();
           onPick();
         });
         line.appendChild(cell);
@@ -563,7 +563,6 @@
       panel.appendChild(line);
     });
 
-    /* 更多颜色（系统取色器） */
     var moreRow = h('div', 'lk-pal-more');
     var moreLab = h('label', 'lk-upload lk-pal-more-btn');
     moreLab.appendChild(h('span', 'lk-upload-main', '更多颜色…'));
@@ -574,32 +573,14 @@
     moreLab.appendChild(cIn);
     moreRow.appendChild(moreLab);
     panel.appendChild(moreRow);
+    /* 取色器的 input/change 都算选完：收起面板 */
     cIn.addEventListener('input', function () {
       draft.textColor = cIn.value;
       markDirty();
     });
-    cIn.addEventListener('change', function () {
-      close();
-      onPick();
-    });
+    cIn.addEventListener('change', function () { onPick(); });
 
-    var actions = h('div', 'iol-drawer-actions');
-    var cancel = h('button', 'iol-drawer-cancel', '先不改');
-    actions.appendChild(cancel);
-    panel.appendChild(actions);
-
-    function close() {
-      wrap.classList.remove('show');
-      setTimeout(function () {
-        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
-      }, 240);
-    }
-    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
-    cancel.addEventListener('click', close);
-
-    wrap.appendChild(panel);
-    host.appendChild(wrap);
-    requestAnimationFrame(function () { wrap.classList.add('show'); });
+    return panel;
   }
 
   Sleepy.register('appearance', {
@@ -810,25 +791,54 @@
         if (draft.textColor) demoText.style.color = draft.textColor;
         demo.appendChild(demoText);
         g5.card.appendChild(demo);
-        /* 正文字颜色（WPS 式点开色板，不平铺） */
+        /* 正文字颜色（WPS 式点开色板，不平铺；内联展开在行下方）。
+           展开/选色全部**局部更新**，绝不 paint 整页 —— 外观页很长，
+           整页重画一次肉眼可见的卡，「点一下卡半天」就是它。 */
+        var inkOpen = false;
+        var inkPanelEl = null;
         var inkRow = h('button', 'lk-ink-row');
         inkRow.type = 'button';
         inkRow.appendChild(h('span', 'lk-ink-label', '正文字颜色'));
         var inkRight = h('span', 'lk-ink-right');
         var dot = h('span', 'lk-ink-dot');
-        if (draft.textColor) {
-          dot.style.background = draft.textColor;
-          inkRight.appendChild(dot);
-          inkRight.appendChild(h('span', 'lk-ink-value', draft.textColor.toUpperCase()));
-        } else {
-          dot.classList.add('is-auto');
-          inkRight.appendChild(dot);
-          inkRight.appendChild(h('span', 'lk-ink-value', '跟随主题'));
+        var inkValue = h('span', 'lk-ink-value');
+        var inkArrow = h('span', 'lk-ink-arrow', '›');
+        function inkRowSync() {
+          if (draft.textColor) {
+            dot.style.background = draft.textColor;
+            dot.classList.remove('is-auto');
+            inkValue.textContent = draft.textColor.toUpperCase();
+          } else {
+            dot.style.background = '';
+            dot.classList.add('is-auto');
+            inkValue.textContent = '跟随主题';
+          }
+          inkArrow.textContent = inkOpen ? '⌃' : '›';
         }
-        inkRight.appendChild(h('span', 'lk-ink-arrow', '›'));
+        function setInkOpen(v) {
+          inkOpen = v;
+          if (v) {
+            inkPanelEl = buildInkPanel(onInkPick);
+            g5.card.insertBefore(inkPanelEl, inkRow.nextSibling);
+          } else if (inkPanelEl && inkPanelEl.parentNode) {
+            inkPanelEl.parentNode.removeChild(inkPanelEl);
+            inkPanelEl = null;
+          }
+          inkRowSync();
+        }
+        function onInkPick() {
+          /* 行注 + 预览文本字色就地更新，不重画 */
+          inkRowSync();
+          demoText.style.color = draft.textColor || '';
+          setInkOpen(false);
+        }
+        inkRowSync();
+        inkRight.appendChild(dot);
+        inkRight.appendChild(inkValue);
+        inkRight.appendChild(inkArrow);
         inkRow.appendChild(inkRight);
-        inkRow.addEventListener('click', function () { openInkPalette(ctx, paint); });
         g5.card.appendChild(inkRow);
+        inkRow.addEventListener('click', function () { setInkOpen(!inkOpen); });
         /* 自定义字体 URL（字体文件直链） */
         g5.card.appendChild(h('label', 'off-field-label lk-field-label',
           '自定义字体（字体文件直链 · .woff2 / .ttf / .otf，留空 = 默认字体）'));
@@ -862,14 +872,20 @@
         /* ---- 保存 ---- */
         var save = h('button', 'lk-save' + (draft.dirty ? ' is-dirty' : ''));
         save.type = 'button';
-        save.appendChild(h('span', 'lk-save-main',
-          draft.dirty ? '保存外观' : '保存外观（没有改动）'));
-        save.appendChild(h('span', 'lk-save-sub',
-          draft.dirty ? '预览满意了就保存 —— 存档、桌面、主题一起换' : '现在的设置就是已保存的样子'));
+        var saveMain = h('span', 'lk-save-main',
+          draft.dirty ? '保存外观' : '保存外观（没有改动）');
+        var saveSub = h('span', 'lk-save-sub',
+          draft.dirty ? '预览满意了就保存 —— 存档、桌面、主题一起换' : '现在的设置就是已保存的样子');
+        save.appendChild(saveMain);
+        save.appendChild(saveSub);
+        draft.__saveEl = save;   /* markDirty 就地翻亮用（不整页重画） */
         save.addEventListener('click', function () {
           if (!draft.dirty) { ctx.toast('没有要保存的改动', 'ok'); return; }
           saveDraft();
-          paint();
+          draft.__saveEl = save;
+          save.classList.remove('is-dirty');
+          saveMain.textContent = '保存外观（没有改动）';
+          saveSub.textContent = '现在的设置就是已保存的样子';
           ctx.toast('外观已保存 · 桌面和主题都换好了', 'ok');
         });
         body.appendChild(save);

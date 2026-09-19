@@ -174,11 +174,15 @@
     }[style] || '';
   }
 
-  function lengthHintOf(n) {
-    if (n.lengthMode === 'short') return '这一轮总共 120 字上下。';
-    if (n.lengthMode === 'long') return '这一轮总共 450 字上下。';
+  /* 篇幅：**多一个人就多一段量**（用户 2026-09-19：「字数一般在三百字以上，
+     那么多人线下就应该总字数更多」）。给的是「这一轮全场加起来的字数」，
+     不是每人一份 —— 所以要说清楚，否则模型会按人翻倍。 */
+  function lengthHintOf(n, people) {
+    var extra = Math.max(0, (Number(people) || 1) - 1);
+    if (n.lengthMode === 'short') return '这一轮总共 ' + (200 + 130 * extra) + ' 字上下。';
+    if (n.lengthMode === 'long') return '这一轮总共 ' + (600 + 280 * extra) + ' 字上下。';
     if (n.lengthMode === 'custom' && n.customLengthMin) return '这一轮不少于 ' + n.customLengthMin + ' 字。';
-    return '这一轮总共 250 字上下。';
+    return '这一轮总共 ' + (350 + 190 * extra) + ' 字上下。';
   }
 
   function buildSystem(s) {
@@ -210,6 +214,36 @@
     });
     parts.push(ppl.join('\n'));
 
+    /* 语言（[LANGUAGES]）：只有「在场且常驻在国外」的角色才进这块 ——
+       跟线上 I03 同一个出处（promptEngine.langOfChar / transAsked），
+       语言从常驻地点推，不开第四个设置项。
+       译文走 dialogue 段的 trans 字段：**不塞进 text**，因为 text 会被
+       historyMessages 原样拼回模型（标签跟着进上下文就洗不掉了）。 */
+    var langLines = [];
+    var transAny = false;
+    presentParts(s).forEach(function (p) {
+      var lang0 = E.langOfChar && E.langOfChar(p.ownerId);
+      if (!lang0 || lang0.same) return;
+      var nm = partMeta(s, p).name;
+      langLines.push(nm + ' 平时说' + lang0.name + '（' + lang0.native + '）。' +
+        nm + ' 说出口的台词就用' + lang0.name + '写，用这个人本来会用的说法，不要刻意放慢或简化成教科书句子。');
+      if (E.transAsked && E.transAsked(p.ownerId)) transAny = true;
+    });
+    if (langLines.length) {
+      langLines.unshift('[LANGUAGES]');
+      /* 用户 2026-09-19 定的语义：「可以听懂可以不懂」——
+         不强制任何人听懂，也不刻意制造语言障碍。写一句中性许可，
+         免得模型自己脑补出「大家都精通对方的语言」这种默认。 */
+      langLines.push('在场的人能听懂多少由现场自然决定：听懂、半懂、请旁边的人译一句、' +
+        '或者就是没听懂，都可以 —— 不必让每个人都精通对方的语言，也不用刻意强调这件事。');
+      if (transAny) {
+        langLines.push('上面这些角色说出口的台词（dialogue 段）必须带 trans 字段，' +
+          '写这一段的中文翻译（只翻说出口的内容，不加动作、神态或心声）；' +
+          '其他角色的台词不要 trans。');
+      }
+      parts.push(langLines.join('\n'));
+    }
+
     var rules = ['[PRESENCE RULES]'];
     var wait = waitingParts(s), away = awayParts(s);
     if (wait.length) {
@@ -224,7 +258,9 @@
     rules.push('user 的行动已经给出：转述和回应都可以，但不要替 ' + um.name + ' 编造新的决定或台词。');
     if (n.styleWords) rules.push('文风词（必须遵守）：' + n.styleWords);
     else if (styleHintOf(n.style)) rules.push('文风：' + styleHintOf(n.style));
-    rules.push(lengthHintOf(n));
+    rules.push(lengthHintOf(n, presentParts(s).length) +
+      '（这是这一轮全场加起来的字数：在场的人越多，段落越多，总量越大 —— ' +
+      '不是每人一份，也不要一轮只写一两句。）');
     /* 叙事焦点（场景操作里调）：自动是默认，ensemble 铺群像，角色名给特写 */
     if (n.focus === 'ensemble') {
       rules.push('叙事焦点：群像。多个在场角色平均着墨，铺开场面，不要只围着一个人转。');
@@ -234,13 +270,54 @@
     if (n.showCharInner === false) rules.push('不要直接写出角色内心，只写外部可见的言行。');
     parts.push(rules.join('\n'));
 
+    /* [OUTPUT]：四种段落 —— 照《多人线下场景交互页 Demo v1》的
+       scene-frame / turn(prose+dialogue) / aside / silent 五件套来。
+       四类各是一件事，别混：
+         prose   环境或动作神态（**不带 speaker 是群像铺底，带 speaker 是那个人的动作**）
+         dialogue 主说话人的台词（一段台词 = 一轮的开始）
+         aside   同一轮里**别人插的一句话**（不另起一轮、不占头像位）
+         silent  这一轮里**没开口但有一个动作的人**（比 aside 更轻）
+       渲染层按 speaker 把连续的段落归成一轮（见 blockFor），所以
+       「谁的动作」必须由 speaker 说清楚，不能指望顺序。 */
     parts.push([
       '[OUTPUT]',
       '只输出一个 JSON，不要代码块：',
-      '{"paras":[{"speaker":"说话角色名，叙述段留空字符串","type":"prose 或 dialogue","text":"…"}],"suggests":["给 user 的两个可选行动"],"envUpdate":{"clockTime":"HH:MM"}}',
-      '- prose：环境、动作、神态的叙述（speaker 留空）；dialogue：角色口语台词（speaker 必填在场角色名）。',
-      '- 一轮里可以有多个角色的多段台词，按现场自然分配，不必人人开口。',
+      '{"paras":[' +
+        '{"type":"prose","text":"这一段的环境与场面的铺底"},' +
+        '{"type":"prose","speaker":"角色名","text":"这个人的动作与神态"},' +
+        '{"type":"dialogue","speaker":"角色名","text":"「他说出口的话」"}' +
+        (transAny ? ',"trans":"这一段的中文译文"' : '') + '},' +
+        '{"type":"aside","speaker":"另一个角色名","text":"“插进来的一句话”"},' +
+        '{"type":"silent","speaker":"角色名","text":"没开口，只是做了个什么动作"}' +
+        '],"suggests":["给 user 的两个可选行动"],"envUpdate":{"clockTime":"HH:MM"}}',
+      '- prose：环境、动作、神态。不带 speaker 是场面铺底；带 speaker 是那个人的动作。',
+      '- dialogue：说出口的话（speaker 必填在场角色名）。一段 dialogue 就是一轮的主角。',
+      '- aside：同一轮里别人插的一句话（speaker 必填）—— 不要为它另起一轮，也不要给它头像位。',
+      '- silent：这一轮里没开口、但有一个值得写的动作的人（speaker 必填）。',
+      '- 顺序就是你希望的阅读顺序；一轮 = 一个主说话人 + 他的 prose/dialogue + 别人的 aside/silent。',
+      (transAny ? '- trans：上面 [LANGUAGES] 里列出的角色，其 dialogue / aside 段带上 trans（中文译文）；' +
+        'prose / silent 段和中文角色的台词都不要这个字段。' : ''),
+      '- 一轮里可以有多个角色的多段台词（用 aside 承接），不必人人开口。',
       '- envUpdate 在时间明显流逝时给出新的时刻，否则照旧。'
+    ].filter(Boolean).join('\n'));
+
+    /* 「怎么写」——用户 2026-09-19 的原话：
+       「我以为是他输出一个长文，里面有对话有描写有心理，要是没有想说的就不说，
+       就只有描写和心理这样，而且字数一般在三百字以上」。
+       所以这一段的中心句是「你写的是一篇文章」：
+       描写与心理是主体，**对话有没有由现场决定**（不许硬凑），
+       prose 要成段（一句一段就成了提纲）。 */
+    parts.push([
+      '[WRITING]',
+      '- 你写的是一篇连续的叙事：环境、动作、神态与各人的心理按事情发生的顺序写在一起，' +
+        '对话写在它出现的位置上。读者看到的是连贯的一整篇 —— ' +
+        '段落类型只是给程序排版的标记，不要写成一条条一句话的短段。',
+      '- 描写与心理是主体；同一段叙述要写成成段的话（两三句一起），不要一句一段。',
+      '- 有想说的才写 dialogue 段：没人开口就整轮都是叙述（只有描写与心理），' +
+        '不要为了凑对话硬写；也不要几段台词连着出现而没有落点动作。',
+      '- 场面要有具体的物与动静（杯子、雨、灯、椅子的响动），不要只写「气氛很好」这类概括。',
+      '- 没开口的人也有戏：他的反应可以写在叙述里，值得突出时用 silent 段。',
+      '- 位置关系要立得住（谁坐在哪、谁离门近），后面的动作才有落点。'
     ].join('\n'));
 
     return parts.filter(Boolean).join('\n\n');
@@ -255,10 +332,7 @@
       } else if (m.role === 'scene') {
         out.push({ role: 'assistant', content: '【场景】' + parasText(m.paras) });
       } else if (m.role === 'turn') {
-        var lines = (m.paras || []).map(function (p) {
-          return p.speaker ? (p.speaker + '：' + p.text) : ('（' + p.text + '）');
-        });
-        out.push({ role: 'assistant', content: lines.join('\n') });
+        out.push({ role: 'assistant', content: parasToLines(m.paras) });
       } else if (m.role === 'photo') {
         out.push({ role: 'assistant', content: '（拍下了一张现场照片）' });
       }
@@ -268,7 +342,29 @@
   }
 
   function parasText(paras) {
-    return (paras || []).map(function (p) { return p.text || ''; }).join('');
+    /* 段落之间换行，不是直接粘在一起：线下是一篇连续的叙事，「他做了个动作」
+     与「他说了句话」粘成一行之后，回给模型的原文就再也读不出结构了。 */
+    return (paras || []).map(function (p) { return p.text || ''; }).join('\n');
+  }
+
+  /* 四种段落（照《多人线下场景交互页 Demo v1》）：
+       prose    环境/场面铺底（不带 speaker）或某个人的动作神态（带 speaker）
+       dialogue 主说话人的台词 —— 一段 dialogue 起一轮
+       aside    同一轮里别人插的一句话
+       silent   这一轮里没开口、但有一个动作的人
+     渲染层按 speaker 归轮（见 blockFor），解析层只认这四种，别的落回 prose。 */
+  var PARA_TYPES = { prose: 1, dialogue: 1, aside: 1, silent: 1 };
+  var SPOKEN_TYPES = { dialogue: 1, aside: 1 };
+
+  /* 段落 → 纯文本。回给模型的上下文（historyMessages）、群记忆的 transcript、
+     门弹窗的预览都用它，**只拼 text**：译文永远不进这里（它是给读的人看的那一层）。 */
+  function parasToLines(paras) {
+    return (paras || []).map(function (p) {
+      if (!p || !p.text) return '';
+      if (SPOKEN_TYPES[p.type]) return (p.speaker || '?') + '：' + p.text;
+      if (p.type === 'silent') return '（' + (p.speaker ? p.speaker + '：' : '') + p.text + '）';
+      return '（' + (p.speaker ? p.speaker + '：' : '') + p.text + '）';
+    }).filter(Boolean).join('\n');
   }
 
   /* 解析：JSON 优先（剥围栏），失败整体降级为一条 prose。不崩溃。 */
@@ -286,10 +382,18 @@
             paras: obj.paras.filter(function (p) {
               return p && typeof p.text === 'string' && p.text.trim();
             }).map(function (p) {
+              var type = PARA_TYPES[p.type] ? p.type : 'prose';
+              /* 译文只认「说出口那一段」（dialogue / aside）上的 trans；
+                 单独成字段，不进 text（text 会被 historyMessages 拼回去，
+                 标签跟着进上下文就洗不掉了）。 */
+              var spoke = (type === 'dialogue' || type === 'aside');
+              var tr = (spoke && typeof p.trans === 'string' && p.trans.trim())
+                ? p.trans.trim() : '';
               return {
                 speaker: typeof p.speaker === 'string' ? p.speaker.trim() : '',
-                type: p.type === 'dialogue' ? 'dialogue' : 'prose',
-                text: String(p.text).trim()
+                type: type,
+                text: String(p.text).trim(),
+                trans: tr || null
               };
             }),
             suggests: (Array.isArray(obj.suggests) ? obj.suggests : [])
@@ -302,7 +406,7 @@
     }
     return {
       ok: true,
-      paras: [{ speaker: '', type: 'prose', text: String(raw || '').trim() || '……' }],
+      paras: [{ speaker: '', type: 'prose', text: String(raw || '').trim() || '……', trans: null }],
       suggests: [], envUpdate: null
     };
   }
@@ -341,7 +445,9 @@
       var preview = '（还没有开始说话）';
       if (last) {
         if (last.role === 'user') preview = last.text || '';
-        else if (last.role === 'turn') preview = parasText(last.paras);
+        /* 一轮的预览用 parasToLines 并**压成一行**：只拼 text 的话
+           出来是一串没有说话人的流水句（「帰ろうか。再坐五分钟」）。 */
+        else if (last.role === 'turn') preview = parasToLines(last.paras).replace(/\n/g, ' ');
         else if (last.role === 'scene') preview = parasText(last.paras);
         else if (last.role === 'photo') preview = '一张现场照片';
       }
@@ -576,10 +682,28 @@
       return bar;
     }
 
+    /* 头像格：**一人一色**（跟群聊里的格子同一套色 —— `groupStore.tileColor`
+       按名字哈希，同名恒同色）。Demo 里每个人的头像都有自己的颜色，一排脸才认得出
+       谁是谁；以前全部一个暖棕，四个同样的方块并排等于没有信息。
+       有头像图就用图（char.avatar）。色走 CSS 变量而不是直接写 background，
+       这样 `.is-waiting`（在路上 = 灰掉）那类状态类还能盖得住。 */
+    function avaEl(meta, cls) {
+      var el = h('span', cls);
+      var name = (meta && meta.name) || '?';
+      try { el.style.setProperty('--ava-bg', Sleepy.groupStore.tileColor(name)); } catch (e) { /* 拿不到就落回默认色 */ }
+      if (meta && meta.avatar) {
+        var img = h('img', 'gof-ava-img');
+        img.alt = '';
+        img.src = meta.avatar;
+        el.appendChild(img);
+      } else {
+        el.appendChild(h('span', 'gof-ava-tx', String((meta && meta.initial) || '?').charAt(0)));
+      }
+      return el;
+    }
+
     function faceEl(meta, cls, solid) {
-      var f = h('span', 'gof-face gof-face-' + cls + (solid ? '' : ' is-waiting'),
-        (meta.initial || '?').charAt(0));
-      return f;
+      return avaEl(meta, 'gof-face gof-face-' + cls + (solid ? '' : ' is-waiting'));
     }
 
     function buildScroll() {
@@ -626,21 +750,106 @@
         card.appendChild(img);
         return card;
       }
-      /* turn：群像轮 —— 叙述段铺底，说话人逐段成块 */
-      var wrap = h('div', 'gof-turn');
-      (m.paras || []).forEach(function (p) {
+      /* turn：群像轮 —— **照《多人线下场景交互页 Demo v1》归轮**：
+           一轮 = 一个头像 + 名字（turn-head）+ 那个人的 prose/dialogue，
+           同一轮里别人的话是 aside、没开口的人的动作是 silent。
+         以前是「每段台词各起一个说话人块」，那一版看着像聊天界面、
+         不像一场戏（用户 2026-09-19：「我以为是不带角色头像的」——
+         Demo 里只有**一轮一个**头像位，aside/silent 都不占）。 */
+      var wrap = h('div', 'gof-turns');
+      var turn = null;                       /* { owner, el, ownerId } */
+
+      function metaOfName(name) {
+        var pm = partByName(session, name);
+        if (pm) {
+          var m2 = partMeta(session, pm);
+          m2.ownerId = pm.ownerId;
+          return m2;
+        }
+        /* 名对不上名单（模型编了个名字）：照样渲染，只是判不了语言 */
+        return { name: String(name || ''), initial: String(name || '?').charAt(0), ownerId: null };
+      }
+      function openTurn(name) {
+        var meta = metaOfName(name);
+        var el = h('div', 'gof-turn');
+        var head = h('div', 'gof-turn-head');
+        head.appendChild(avaEl(meta, 'gof-ava'));
+        head.appendChild(h('strong', null, meta.name));
+        el.appendChild(head);
+        wrap.appendChild(el);
+        turn = { owner: meta.name, el: el, ownerId: meta.ownerId };
+        return turn;
+      }
+
+      /* 这一轮**没人开口**（整轮只有描写与心理）时，不该出现头像块 ——
+         用户 2026-09-19：「要是没有想说的就不说，就只有描写和心理这样」。
+         所以没有 dialogue 的消息整条按叙述渲染：prose 一律是段落，
+         只有 aside（有人插了话）和 silent（有人做了个动作）保留它们的形式。 */
+      var hasDialogue = (m.paras || []).some(function (p) { return p.type === 'dialogue'; });
+
+      (m.paras || []).forEach(function (p, pi) {
+        var type = PARA_TYPES[p.type] ? p.type : 'prose';
+        var text = p.text || '';
+        if (!text) return;
+
+        if (!hasDialogue) {
+          if (type === 'silent') {
+            var sw0 = metaOfName(p.speaker);
+            var sl0 = h('div', 'gof-silent');
+            sl0.appendChild(avaEl(sw0, 'gof-ava is-mini'));
+            sl0.appendChild(h('p', null, text));
+            wrap.appendChild(sl0);
+          } else if (type === 'aside') {
+            var who0 = metaOfName(p.speaker);
+            var as0 = h('div', 'gof-aside');
+            as0.appendChild(h('b', null, who0.name));
+            as0.appendChild(h('p', null, text));
+            wrap.appendChild(as0);
+            if (p.trans) Sleepy.msgTrans.attach(as0, m.id + ':' + pi, p.trans, who0.ownerId);
+          } else {
+            wrap.appendChild(h('p', 'gof-prose is-scene', text));
+          }
+          return;
+        }
+
+        /* 台词：说话人换了就另起一轮（模型该用 aside 承接插话，这是兜底） */
+        if (type === 'dialogue') {
+          if (!turn || turn.owner !== p.speaker) openTurn(p.speaker);
+          turn.el.appendChild(h('p', 'gof-dialogue', text));
+          /* 译文按**说话人自己的**常驻地点判语言：同桌上中日混着说话时，
+             只有外语那句长译文（闸门在 msg-trans 里，这里不判开关）。 */
+          if (p.trans) Sleepy.msgTrans.attach(turn.el, m.id + ':' + pi, p.trans, turn.ownerId);
+          return;
+        }
+        /* 插话：**不换轮**，就挂在当前这一轮里，也不占头像位 */
+        if (type === 'aside') {
+          if (!turn) openTurn(p.speaker);
+          var who = metaOfName(p.speaker);
+          var as = h('div', 'gof-aside');
+          as.appendChild(h('b', null, who.name));
+          as.appendChild(h('p', null, text));
+          turn.el.appendChild(as);
+          if (p.trans) Sleepy.msgTrans.attach(as, m.id + ':' + pi, p.trans, who.ownerId);
+          return;
+        }
+        /* 沉默的人有个动作：轻量行，带小头像 */
+        if (type === 'silent') {
+          if (!turn) openTurn(p.speaker);
+          var sw = metaOfName(p.speaker);
+          var sl = h('div', 'gof-silent');
+          sl.appendChild(avaEl(sw, 'gof-ava is-mini'));
+          sl.appendChild(h('p', null, text));
+          turn.el.appendChild(sl);
+          return;
+        }
+        /* prose：不带 speaker = 场面铺底（**闭合当前轮**，它是全场的话）；
+                  带 speaker = 那个人的动作，归到他那一轮里 */
         if (p.speaker) {
-          var pm = partByName(session, p.speaker);
-          var meta = pm ? partMeta(session, pm) : { name: p.speaker, avatar: '', initial: p.speaker.charAt(0) };
-          var blk = h('div', 'gof-speaker');
-          var head = h('div', 'gof-speaker-head');
-          head.appendChild(h('span', 'gof-speaker-ava', (meta.initial || '?').charAt(0)));
-          head.appendChild(h('strong', null, meta.name));
-          blk.appendChild(head);
-          blk.appendChild(h('p', 'off-char-q', p.text));
-          wrap.appendChild(blk);
+          if (!turn || turn.owner !== p.speaker) openTurn(p.speaker);
+          turn.el.appendChild(h('p', 'gof-prose', text));
         } else {
-          wrap.appendChild(h('p', 'off-char-p', p.text));
+          turn = null;
+          wrap.appendChild(h('p', 'gof-prose is-scene', text));
         }
       });
       var sugg = (m.suggests || []).filter(function (x) { return x; });
@@ -916,7 +1125,7 @@
         parts2.forEach(function (p) {
           var m = partMeta(session, p);
           var r = h('div', 'gof-state-row');
-          r.appendChild(h('span', 'gof-speaker-ava', (m.initial || '?').charAt(0)));
+          r.appendChild(avaEl(m, 'gof-speaker-ava'));
           var copy = h('span', 'gof-state-copy');
           copy.appendChild(h('b', null, m.name));
           copy.appendChild(h('small', null,
@@ -1006,7 +1215,8 @@
         var rec = core.findChar(e.ownerId);
         var r = h('button', 'gof-state-row gof-state-row-btn');
         r.type = 'button';
-        r.appendChild(h('span', 'gof-speaker-ava', core.initialOf((rec && rec.name) || '?')));
+        r.appendChild(avaEl({ name: (rec && rec.name) || '?', avatar: (rec && rec.avatar) || '',
+          initial: core.initialOf((rec && rec.name) || '?') }, 'gof-speaker-ava'));
         var copy = h('span', 'gof-state-copy');
         copy.appendChild(h('b', null, (rec && rec.name) || '?'));
         copy.appendChild(h('small', null,
@@ -1404,6 +1614,21 @@
         sys.endSummary !== false, function (v) { updateSys({ endSummary: v }); }));
       p.appendChild(itSec);
 
+      /* 译文开关：**跟线上加号面板同一个全局偏好**（store 的 translateOn）。
+         只要现场有一个说外语的人就出现 —— 混着说话时只有外语那句长译文。 */
+      var anyForeign = (session ? presentParts(session) : []).some(function (pp) {
+        return Sleepy.msgTrans && Sleepy.msgTrans.needs(pp.ownerId);
+      });
+      if (anyForeign) {
+        var lgSec = section('语言');
+        lgSec.appendChild(rowToggle('外语台词附译文', '关掉只是不看译文，不影响他说什么语言',
+          !!(Sleepy.calendar && Sleepy.calendar.translateOn()), function (v) {
+            if (Sleepy.calendar) Sleepy.calendar.setTranslateOn(v);
+            fillMessages(body.querySelector('.off-chat-scroll'));
+          }));
+        p.appendChild(lgSec);
+      }
+
       var memSec = section('记忆');
       memSec.appendChild(rowToggle('自动沉淀重要时刻', '总结时把重要时刻自动标为锚定记忆，永远优先召回',
         sys.autoAnchorMoments !== false, function (v) { updateSys({ autoAnchorMoments: v }); }));
@@ -1750,11 +1975,9 @@
       if (m.role === 'scene') return '【场景】' + parasText(m.paras);
       if (m.role === 'event') return '（' + (m.title || '') + '）';
       if (m.role === 'photo') return um.name + '：（拍下了一张现场照片）';
-      if (m.role === 'turn') {
-        return (m.paras || []).map(function (p) {
-          return p.speaker ? (p.speaker + '：' + p.text) : ('（' + p.text + '）');
-        }).join('\n');
-      }
+      /* 一场戏交给总结引擎的原文：四类段落各按它本来的样子拼
+         （台词带说话人、动作与沉默加括号），译文永远不进这里 */
+      if (m.role === 'turn') return parasToLines(m.paras);
       return '';
     }).filter(Boolean).join('\n');
   }
@@ -1796,7 +2019,10 @@
     appendMessage: appendMessage,
     pause: pause,
     endSession: endSession,
-    parseGroupReply: parseGroupReply
+    parseGroupReply: parseGroupReply,
+    /* 装配与解析对调试有用（冒烟桩也靠它验 [LANGUAGES] / [WRITING] 段） */
+    buildSystem: buildSystem,
+    parasToLines: parasToLines
   };
 
   Sleepy.groupMemory = {

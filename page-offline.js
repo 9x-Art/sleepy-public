@@ -287,7 +287,9 @@
   }
 
   function parasText(paras) {
-    return (paras || []).map(function (p) { return p.text || ''; }).join('');
+    /* 段落之间换行，不是直接粘在一起：线下是一篇连续的叙事，「他做了个动作」
+     与「他说了句话」粘成一行之后，回给模型的原文就再也读不出结构了。 */
+    return (paras || []).map(function (p) { return p.text || ''; }).join('\n');
   }
 
   /* endSession 的总结调用。返回 Promise<{ok, summary}>，
@@ -1035,8 +1037,14 @@
         var cb = h('div', 'off-char-block');
         cb.appendChild(h('span', 'off-char-name', charName));
         var bodyEl = h('div', 'off-char-body');
-        (m.paras || []).forEach(function (p) {
+        (m.paras || []).forEach(function (p, pi) {
           bodyEl.appendChild(h('p', p.type === 'dialogue' ? 'off-char-q' : 'off-char-p', p.text));
+          /* 海外角色的台词下面挂译文（组件 msg-trans）——
+             只在 dialogue 段下，而且开关/语言两道闸门由组件自己判。
+             键带段落序号，所以同一段消息第二次看仍是你上次的收起状态。 */
+          if (p.type === 'dialogue' && p.trans) {
+            Sleepy.msgTrans.attach(bodyEl, m.id + ':' + pi, p.trans, session.charId);
+          }
         });
         cb.appendChild(bodyEl);
         return cb;
@@ -1526,6 +1534,19 @@
         itSec.appendChild(rowToggle('结束时生成总结', '见面结束后提示整理记忆',
           sys.endSummary !== false, function (v) { updateSystem(id, { endSummary: v }); }));
         p.appendChild(itSec);
+
+        /* 译文开关：**跟线上加号面板是同一个全局偏好**（store 的 translateOn），
+           不做成会话级 —— 「我要不要看译文」是读者的习惯，不是这场戏的属性。
+           他说中文的话这一行没有意义，就不出现（语言由常驻地点推）。 */
+        if (Sleepy.msgTrans && Sleepy.msgTrans.needs(session.charId)) {
+          var lgSec = section('语言');
+          lgSec.appendChild(rowToggle('他说的外语附译文', '关掉只是不看译文，不影响他说什么语言',
+            !!(Sleepy.calendar && Sleepy.calendar.translateOn()), function (v) {
+              if (Sleepy.calendar) Sleepy.calendar.setTranslateOn(v);
+              fillMessages(body.querySelector('.off-chat-scroll'));
+            }));
+          p.appendChild(lgSec);
+        }
 
         var memSec = section('记忆');
         memSec.appendChild(rowToggle('自动沉淀重要时刻', '总结时把模型标为「重要」的时刻自动锚定，永远优先召回',

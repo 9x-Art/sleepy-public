@@ -243,7 +243,18 @@
                   'todos', 'favorites', 'userMasks', 'characters', 'moments',
                   'wallet', 'stickers', 'offlineSessions',
                   'groups', 'groupMembers', 'groupMessages', 'offlineHandoffs',
-                  'groupOfflineSessions'];
+                  'groupOfflineSessions',
+                  /* 查手机系统（phone.js / 施工卡-查手机-v1）：
+                     十条表全部 scoped，删房跟着清，漏了会积幽灵数据 */
+                  'phones', 'phonePerms', 'phoneSessions', 'phoneTraces',
+                  'phonePlans', 'phoneMsgs', 'phoneNotes', 'phoneBrowser',
+                  'phoneShop', 'phoneHealth',
+                  /* 工坊（page-workshop.js）：安装实例和记录按岛隔离；
+                     wsTemplates 是 user 创作侧的全局资产，不随房删 */
+                  'wsInstalls', 'wsRecords',
+                  /* 日历（calendar.js）：每个 char 一份配置 + 事件表。
+                     两张表都按 (sandboxId, charId) 隔离，删房跟着清。 */
+                  'calConfigs', 'calEvents'];
     scoped.forEach(function (key) {
       var all = arr(store.get(key));
       if (!all.length) return;
