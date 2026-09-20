@@ -11220,9 +11220,10 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wj-range{width:100%;accent-color:var(--wj-wine);}
 
 .wj-rule-list{display:flex;flex-direction:column;gap:7px;margin-top:13px;}
-.wj-rule{display:grid;grid-template-columns:1fr 104px auto;gap:7px;align-items:center;
+.wj-rule{display:grid;grid-template-columns:1fr 104px auto auto;gap:7px;align-items:center;
   padding:8px;border:1px solid var(--wj-line-soft);border-radius:4px;
   background:rgba(255,255,255,.015);}
+.wj-rule-confirm{color:var(--wj-green);}
 .wj-rule-text,.wj-rule-strength{
   width:100%;padding:9px;border:1px solid var(--wj-line);border-radius:3px;
   background:#172238;color:var(--wj-text);font-size:10.5px;font-family:inherit;
@@ -11381,3 +11382,27 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wjr-chrow.is-on{border-color:var(--wj-silver);}
 .wjr-chrow b{font-size:12.5px;font-weight:500;color:var(--wj-text);letter-spacing:.03em;}
 .wjr-chrow small{font-size:10px;color:var(--wj-dim);}
+
+/* ==================== 帷境 · 成稿检查（T4） ==================== */
+.wjc-list{display:flex;flex-direction:column;gap:9px;}
+.wjc-row{align-items:flex-start;}
+.wjc-head{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+.wjc-layer{
+  font-size:9px;letter-spacing:.08em;padding:2px 7px;border-radius:3px;
+  border:1px solid var(--wj-line);color:var(--wj-dim);white-space:nowrap;
+}
+.wjc-layer.is-logic{border-color:var(--wj-wine);color:var(--wj-wine-lite);}
+.wjc-rule{font-size:12px;font-weight:500;color:var(--wj-text);}
+.wjc-excerpt{
+  display:block;font-size:10.5px;color:var(--wj-dim);line-height:1.7;
+  margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.wjc-hint{display:block;font-size:10.5px;color:var(--wj-silver);line-height:1.7;}
+.wjc-loc{display:block;font-size:9.5px;color:var(--wj-dimmer);margin-top:4px;}
+.wjc-fix{
+  border:1px solid var(--wj-line);background:transparent;color:var(--wj-silver);
+  padding:8px 12px;font-size:11px;border-radius:4px;font-family:inherit;
+  cursor:pointer;white-space:nowrap;margin-top:4px;
+}
+.wjc-fix:disabled{opacity:.45;pointer-events:none;}
+.wj-notice.is-ok{border-left-color:var(--wj-green);color:#9db8a8;}

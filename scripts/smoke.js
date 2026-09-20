@@ -4128,6 +4128,102 @@ t('帷境局部重写与岔路：重写只换 text 留修订；选岔路记 bran
   return { 锚点: '不变', 修订: 1, 岔路: '消费一次', 进度: g.progress.percent + '%' };
 });
 
+t('wjCheck 五层八股：各层都能命中，干净文本零误报', () => {
+  const w = S.wj.createDraft({
+    title: '检查用', cast: [{ charId: 'x1', name: '林渡', role: 'lead' }],
+    materialScope: 'none', reality: 'story', userPos: 'hidden'
+  });
+  S.wj.mutate(w.id, (x) => { x.status = 'serializing'; return x; });
+  S.wj.addChapter(w.id, '第一章');
+  const chId = S.wj.get(w.id).chapters[0].id;
+  const pad = '夜潮一遍遍漫过台阶，他把灯笼挂回木架，看远处渡口的灯一盏一盏熄下去，然后慢慢往回走。';
+  const paras = [
+    ['prose', '他站在码头上，海风把衣角掀起来。' + pad],                 // 干净
+    ['prose', '她不易察觉地笑了。（低头）' + pad],                        // banned：套话 + 括号
+    ['prose', '他数完了第九级台阶。' + pad],                              // 段首「他」×3 之 1
+    ['prose', '他把灯芯捻短了一截。' + pad],                              // 之 2
+    ['prose', '他听见远处的涛声低了下去。' + pad],                        // 之 3 → template
+    ['prose', '时间仿佛静止了。这一切似乎在诉说着什么。' + pad],          // pgraph ×2
+    ['prose', '他揉了揉她的头发，没有说话，只是把外套披在她肩上，转身去生了火，又坐回她身边看着炉膛里的光。' + pad], // logic
+    ['prose', '她的指尖划过木栏。他的指尖停在半空。指尖与指尖之间隔着一步。潮水漫过指尖。指尖凉了。' + pad] // density
+  ];
+  paras.forEach(([k, t]) => S.wj.addPara(w.id, chId, k, t));
+  const issues = S.wjCheck.chapter(S.wj.get(w.id), S.wj.get(w.id).chapters[0]);
+  const layers = new Set(issues.map((x) => x.layer));
+  ['logic', 'banned', 'density', 'template', 'pgraph'].forEach((l) => {
+    if (!layers.has(l)) throw new Error('「' + l + '」层没有命中：' + JSON.stringify([...layers]));
+  });
+  if (!issues.some((x) => x.rule.indexOf('括号') >= 0)) throw new Error('括号动作没被抓到');
+  if (!issues.some((x) => x.rule.indexOf('套话') >= 0)) throw new Error('套话没被抓到');
+  if (!issues.every((x) => /^p_1_[a-z0-9]+$/.test(x.paraId))) throw new Error('问题没挂到锚点上');
+
+  /* 干净章零误报 */
+  S.wj.addChapter(w.id, '第二章');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'prose',
+    '他蹲下去解缆绳。' + pad + '船身轻轻磕了一下木桩，又稳住了。');
+  const clean = S.wjCheck.chapter(S.wj.get(w.id), S.wj.get(w.id).chapters[1]);
+  if (clean.length) throw new Error('干净章被误报：' + JSON.stringify(clean.map((x) => x.rule)));
+  return { 层: layers.size, 干净章: 0 };
+});
+
+t('wjCheck 雷区资格：候选规则不参与检查，确认后才算数', () => {
+  const w = S.wj.createDraft({
+    title: '雷区资格', cast: [{ charId: 'x1', name: '林渡', role: 'lead' }],
+    materialScope: 'none', reality: 'story', userPos: 'hidden',
+    workRules: [{ text: '雪松', strength: '尽量避免', confirmed: false }]
+  });
+  S.wj.mutate(w.id, (x) => { x.status = 'serializing'; return x; });
+  S.wj.addChapter(w.id, '第一章');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[0].id, 'prose',
+    '院子里种着一棵雪松，影子铺在台阶上，他站了很久才敲门。');
+  const g1 = S.wjCheck.chapter(S.wj.get(w.id), S.wj.get(w.id).chapters[0]);
+  if (g1.some((x) => x.rule === '命中你的雷区')) throw new Error('候选规则不该参与检查');
+  S.wj.mutate(w.id, (x) => { x.workRules[0].confirmed = true; return x; });
+  const g2 = S.wjCheck.chapter(S.wj.get(w.id), S.wj.get(w.id).chapters[0]);
+  if (!g2.some((x) => x.rule === '命中你的雷区')) throw new Error('确认后的规则没参与检查');
+  return { 候选: '不查', 已确认: '查' };
+});
+
+t('wjCheck 漂移与声音：给数字给证据，判断权留给 user', () => {
+  const w = S.wj.createDraft({
+    title: '漂移检查', cast: [
+      { charId: 'x1', name: '林渡', role: 'lead' },
+      { charId: 'x2', name: '沈砚', role: 'support' }
+    ],
+    materialScope: 'none', reality: 'story', userPos: 'hidden'
+  });
+  S.wj.mutate(w.id, (x) => { x.status = 'serializing'; return x; });
+  const shortPara = '潮声近了。他停下脚步，回头看了一眼渡口的灯，然后继续往前走，直到石阶尽头。';
+  S.wj.addChapter(w.id, '第一章');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[0].id, 'prose', shortPara);
+  S.wj.addChapter(w.id, '第二章');
+  /* 第二章：平均段长突变 + 对白占比拉满 + 同一人台词同一起手 */
+  const longPara = '他把灯举过头顶，光沿着湿漉漉的石壁往上爬，照见一层一层旧年的水痕，' +
+    '像谁用指甲一道一道刻上去的记号。他数到第九道的时候，塔顶的风把灯焰压得很低，' +
+    '他不得不侧过身子护住它，一步一步往上挪。楼梯在黑暗里拐了三折，每一折都更窄，' +
+    '最后一段几乎没有扶手，只有墙上一条被无数只手磨亮的木沿，他把手放在上面，木头是温的。';
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'prose', longPara);
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'dialogue', '林渡：「好，我上去看看，你在这里等。」');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'dialogue', '林渡：「好，你别跟上来。」');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'dialogue', '林渡：「好，灯还亮着。」');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'dialogue', '林渡：「好，随他们去说。」');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[1].id, 'dialogue', '沈砚：「随你便。」');
+  S.wj.mutate(w.id, (x) => {
+    x.chapters.forEach((c) => { c.status = 'ready'; });
+    return x;
+  });
+  const d = S.wjCheck.drift(S.wj.get(w.id));
+  if (d.rows.length !== 2) throw new Error('漂移统计缺章');
+  if (!d.notes.length) throw new Error('突变没有提醒：' + JSON.stringify(d.rows));
+  const v = S.wjCheck.voices(S.wj.get(w.id));
+  const ld = v.filter((x) => x.name === '林渡')[0];
+  if (!ld || ld.lines !== 4) throw new Error('台词归属错了：' + JSON.stringify(ld));
+  if (!ld.remind) throw new Error('起手趋同没有提醒');
+  const sy = v.filter((x) => x.name === '沈砚')[0];
+  if (sy.remind) throw new Error('沈砚不该被提醒（只有一句）：' + sy.remind);
+  return { 漂移: d.notes.length, 林渡: '趋同提醒', 沈砚: '干净' };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

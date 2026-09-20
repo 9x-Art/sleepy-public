@@ -256,13 +256,22 @@
         view.dirty = true;
       };
       row.appendChild(sel);
+      /* 候选规则的两条出路：确认生效 / 删除（拒绝）。
+         不确认就永远不参与检查 —— 一次误判不能永久污染全局（总纲 §9.3）。 */
+      if (r.confirmed === false) {
+        row.appendChild(btn('确认生效', 'wj-rule-del wj-rule-confirm', function () {
+          list[i].confirmed = true;
+          view.dirty = true;
+          paint(ctx);
+        }));
+      }
       row.appendChild(btn('删除', 'wj-rule-del', function () {
         list.splice(i, 1);
         view.dirty = true;
         paint(ctx);
       }));
       if (r.confirmed === false) {
-        row.appendChild(h('em', 'wj-rule-cand', '候选'));
+        row.appendChild(h('em', 'wj-rule-cand', '候选 · 还没生效，不参与检查'));
       }
       ruleList.appendChild(row);
     });

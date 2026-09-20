@@ -22,7 +22,8 @@
     { id: 'overview', name: '作品概览' },
     { id: 'chapters', name: '章节' },
     { id: 'branches', name: '故事分支' },
-    { id: 'versions', name: '版本' }
+    { id: 'versions', name: '版本' },
+    { id: 'check', name: '成稿检查' }
   ];
 
   var view = { id: null, tab: 'overview' };
@@ -262,6 +263,120 @@
     return box;
   }
 
+  /* ---------- 成稿检查（T4）：五层八股 + 漂移 + 人物声音 ----------
+     检查在 wj-check.js（0 API，本地）。这里只负责两件事：
+     把报告摊开给人看、把「重写此段」接到 engine 的重写管线上 ——
+     **检查无权静默重写全文**（总纲 §14），每一次重写都是用户点的。 */
+  function paneCheck(w, ctx) {
+    var box = h('div', 'wj-pane');
+    var hasReady = (w.chapters || []).some(function (c) { return c.status === 'ready'; });
+    if (!hasReady) {
+      box.appendChild(h('div', 'wj-empty',
+        w.status === 'draft'
+          ? '草稿还没有开帷，没有成稿可检查。'
+          : '还没有写完的章节。生成完成后再来这里看检查报告。'));
+      return box;
+    }
+
+    var r = Sleepy.wjCheck.all(w);
+
+    /* ---- 问题段 ---- */
+    box.appendChild(sectionTitle('问题段 · 只重写被点名的',
+      '检查只报告，不动正文。点「重写此段」才会重写 —— 且只动那一段，锚点不变。'));
+    if (!r.issues.length) {
+      box.appendChild(h('div', 'wj-empty', '五层检查都干净。\n干净不等于没有问题 —— 逻辑与声音最终要靠你自己读。'));
+    } else {
+      var list = h('div', 'wj-rows wjc-list');
+      r.issues.forEach(function (it) {
+        var layerMeta = Sleepy.wjCheck.LAYERS.filter(function (x) { return x.id === it.layer; })[0];
+        var row = h('div', 'wj-row wjc-row');
+        var main = h('div', 'wj-row-main');
+        var head = h('div', 'wjc-head');
+        head.appendChild(h('span', 'wjc-layer is-' + it.layer,
+          (layerMeta ? layerMeta.name : it.layer) +
+          (layerMeta && layerMeta.id === 'logic' ? ' · 代理检查' : '')));
+        head.appendChild(h('b', 'wjc-rule', it.rule));
+        main.appendChild(head);
+        main.appendChild(h('span', 'wjc-excerpt', '「' + it.excerpt + '」'));
+        main.appendChild(h('span', 'wjc-hint', it.hint));
+        main.appendChild(h('span', 'wjc-loc',
+          '《' + it.chapterTitle + '》第 ' + it.paraNo + ' 段'));
+        row.appendChild(main);
+        row.appendChild(h('em', 'wj-row-tail', ''));
+        var fix = btn('重写此段', 'wjc-fix', function () {
+          fix.disabled = true;
+          fix.textContent = '重写中…';
+          Sleepy.wjEngine.rewritePara(w.id, it.chapterId, it.paraId,
+            '成稿检查（' + it.rule + '）：' + it.hint)
+            .then(function () {
+              Sleepy.toast('已重写，检查报告已刷新');
+              paint(ctx);
+            })
+            ['catch'](function (e) {
+              Sleepy.toast(e.message || '重写失败');
+              fix.disabled = false;
+              fix.textContent = '重写此段';
+            });
+        });
+        row.appendChild(fix);
+        list.appendChild(row);
+      });
+      box.appendChild(list);
+    }
+
+    /* ---- 跨章风格漂移 ---- */
+    var box2 = h('div', 'wj-pane-gap');
+    box2.appendChild(sectionTitle('跨章风格漂移',
+      '只给数字与突变，判断权在你。文风台的口径是基准。'));
+    var dRows = h('div', 'wj-rows');
+    if (!r.drift.rows.length) {
+      dRows.appendChild(h('p', 'wj-sub', '还没有可对比的章节。'));
+    } else {
+      r.drift.rows.forEach(function (row) {
+        var el = h('div', 'wj-row');
+        var main = h('div', 'wj-row-main');
+        main.appendChild(h('b', 'wj-row-title', row.title));
+        main.appendChild(h('span', 'wj-row-hint',
+          row.paras + ' 段 · 平均 ' + row.avgLen + ' 字/段 · 对白 ' + row.dialogueRatio + '%'));
+        el.appendChild(main);
+        dRows.appendChild(el);
+      });
+      (r.drift.notes || []).forEach(function (n) {
+        var el = h('div', 'wj-notice', n);
+        dRows.appendChild(el);
+      });
+      if (!(r.drift.notes || []).length && r.drift.rows.length > 1) {
+        dRows.appendChild(h('p', 'wj-notice is-ok', '相邻章节的口径没有突变。'));
+      }
+    }
+    box2.appendChild(dRows);
+    box.appendChild(box2);
+
+    /* ---- 人物声音 ---- */
+    var box3 = h('div', 'wj-pane-gap');
+    box3.appendChild(sectionTitle('人物声音差异',
+      '同一个人跨章是同一种声音；不同人物不共用一种腔调。这里是统计与提醒，不是评分。'));
+    var vRows = h('div', 'wj-rows');
+    if (!r.voices.length) {
+      vRows.appendChild(h('p', 'wj-sub', '还没有可统计的台词。'));
+    } else {
+      r.voices.forEach(function (v) {
+        var el = h('div', 'wj-row');
+        var main = h('div', 'wj-row-main');
+        main.appendChild(h('b', 'wj-row-title', v.name));
+        main.appendChild(h('span', 'wj-row-hint', v.lines
+          ? v.lines + ' 句台词 · 平均 ' + v.avgLen + ' 字'
+          : '还没有认出 TA 的台词（对白段开头写说话人才能认出）'));
+        el.appendChild(main);
+        vRows.appendChild(el);
+        if (v.remind) vRows.appendChild(h('div', 'wj-notice', v.remind));
+      });
+    }
+    box3.appendChild(vRows);
+    box.appendChild(box3);
+    return box;
+  }
+
   function sectionTitle(t, hint) {
     var s = h('div', 'wj-section-head');
     s.appendChild(h('h3', 'wj-h3', t));
@@ -408,6 +523,7 @@
     if (view.tab === 'overview') shell.appendChild(paneOverview(w));
     else if (view.tab === 'chapters') shell.appendChild(paneChapters(w, ctx));
     else if (view.tab === 'branches') shell.appendChild(paneBranches(w));
+    else if (view.tab === 'check') shell.appendChild(paneCheck(w, ctx));
     else shell.appendChild(paneVersions(w));
 
     body.appendChild(shell);
