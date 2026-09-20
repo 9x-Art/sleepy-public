@@ -4224,6 +4224,120 @@ t('wjCheck 漂移与声音：给数字给证据，判断权留给 user', () => {
   return { 漂移: d.notes.length, 林渡: '趋同提醒', 沈砚: '干净' };
 });
 
+t('wjCoread 状态机：邀请四回应 → 同席 → 台账，现实候选只有「共同读过」', async () => {
+  const w = S.wj.createDraft({
+    title: '同席检查', cast: [{ charId: 'x1', name: '林渡', role: 'lead' }],
+    materialScope: 'none', reality: 'story', userPos: 'hidden'
+  });
+  S.wj.mutate(w.id, (x) => { x.status = 'serializing'; return x; });
+  S.wj.addChapter(w.id, '第一章');
+  const chId = S.wj.get(w.id).chapters[0].id;
+  const plotText = '潮水漫过第九级台阶，他在黑暗里守着灯，什么也没有说。';
+  S.wj.addPara(w.id, chId, 'prose', plotText);
+  const anchorId = S.wj.get(w.id).chapters[0].paras[0].id;
+
+  /* 四回应：later / share / refuse 都不建共读 */
+  const s1 = S.wjCoread.createInvite({ workId: w.id, charId: 'x1', charName: '林渡',
+    mode: 'quiet', scope: 'start', startAnchorId: anchorId });
+  S.wjCoread.settle(s1.id, 'later');
+  if (S.wjCoread.get(s1.id).status !== 'deferred') throw new Error('later 状态机不对');
+  const s2 = S.wjCoread.createInvite({ workId: w.id, charId: 'x1', charName: '林渡',
+    mode: 'occasional', scope: 'start', startAnchorId: anchorId });
+  S.wjCoread.settle(s2.id, 'refuse');
+  if (S.wjCoread.get(s2.id).status !== 'refused') throw new Error('refuse 状态机不对');
+  if (!/改天再说/.test(S.wjCoread.get(s2.id).responseNote)) {
+    throw new Error('拒绝的分寸文案丢了');
+  }
+
+  /* accept → active → 批注挂锚点 → 暂停/恢复 → 结束 */
+  const s = S.wjCoread.createInvite({ workId: w.id, charId: 'x1', charName: '林渡',
+    mode: 'quiet', scope: 'start', startAnchorId: anchorId });
+  S.wjCoread.settle(s.id, 'accept', '好啊，一起读。');
+  let g = S.wjCoread.get(s.id);
+  if (g.status !== 'active') throw new Error('accept 没建立同席');
+  S.wjCoread.annotate(s.id, anchorId, '这段的灯亮得刚好。');
+  S.wjCoread.touchAnchor(s.id, anchorId);
+  S.wjCoread.pause(s.id);
+  if (S.wjCoread.get(s.id).status !== 'paused') throw new Error('暂停不对');
+  S.wjCoread.resume(s.id);
+  S.wjCoread.end(s.id);
+  g = S.wjCoread.get(s.id);
+  if (g.status !== 'ended' || g.endAnchorId !== anchorId) throw new Error('结束没记离席锚点');
+
+  /* 现实候选：只有共读事件，绝不带剧情 */
+  const cand = S.wjCoread.candidateFor(s.id);
+  if (!cand || cand.content.indexOf('共同读过') < 0 || cand.content.indexOf('《同席检查》') < 0) {
+    throw new Error('共读候选不对：' + JSON.stringify(cand));
+  }
+  if (cand.content.indexOf('潮水') >= 0 || cand.content.indexOf(plotText.slice(0, 6)) >= 0) {
+    throw new Error('候选里混进了剧情 —— 共读事件真≠故事真（红线）');
+  }
+  if (cand.charId !== 'x1') throw new Error('候选没挂对人物');
+  /* 台账里批注在、挂靠在，但它属于记录，不属于现实候选 */
+  if (!g.transcript.some((t) => t.action === 'annotate' && t.anchorId === anchorId)) {
+    throw new Error('批注没进台账');
+  }
+  S.wjCoread.markMemorySaved(s.id);
+  S.wjCoread.markMemorySaved(s.id);
+  if (!S.wjCoread.get(s.id).memorySaved) throw new Error('memorySaved 没落');
+  return { 四回应: 'ok', 候选: '仅共读事件', 批注: '挂靠锚点' };
+});
+
+t('wjCoread 反应：沉默合法、冷却真拦、模式能力表按 Demo 变形', async () => {
+  const w = S.wj.createDraft({
+    title: '反应检查', cast: [{ charId: 'x1', name: '林渡', role: 'lead' }],
+    materialScope: 'none', reality: 'story', userPos: 'hidden'
+  });
+  S.wj.mutate(w.id, (x) => { x.status = 'serializing'; return x; });
+  S.wj.addChapter(w.id, '第一章');
+  S.wj.addPara(w.id, S.wj.get(w.id).chapters[0].id, 'prose', '他守着灯，读完了这一段。');
+  const anchorId = S.wj.get(w.id).chapters[0].paras[0].id;
+  const s = S.wjCoread.createInvite({ workId: w.id, charId: 'x1', charName: '林渡',
+    mode: 'quiet', scope: 'start', startAnchorId: anchorId });
+  S.wjCoread.settle(s.id, 'accept');
+
+  /* 沉默是完全合法的输出：不凑感想 */
+  const r1 = await S.wjCoread.react(s.id, anchorId, '他守着灯，读完了这一段。',
+    { transport: async () => JSON.stringify({ action: 'stay_silent', text: '' }) });
+  if (r1.action !== 'stay_silent') throw new Error('stay_silent 没走通');
+  let g = S.wjCoread.get(s.id);
+  if (!g.transcript.some((t) => t.action === 'stay_silent')) throw new Error('沉默没进台账');
+
+  /* 冷却：刚回应过，再点要被拦 */
+  let cooled = false;
+  try {
+    await S.wjCoread.react(s.id, anchorId, '再看一段。',
+      { transport: async () => JSON.stringify({ action: 'react', text: '很好' }) });
+  } catch (e) { cooled = /再读一会儿/.test(e.message); }
+  if (!cooled) throw new Error('冷却没拦住第二次反应');
+
+  /* 冷却过后正常反应 */
+  S.wjCoread.mutate(s.id, (x) => { x.lastReactAt = 0; return x; });
+  const r2 = await S.wjCoread.react(s.id, anchorId, '他守着灯。',
+    { transport: async () => JSON.stringify({ action: 'react', text: '这一段的灯写得克制。' }) });
+  if (r2.action !== 'react' || !r2.text) throw new Error('正常反应没走通');
+
+  /* 模式能力表（Demo：quiet 真的少功能） */
+  if (S.wjCoread.canMilestone('quiet')) throw new Error('quiet 不该有重要节点');
+  if (!S.wjCoread.canMilestone('occasional') || !S.wjCoread.canMilestone('free')) {
+    throw new Error('occasional/free 该有重要节点');
+  }
+  if (S.wjCoread.canPauseDiscussion('quiet')) throw new Error('quiet 不该能暂停讨论');
+  if (S.wjCoread.reactLabel('quiet') !== '询问反应') throw new Error('quiet 的反应按钮该改名');
+  /* judgeInvite：无权读手记 —— 提示词里不许出现 directorNote 内容 */
+  S.wj.mutate(w.id, (x) => {
+    x.chapters[0].directorNote = '绝密手记内容XYZ';
+    return x;
+  });
+  let prompt = '';
+  const r3 = await S.wjCoread.judgeInvite(w.id, S.wjCoread.get(s.id),
+    { transport: async (messages) => { prompt = messages[0].content;
+      return JSON.stringify({ action: 'accept', note: '好。' }); } });
+  if (r3.action !== 'accept') throw new Error('邀请判断没走通');
+  if (prompt.indexOf('绝密手记内容XYZ') >= 0) throw new Error('邀请判断读到了创作手记（越权）');
+  return { 沉默: '合法', 冷却: '拦', 静音: '能力表正确', 手记: '未越权' };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

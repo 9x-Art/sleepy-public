@@ -21,14 +21,23 @@
   var h = Sleepy.ui.h;
   var wj = function () { return Sleepy.wj; };
   var eng = function () { return Sleepy.wjEngine; };
+  var CR = function () { return Sleepy.wjCoread; };
 
-  var view = { id: null, chId: null, picked: null };
+  var view = { id: null, chId: null, picked: null, sessionId: null };
 
   function btn(text, cls, fn) {
     var b = h('button', cls, text);
     b.type = 'button';
     b.onclick = fn;
     return b;
+  }
+
+  /* 会话态：带 session 参数进来时，同一份月光纸本变成「同席现场」。
+     会话不在进行中（ended/invited）就当普通阅读处理。 */
+  function liveSession() {
+    if (!view.sessionId) return null;
+    var s = Sleepy.wjCoread.get(view.sessionId);
+    return s && (s.status === 'active' || s.status === 'paused') ? s : null;
   }
 
   /* ------------------------ 底部弹层（幕布色系） ------------------------ */
@@ -301,12 +310,131 @@
         var idx = Math.max(0, Math.min(paras.length - 1,
           Math.round(pct * (paras.length - 1))));
         eng().saveProgress(w.id, ch.id, paras[idx].id);
+        var s = liveSession();
+        if (s) Sleepy.wjCoread.touchAnchor(s.id, paras[idx].id);
       }, 700);
     };
     page.addEventListener('scroll', page.__wjrScroll);
   }
 
   /* ----------------------------- 主绘制 ----------------------------- */
+  /* ------------------------ 同席会话态（T5） ------------------------ */
+
+  /* 批注：user 写的，不经过模型，直接挂锚点进共读记录 */
+  function annotateSheet(ctx, w, session, ch) {
+    var para = null;
+    (ch.paras || []).forEach(function (p) { if (p.id === view.picked) para = p; });
+    if (!para) { Sleepy.toast('先选一段正文'); return; }
+    var sh = sheet(ctx, '批注这段 · 只进共读记录', function (box) {
+      box.appendChild(h('p', 'wjr-sheet-note',
+        '批注挂在这个段落的锚点上，属于共读事件 —— 不是剧情，也不会成为 TA 的记忆。'));
+      var ta = h('textarea', 'wj-textarea');
+      ta.placeholder = '想跟 TA 说什么？例如：这段的灯亮得刚好。';
+      box.appendChild(ta);
+      box.appendChild(btn('写下批注', 'wj-btn wj-btn-solid wjr-sheet-go', function () {
+        CR().annotate(session.id, para.id, ta.value);
+        Sleepy.toast('批注已记入共读记录');
+        view.picked = null;
+        sh.close();
+        paint(ctx);
+      }));
+    });
+  }
+
+  /* 此刻反应浮条：TA 作为读者的想法，点一下就散 */
+  function whisper(ctx, session, text, anchorId) {
+    var old = ctx.el.querySelector('.wjk-whisper');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var f = h('div', 'wjk-whisper');
+    f.appendChild(h('small', 'wjk-whisper-meta',
+      (session.charName || 'TA') + (anchorId ? ' · 挂靠 ' + anchorId : '')));
+    f.appendChild(h('p', 'wjk-whisper-text', text));
+    f.onclick = function () {
+      if (f.parentNode) f.parentNode.removeChild(f);
+    };
+    ctx.el.appendChild(f);
+    setTimeout(function () {
+      if (f.parentNode) f.parentNode.removeChild(f);
+    }, 12000);
+  }
+
+  function doReact(ctx, w, session, ch, btnEl) {
+    var anchor = session.currentAnchorId;
+    var text = '';
+    (ch.paras || []).some(function (p) {
+      if (p.id === anchor && p.kind !== 'scene_break') { text = p.text || ''; return true; }
+      return false;
+    });
+    if (!text) {
+      var first = (ch.paras || []).filter(function (p) {
+        return p.kind !== 'scene_break';
+      })[0];
+      if (!first) { Sleepy.toast('这一章还没有正文'); return; }
+      anchor = first.id;
+      text = first.text || '';
+    }
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '等 TA 一下…'; }
+    CR().react(session.id, anchor, text)
+      .then(function (r) {
+        if (r.action === 'stay_silent') {
+          Sleepy.toast('TA 读到这里，沉默了一会儿。');
+        } else {
+          whisper(ctx, CR().get(session.id) || session, r.text, anchor);
+        }
+        paint(ctx);
+      })
+      ['catch'](function (e) {
+        Sleepy.toast(e.message || '这次没有回应');
+        paint(ctx);
+      });
+  }
+
+  /* 会话工具条：按陪读方式变形（不是装饰按钮 —— quiet 会真的少功能） */
+  function sessionTools(ctx, w, session, ch) {
+    var box = h('div', 'wjk-tools');
+    var reactBtn = btn(CR().reactLabel(session.mode), 'wjr-tool wjk-tool-react',
+      function () { doReact(ctx, w, session, ch, reactBtn); });
+    if (CR().reactCoolingDown(session.id)) {
+      reactBtn.disabled = true;
+      reactBtn.textContent = '让 TA 再读一会儿…';
+    }
+    box.appendChild(reactBtn);
+    if (CR().canMilestone(session.mode)) {
+      box.appendChild(btn('重要节点', 'wjr-tool', function () {
+        CR().log(session.id, { action: 'discuss',
+          anchorId: session.currentAnchorId, text: '' });
+        doReact(ctx, w, session, ch, null);
+      }));
+    }
+    if (session.status === 'paused') {
+      box.appendChild(btn('继续讨论', 'wjr-tool', function () {
+        CR().resume(session.id);
+        Sleepy.toast('继续同席');
+        paint(ctx);
+      }));
+    } else {
+      var pauseBtn = btn('暂停讨论', 'wjr-tool' +
+        (CR().canPauseDiscussion(session.mode) ? '' : ' is-off'), function () {
+        CR().pause(session.id);
+        Sleepy.toast('已暂停讨论，纸本还能继续翻');
+        paint(ctx);
+      });
+      box.appendChild(pauseBtn);
+    }
+    box.appendChild(btn('结束同席', 'wjr-tool wjk-tool-end', function () {
+      Sleepy.ui.confirm({
+        title: '结束这次同席？',
+        note: '结束后会生成台账与一条「共同读过」的现实候选，剧本内容不会成为现实。',
+        ok: '结束'
+      }).then(function (yes) {
+        if (!yes) return;
+        CR().end(session.id);
+        Sleepy.nav.open('wj-coread', { workId: w.id, session: session.id });
+      });
+    }));
+    return box;
+  }
+
   function paint(ctx) {
     var w = view.id ? wj().get(view.id) : null;
     var body = ctx.body;
@@ -318,12 +446,25 @@
       return;
     }
     var ch = currentChapter(w);
-    ctx.setTitle('剧本阅读页');
+    var session = liveSession();
+    ctx.setTitle(session ? '同席 · ' + (session.charName || '') : '剧本阅读页');
     ctx.setActions([{ label: '手记', onClick: function () {
       if (ch) noteSheet(ctx, w, ch);
     } }]);
 
     var shell = h('div', 'wj-shell wjr');
+
+    /* ---- 会话状态胶囊（sessionbar） ---- */
+    if (session) {
+      var sbar = h('div', 'wjk-sessionbar' + (session.status === 'paused' ? ' is-paused' : ''));
+      sbar.appendChild(h('span', 'wjk-sb-dot'));
+      sbar.appendChild(h('span', 'wjk-sb-text',
+        (session.charName || 'TA') + ' 正在同席 · ' +
+        (CR().MODES.filter(function (m) { return m.id === session.mode; })[0] || {}).name +
+        (session.status === 'paused' ? ' · 已暂停' : '') +
+        (session.currentAnchorId ? ' · 读至 ' + session.currentAnchorId : '')));
+      shell.appendChild(sbar);
+    }
 
     /* ---- 头 ---- */
     var headBox = h('div', 'wjr-head');
@@ -359,6 +500,11 @@
 
     /* ---- 选段操作条（点段落出现） ---- */
     var pickbar = h('div', 'wjr-pickbar' + (view.picked ? ' show' : ''));
+    if (session) {
+      pickbar.appendChild(btn('批注此段', 'wj-btn wjr-pickbtn', function () {
+        annotateSheet(ctx, w, session, ch);
+      }));
+    }
     pickbar.appendChild(btn('重写此段', 'wj-btn wjr-pickbtn', function () {
       rewriteSheet(ctx, w, ch);
     }));
@@ -369,6 +515,9 @@
       pickbar.classList.remove('show');
     }));
     shell.appendChild(pickbar);
+
+    /* ---- 同席工具（会话态才出现，按陪读方式变形） ---- */
+    if (session) shell.appendChild(sessionTools(ctx, w, session, ch));
 
     /* ---- 底部工具 ---- */
     var chs = w.chapters || [];
@@ -399,9 +548,11 @@
     /* 打开这一章就把位置记下（滚动追踪随后接管） */
     var paras = (ch.paras || []).filter(function (p) { return p.kind !== 'scene_break'; });
     if (paras.length) {
-      eng().saveProgress(w.id, ch.id,
-        w.progress && w.progress.chapterId === ch.id && w.progress.anchorId
-          ? w.progress.anchorId : paras[0].id);
+      var anchor = w.progress && w.progress.chapterId === ch.id && w.progress.anchorId
+        ? w.progress.anchorId : paras[0].id;
+      eng().saveProgress(w.id, ch.id, anchor);
+      /* 同席：TA 跟着 user 的阅读位置走（只记位置，不触发任何模型调用） */
+      if (session) CR().touchAnchor(session.id, anchor);
     }
   }
 
@@ -409,6 +560,7 @@
     title: '剧本阅读页',
     render: function (ctx) {
       var p = ctx.params || {};
+      view.sessionId = p.session || null;   /* 不带 session 就是普通阅读 */
       if (p.id && p.id !== view.id) {
         view.id = p.id;
         view.chId = p.ch || null;

@@ -11406,3 +11406,80 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .wjc-fix:disabled{opacity:.45;pointer-events:none;}
 .wj-notice.is-ok{border-left-color:var(--wj-green);color:#9db8a8;}
+
+/* ==================== 帷境 · 同席共读（T5） ==================== */
+
+/* ---- 邀请页 ---- */
+.wjk-going{border:1px solid var(--wj-line);border-radius:6px;padding:16px;
+  background:rgba(255,255,255,.03);}
+.wjk-going .wj-h2{margin-bottom:4px;}
+.wjk-going-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px;}
+.wjk-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.wjk-perms{display:flex;flex-direction:column;gap:8px;margin-top:10px;}
+.wjk-perm-row{display:flex;gap:10px;align-items:baseline;
+  padding:9px 11px;border:1px solid var(--wj-line-soft);border-radius:4px;
+  background:rgba(255,255,255,.015);}
+.wjk-perm-row b{font-size:11px;color:var(--wj-silver);white-space:nowrap;font-weight:500;}
+.wjk-perm-row span{font-size:10.5px;color:var(--wj-dim);line-height:1.7;}
+.wjk-actions{display:flex;flex-direction:column;gap:9px;align-items:center;}
+.wjk-go{width:100%;}
+.wjk-note{margin:8px 0 0;font-size:13px;line-height:1.8;color:var(--wj-silver);
+  font-family:var(--ff-serif);}
+
+/* ---- 状态胶囊（sessionbar） ---- */
+.wjk-sessionbar{display:flex;align-items:center;gap:8px;
+  border:1px solid var(--wj-line);border-radius:99px;
+  padding:8px 14px;background:rgba(255,255,255,.03);}
+.wjk-sessionbar.is-paused{opacity:.7;}
+.wjk-sb-dot{width:7px;height:7px;border-radius:50%;background:var(--wj-green);
+  animation:wjr-dot 1.6s ease-in-out infinite;flex:none;}
+.wjk-sessionbar.is-paused .wjk-sb-dot{background:var(--wj-dimmer);animation:none;}
+.wjk-sb-text{font-size:10.5px;letter-spacing:.04em;color:var(--wj-silver);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* ---- 会话工具条 ---- */
+.wjk-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.wjk-tool-react{grid-column:1/-1;}
+.wjk-tool-end{border-color:rgba(200,150,160,.4);color:var(--wj-wine-lite);}
+.wjk-tools .wjr-tool:disabled{opacity:.45;pointer-events:none;}
+
+/* ---- 反应浮条（whisper） ---- */
+.wjk-whisper{
+  position:absolute;left:14px;right:14px;bottom:18px;z-index:20;
+  border:1px solid var(--wj-line);border-radius:8px;
+  background:#16203366;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  background:#162033f2;
+  padding:12px 14px;cursor:pointer;
+  box-shadow:0 10px 26px rgba(4,8,18,.5);
+  animation:wjk-rise .28s cubic-bezier(.3,.7,.3,1);
+}
+@keyframes wjk-rise{from{transform:translateY(14px);opacity:0;}}
+.wjk-whisper-meta{font-size:9px;letter-spacing:.12em;color:var(--wj-dimmer);}
+.wjk-whisper-text{margin:5px 0 0;font-size:12.5px;line-height:1.85;
+  color:var(--wj-text);font-family:var(--ff-serif);}
+
+/* ---- 台账：real vs story 两张并置 ---- */
+.wjk-ledger{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+.wjk-ledger-card{border:1px solid var(--wj-line);border-radius:6px;padding:12px;
+  background:rgba(255,255,255,.02);display:flex;flex-direction:column;gap:8px;}
+.wjk-ledger-card.is-real{border-color:rgba(145,170,156,.5);}
+.wjk-ledger-card.is-story{border-style:dashed;}
+.wjk-ledger-tag{font-size:8.5px;letter-spacing:.14em;color:var(--wj-dimmer);}
+.wjk-ledger-card.is-real .wjk-ledger-tag{color:var(--wj-green);}
+.wjk-ledger-body{display:flex;flex-direction:column;gap:5px;}
+.wjk-ledger-body p{margin:0;font-size:10.5px;line-height:1.7;color:var(--wj-silver);}
+
+/* ---- 过程记录与现实候选 ---- */
+.wjk-timeline{display:flex;flex-direction:column;gap:9px;margin-top:10px;}
+.wjk-tl-row{display:flex;gap:10px;align-items:baseline;}
+.wjk-tl-time{font-size:9px;color:var(--wj-dimmer);flex:none;width:52px;}
+.wjk-tl-main{display:flex;flex-direction:column;gap:2px;}
+.wjk-tl-main b{font-size:11.5px;font-weight:500;color:var(--wj-text);}
+.wjk-tl-anchor{font-size:9px;color:var(--wj-dimmer);letter-spacing:.05em;}
+.wjk-tl-text{margin:2px 0 0;font-size:11px;line-height:1.75;color:var(--wj-dim);
+  padding-left:9px;border-left:2px solid var(--wj-line-soft);}
+.wjk-candidate{
+  border:1px solid rgba(145,170,156,.5);border-radius:5px;
+  padding:11px 13px;margin:10px 0;font-size:12px;line-height:1.8;
+  color:var(--wj-text);font-family:var(--ff-serif);background:rgba(145,170,156,.06);
+}

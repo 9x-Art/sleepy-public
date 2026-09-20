@@ -489,7 +489,7 @@
         Sleepy.nav.open('wj-read', { id: w.id });
       }));
       acts.appendChild(btn('邀请同席', 'wj-btn', function () {
-        Sleepy.toast('同席共读还在准备中');
+        Sleepy.nav.open('wj-coread', { workId: w.id });
       }));
     }
     copy.appendChild(acts);
