@@ -960,14 +960,10 @@ body{
 .chat-item-time{flex:none;}
 .chat-item-preview{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-.chat-item-del{
-  flex:none;width:32px;height:32px;
-  border-radius:16px;background:var(--bg-3);
-  border:0;margin-right:8px;
-  color:var(--text-faint);font-size:13px;
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;
-}
+/* 会话列表项的头像用的 .chat-item-ava 定义在通讯录那一段 ——
+   它和 .addr-av 共用同一条规则（首字圆头像 / 有图就用图），
+   别在这儿再写一份，两边会长得不一样。
+   右侧那个「删」按钮（.chat-item-del）已经删掉了：现在删除走长按条目。 */
 
 /* 消息气泡 */
 .msg-wrap{
@@ -5409,7 +5405,9 @@ span.msg-avatar-initial{
   transition:background .18s var(--ease);
 }
 .addr-row:active{background:rgba(111,184,106,.12);}
-.addr-av{
+/* 首字圆头像。会话列表（.chat-item-ava）和通讯录（.addr-av）共用这一条 ——
+   两处的视觉本来就该一致，分开写只会慢慢漂移。 */
+.chat-item-ava,.addr-av{
   flex:none;width:38px;height:38px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
   font-size:15px;font-weight:500;color:#2E4B30;
@@ -5417,7 +5415,7 @@ span.msg-avatar-initial{
   border:1px solid rgba(139,108,76,.2);
   background-size:cover;background-position:center;
 }
-.addr-av.has-img{color:transparent;}   /* 有头像图时别让首字压在上面 */
+.chat-item-ava.has-img,.addr-av.has-img{color:transparent;}   /* 有头像图时别让首字压在上面 */
 .addr-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
 .addr-name-line{display:flex;align-items:center;gap:7px;}
 .addr-name{font-size:14.5px;color:var(--text);}

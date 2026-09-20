@@ -5,7 +5,7 @@
 
    为什么手画 PNG：项目零依赖（用户 C 盘紧张，不装 node_modules），
    而手撸 PNG 只需要 zlib（node 自带）+ 手写 chunk/CRC。
-   图案：深夜底色 + 琥珀色猫爪（跟主题色一致），直角处做圆角遮罩。
+   图案：深夜底色 + 琥珀色猫爪，**满幅方块不烤圆角**（见 draw() 上面的说明）。
    改图案改 draw() 就行，重跑一次脚本。
    ============================================================ */
 'use strict';
@@ -60,21 +60,31 @@ function encodePNG(w, h, rgba) {
 
 /* ---------------------------- 画猫爪 ---------------------------- */
 
-const BG = [30, 27, 46, 255];        /* 深夜 #1E1B2E（theme-color 同源） */
-const PAD = [232, 184, 123, 255];    /* 琥珀 --amber */
+const BG = [30, 27, 46, 255];        /* 深夜 #1E1B2E：给桌面/主屏留对比，不跟 app 的纯白走 */
+const PAD = [232, 184, 123, 255];    /* 琥珀 */
+
+/* ⚠️ 必须画成**满幅方块**，不能自己烤圆角。
+   这两张图在 manifest 里声明成 purpose:"any maskable"，系统会按自己的形状
+   去裁（安卓 / Edge 常见是圆形）。图里已经有一层圆角的话，裁出来就是
+   「圆里套着一个带深色直角的方块」—— 以前就是这么画的。
+   另外猫爪整体缩到画布的 88%：maskable 的安全区是**以画布中心为圆心、
+   半径 40%** 的圆，超出部分可能被裁掉，原来的趾头刚好压线。
+   （2026-09-21 修，重跑本脚本覆盖 icons/ 即可） */
+const SAFE_K = 0.88;
 
 function draw(size) {
   const buf = Buffer.alloc(size * size * 4);
-  const R = size * 0.22;              /* 圆角半径 */
-  /* 猫爪：一个大肉垫 + 三个脚趾，整体在画面中心偏下 */
   const cx = size / 2;
-  const cy = size * 0.56;
-  const padR = size * 0.185;          /* 大肉垫半径（椭圆 x 方向压一点） */
-  const toeR = size * 0.085;
+  const cy = size / 2;
+  /* 猫爪：一个大肉垫 + 三个脚趾，整体在画面中心略偏下。
+     下面所有偏移都是**相对画布中心**算的，再乘 SAFE_K 缩进安全区。 */
+  const padR = size * 0.185 * SAFE_K;   /* 大肉垫半径（椭圆 x 方向压一点） */
+  const toeR = size * 0.085 * SAFE_K;
+  const padCy = cy + size * 0.06 * SAFE_K;
   const toes = [
-    [cx - size * 0.21, size * 0.335],
-    [cx, size * 0.285],
-    [cx + size * 0.21, size * 0.335]
+    [cx - size * 0.21 * SAFE_K, cy - size * 0.165 * SAFE_K],
+    [cx, cy - size * 0.215 * SAFE_K],
+    [cx + size * 0.21 * SAFE_K, cy - size * 0.165 * SAFE_K]
   ];
 
   function inCircle(x, y, ccx, ccy, r) {
@@ -84,27 +94,16 @@ function draw(size) {
   function inPad(x, y) {
     /* 大肉垫画成横向压扁的椭圆，底边略平 —— 用两段圆拼太啰嗦，椭圆够了 */
     const dx = (x - cx) / (padR * 1.25);
-    const dy = (y - cy) / (padR * 0.92);
+    const dy = (y - padCy) / (padR * 0.92);
     return dx * dx + dy * dy <= 1;
   }
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      /* 圆角遮罩：四角以外的部分透明 */
-      const rx = Math.min(x, size - 1 - x);
-      const ry = Math.min(y, size - 1 - y);
-      const inCorner = (rx < R && ry < R);
-      let on = true;
-      if (inCorner) {
-        const dx = R - rx, dy = R - ry;
-        on = dx * dx + dy * dy <= R * R;
-      }
-      let c = [0, 0, 0, 0];
-      if (on) {
-        c = BG.slice();
-        if (inPad(x, y) || toes.some(function (t) { return inCircle(x, y, t[0], t[1], toeR); })) {
-          c = PAD.slice();
-        }
+      /* 满幅底色：没有圆角遮罩，四角也是实心的 */
+      let c = BG.slice();
+      if (inPad(x, y) || toes.some(function (t) { return inCircle(x, y, t[0], t[1], toeR); })) {
+        c = PAD.slice();
       }
       const i = (y * size + x) * 4;
       buf[i] = c[0]; buf[i + 1] = c[1]; buf[i + 2] = c[2]; buf[i + 3] = c[3];

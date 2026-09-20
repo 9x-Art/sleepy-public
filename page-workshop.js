@@ -207,7 +207,13 @@
           var del = h('button', 'ws-mini', '删除');
           del.type = 'button';
           del.addEventListener('click', function () {
-            ui.confirm('删掉「' + t.name + '」？装出去的实例会一起消失。', function () {
+            /* ui.confirm 是**Promise 版**，只收一个对象（ui.js:476）。
+               以前写成 (文案, 回调) 的旧签名 → 回调永远不会执行，按钮点着没反应。 */
+            ui.confirm({
+              title: '删掉「' + t.name + '」？装出去的实例会一起消失。',
+              ok: '删除', danger: true
+            }).then(function (yes) {
+              if (!yes) return;
               store.set('wsTemplates', arr(store.get('wsTemplates')).filter(function (x) { return x.id !== t.id; }));
               /* 实例一起撤（记录归档） */
               arr(store.get('wsInstalls')).filter(function (i) { return i.templateId === t.id; })
@@ -252,7 +258,11 @@
             var rm = h('button', 'ws-mini', '卸载');
             rm.type = 'button';
             rm.addEventListener('click', function () {
-              ui.confirm('从 ' + (c.name || '?') + ' 的手机上卸下「' + inst.templateName + '」？', function () {
+              ui.confirm({
+                title: '从 ' + (c.name || '?') + ' 的手机上卸下「' + inst.templateName + '」？',
+                ok: '卸载', danger: true
+              }).then(function (yes) {
+                if (!yes) return;
                 Sleepy.workshop.uninstall(inst.id);
                 ctx.toast('卸下了', 'ok');
                 ctx.rebuild();

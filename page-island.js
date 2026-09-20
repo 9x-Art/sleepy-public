@@ -129,7 +129,13 @@
      孤岛就一个名字；群岛两三个并列；再多就「A、B 等 N 人」。
      空房给一句中性的话。 */
   function roomTitle(sb) {
-    if (sb && sb.name) return sb.name;
+    /* sb 可以是 null：页面实例是缓存复用的（app.js 的 build 只跑一次），
+       所以「看过 A 岛的角色档案 → A 岛被删掉 → 再回这一页」时
+       findSandbox() 会回 null。原写法第一行 guard 了 sb、第二行就直接读
+       sb.kind —— 属于「以为自己防住了但没防完」，会整页崩成「这一页出错了」。
+       （2026-09-21 全页渲染冒烟抓的，见 scripts/smoke.js 末尾那一段） */
+    if (!sb) return '空着的一座岛';
+    if (sb.name) return sb.name;
     var chars = core.charsOfSandbox(sb);
     if (!chars.length) return sb.kind === core.KIND_ISLE ? '空着的一座岛' : '空着的一片群岛';
     if (chars.length === 1) return chars[0].name || '未命名';

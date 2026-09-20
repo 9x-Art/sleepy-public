@@ -10,9 +10,10 @@
        type 缺省 = 文字气泡；'file' / 'photo' = 附件气泡
 
    两个刻意的取舍，别当成 bug：
-   1) 附件只存元数据（文件名 / 大小 / 类型），不存 base64。
-      localStorage 只有 5MB 左右，塞两张原图就把配额撑爆，store 会直接
-      写失败（QuotaExceededError）。真要存图，等接 IndexedDB 再说。
+   1) 附件只存元数据（文件名 / 大小 / 类型）+ **mediaId**，不存 base64。
+      图片本体在 IndexedDB 图库里（media.js），进存档的只有 mediaId ——
+      objectURL 活不过刷新，别把它写进存档。
+      （这段原来写的是「存储只等接 IndexedDB 再说」，早就接上了，2026-09-21 更正）
    2) 「空输入点发送」给模型塞的是一句用户口吻的指令。这是临时办法，
       等 F 模块（提示词引擎）做出来就该由 F 统一组装。
    ============================================================ */
@@ -107,6 +108,25 @@
 
   /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管 */
   var PROACTIVE_HINT = '（我这边安静着，没打字，你主动开口说一句吧。）';
+  /* 同样的「空发送」，但如果**上面最后一句就是我说的**（典型场景：
+     我想分气泡连发三条，发完才让他开口），提示词不能再说「我没打字」——
+     那会让模型以为我一句话都没说，回一句跟我刚说的完全无关的东西。
+     这种情况换成「我说完了」。 */
+  var PROACTIVE_HINT_REPLY = '（我说完了，你说吧。）';
+
+  /* 空发送到底该用哪一句，看这轮对话里**最后一条有效消息是谁发的** */
+  function proactiveHintFor(chat) {
+    var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+    for (var i = msgs.length - 1; i >= 0; i--) {
+      var m = msgs[i];
+      if (!m) continue;
+      if (m.role === 'user' || m.role === 'assistant') {
+        return m.role === 'user' ? PROACTIVE_HINT_REPLY : PROACTIVE_HINT;
+      }
+    }
+    /* 空对话（或者只有 system 事件条）：让他先开口 */
+    return PROACTIVE_HINT;
+  }
 
   /* ============================ 数据层 ============================ */
 
@@ -432,6 +452,10 @@
     return { role: 'system', content: note };
   }
 
+  /* 列表预览：**只给最后一个气泡**。
+     一次模型输出在存档里是用 '||' 把多个气泡拼成一整串（见 prompt-engine
+     的 splitBubblesT），直接 slice 就会把 `消息1||消息2` 原样显示出来 ——
+     那是协议分隔符，不该给用户看见。2026-09-21 修。 */
   function previewOf(msg) {
     if (!msg) return '空对话';
     if (msg.type === 'photo') return '你发了张照片';
@@ -439,7 +463,12 @@
     if (msg.type === 'transfer') return '你转了 ¥' + (Number(msg.amount) || 0).toFixed(2);
     if (msg.type === 'sticker') return '你发了个表情' + (msg.name ? '「' + msg.name + '」' : '');
     if (msg.type === 'pat') return (msg.content || '拍一拍');
-    var t = String(msg.content || '').replace(/\s+/g, ' ').slice(0, 20);
+    var raw = String(msg.content || '');
+    if (msg.role === 'assistant' && Sleepy.promptEngine && Sleepy.promptEngine.splitBubbles) {
+      var arr = Sleepy.promptEngine.splitBubbles(raw);
+      if (arr && arr.length) raw = arr[arr.length - 1] || raw;
+    }
+    var t = raw.replace(/\s+/g, ' ').slice(0, 20);
     return (msg.role === 'user' ? '你说：' : '对方回：') + t;
   }
 
@@ -720,25 +749,23 @@
           main.appendChild(meta);
           item.appendChild(main);
 
-          var del = h('button', 'chat-item-del', '删');
-          del.type = 'button';
-          del.title = '解散并删除这个群';
-          del.addEventListener('click', async function (e) {
-            e.stopPropagation();
-            var yes = await ui.confirm({
+          /* 同私聊：删除走长按，不再挂一个容易误触的「删」按钮 */
+          bindLongPress(item, function () {
+            ui.confirm({
               title: '解散「' + g.name + '」？',
               note: '群的聊天记录和成员记录会一起没掉，角色那边不会收到任何通知。',
               ok: '解散',
               danger: true
+            }).then(function (yes) {
+              if (!yes) return;
+              Sleepy.groupStore.removeGroup(g.id);
+              rebuild();
+              ctx.toast('已解散', 'ok');
             });
-            if (!yes) return;
-            Sleepy.groupStore.removeGroup(g.id);
-            rebuild();
-            ctx.toast('已解散', 'ok');
           });
-          item.appendChild(del);
 
           item.addEventListener('click', function () {
+            if (wasLongPressed(item)) return;   /* 同私聊：长按后别顺带进群 */
             ctx.open('group-chat', { groupId: g.id });
           });
           listWrap.appendChild(item);
@@ -750,6 +777,17 @@
       chats.forEach(function (chat) {
         var item = h('div', 'chat-item');
 
+        /* 头像：以前私聊项只有名字和时间，头像位空着（.chat-item 的 gap:14
+           留出一道白），看着像漏画了东西。沿用通讯录那套首字圆头像；
+           char 有头像图就用图（.chat-item-ava.has-img 见 style.css）。 */
+        var chAv = chat.characterId ? findCharacter(chat.characterId) : null;
+        var ava = h('span', 'chat-item-ava' + (chAv && chAv.avatar ? ' has-img' : ''),
+          Sleepy.core.initialOf((chAv && chAv.name) || chat.name || '?'));
+        if (chAv && chAv.avatar) {
+          ava.style.backgroundImage = 'url("' + String(chAv.avatar).replace(/"/g, '%22') + '")';
+        }
+        item.appendChild(ava);
+
         var main = h('div', 'chat-item-main');
         main.appendChild(h('span', 'chat-item-name', chat.name));
 
@@ -760,25 +798,26 @@
         main.appendChild(meta);
         item.appendChild(main);
 
-        var del = h('button', 'chat-item-del', '删');
-        del.type = 'button';
-        del.title = '删除这个对话';
-        del.addEventListener('click', async function (e) {
-          e.stopPropagation();
-          var yes = await ui.confirm({
+        /* 删除改成**长按条目**（原来右侧那个 32px 的「删」字又隐蔽又容易误触，
+           点错一次聊天记录就没了）。长按 → 二次确认；桌面端右键走同一条路
+           （bindLongPress 里已经接了 contextmenu）。 */
+        bindLongPress(item, function () {
+          ui.confirm({
             title: '删除「' + chat.name + '」？',
             note: '里面的聊天记录会一起没掉。',
             ok: '删除',
             danger: true
+          }).then(function (yes) {
+            if (!yes) return;
+            saveChats(allChats().filter(function (c) { return c.id !== chat.id; }));
+            rebuild();
+            ctx.toast('已删除', 'ok');
           });
-          if (!yes) return;
-          saveChats(allChats().filter(function (c) { return c.id !== chat.id; }));
-          rebuild();
-          ctx.toast('已删除', 'ok');
         });
-        item.appendChild(del);
-
         item.addEventListener('click', function () {
+          /* 长按刚触发过（480ms 计时器 fire 之后就抬手）会补一次 click，
+             不挡掉的话「长按删除」会顺手把对话也打开 */
+          if (wasLongPressed(item)) return;
           ctx.open('chat-detail', { chatId: chat.id });
         });
         listWrap.appendChild(item);
@@ -1376,7 +1415,8 @@
         /* 别用 textContent 改发送键——那会把爪印 SVG 抹掉。
            忙碌状态只加 class，靠 CSS 的呼吸动画表达「在等回复」。 */
         sendBtn.classList[busy ? 'add' : 'remove']('is-busy');
-        sendBtn.title = busy ? '还在等回复' : '发送（输入框留空，就是让角色主动开口）';
+        sendBtn.title = busy ? '还在等回复'
+          : '发送 · 输入框里有字就发出去，空着点就是让 TA 开口';
       }
 
       /* 流式过程中，心声标签之后的内容不能进气泡。
@@ -1660,7 +1700,7 @@
               content: '（刚刚发生的事：' + opts.eventNote + '。请以 char 的身份自然地回应这件事。）'
             });
           }
-          if (opts.proactive) built.messages.push({ role: 'user', content: PROACTIVE_HINT });
+          if (opts.proactive) built.messages.push({ role: 'user', content: proactiveHintFor(c) });
           return built.messages;
         }
 
@@ -1713,7 +1753,7 @@
             content: '（刚刚发生的事：' + opts.eventNote + '。请以 char 的身份自然地回应这件事。）'
           });
         }
-        if (opts.proactive) out.push({ role: 'user', content: PROACTIVE_HINT });
+        if (opts.proactive) out.push({ role: 'user', content: proactiveHintFor(c) });
         return out;
       }
 
@@ -1934,7 +1974,10 @@
 
         var content = textarea.value.trim();
 
-        /* D1：输入框空着点发送 = 让角色主动开口说话，而不是发一个空气泡 */
+        /* 发送键是**两义**的（D1 + 2026-09-21 修订）：
+           空着点 = 让角色开口说话（不是发一个空气泡）；
+           有字点 = 只把这条发出去，**不**触发回复。
+           这样才可能「分气泡连发几条」—— 见下面正文那段末尾的说明。 */
         if (!content) {
           requestReply({ proactive: true });
           return;
@@ -1954,7 +1997,12 @@
         autoGrow();
         clearQuote();
         renderMessages();
-        requestReply({});
+        /* ⚠️ 这里**故意不请求回复**（2026-09-21 改）。
+           发送键是两义的：有字 = 只发送一条，空着点 = 让角色开口。
+           以前这里直接 requestReply({})，于是「我说一句他立刻回一句」——
+           想分气泡连发几条根本做不到（第一条发出去回复就开始跑，
+           后面几条只能等他回完）。用户要的是：想说几句就说几句，
+           说完了把输入框清空再点一次发送，才让他开口。 */
       }
 
       /* ======================== 加号面板 ======================== */
@@ -2947,7 +2995,13 @@
     mountTab: mountChatTab,
     parseTransfer: parseTransfer,
     transferText: transferText,
-    TRANSFER_MAX: TRANSFER_MAX
+    TRANSFER_MAX: TRANSFER_MAX,
+    /* 纯函数，导出是为了冒烟能直接打表验：
+       「空发送」到底该说「我没打字」还是「我说完了」，
+       取决于上一条是谁发的 —— 搞错会让模型无视我刚连发的那几条。 */
+    proactiveHintFor: proactiveHintFor,
+    PROACTIVE_HINT: PROACTIVE_HINT,
+    PROACTIVE_HINT_REPLY: PROACTIVE_HINT_REPLY
   };
 
 })(window);

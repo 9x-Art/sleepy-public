@@ -475,7 +475,12 @@
 
     var dark = (wall && wall.dark) || (!wall || wall.id === 'auto') && theme && theme.dark;
     var pv = h('div', 'lk-preview' + (dark ? ' is-dark' : ''));
-    if (wall && wall.id === 'custom' && cfg.wallMediaId && Sleepy.media) {
+    /* ⚠️ 判断要用 cfg.wall，不能写 `wall && wall.id === 'custom'`：
+       'custom' 是**伪 id**，WALLS 表里根本没有这一项，上面那个 forEach
+       查完 wall 还是 null —— 于是预览永远落到「跟随主题」的底色，
+       而 applyDesktop（:363）判断写对了，桌面会换、预览不换。
+       2026-09-21 修：和 applyDesktop 保持同一口径。 */
+    if (cfg.wall === 'custom' && cfg.wallMediaId && Sleepy.media) {
       pv.classList.add('has-img');
       Sleepy.media.url(cfg.wallMediaId).then(function (u) {
         if (u) pv.style.backgroundImage =
@@ -693,12 +698,13 @@
         add.appendChild(h('span', 'look-card-name', '自定义图'));
         add.appendChild(h('span', 'look-card-hint',
           curCfg.wall === 'custom' ? '已设置 · 点按更换' : '从相册选一张'));
+        /* 文件 input 走**兄弟节点**（同上面图标那处的理由：
+           塞进按钮里会被合成事件的 preventDefault 掐掉默认动作）。
+           所以先建 input，等 add 挂进 wallGrid 之后再挂在同一层。 */
         var wfile = h('input');
         wfile.type = 'file';
         wfile.accept = 'image/*';
         wfile.style.display = 'none';
-        add.appendChild(wfile);
-        add.addEventListener('click', function () { wfile.click(); });
         wfile.addEventListener('change', function () {
           var f = wfile.files && wfile.files[0];
           if (!f || !Sleepy.media) return;
@@ -714,6 +720,8 @@
           });
         });
         wallGrid.appendChild(add);
+        wallGrid.appendChild(wfile);
+        add.addEventListener('click', function () { wfile.click(); });
         if (curCfg.wall === 'custom') {
           var clr = h('button', 'lk-clear-custom', '移除自定义图，回到跟随主题');
           clr.type = 'button';
@@ -991,15 +999,22 @@
         });
         g2.card.appendChild(applyName);
 
-        /* 图标 */
-        var up = h('label', 'lk-upload');
+        /* 图标
+           ⚠️ 文件 input 必须是按钮的**兄弟节点**，不能塞在按钮/label 里面。
+           塞在里面的话：input.click() 的合成事件会冒泡回外层，
+           外层处理器里的 e.preventDefault() 又把这个事件的默认动作
+           （打开文件选择器）取消掉 —— 表现就是「点了没反应」。
+           2026-09-21 修；壁纸那处同款写法一起改掉。 */
+        var up = h('button', 'lk-upload');
+        up.type = 'button';
         up.appendChild(h('span', 'lk-upload-main', '上传自定义图标'));
         var ifile = h('input');
         ifile.type = 'file';
         ifile.accept = 'image/*';
         ifile.style.display = 'none';
-        up.appendChild(ifile);
-        up.addEventListener('click', function (e) { e.preventDefault(); ifile.click(); });
+        g2.card.appendChild(up);
+        g2.card.appendChild(ifile);
+        up.addEventListener('click', function () { ifile.click(); });
         ifile.addEventListener('change', function () {
           var f = ifile.files && ifile.files[0];
           if (!f || !Sleepy.media) return;
@@ -1014,7 +1029,6 @@
             ctx.toast('没换成：' + (e2 && e2.message || '图片处理失败'), 'err');
           });
         });
-        g2.card.appendChild(up);
 
         /* 恢复默认 */
         if (ov2) {

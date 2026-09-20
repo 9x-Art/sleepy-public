@@ -20,6 +20,20 @@ const ROOT = path.resolve(__dirname, '..');
 
 /* ---------------------------- DOM 桩 ---------------------------- */
 
+/* DOM 的 appendChild 是**移动**语义：节点会从原来的父节点上摘下来。
+   桩里只加不删的话，`while (a.firstChild) b.appendChild(a.firstChild)`
+   这种「搬家」循环永远不结束（page-group.js 的 paintHero 就是这么写的），
+   最后以 RangeError: Invalid array length 收场 —— 那是桩的锅。 */
+function detach(c) {
+  const p = c && c.parentNode;
+  if (!p) return;
+  const i = p.childNodes.indexOf(c);
+  if (i >= 0) p.childNodes.splice(i, 1);
+  const j = p.children.indexOf(c);
+  if (j >= 0) p.children.splice(j, 1);
+  c.parentNode = null;
+}
+
 function makeEl(tag) {
   const cls = new Set();
   /* style 得是个带方法的小对象，不能只是 {}。
@@ -34,6 +48,10 @@ function makeEl(tag) {
   const el = {
     tagName: String(tag || 'div').toUpperCase(),
     children: [], childNodes: [], style, dataset: {},
+    /* parentNode 必须存在：`x.parentNode.removeChild(x)` 是极常见的写法，
+       桩里缺这个字段会把「真实浏览器里一定有」的东西变成 TypeError，
+       全页渲染冒烟就会误报成页面炸了（2026-09-21 踩过）。 */
+    parentNode: null,
     _text: '', _html: '', _attrs: {},
     classList: {
       add: (...c) => c.forEach((x) => x && cls.add(x)),
@@ -50,20 +68,69 @@ function makeEl(tag) {
     get textContent() { return this._text; },
     set textContent(v) { this._text = String(v); },
     get innerHTML() { return this._html; },
-    set innerHTML(v) { this._html = String(v); this.children = []; this.childNodes = []; },
-    appendChild(c) { this.children.push(c); this.childNodes.push(c); return c; },
+    set innerHTML(v) {
+      this._html = String(v);
+      /* 重建 DOM 时把旧孩子摘干净，并清掉 querySelector 的记忆 ——
+         否则「已经不在文档里」的节点会以 parentNode 非空的样子留在桩里 */
+      this.children.forEach((c) => { c.parentNode = null; });
+      this.children = []; this.childNodes = [];
+      this._q = null;
+    },
+    appendChild(c) { detach(c); c.parentNode = this; this.children.push(c); this.childNodes.push(c); return c; },
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
-    prepend(c) { this.children.unshift(c); return c; },
-    insertBefore(c) { this.children.unshift(c); return c; },
-    removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); return c; },
-    replaceChildren(...cs) { this.children = cs; this.childNodes = cs; },
-    remove() {},
+    prepend(c) { detach(c); c.parentNode = this; this.children.unshift(c); this.childNodes.unshift(c); return c; },
+    insertBefore(c) { detach(c); c.parentNode = this; this.children.unshift(c); this.childNodes.unshift(c); return c; },
+    removeChild(c) {
+      const i = this.children.indexOf(c);
+      if (i >= 0) this.children.splice(i, 1);
+      const j = this.childNodes.indexOf(c);
+      if (j >= 0) this.childNodes.splice(j, 1);
+      if (c) c.parentNode = null;
+      return c;
+    },
+    replaceChildren(...cs) {
+      this.children.forEach((c) => { c.parentNode = null; });
+      cs.forEach((c) => { c.parentNode = this; });
+      this.children = cs; this.childNodes = cs;
+    },
+    remove() { if (this.parentNode) this.parentNode.removeChild(this); },
+    /* 兄弟/首尾节点：真实 DOM 里 appendChild 完一定有，且页面里用得很多
+       （`box.lastChild.appendChild(...)` 这种）。桩里给不出来的话，
+       受影响的页面会被误报成渲染失败。 */
+    get firstChild() { return this.childNodes[0] || null; },
+    get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; },
+    get firstElementChild() { return this.children[0] || null; },
+    get lastElementChild() { return this.children[this.children.length - 1] || null; },
+    get nextSibling() {
+      if (!this.parentNode) return null;
+      const s = this.parentNode.childNodes;
+      return s[s.indexOf(this) + 1] || null;
+    },
+    get previousSibling() {
+      if (!this.parentNode) return null;
+      const s = this.parentNode.childNodes;
+      const i = s.indexOf(this);
+      return i > 0 ? s[i - 1] : null;
+    },
+    get nextElementSibling() {
+      if (!this.parentNode) return null;
+      const s = this.parentNode.children;
+      return s[s.indexOf(this) + 1] || null;
+    },
     setAttribute(k, v) { this._attrs[k] = String(v); if (k === 'class') this.className = v; },
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k) ? this._attrs[k] : null; },
     hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k); },
     removeAttribute(k) { delete this._attrs[k]; },
     addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
-    querySelector() { return makeEl('div'); },
+    /* 桩不解析 innerHTML，所以元素级 querySelector 只能「凭空给一个元素」。
+       但必须**同一个选择器返回同一个元素**，并且给它 parentNode ——
+       页面常见的 `el.querySelector('.x').appendChild(...)` 之后再回来找它，
+       每次新建一个的话 append 的东西等于扔了。 */
+    querySelector(sel) {
+      this._q = this._q || Object.create(null);
+      if (!this._q[sel]) { this._q[sel] = makeEl('div'); this._q[sel].parentNode = this; }
+      return this._q[sel];
+    },
     querySelectorAll() { return []; },
     closest() { return null; },
     contains() { return false; },
@@ -91,10 +158,14 @@ const documentStub = {
      给出 id → 桩元素的映射，元素的行为与真实 DOM 一致。 */
   getElementById(id) {
     if (!DOC_IDS[id]) DOC_IDS[id] = makeEl('div');
+    /* 真实浏览器里 getElementById 只可能返回**已经在文档里**的节点，
+       父节点一定存在。桩也得这样，否则 `el.parentNode.removeChild(el)`
+       会被误报成页面渲染失败（2026-09-21 踩过 chat-detail）。 */
+    if (!DOC_IDS[id].parentNode) DOC_IDS[id].parentNode = documentStub.body;
     return DOC_IDS[id];
   },
   querySelector(sel) {
-    if (!DOC_SEL[sel]) DOC_SEL[sel] = makeEl('div');
+    if (!DOC_SEL[sel]) { DOC_SEL[sel] = makeEl('div'); DOC_SEL[sel].parentNode = documentStub.body; }
     return DOC_SEL[sel];
   },
   querySelectorAll() { return []; },
@@ -810,6 +881,30 @@ t('转账输入的解析与校验', () => {
   if (!c.ok || c.amount !== 88) throw new Error(JSON.stringify(c));
   if (S.chatApp.TRANSFER_MAX !== 99999) throw new Error('上限被改了');
   return { 合法: a.amount + ' + ' + a.note, 上限: S.chatApp.TRANSFER_MAX };
+});
+
+/* 「空输入点发送」到底该替用户说什么 —— 现在发送键是两义的：
+   有字 = 只发一条，空着点 = 让他开口。分气泡连发几条之后再空发送时，
+   提示词必须是「我说完了」，不能再是「我这边安静着，没打字」（那会让
+   模型以为我一句话没说，回一句跟我们刚聊的完全无关的东西）。 */
+t('空发送的提示词按「上一条是谁发的」分流', () => {
+  const F = S.chatApp.proactiveHintFor;
+  const A = S.chatApp.PROACTIVE_HINT;
+  const B = S.chatApp.PROACTIVE_HINT_REPLY;
+  if (A === B) throw new Error('两句提示词不该一样');
+  const mk = (roles) => ({ messages: roles.map((r, i) => ({ id: 'm' + i, role: r, content: 'x' + i })) });
+
+  if (F(mk([])) !== A) throw new Error('空对话该是「主动开口」');
+  if (F(mk(['assistant'])) !== A) throw new Error('上一句是他说的，该是「主动开口」');
+  if (F(mk(['assistant', 'user'])) !== B) throw new Error('上一句是我说的，该是「我说完了」');
+  if (F(mk(['user', 'assistant', 'user', 'user'])) !== B) throw new Error('连发两条后该是「我说完了」');
+  if (F(mk(['user', 'assistant'])) !== A) throw new Error('他刚回完，该是「主动开口」');
+  /* system 事件条（换面具那种）不算「有效消息」，不能让它顶掉判断 */
+  if (F({ messages: [{ role: 'user', content: 'p' }, { role: 'system', content: 's' }] }) !== B) {
+    throw new Error('system 条不该顶掉「上一条是我说的」');
+  }
+  if (F(null) !== A) throw new Error('拿不到对话时别炸');
+  return { 空对话: '主动', 我发的: '我说完了', 他发的: '主动' };
 });
 
 /* 余额按房存（一间房一条）。写入必须拿全量按房找那条 ——
@@ -4336,6 +4431,81 @@ t('wjCoread 反应：沉默合法、冷却真拦、模式能力表按 Demo 变�
   if (r3.action !== 'accept') throw new Error('邀请判断没走通');
   if (prompt.indexOf('绝密手记内容XYZ') >= 0) throw new Error('邀请判断读到了创作手记（越权）');
   return { 沉默: '合法', 冷却: '拦', 静音: '能力表正确', 手记: '未越权' };
+});
+
+/* ======================== 全页渲染冒烟 ========================
+   为什么需要这一段：check.js 只验语法，而 app.js 的错误边界会把 render()
+   抛出的异常**吞掉**、把那页换成「这一页出错了」—— 语法全绿照样整页崩。
+   2026-09-21 就踩了：page-chat-settings.js 的渲染函数里 charId / core
+   两个变量从来没声明，'use strict' 下整页 ReferenceError，
+   而当时的 check + smoke **全绿**，一行都抓不到。
+
+   所以这里把注册表里每个页面挨个真的 open() 一遍。
+   判定方式：拦截 console.error —— app.js 的 logError 打的是 '[Sleepy]' 前缀，
+   只认这个前缀，避免误伤页面里正常的 console.error。
+   跑在最后：它会切 activeSandbox + 真的压页面栈，放前面会打扰其它断言。 */
+console.log('\n--- 全页渲染冒烟（每个注册页面真跑一次 render）---');
+t('所有注册页面的 render() 都不触发 app.js 的错误边界', () => {
+  const ids = Object.keys(S.registered()).filter((id) => id !== 'home');
+  /* home 是基底页、不在页面栈里，它的点火由上面的 bootHome 断言覆盖：
+     nav.open('home') 只等于「回桌面」，不 build，测不到 render。 */
+  if (ids.length < 50) throw new Error('注册页面只有 ' + ids.length + ' 个，注册表是不是没加载全');
+
+  /* ---- 夹具：真建一套 岛 / 角色 / 马甲 / 对话 / 群，参数一次性全给上 ---- */
+  const m = S.core.upsertChar({ name: '冒烟大号', kind: 'main', content: '渲染夹具' }).id;
+  const n = S.core.upsertChar({ name: '冒烟NPC', kind: 'npc', parentId: m, content: '渲染夹具' }).id;
+  const u = S.core.upsertUser({ name: '冒烟马甲' }).id;
+  const sb = S.core.createSandbox('archipelago', '冒烟群岛');
+  S.core.setSandboxChars(sb.id, [m]);
+  S.core.setActiveSandbox(sb.id);
+
+  const chat = S.chatStore.createChat('冒烟对话', m);
+  const gr = S.groupStore.createGroup({
+    name: '冒烟群',
+    ownerAccountId: u,
+    members: [
+      { kind: 'char', ownerId: m, accountId: m },
+      { kind: 'npc', ownerId: m, accountId: n }
+    ]
+  });
+  const groupId = (gr && (gr.group ? gr.group.id : (gr.ok ? gr.id : ''))) || '';
+
+  const fixture = {
+    chatId: chat.id, charId: m, npcId: n, userId: u,
+    sandboxId: sb.id, islandId: sb.id, sbId: sb.id, groupId: groupId,
+    id: chat.id, roomId: sb.id, phoneId: 'ph_smoke'
+  };
+
+  const broken = [];
+  const origError = console.error;
+
+  ids.forEach((id) => {
+    const caught = [];
+    console.error = function () {
+      const a = Array.prototype.slice.call(arguments);
+      const line = a.map(String).join(' ');
+      const st = a[1] && a[1].stack ? '\n        ' + String(a[1].stack).split('\n').slice(0, 4).join('\n        ') : '';
+      caught.push(line + st);
+    };
+    try {
+      if (S.nav.depth() > 0) S.nav.closeAll();
+      S.nav.open(id, Object.assign({}, fixture));
+    } catch (e) {
+      caught.push('[open] ' + (e && e.message));
+    } finally {
+      console.error = origError;
+    }
+    /* 只认 logError 的 '[Sleepy]' 前缀；页面自己打的 error 不算渲染失败 */
+    const hit = caught.filter((line) => line.indexOf('[Sleepy]') >= 0);
+    if (hit.length) broken.push(id + ' → ' + hit[0].replace(/\s+/g, ' ').slice(0, 700));
+  });
+
+  if (S.nav.depth() > 0) S.nav.closeAll();
+  if (broken.length) {
+    broken.forEach((b) => console.log('      · ' + b));
+    throw new Error('有 ' + broken.length + ' 个页面渲染失败');
+  }
+  return { 页面数: ids.length, 全部通过: true };
 });
 
 if (asyncPending > 0) {

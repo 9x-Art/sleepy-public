@@ -9,6 +9,11 @@
    更新：版本号 CACHE 一改，旧缓存整体清掉；
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
 
+   v4（2026-09-21）：修「对话设置整页崩」「副 API 存不了」「工坊按钮没反应」
+   等一批渲染 bug；聊天列表加了头像、删除改成点按变长按；PWA 图标重画
+   （去掉了烤进去的圆角，manifest 主题色跟着纯白底走）。
+   → 必须跳版本：图标和 manifest 被缓存住的话，主屏上还是旧图标旧配色。
+
    v3（2026-09-18）：第 2 屏接上亚克力挂件灯，新增 vendor/（three + 灯核心）。
    它**不写进 CORE**：671 KB 的引擎塞进安装期预缓存，会让第一次装 SW
    白等好几秒，而灯在第 2 屏 —— 很多人一轮都不一定滑过去。
@@ -21,7 +26,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v63';
+var CACHE = 'sleepy-v64';
 var CORE = [
   './',
   './index.html',
@@ -68,12 +73,44 @@ self.addEventListener('fetch', function (e) {
         }
         return r;
       })['catch'](function () {
-        /* 完全没缓存又离线：导航请求兜底回 index.html（PWA 的壳） */
+        /* 完全没缓存又离线：导航请求兜底回外壳页。
+           ⚠️ 这里**绝不能 resolve 成 undefined** —— respondWith(undefined)
+           在 Chromium 里就是 ERR_FAILED，用户看到的是「嗯…无法访问此页面」
+           加一个错误码，而我们这边什么都没报错，极难定位。
+           2026-09-21 就是踩在这上面：手机上加到首页的 PWA 点开 ERR_FAILED。
+           所以做三级兜底：index.html → './' → 一张自带的离线页。 */
         if (req.mode === 'navigate') {
-          return caches.match('./index.html');
+          return caches.match('./index.html')
+            .then(function (r) { return r || caches.match('./'); })
+            .then(function (r) { return r || offlineShell(); });
         }
         return Response.error();
       });
     })
   );
 });
+
+/* 彻底没缓存又连不上时的兜底页。自带文案、不依赖网络 ——
+   有它就不会再出现 respondWith(undefined) → ERR_FAILED 那种一片空白，
+   用户至少知道「是网络，不是 app 坏了」。 */
+function offlineShell() {
+  var html = '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Sleepy</title></head>' +
+    '<body style="margin:0;display:flex;min-height:100vh;align-items:center;' +
+    'justify-content:center;background:#FFFFFF;color:#43382C;' +
+    'font:15px/1.7 system-ui,sans-serif;text-align:center">' +
+    '<div style="padding:32px">' +
+    '<p style="font-size:17px;margin:0 0 10px">连不上，本地也还没有缓存</p>' +
+    '<p style="margin:0;color:#8A7A67">第一次打开需要联网。' +
+    '加载过一次之后，再到桌面打开就能离线用了。</p>' +
+    '<p style="margin:16px 0 0;color:#8A7A67"><button ' +
+    'onclick="location.reload()" style="font:inherit;color:#8A6844;' +
+    'background:none;border:0;border-bottom:1px solid currentColor;' +
+    'padding:0 0 1px;cursor:pointer">再试一次</button></p>' +
+    '</div></body></html>';
+  return new Response(html, {
+    status: 503,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  });
+}

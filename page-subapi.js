@@ -295,9 +295,13 @@
       });
       g.card.appendChild(f.apiKey.el);
 
+      /* modelFieldWithPicker 返回 {f:{model:字段}} 这种嵌套，且**内部已经把
+         picker 绑好了**（见 :194）。所以这里要取 .f.model，且不能再绑一次 ——
+         以前写成 f.model = mp.f + 重复 attachModelPicker，后果是
+         f.model.input / f.model.get() 全是 undefined：
+         模型选项点不动、点保存必抛错（2026-09-21 修）。 */
       var mp = modelFieldWithPicker(g.card, '');
-      f.model = mp.f;
-      attachModelPicker(f, mp.pickBtn, mp.pickBox);
+      f.model = mp.f.model;
       body.appendChild(g.wrap);
 
       var g2 = group('生成参数');
@@ -428,9 +432,9 @@
       });
       g.card.appendChild(f.apiKey.el);
 
+      /* 同新增页：取 .f.model，且不重复绑定 picker（2026-09-21 修）。 */
       var mp = modelFieldWithPicker(g.card, item.model);
-      f.model = mp.f;
-      attachModelPicker(f, mp.pickBtn, mp.pickBox);
+      f.model = mp.f.model;
       body.appendChild(g.wrap);
 
       var g2 = group('生成参数');

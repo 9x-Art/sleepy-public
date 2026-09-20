@@ -1686,9 +1686,10 @@
     return (d.getMonth() + 1) + '.' + d.getDate();
   }
 
-  /* 选图 → 读成 dataURL → 存起来。
-     注意：localStorage 只有 5MB，这里必须缩放后再存（见 readImageScaled）。
-     真接 IndexedDB 之前，640px 宽 + JPEG 0.72 大约每张 60–90KB，能放几十张。 */
+  /* 选图 → 交给 photos 数据层落库。
+     图片本体在 IndexedDB 图库里，存档里只留 mediaId（photos.js 负责
+     缩放 / 配额 / 新老记录兼容）。这里以前写的是「localStorage 只有 5MB，
+     必须缩放后再存」—— 那是接 IDB 之前的说法，已经不准了（2026-09-21）。 */
   function addWallPhotos(ctx) {
     if (!Sleepy.photos || !Sleepy.photos.pick) {
       ctx.toast('相册模块没加载出来', 'err');

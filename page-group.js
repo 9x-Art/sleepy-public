@@ -1392,7 +1392,7 @@
             title: '图片链接',
             placeholder: 'https://…',
             value: /^https?:/.test(g.avatar || '') ? g.avatar : '',
-            note: '链接失效的话头像会显示不出来，建议用稳定的图床。'
+            note: '链接失效的话头像就会显示不出来。想稳一点就用上面那个「上传照片」。'
           });
           if (u === null) return;
           u = String(u).trim();

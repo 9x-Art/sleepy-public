@@ -319,9 +319,15 @@
     });
     body.appendChild(f.name.el);
 
+    /* 头像：**目前只收 URL**。
+       ⚠️ 缺口：图库（IndexedDB，media.js）已经做好了，缺的是
+       「选本地图 → 存 mediaId → 显示时取 objectURL」这一步。
+       以前这里的文案是「别存本地图片，5MB 配额会被撑爆」——
+       图片本来就不走 localStorage，这句话早就不成立了，删掉免得误导
+       （2026-09-21）。 */
     f.avatar = textField({
       label: '头像地址',
-      hint: '留空就用名字首字。别存本地图片，5MB 配额会被撑爆',
+      hint: '留空就用名字首字。目前只收图片网址',
       value: existing ? (existing.avatar || '') : '',
       placeholder: 'https://…',
       inputmode: 'url'
@@ -532,11 +538,14 @@
       });
       gKind.card.appendChild(f.name.el);
 
-      /* 头像：存 URL 而不是二进制 —— localStorage 只有 5MB，
-         塞一张原图就可能撑爆配额（施工卡里踩过这个坑）。 */
+      /* 头像：**目前只收 URL**。
+         ⚠️ 缺口：图库（IndexedDB）已经有了，本地上传缺的是「选图 → 存 mediaId
+         → 显示时取 objectURL」这一环。
+         旧注释的理由（「localStorage 只有 5MB，塞一张原图就可能撑爆配额」）
+         已经不成立 —— 图片本来就不进 localStorage（2026-09-21）。 */
       f.avatar = textField({
         label: '头像地址',
-        hint: '留空就用名字首字。别存本地图片，5MB 配额会被撑爆',
+        hint: '留空就用名字首字。目前只收图片网址',
         value: existing ? (existing.avatar || '') : '',
         placeholder: 'https://…',
         inputmode: 'url'
@@ -722,7 +731,7 @@
       f.faceLockImage = textField({
         label: '图片锁脸（地址）',
         value: existing ? (existing.faceLockImage || '') : '',
-        hint: '先只收网址。本地上传要等 IndexedDB —— 现在塞本地图会撑爆 5MB 配额',
+        hint: '先只收网址 · 本地上传还没接（图库已经有了，缺这一环）',
         placeholder: 'https://…',
         inputmode: 'url'
       });

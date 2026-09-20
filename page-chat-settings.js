@@ -485,6 +485,13 @@
       }
       var ch = chat.characterId ? c.findCharacter(chat.characterId) : null;
       var chName = ch ? ch.name : '未绑定角色';
+      /* ⚠️ 这个渲染函数必须自己拿 charId 和 core。
+         文件里唯一的 `var core` 在 :166 那个**同级**函数里，不是外层作用域；
+         而 charId 从来只作为 charSettings() 的形参出现过。
+         漏掉就是整页 ReferenceError —— 'use strict' 不会替我们兜，
+         app.js 的错误边界会把这页整个换成「这一页出错了」（2026-09-21 修）。 */
+      var charId = chat.characterId || '';
+      var coreRef = Sleepy.core;
       var csRow = charSettings(chat.characterId);
       /* 防御：SW 的 stale-while-revalidate 会先给一屏旧 index.html，
          那一屏里 page-char-appearance.js 还没挂上 —— 别让整页崩掉。 */
@@ -622,14 +629,18 @@
       }
       secMem.appendChild(demoRow({
         label: '前往留痕', note: '查看属于 ' + chName + ' 的记忆',
-        onClick: function () { ctx.open('memory', { charId: charId }); }
+        onClick: function () {
+          if (!charId) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
+          ctx.open('memory', { charId: charId });
+        }
       }));
 
       /* ---- 他的手机（查手机系统 · 施工卡-查手机-v1） ---- */
       var secPh = sectionOf(body, '他的手机');
       var LIFE_LABEL = { off: '关 · 他只在你们互动时生活', low: '低 · 偶尔留下一点痕迹',
         mid: '中 · 像普通人一样过日子', high: '高 · 日子过得很满' };
-      var lifeLevel = (Sleepy.phone && Sleepy.phone.autoLifeOf) ? Sleepy.phone.autoLifeOf(charId) : 'off';
+      var lifeLevel = (charId && Sleepy.phone && Sleepy.phone.autoLifeOf)
+        ? Sleepy.phone.autoLifeOf(charId) : 'off';
       secPh.appendChild(demoRow({
         label: '自主生活', note: LIFE_LABEL[lifeLevel] || LIFE_LABEL.off,
         onClick: function () {
@@ -644,7 +655,7 @@
             ],
             current: lifeLevel,
             onPick: function (v) {
-              if (Sleepy.phone) Sleepy.phone.setAutoLife(charId, v);
+              if (Sleepy.phone && charId) Sleepy.phone.setAutoLife(charId, v);
             }
           });
         }
@@ -658,8 +669,11 @@
       /* 「他给过你密码」是 user 声明的关系事实（分流定案 §二·C）：
          知道密码 ≠ 获得允许 —— 打开后查手机多一个「使用你记得的密码」入口，
          但没被允许时照样算未经允许查看。 */
-      if (Sleepy.phone && core.scopeId()) {
-        var phRec = Sleepy.phone.ensurePhone(core.scopeId(), core.rootIdOf(charId) || charId);
+      if (Sleepy.phone && coreRef && coreRef.scopeId && coreRef.scopeId() && charId) {
+        var phRec = Sleepy.phone.ensurePhone(
+          coreRef.scopeId(),
+          (coreRef.rootIdOf ? coreRef.rootIdOf(charId) : '') || charId
+        );
         secPh.appendChild(demoRow({
           label: '他给过你密码',
           note: phRec.knownPin ? '告诉过你 —— 查手机时可以「使用你记得的密码」' : '还没给过（可以试着猜猜看）',
