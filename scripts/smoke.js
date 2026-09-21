@@ -2961,6 +2961,21 @@ t('K04 世界书：常驻必进，关键词条目按近期原文命中，个人�
     S.store.set('worldbooks', books.filter((b) => b.id !== bid));
   }
 });
+t('K04b 世界书导入：格式模板能被解析器原样吃回去 + 酒馆 json 必拒', () => {
+  if (!S.worldbook || !S.worldbook.formatTemplate) throw new Error('formatTemplate 没导出');
+  const parsed = S.worldbook.parseBooksText(S.worldbook.formatTemplate);
+  const books = parsed.filter((p) => (p.entries || []).length);
+  if (books.length !== 1) throw new Error('模板应解析出 1 本有内容的书，实际 ' + books.length);
+  const es = books[0].entries;
+  if (es.length !== 2) throw new Error('模板应解析出 2 个条目，实际 ' + es.length);
+  if (es[0].name !== '他养的猫' || es[0].keys.indexOf('煤球') < 0) {
+    throw new Error('关键词条目没解析对：' + JSON.stringify(es[0]));
+  }
+  if (es[1].name !== '他的口头禅' || !es[1].always) throw new Error('常驻条目没解析对');
+  if (!S.worldbook.isTavernJson('x.json', '{}')) throw new Error('.json 没被识别为酒馆格式');
+  if (!S.worldbook.isTavernJson('x.txt', '{"entries":[]}')) throw new Error('json 内容没被识别');
+  return 'ok';
+});
 t('assembleOffline：槽位齐 + 历史转写 + 马甲逐级回落', () => {
   const ch = S.core.upsertChar({ name: '线下测试角色', kind: 'main' }).id;
   const session = S.offlineStore.createSession(ch, {

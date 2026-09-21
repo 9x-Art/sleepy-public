@@ -23,7 +23,9 @@
 
    只有条目、没有书头的老文件也能导：整包进一本新书（全局），
    名字取文件名 —— 上一版的导出文件照导不误。
-   酒馆(SillyTavern)的 json 世界书一律识别并明确拒收（B2）。
+   酒馆(SillyTavern)的 json 世界书一律识别并明确拒收、不做导入
+   （2026-09-21 拍板）。导入失败按真实原因分因开口（docx 乱码 /
+   酒馆 json / 纯散文没条目标记），并递上能照抄的格式模板（WB_TEMPLATE）。
    ============================================================ */
 (function (global) {
   'use strict';
@@ -290,6 +292,110 @@
     try { JSON.parse(t); return true; } catch (e) { return false; }
   }
 
+  /* ---------------------- 导入：格式模板与分因报错 ----------------------
+     审查报告三.1：以前失败只有一句「这个文件里没有内容」，用户不知道自己
+     错在哪。现在按真实原因分别开口，并且把能照抄的格式模板直接递到手上。
+     （2026-09-21 拍板：酒馆格式**不做导入**，保持拒收。） */
+
+  /* 与 bookToText 导出的格式一字不差 —— 照抄就能导进来 */
+  var WB_TEMPLATE = [
+    '===== 世界书：示例书名 =====',
+    '范围：全局',
+    '',
+    '===== 条目：他养的猫 | 关键词：猫，煤球 =====',
+    '正文写在这里。对话里出现「猫」或「煤球」时，这段才会注入给模型。',
+    '',
+    '===== 条目：他的口头禅 | 常驻 =====',
+    '常驻条目不靠触发词，一直生效。'
+  ].join('\n');
+
+  function copyText(text) {
+    if (global.navigator && global.navigator.clipboard && global.navigator.clipboard.writeText) {
+      return global.navigator.clipboard.writeText(text);
+    }
+    /* file:// 下有些浏览器不给 clipboard，退回老办法 */
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) resolve(); else reject(new Error('浏览器不允许复制'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  /* 失败时给一条「能照抄的格式模板」。noFocus 弹窗（键盘不抢屏），
+     点「复制模板」直接进剪贴板。 */
+  function showFormatDialog(ctx, title, note) {
+    ui.prompt({
+      title: title,
+      note: note,
+      ok: '复制模板',
+      noFocus: true,
+      fields: [{ key: 'tpl', multiline: true, rows: 9, value: WB_TEMPLATE }]
+    }).then(function (v) {
+      if (v == null) return;
+      copyText(v).then(function () {
+        ctx.toast('模板已复制，存成 .txt 就能导入', 'ok');
+      }, function () {
+        ctx.toast('复制没成，在框里长按全选自己拷一份', 'warn');
+      });
+    });
+  }
+
+  /* 两个导入入口共用的「选文件 + 按真实原因报错」。
+     accept 里必须有 json/docx —— 不给的话手机文件管理器里这俩直接是灰的，
+     用户点不到，只会觉得「导入坏了」。选进来再按扩展名/内容分因。 */
+  function pickWorldbookFile(ctx, onText) {
+    pickTextFile('.txt,.md,.markdown,.json,.docx,text/plain,text/markdown', function (text, fileName) {
+      var ext = '';
+      var m = String(fileName || '').match(/\.([a-z0-9]+)$/i);
+      if (m) ext = m[1].toLowerCase();
+
+      /* Word / 富文本本质是 zip 壳，按文本读全是乱码 —— 别让人对着乱码猜。
+         （.txt 扩展名但内容以 PK 开头的，是改了名的 zip，一样拦。） */
+      if (ext === 'docx' || ext === 'doc' || ext === 'odt' || ext === 'rtf' ||
+          (ext !== 'txt' && String(text || '').slice(0, 2) === 'PK')) {
+        showFormatDialog(ctx, 'Word 文档读不了',
+          'docx 是压缩包，按文本读出来全是乱码。把内容复制出来存成 .txt 再导入。' +
+          '要的格式长这样：');
+        return;
+      }
+
+      /* 酒馆格式不导入（拍板 2026-09-21）。拒，但说清是什么、给出路。 */
+      if (ext === 'json' || isTavernJson(fileName, text)) {
+        showFormatDialog(ctx, '不收酒馆(SillyTavern)格式',
+          '这是 JSON 世界书，多半是酒馆导出的。这里不导入酒馆格式，' +
+          '只收下面的纯文本格式，照着模板抄一遍就能用：');
+        return;
+      }
+
+      onText(text, fileName);
+    }, function (msg) {
+      ctx.toast(msg || '读取文件失败', 'err');
+    });
+  }
+
+  /* 解析出来是空的，分两种情况开口：有散文但没条目标记 → 给模板；
+     整个文件是空的 → 一句话。 */
+  function noEntriesFeedback(ctx, text) {
+    if (String(text || '').trim()) {
+      showFormatDialog(ctx, '没认出条目',
+        '文件里有内容，但没有「===== 条目：名字 =====」这样的条目标记 —— ' +
+        '纯散文拼不成世界书。照下面的格式改一遍：');
+    } else {
+      ctx.toast('这个文件里没有内容', 'err');
+    }
+  }
+
+
   /* 把解析结果落库成书。同名书覆盖（幂等）。characterName 在这里
      解析成 characterId。返回 {added, updated} */
   function importBooks(parsed) {
@@ -448,17 +554,13 @@
 
   /* 一级页导入：整份文件 → 若干本书（同名书覆盖） */
   function importBooksFile(ctx) {
-    pickTextFile('.txt,.md,.markdown,text/plain,text/markdown', function (text, fileName) {
-      if (isTavernJson(fileName, text)) {
-        ctx.toast('这是酒馆(SillyTavern)的 json 世界书，这里只收 txt / md 纯文本', 'err');
-        return;
-      }
+    pickWorldbookFile(ctx, function (text, fileName) {
       var parsed = parseBooksText(text);
       parsed = parsed.filter(function (p) {
         return (p.entries || []).length || p.name;
       });
       if (!parsed.length) {
-        ctx.toast('这个文件里没有内容', 'err');
+        noEntriesFeedback(ctx, text);
         return;
       }
       parsed.forEach(function (p, i) {
@@ -577,11 +679,7 @@
 
   /* 二级页导入：文件里的条目塞进当前这本书（同名条目覆盖） */
   function importEntriesFile(ctx, bookId) {
-    pickTextFile('.txt,.md,.markdown,text/plain,text/markdown', function (text, fileName) {
-      if (isTavernJson(fileName, text)) {
-        ctx.toast('这是酒馆(SillyTavern)的 json 世界书，这里只收 txt / md 纯文本', 'err');
-        return;
-      }
+    pickWorldbookFile(ctx, function (text, fileName) {
       var parsed = parseBooksText(text);
       var items = [];
       parsed.forEach(function (p) { items = items.concat(p.entries || []); });
@@ -589,7 +687,7 @@
         return String(it.content || '').trim() || it.name;
       });
       if (!items.length) {
-        ctx.toast('这个文件里没有条目', 'err');
+        noEntriesFeedback(ctx, text);
         return;
       }
       /* 必须在 withBook 的同一份数组里改，否则 store.get 的深拷贝会把改动吞掉 */
@@ -937,7 +1035,8 @@
     allBooksToText: allBooksToText,
     parseBooksText: parseBooksText,
     importBooks: importBooks,
-    isTavernJson: isTavernJson
+    isTavernJson: isTavernJson,
+    formatTemplate: WB_TEMPLATE
   };
 
 })(window);

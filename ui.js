@@ -464,9 +464,11 @@
       els.mask.classList.add('is-open');
       els.card.classList.add('is-open');
       if (kind === 'input') {
-        /* 等一帧再聚焦，刚 display 出来的元素直接 focus 在部分浏览器上不生效 */
+        /* 等一帧再聚焦，刚 display 出来的元素直接 focus 在部分浏览器上不生效。
+           o.noFocus：给「内容只是给人看/复制」的弹窗用 —— 手机上自动聚焦
+           会立刻弹键盘，正好把要看的正文盖住。 */
         var first = fields ? live[0].input : els.input;
-        setTimeout(function () { first.focus(); first.select(); }, 30);
+        if (!o.noFocus) setTimeout(function () { first.focus(); first.select(); }, 30);
       }
     });
   }
