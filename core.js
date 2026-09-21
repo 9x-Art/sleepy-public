@@ -17,7 +17,8 @@
    ---- 树状层级（《终极架构总纲》第 2 节）----
      kind='main' 大号 / 灵魂层：根节点，独立记忆库
      kind='sub'  皮套 / 小号：挂在某个大号名下，共享同一个大脑
-     kind='npc'  附属：挂在大号名下，只在该大号的宇宙/群聊里出场
+     kind='npc'  附属：属于整座岛（parentType='sandbox'，唯一口径 npcsOfRoom）；
+                 岛上的谁认识 TA，由 knownBy / 认知矩阵单独定（2026-09-21 拍板）
 
      根节点（rootOf）＝ 记忆库的主人。皮套的记忆要归到根上去。
 
@@ -638,6 +639,10 @@
         region: has(data, 'region') ? data.region : '',
         timezone: has(data, 'timezone') ? data.timezone : '',
         isDefault: !!data.isDefault,
+        /* 岛章：调用方显式给了就照写（配置台「在本岛建马甲」），
+           没给才盖当前房的章（tagScope）。以前 new-item 分支根本不收
+           sandboxId，跨岛开着的配置台建出来会盖错章。 */
+        sandboxId: has(data, 'sandboxId') ? data.sandboxId : '',
         createdAt: Date.now(),
         updatedAt: Date.now()
       };

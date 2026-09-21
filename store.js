@@ -11,7 +11,7 @@
         [{ id, name, content, kind:'main'|'sub'|'npc', parentId, ... }]
         kind='main' 大号（灵魂层，根节点，parentId=null）
         kind='sub'  皮套（小号，挂在大号名下，parentId 指向大号）
-        kind='npc'  附属（挂在大号名下，只在该大号的宇宙/群聊里出场）
+        kind='npc'  附属（属于整座岛，parentType='sandbox'；谁认识 TA 单独定）
       对外展示的皮套各不相同，但底层共享同一个大脑 —— 这个「共享」
       由 parentId 表达，记忆库挂在根节点上（见 memories）。
 

@@ -72,6 +72,21 @@
 
   function isSkin(cfg) { return !!SKINS[cfg.mode]; }
 
+  /* 气泡底色 → 字色。色板是**角色级**的选择（角色外观里挑的），
+     底色换了字色必须跟着翻：浅色板配白字就是一片看不见。
+     用相对亮度判明暗，白 / 近黑二选一 —— 各家聊天都是这个做法。
+     注意作用面只到「我方气泡」：对方气泡跟主题（.msg-assistant 走 --g-ink），
+     这是用户 2026-09-21 拍的口径「正文跟着主题，气泡有角色设置的话跟着角色设置」。 */
+  function inkOn(hex) {
+    var m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || '').trim());
+    if (!m) return '#FFFFFF';
+    var n = parseInt(m[1], 16);
+    var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    /* sRGB 相对亮度（WCAG 那条公式，系数取整到 0.001 就够用） */
+    var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return lum > 0.62 ? '#241F19' : '#FFFFFF';
+  }
+
   /* ---------------------------- 存取 ---------------------------- */
 
   function readAll() {
@@ -186,6 +201,10 @@
       /* ---- 经典：主题色 × 氛围浓度；尾巴三角跟着同色 ---- */
       lines.push('.msg-wrap.ap-on .msg-user .msg-text{background-color:' + uBg + ';}');
       lines.push('.msg-wrap.ap-on .msg-user .msg-text::after{border-left-color:' + uBg + ';}');
+      /* 我方气泡的字色跟着**这张色板**翻（见 inkOn 的说明）。
+         不给对方气泡写字色 —— 它跟主题走。 */
+      var uInk = inkOn(c.accent);
+      lines.push('.msg-wrap.ap-on .msg-user .msg-text,.msg-wrap.ap-on .msg-user .msg-body{color:' + uInk + ';}');
     }
 
     return lines.join('\n');

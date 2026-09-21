@@ -526,6 +526,58 @@
     }
   });
 
+  /* --------------------- 软键盘避让（真机） ---------------------
+
+     手机键盘弹起时**布局视口不动**，缩的只有 visualViewport；而
+     position:fixed 的抽屉锚在布局视口底部 → 原地被键盘盖住。
+     用户看到的正是这个：「点击输入框后键盘压住了输入框，要输入几个字
+     才会上去」—— 那一下是浏览器等内容撑高之后自己滚的。
+
+     所以自己把键盘高度算出来写进 --kb-inset，抽屉（.iol-drawer 等）
+     拿它把自己抬到键盘上沿；聚焦的框再 scrollIntoView 一次，
+     落点在弹起的那一帧就对了，不用等打字。
+
+     只认 visualViewport（Chrome 61+ / Safari 13+）。没有这个 API 就
+     整个不启用 —— 老浏览器维持原样，不会比现在更差。 */
+  (function () {
+    var vv = global.visualViewport;
+    if (!vv) return;
+    var root = document.documentElement;
+    var raf = null;
+
+    function sync() {
+      raf = null;
+      /* offsetTop 也要减：iOS 弹键盘时会把整个可视区往上顶，
+         不减的话算出来的高度会少一截（抽屉正好又被盖住一点点）。 */
+      var kb = Math.max(0, (global.innerHeight || vv.height) - vv.height - vv.offsetTop);
+      /* 80px 以内基本是地址栏伸缩，不是键盘 —— 跟着抖会把界面顶得一跳一跳 */
+      if (kb < 80) kb = 0;
+      if (kb) root.style.setProperty('--kb-inset', kb + 'px');
+      else root.style.removeProperty('--kb-inset');
+      root.classList.toggle('kb-open', kb > 0);
+    }
+    function schedule() {
+      if (raf) return;
+      raf = global.requestAnimationFrame(sync);
+    }
+    vv.addEventListener('resize', schedule);
+    vv.addEventListener('scroll', schedule);
+
+    /* 键盘弹起后把正在编辑的框拉进可视区中间 ——
+       抽屉里表单长，不拉的话焦点框可能正好压在键盘下沿。 */
+    document.addEventListener('focusin', function (e) {
+      var t = e.target;
+      if (!t || !t.tagName) return;
+      var tag = t.tagName.toLowerCase();
+      if (tag !== 'input' && tag !== 'textarea') return;
+      setTimeout(function () {
+        if (document.activeElement !== t) return;   /* 已经点到别处了，别抢 */
+        try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        catch (err) { /* 老浏览器不认参数对象，忽略 */ }
+      }, 260);
+    });
+  })();
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.register = function (id, def) { registry[id] = def || {}; return def; };

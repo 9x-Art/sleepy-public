@@ -39,23 +39,36 @@
      accent / ink / ink2 抄自 style.css 各主题块的 --g-accent / --g-ink / --g-ink-2：
      预览把这三个 inline 设到预览容器上，壁纸铺上后**配色差异**也能看见
      （用户 2026-09-21：壁纸+配色同时选，预览看不出配色影响）。 */
+  /* 四套配色。`ink/ink2` = 无壁纸时正文/次级字色；`wallInkDark/wallInkLight`
+     是**铺了壁纸之后**桌面裸字（App 名 / 日期头 / 线框图标）用的字色。
+
+     为什么壁纸要单独一对（2026-09-21 修「预览改了实际没改」）：
+     以前壁纸下的字色在 style.css 里写死成 #F2EDE3 / #4A4238，于是
+     「配色」这个选择在**没有壁纸**时看得见、一铺壁纸就看不见了 ——
+     而预览卡不看壁纸那两条规则，照样跟着主题变 → 预览在说谎。
+     现在壁纸只决定**明暗**，色相仍旧由主题给：四个主题各出一对，
+     预览和真实桌面读的是同一对变量，不可能再对不上。 */
   var THEMES = [
     { id: 'grape', name: '纯白', hint: '纯白底 · 暖棕字 · 焦糖点缀',
       chip: 'linear-gradient(140deg,#B08A5E,#FFFFFF)',
       bg: 'linear-gradient(165deg,#FBFAF7 0%,#F1EDE4 100%)', dark: false,
-      accent: '#B08A5E', ink: '#43382C', ink2: '#8A7A67' },
+      accent: '#B08A5E', ink: '#43382C', ink2: '#8A7A67',
+      wallInkDark: '#F2EDE3', wallInkLight: '#4A4238' },
     { id: 'night', name: '夜灯', hint: '深色，晚上看不刺眼',
       chip: 'linear-gradient(140deg,#7FC97A,#252F27)',
       bg: 'linear-gradient(165deg,#232E29 0%,#31403B 100%)', dark: true,
-      accent: '#8FE08A', ink: '#E7EFE8', ink2: '#A9B9AB' },
+      accent: '#8FE08A', ink: '#E7EFE8', ink2: '#A9B9AB',
+      wallInkDark: '#E7EFE8', wallInkLight: '#2C3630' },
     { id: 'peach', name: '蜜桃', hint: '暖粉，软一点',
       chip: 'linear-gradient(140deg,#E8846B,#FFE6DC)',
       bg: 'linear-gradient(165deg,#F9E9E2 0%,#F4EDE3 100%)', dark: false,
-      accent: '#E8846B', ink: '#3E2F2A', ink2: '#806A62' },
+      accent: '#E8846B', ink: '#3E2F2A', ink2: '#806A62',
+      wallInkDark: '#FFEDE4', wallInkLight: '#4A322C' },
     { id: 'sea', name: '海盐', hint: '冷蓝，安静',
       chip: 'linear-gradient(140deg,#4C86B8,#DCEAF6)',
       bg: 'linear-gradient(165deg,#E6EFF3 0%,#EDF0EA 100%)', dark: false,
-      accent: '#5B93C4', ink: '#28394A', ink2: '#5F7A92' }
+      accent: '#5B93C4', ink: '#28394A', ink2: '#5F7A92',
+      wallInkDark: '#E8F1F8', wallInkLight: '#243444' }
   ];
 
   var FONTS = [
@@ -304,6 +317,17 @@
       phone.setAttribute('data-theme', (isl && isl.theme) || a.theme);
       phone.setAttribute('data-motion', a.motion === 'off' ? 'off' : 'on');
       phone.style.setProperty('--fs-scale', String(a.fontScale));
+      /* 壁纸下的桌面裸字色：明暗由壁纸定，色相由**生效主题**定。
+         写在这里而不是写死在 style.css 的 .is-dark-wall 里，
+         是为了让「配色」在铺了壁纸之后照样看得出来
+         （2026-09-21 修：预览改了、真实桌面没改）。 */
+      var th = null;
+      var thId = (isl && isl.theme) || a.theme;
+      THEMES.forEach(function (x) { if (x.id === thId) th = x; });
+      if (th) {
+        phone.style.setProperty('--wall-ink-dark', th.wallInkDark || '#F2EDE3');
+        phone.style.setProperty('--wall-ink-light', th.wallInkLight || '#4A4238');
+      }
       /* 正文字颜色：inline 覆盖主题块的 --g-ink（--text 是它的别名）；
          空 = 跟随主题，把覆盖摘掉 */
       if (a.textColor) phone.style.setProperty('--g-ink', a.textColor);
@@ -509,9 +533,24 @@
     /* 草稿配色的三个关键色 inline 到预览容器上 —— 预览里的文字/图标/色样
        都引 var(--g-ink)/(--g-accent)，换配色预览就跟着变。 */
     if (theme) {
-      pv.style.setProperty('--g-ink', theme.ink);
+      /* 正文字色跟**草稿**走，不能只跟主题 —— 用户选过「正文字颜色」时，
+         真实 App 的 --g-ink 被 inline 钉在 #phone 上（见 apply():333），
+         换配色它根本不动。预览要是还照主题给，就会演出
+         「预览里正文跟着配色变了、一点到实际去没变」（用户 2026-09-21）。
+         口径必须和 apply() 完全一致：有自定义用自定义，没有才回落主题。 */
+      pv.style.setProperty('--g-ink', draft.textColor || theme.ink);
       pv.style.setProperty('--g-ink-2', theme.ink2);
       pv.style.setProperty('--g-accent', theme.accent);
+    }
+    /* 桌面裸字（状态栏 / 下午好 / 角标）在真实桌面上是**壁纸定明暗、
+       主题定色相**那一对变量（见 apply() 写的 --wall-ink-*）。
+       预览卡以前没管这一层，铺了壁纸照样跟 --g-ink 走 → 说谎。
+       这里跟真实桌面用同一对值：有壁纸才写，没壁纸留空
+       （留空时上面那组 --g-ink 生效，就是真实桌面「跟随主题」的样子）。 */
+    var wallActive = cfg.wall && cfg.wall !== 'auto';
+    if (theme && (dark || wallActive)) {
+      pv.style.setProperty('--wall-ink',
+        (dark ? theme.wallInkDark : theme.wallInkLight) || (dark ? '#F2EDE3' : '#4A4238'));
     }
     /* ⚠️ 判断要用 cfg.wall，不能写 `wall && wall.id === 'custom'`：
        'custom' 是**伪 id**，WALLS 表里根本没有这一项，上面那个 forEach

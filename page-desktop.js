@@ -2121,6 +2121,14 @@
     st.node.classList.remove('is-dragging');
     if (st.ghost && st.ghost.parentNode) st.ghost.parentNode.removeChild(st.ghost);
     if (st.grid) st.grid.classList.remove('is-drop-target');
+    /* 跨屏拖到一半被打断（重画 / 退出编辑）：节点可能已经挂在别的屏的
+       DOM 里，但存档还在源屏 —— 挪回去，别留下两处对不上。 */
+    if (st.scaf) {
+      st.scaf.scroller.style.scrollBehavior = '';
+      if (st.pi !== st.srcPi && st.scaf.grids[st.srcPi]) {
+        st.scaf.grids[st.srcPi].appendChild(st.node);
+      }
+    }
   }
 
   /* 给一个组件绑上「长按 → 拖动」。
@@ -2228,6 +2236,25 @@
     node.addEventListener('click', onClick, true);   /* 捕获阶段先拦 */
   }
 
+  /* 拖到屏幕左右边缘多近就翻到相邻那一屏 */
+  var DRAG_EDGE = 46;
+
+  /* 拖拽要用到的那几样东西：滚动容器 + 每一屏的网格。
+     以前只认「起点那一屏」，所以组件永远出不了自己那一屏
+     （用户 2026-09-21：「组件和 app 还不可以跨屏幕移动喔」）。 */
+  function dragScaffold(ctx) {
+    var body = ctx && ctx.body;
+    if (!body) return null;
+    var scroller = body.querySelector('.dt-scroll');
+    if (!scroller) return null;
+    var screens = body.querySelectorAll('.dt-screen');
+    var grids = [];
+    for (var i = 0; i < screens.length; i++) {
+      grids.push(screens[i].querySelector('.dt-grid'));
+    }
+    return { scroller: scroller, screens: screens, grids: grids };
+  }
+
   function startCellDrag(node, cell, pi, ctx, p) {
     var grid = node.parentNode;
     var ghost = h('div', 'dt-ghost');
@@ -2237,13 +2264,47 @@
     node.classList.add('is-dragging');
     node.style.zIndex = 40;
 
+    var scaf = dragScaffold(ctx);
+    /* 拖拽期间把 scroll-behavior 收成 auto：下面换屏是「同一帧里
+       挪节点 + 挪滚动位置」，smooth 会让滚动慢慢追，看着像组件被扯掉。 */
+    if (scaf) scaf.scroller.style.scrollBehavior = 'auto';
+
     dragState = {
       node: node, cell: cell, pi: pi, grid: grid, ghost: ghost,
       ctx: ctx,
+      srcPi: pi,
+      scaf: scaf,
+      /* 「蹭边缘翻屏」的一次性开关。翻过去之后指针还停在边缘区里，
+         如果不管它，下一帧 relX 依然超界 → 又翻一屏 → 一路翻到最后一屏，
+         用户根本落不到中间那几屏。所以翻完就卸武装，
+         必须先把指针挪回中间区才重新武装（一次边缘 = 一屏）。 */
+      edgeArmed: true,
       off: { x: p.x, y: p.y },
       origin: { x: cell.x, y: cell.y }
     };
     grid.classList.add('is-drop-target');
+  }
+
+  /* 换到另一屏去：幽灵、被拖的节点、网格高亮、滚动位置一起挪。
+     节点和滚动**同向同幅**地动（都是 clientWidth），所以在视口里
+     看着是原地不动的 —— 不用去补 translate 的偏移。 */
+  function switchDragScreen(pi) {
+    var st = dragState;
+    if (!st || !st.scaf) return;
+    var grids = st.scaf.grids;
+    if (!grids[pi] || !grids[st.pi]) return;
+
+    st.grid.classList.remove('is-drop-target');
+    st.pi = pi;
+    st.grid = grids[pi];
+    st.grid.classList.add('is-drop-target');
+    st.grid.appendChild(st.ghost);      /* appendChild = 移动，不用先摘 */
+    st.grid.appendChild(st.node);
+
+    var w = st.scaf.scroller.clientWidth || 0;
+    st.scaf.scroller.scrollLeft = pi * w;
+    /* 目标屏也要显形网格（paintEditState 按 scrollLeft 判当前屏） */
+    paintEditState(true);
   }
 
   function moveCellDrag(p) {
@@ -2253,8 +2314,24 @@
     var dy = p.y - st.off.y;
     st.node.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.06)';
 
+    /* ---- 蹭到左右边缘就翻到相邻那一屏 ---- */
+    if (st.scaf && st.scaf.scroller.clientWidth) {
+      var box = st.scaf.scroller.getBoundingClientRect();
+      var relX = p.x - box.left;
+      /* 回到中间区 = 重新武装，允许下一次蹭边翻屏 */
+      if (relX >= DRAG_EDGE && relX <= box.width - DRAG_EDGE) st.edgeArmed = true;
+      var want = st.pi;
+      if (relX < DRAG_EDGE) want = st.pi - 1;
+      else if (relX > box.width - DRAG_EDGE) want = st.pi + 1;
+      want = Math.max(0, Math.min(PAGES - 1, want));
+      if (want !== st.pi && st.edgeArmed) {
+        st.edgeArmed = false;
+        switchDragScreen(want);
+      }
+    }
+
     /* 幽灵显示「当前会落在哪」，用户不用自己猜对齐。
-       注意把 **这一屏的 grid** 传进去 —— 用 ctx 反查会拿到第 0 屏的网格。 */
+       注意把 **当前这一屏的 grid** 传进去 —— 用 ctx 反查会拿到第 0 屏的网格。 */
     var r = st.node.getBoundingClientRect();
     var spot = snapTo(st.grid, st.ctx, r.left, r.top, st.cell.w, st.cell.h);
     var d = getDesktop();
@@ -2276,22 +2353,47 @@
     st.node.classList.remove('is-dragging');
     if (st.ghost && st.ghost.parentNode) st.ghost.parentNode.removeChild(st.ghost);
     st.grid.classList.remove('is-drop-target');
+    if (st.scaf) st.scaf.scroller.style.scrollBehavior = '';
 
     var spot = st.spot;
     if (!spot) return;
 
-    /* 原地没动：当作点了一下，不写存档 */
-    if (spot.x === st.origin.x && spot.y === st.origin.y) return;
+    /* 原地没动（也没换屏）：当作点了一下，不写存档 */
+    if (st.pi === st.srcPi && spot.x === st.origin.x && spot.y === st.origin.y) return;
 
     var d = getDesktop();
     if (!canPlace(d.pages, st.pi, st.cell, spot.x, spot.y)) {
       ctx.toast('那儿放不下', 'warn');
+      /* 跨屏失败要把节点挪回原来那一屏，否则它留在目标屏的 DOM 里、
+         存档里却还在源屏 —— 下次渲染就凭空消失（或者更糟：重影）。 */
+      if (st.pi !== st.srcPi && st.scaf && st.scaf.grids[st.srcPi]) {
+        st.scaf.grids[st.srcPi].appendChild(st.node);
+      }
       return;                    /* 不改存档，组件弹回原位（transform 已清） */
     }
 
     st.cell.x = spot.x;
     st.cell.y = spot.y;
-    persistCell(ctx, st.pi, st.cell.i, spot.x, spot.y);
+
+    /* 跨屏：从源屏那一页摘掉，挂到目标屏那一页 —— 两处一起改，
+       不能只改坐标（那样会在源屏留下一个同 id 的孤儿格）。 */
+    if (st.pi !== st.srcPi) {
+      var from = d.pages[st.srcPi] || [];
+      var moved = null;
+      for (var i = 0; i < from.length; i++) {
+        if (from[i] && from[i].i === st.cell.i) { moved = from.splice(i, 1)[0]; break; }
+      }
+      if (!moved) moved = st.cell;
+      moved.x = spot.x;
+      moved.y = spot.y;
+      d.pages[st.pi] = d.pages[st.pi] || [];
+      d.pages[st.pi].push(moved);
+      setDesktop(d);
+      ctx.toast('挪到第 ' + (st.pi + 1) + ' 屏了', 'ok');
+    } else {
+      persistCell(ctx, st.pi, st.cell.i, spot.x, spot.y);
+    }
+
     st.node.style.gridArea = spot.y + ' / ' + spot.x + ' / ' +
       (spot.y + st.cell.h) + ' / ' + (spot.x + st.cell.w);
   }

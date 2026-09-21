@@ -604,7 +604,9 @@
         npcs.forEach(function (n) {
           var card = h('button', 'iol-member');
           card.type = 'button';
-          card.appendChild(h('span', 'iol-member-ava', (n.name || '?').charAt(0)));
+          var nAva = h('span', 'iol-member-ava', (n.name || '?').charAt(0));
+          card.appendChild(nAva);
+          core.setAvatarBg(nAva, n);
           card.appendChild(h('strong', '', n.name));
           card.appendChild(h('small', '', clip(n.content || 'NPC', 18)));
           card.addEventListener('click', function () {
@@ -653,7 +655,7 @@
       /* ---- 我的马甲 ---- */
       var gMask = group('我的马甲',
         '这座岛自己的马甲 —— 别岛的不带过来（岛与岛隔绝往来）。' +
-        '想要同一个人设，点「从别的岛复制一件」。新的在「我 → 设置 → 小号」里建。');
+        '想要同一个人设，点「从别的岛复制一件」；也可以就在这里直接新建。');
       var maskBox = h('div', 'cfg-masks');
       gMask.card.appendChild(maskBox);
 
@@ -706,7 +708,10 @@
                 avatar: u.avatar || '',
                 /* 头像若存的是图库（IndexedDB），复制时两件马甲共用同一张图 ——
                    mediaId 指向的是图，不是「哪件马甲的专属文件」 */
-                avatarMedia: u.avatarMedia || ''
+                avatarMedia: u.avatarMedia || '',
+                /* 显式盖本岛章：人在 A 岛配置台复制 B 岛的马甲时，
+                   不能靠「当前房」兜底（那会盖成 A 以外的岛）。 */
+                sandboxId: sb.id
               });
               var next = (sb.maskIds || []).slice();
               if (next.indexOf(nu.id) < 0) next.push(nu.id);
@@ -736,16 +741,16 @@
         });
         if (!users.length) {
           maskBox.appendChild(h('p', 'cfg-empty',
-            '这座岛还没有马甲 · 在「我 → 设置 → 小号」里建，或从别的岛复制一件'));
-          paintCopyList();
-          return;
+            '这座岛还没有马甲 · 下面可以新建一件，或从别的岛复制'));
         }
         var picked = sb.maskIds || [];
         users.forEach(function (u) {
           var on = picked.indexOf(u.id) >= 0;
           var item = h('button', 'cfg-mask' + (on ? ' is-on' : ''));
           item.type = 'button';
-          item.appendChild(h('span', 'cfg-check', on ? '\u2713' : ''));
+          var uAva = h('span', 'cfg-ava', core.initialOf(u.name));
+          item.appendChild(uAva);
+          core.setAvatarBg(uAva, u);
           var mb = h('div', 'cfg-char-body');
           mb.appendChild(h('span', 'cfg-char-name', u.name));
           mb.appendChild(h('span', 'cfg-char-line', u.persona || '还没写一句话人设'));
@@ -761,11 +766,23 @@
           });
           maskBox.appendChild(item);
         });
+
+        /* 就在本岛建马甲（用户 2026-09-21：配置台那句「去『我 → 设置 → 小号』里建」
+           不 ok —— 全局路径和按岛矛盾，而且得多跳一页）。
+           显式带上 sandboxId，免得盖错章。 */
+        var addMask = h('button', 'cfg-mask cfg-mask-add');
+        addMask.type = 'button';
+        addMask.appendChild(h('span', 'cfg-check', ''));
+        addMask.appendChild(h('span', 'cfg-char-name', '＋ 新建一件马甲'));
+        addMask.addEventListener('click', function () {
+          ctx.open('mask-edit', { id: '', sandboxId: sb.id });
+        });
+        maskBox.appendChild(addMask);
       }
 
       /* ---- 初始认知锁 ---- */
       var gLock = group('初始认知锁',
-        '定这一段关系的基调。之后在聊天里长按头像还能随时掉马。');
+        '定这一段关系的基调。');
       var lockBox = h('div', 'cfg-locks');
       gLock.card.appendChild(lockBox);
 
@@ -954,6 +971,7 @@
 
         var lines = '', nodes = '';
         var col = {};      /* 每一列的「下一个空位」y */
+        var avaJobs = [];  /* 这一遍画出来的头像待填表（fillTreeAvatars 用） */
 
         function colNext(x, key) {
           if (col[key] === undefined) col[key] = y0 + ROW_GAP;
@@ -972,6 +990,18 @@
             (act ? ' data-act="' + esc(act) + '"' : '') + '>';
           s += '<circle class="tree-disc ' + cls + '" cx="' + x.toFixed(1) +
             '" cy="' + y.toFixed(1) + '" r="' + r + '"/>';
+          /* 头像（用户 2026-09-21：补了头像但是 user 看不到）：
+             有图就叠一层圆形裁剪的 <image>，首字母垫在底下（图挂了还能看）。 */
+          if (c && (c.avatarMedia || c.avatar)) {
+            var cid = 'tclip' + avaJobs.length;
+            s += '<clipPath id="' + cid + '"><circle cx="' + x.toFixed(1) + '" cy="' +
+              y.toFixed(1) + '" r="' + (r - 1.6).toFixed(1) + '"/></clipPath>';
+            s += '<image class="tree-ava" clip-path="url(#' + cid + ')" x="' +
+              (x - r + 1.6).toFixed(1) + '" y="' + (y - r + 1.6).toFixed(1) +
+              '" width="' + (2 * r - 3.2).toFixed(1) + '" height="' + (2 * r - 3.2).toFixed(1) +
+              '" preserveAspectRatio="xMidYMid slice" data-ava="' + avaJobs.length + '"/>';
+            avaJobs.push(c);
+          }
           s += '<text class="tree-initial" x="' + x.toFixed(1) + '" y="' +
             (y + 1).toFixed(1) + '" text-anchor="middle" dominant-baseline="middle">' +
             esc(core.initialOf(name)) + '</text>';
@@ -979,6 +1009,23 @@
             (y + r + 14).toFixed(1) + '" text-anchor="middle">' + esc(clip(name, 7)) + '</text>';
           s += '</g>';
           return s;
+        }
+
+        /* innerHTML 之后异步把 <image> 的 href 填上（图库头像是 IndexedDB 的
+           objectURL，得等 Promise）。桩的 querySelectorAll 返回 []，天然跳过。 */
+        function fillTreeAvatars() {
+          var imgs = treeWrap.querySelectorAll('image[data-ava]');
+          for (var i = 0; i < imgs.length; i++) {
+            (function (img) {
+              var rec = avaJobs[parseInt(img.getAttribute('data-ava'), 10)];
+              if (!rec) return;
+              core.avatarSrc(rec).then(function (u) {
+                if (!u || !img.parentNode) return;
+                img.setAttribute('href', u);
+                if (img.parentNode.classList) img.parentNode.classList.add('has-ava');
+              });
+            })(imgs[i]);
+          }
         }
 
         function addSlot(x, y, label, act) {
@@ -1088,6 +1135,7 @@
           lines + nodes + '</svg>';
 
         wireTree();
+        fillTreeAvatars();
         centerScroll();
         treeHint.textContent = mains.length
           ? '红线上的字就是你和他的关系 · 点人可以改'
@@ -1319,7 +1367,9 @@
         npcs.forEach(function (n) {
           var card = h('button', 'iol-member');
           card.type = 'button';
-          card.appendChild(h('span', 'iol-member-ava', avatarLetter(n)));
+          var nAva = h('span', 'iol-member-ava', avatarLetter(n));
+          card.appendChild(nAva);
+          core.setAvatarBg(nAva, n);
           card.appendChild(h('strong', '', n.name));
           card.appendChild(h('small', '', clip(n.content || 'NPC', 18)));
           card.addEventListener('click', function () {
@@ -1413,10 +1463,20 @@
         return s;
       }
       function personNode(c, kind) {
-        var p = h('div', 'iol-person is-' + kind);
-        p.appendChild(h('span', 'iol-ava', avatarLetter(c)));
+        /* 总览即配置台（用户 2026-09-21 拍板）：点人物头像直接进编辑 ——
+           char 进档案、我 进配置台（马甲/认知锁在那边）。以前是纯 div，
+           点了没反应，用户以为编辑入口坏了。 */
+        var p = h('button', 'iol-person is-' + kind);
+        p.type = 'button';
+        var ava = h('span', 'iol-ava', avatarLetter(c));
+        p.appendChild(ava);
         p.appendChild(h('b', '', c.name || '未命名'));
         if (c.sub) p.appendChild(h('small', '', c.sub));
+        core.setAvatarBg(ava, c);   /* 图库头像（avatarMedia）+ 网址头像都走这里 */
+        p.addEventListener('click', function () {
+          if (kind === 'char' && c.id) ctx.open('island-char', { sbId: sb.id, charId: c.id });
+          else ctx.open('island-config', { id: sb.id });
+        });
         return p;
       }
       function infoRow(label, value, onEdit) {
@@ -1575,7 +1635,9 @@
 
         /* hero */
         var hero = h('div', 'ipro-hero');
-        hero.appendChild(h('div', 'ipro-ava', avatarLetter(c)));
+        var heroAva = h('div', 'ipro-ava', avatarLetter(c));
+        hero.appendChild(heroAva);
+        core.setAvatarBg(heroAva, c);
         var hName = h('h2', '', c.name || '未命名');
         hName.appendChild(h('span', 'ipro-pill', isNpc ? 'NPC' : (c.kind === 'sub' ? '身份' : '主要角色')));
         hero.appendChild(hName);
@@ -1714,7 +1776,9 @@
       function identityCard(s, tag) {
         var card = h('button', 'ipro-identity');
         card.type = 'button';
-        card.appendChild(h('span', 'ipro-mini', avatarLetter(s)));
+        var mini = h('span', 'ipro-mini', avatarLetter(s));
+        card.appendChild(mini);
+        core.setAvatarBg(mini, s);
         card.appendChild(h('b', '', s.name || '未命名'));
         card.appendChild(h('small', '', tag));
         card.addEventListener('click', function () {
@@ -1884,7 +1948,9 @@
           known.forEach(function (p) {
             var row = h('button', 'iol-person-pick is-on');
             row.type = 'button';
-            row.appendChild(h('span', 'iol-pick-ava', p.isMe ? '我' : avatarLetter(p)));
+            var ava = h('span', 'iol-pick-ava', p.isMe ? '我' : avatarLetter(p));
+            core.setAvatarBg(ava, p);
+            row.appendChild(ava);
             var rowBody = h('span', 'iol-pick-body');
             rowBody.appendChild(h('b', '', p.name));
             rowBody.appendChild(h('small', '', p.sub + ' · 已认识'));

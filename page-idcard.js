@@ -613,7 +613,7 @@
       /* ---- 身份 ---- */
       var gKind = group('身份',
         '大号是根，有独立记忆库；皮套挂在大号名下，对外是另一张脸，底层同源；' +
-        'NPC 只在该大号的宇宙里出场。');
+        'NPC 属于整座岛 —— 岛上的谁认识 TA，在「岛内成员」里单独定。');
 
       var kindRow = h('div', 'seg');
       [['main', '大号'], ['sub', '皮套'], ['npc', 'NPC']].forEach(function (k) {
@@ -674,7 +674,7 @@
          原本的 hint 写着「用在桌面的双城时间」，那个组件早撤了。 */
       f.status = textField({
         label: '状态签名',
-        hint: '显示在桌面角色卡上',
+        hint: '留给桌面角色卡显示（角色卡上架组件商城后生效）',
         value: existing ? (existing.status || '') : '',
         placeholder: '开会中…'
       });
@@ -1223,9 +1223,8 @@
       var body = ctx.body;
 
       var g = group('User 马甲',
-        '「极致的 1:1 对称」：Char 有几个皮套，你就该有几件马甲。' +
-        '切号时，选中的马甲决定整个 OS 里「我」是谁。' +
-        '马甲跟岛走：在哪座岛的界面里建就归哪座岛，别岛的不在这里出现。');
+        '马甲跟岛走：在哪座岛的界面里建就归哪座岛，别岛的不在这里出现。' +
+        '在这座岛里切号，选中的马甲决定「我」是谁。');
 
       var card = g.card;
 
@@ -1247,7 +1246,9 @@
         list.forEach(function (u) {
           var line = h('button', 'pick-line' + (u.id === activeId ? ' is-on' : ''));
           line.type = 'button';
-          line.appendChild(h('span', 'pick-av', core.initialOf(u.name)));
+          var pav = h('span', 'pick-av', core.initialOf(u.name));
+          line.appendChild(pav);
+          core.setAvatarBg(pav, u);   /* 图库头像（第 14 批的口子），别再只有首字母 */
           var b = h('span', 'pick-name', u.name);
           if (u.id === activeId) b.appendChild(h('span', 'pick-cur', '进行中'));
           line.appendChild(b);
@@ -1271,7 +1272,7 @@
       body.appendChild(g.wrap);
 
       body.appendChild(h('p', 'set-foot',
-        '马甲决定「我是谁」。Char 侧的皮套和它是 1:1 对应的。'));
+        '马甲决定这座岛里「我是谁」。Char 侧的皮套和它对应。'));
     },
     onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
