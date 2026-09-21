@@ -55,8 +55,11 @@
     '<path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>';
 
   /* 分隔头。宽松一点：等号三个以上、冒号中英文都认。
-     「预设」是 A5 时期的旧头，留着向后兼容。 */
-  var HEAD_RE = /^={3,}\s*(?:角色|预设)\s*[：:]\s*(.+?)\s*={3,}$/;
+     v2（2026-09-21）：皮套 / NPC 也算头 —— 以前只认「角色/预设」，
+     导出文件里的「===== 皮套：x | 属于：y =====」导回去会整行掉进正文，
+     层级全丢。「属于：」后缀记的是层级（v2 新增「岛：岛名」给岛级 NPC）。 */
+  var HEAD_RE = /^={3,}\s*(角色|皮套|NPC|预设)\s*[：:]\s*(.+?)\s*={3,}$/;
+  var PARENT_MARK = ' | 属于：';
 
   /* ------------------------- 导出 / 解析 ------------------------- */
 
@@ -78,7 +81,7 @@
       var m = line.match(HEAD_RE);
       if (m) {
         if (cur) blocks.push(cur);
-        cur = { name: m[1], lines: [] };
+        cur = { kind: m[1], name: m[2], lines: [] };
         return;
       }
       if (cur) cur.lines.push(line);
@@ -89,7 +92,20 @@
       return [{ name: '', content: String(text || '').replace(/\n$/, '') }];
     }
     return blocks.map(function (b) {
-      return { name: b.name.trim(), content: b.lines.join('\n') };
+      var it = { name: b.name, content: b.lines.join('\n') };
+      /* 「皮套：小号 | 属于：本体」→ name=小号，parentName=本体。
+         名字里真写了「 | 属于：」的极端情况会被切掉 —— 概率低到不值得防。 */
+      var at = it.name.indexOf(PARENT_MARK);
+      if (at >= 0) {
+        it.parentName = it.name.slice(at + PARENT_MARK.length).trim();
+        it.name = it.name.slice(0, at).trim();
+      }
+      /* kind 归一：角色/预设（A5 旧头）= main，皮套 = sub，NPC = npc。
+         岛级 NPC 的头写的是「NPC：某人 | 属于：岛：岛名」，
+         parentName 带着就好，归属在 importItems 里统一按岛走。 */
+      it.kind = b.kind === '皮套' ? 'sub' : (b.kind === 'NPC' ? 'npc' : 'main');
+      it.name = it.name.trim();
+      return it;
     });
   }
 
@@ -106,22 +122,26 @@
     try { JSON.parse(t); return true; } catch (e) { return false; }
   }
 
-  /* 导入的角色一律作为**新的大号**进来（2026-09-21 拍板：没有「导入别岛的
-     已有大号」这回事 —— 想玩同一个人设就是新建一个新的人，各长各的，
-     所以**不再同名覆盖**，永远新建）。导入即打上目标岛的章：
+  /* 导入：**永远新建**（2026-09-21 拍板：没有「导入别岛的已有大号」这回事，
+     想玩同一个人设就是新建一个新的人，各长各的），导入即打上目标岛的章。
+     v2 层级还原：角色=main；皮套挂进**最近一个**大号（导出顺序即层级，
+     前面没有大号的皮套当大号收）；NPC 统一**归岛**（唯一口径 core.npcsOfRoom），
+     不跟着「属于：某某」挂人 —— 旧文件里那层信息只做展示。
      「导入人设」是往这间房加人的动作，不是往某个总库导数据。 */
   function importItems(items, sandboxId) {
     var list = core.allChars();
     var added = 0;
-    /* 把建出来的角色 id 一起返回 —— 调用方（配置台）要拿它把导进来的
-       角色放进当前这间房。 */
+    /* 建出来的**大号** id —— 调用方（配置台）拿它把导进来的角色放进当前房。
+       皮套不进名册（它挂在大号名下），NPC 归岛也不用进。 */
     var ids = [];
+    var lastMain = null;
 
     items.forEach(function (it, i) {
+      var kind = it.kind === 'sub' ? 'sub' : (it.kind === 'npc' ? 'npc' : 'main');
       var created = {
         id: core.newId('ch'),
         name: it.name || ('导入的角色 ' + (i + 1)),
-        kind: 'main',
+        kind: kind,
         parentId: null,
         boundUserId: null,
         sandboxId: sandboxId || null,
@@ -129,9 +149,25 @@
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
+      if (kind === 'main') {
+        lastMain = created;
+        ids.push(created.id);
+      } else if (kind === 'sub') {
+        if (lastMain) {
+          created.parentId = lastMain.id;
+          created.parentType = 'char';
+        } else {
+          /* 文件开头就是皮套 —— 没有本体可挂，当大号收，别让它悬空 */
+          created.kind = 'main';
+          lastMain = created;
+          ids.push(created.id);
+        }
+      } else {
+        created.parentType = 'sandbox';
+        created.parentId = sandboxId || null;
+      }
       list.push(created);
       added++;
-      ids.push(created.id);
     });
 
     core.saveChars(list);
@@ -163,17 +199,30 @@
     var list = core.mainChars();
     if (!list.length) { ctx.toast('还没有任何角色', 'warn'); return; }
 
-    /* 导出带上层级：大号 + 它的皮套/NPC 一起，缩进表示归属。
-       这样导出的文件再导回来，树还能立起来。 */
+    /* 导出带上层级：大号 + 它的皮套/NPC 一起，「属于：」表示归属。
+       这样导出的文件再导回来，树还能立起来（v2：解析侧认皮套/NPC 头）。
+       岛级 NPC（parentType='sandbox'，NPC 归岛不归人）单独收在后面，
+       用「属于：岛：岛名」标记 —— 导回去还是归岛。 */
     var text = '';
+    var exported = {};
     list.forEach(function (m) {
       text += '===== 角色：' + m.name + ' =====\n' + (m.content || '') + '\n';
+      exported[m.id] = 1;
       core.subChars(m.id).forEach(function (s) {
         text += '===== 皮套：' + s.name + ' | 属于：' + m.name + ' =====\n' + (s.content || '') + '\n';
+        exported[s.id] = 1;
       });
       core.npcChars(m.id).forEach(function (s) {
         text += '===== NPC：' + s.name + ' | 属于：' + m.name + ' =====\n' + (s.content || '') + '\n';
+        exported[s.id] = 1;
       });
+    });
+    core.allChars().forEach(function (n) {
+      if (n.kind !== 'npc' || (n.parentType || '') !== 'sandbox') return;
+      if (exported[n.id]) return;
+      var sb = core.findSandbox(n.parentId);
+      text += '===== NPC：' + n.name + ' | 属于：岛：' +
+        (sb ? (sb.name || '未命名') : '未知') + ' =====\n' + (n.content || '') + '\n';
     });
 
     var ok = downloadText('sleepy-characters-' + stamp() + '.md', text, 'text/markdown');
@@ -398,8 +447,13 @@
         content: f.content.get()
       };
       /* 大号、皮套、NPC 都按岛建（2026-09-21 拍板：每岛一份，无全局大号）。
-         parentType 只在「不是大号」时有意义。 */
-      if (kind !== 'main') {
+         NPC 归岛（'sandbox'，唯一口径 core.npcsOfRoom）：有房上下文就把
+         parentId 一并改写成岛 id（老 NPC 编辑一次就自动迁到新口径）；
+         没有房上下文时不动归属字段，免得把老记录改成对不上号的孤儿。 */
+      if (kind === 'npc' && sandboxId) {
+        payload.parentType = 'sandbox';
+        payload.parentId = sandboxId;
+      } else if (kind !== 'main') {
         payload.parentType = parentType || 'char';
       }
       if (sandboxId) payload.sandboxId = sandboxId;
@@ -504,9 +558,10 @@
       });
       gKind.card.appendChild(kindRow);
 
-      /* 归属大号：只有皮套和 NPC 需要 */
+      /* 归属大号：只有皮套需要。NPC 属于整座岛（2026-09-21 拍板），
+         不挂任何人名下 —— 保存时自动归当前房。 */
       var parentSel = null;
-      if (kind !== 'main' || parentId) {
+      if (kind === 'sub') {
         parentSel = h('select', 'set-input set-select');
         core.mainChars().forEach(function (m) {
           if (existing && m.id === existing.id) return;
@@ -515,7 +570,7 @@
           if (m.id === parentId) o.selected = true;
           parentSel.appendChild(o);
         });
-        var pw = ui.fieldShell('属于哪个大号', '皮套和 NPC 必须挂在一个大号名下，不能独立存在。');
+        var pw = ui.fieldShell('属于哪个大号', '皮套挂在一个大号名下；NPC 属于整座岛，不用选。');
         pw.appendChild(parentSel);
         gKind.card.appendChild(pw);
       }
@@ -777,11 +832,15 @@
 
       function doSave() {
         var name = String(f.name.get() || '').trim() || '未命名角色';
+        /* 皮套挂大号；NPC 属于整座岛（parentId = 岛 id），不跟任何人。
+           没有房上下文的编辑不动归属字段（老 NPC 保原状，见下面 payload 段）。 */
         var parent = kind === 'main' ? null
-          : (parentSel && parentSel.value ? parentSel.value : parentId);
+          : (kind === 'npc'
+            ? (sandboxId || (existing ? existing.parentId : null))
+            : (parentSel && parentSel.value ? parentSel.value : parentId));
 
-        if (kind !== 'main' && !parent) {
-          ctx.toast('皮套和 NPC 得挂在某个大号名下', 'err');
+        if (kind === 'sub' && !parent) {
+          ctx.toast('皮套得挂在某个大号名下', 'err');
           return;
         }
 
@@ -808,8 +867,11 @@
 
         /* 全部按房建（2026-09-21 拍板：大号也是每岛一份，没有全局大号）。
            core 的更新分支是按「键在不在」覆盖的，这里只在新键里带 sandboxId。
-           parentType 同理：它只在「不是大号」时有意义。 */
-        if (kind !== 'main') {
+           parentType：皮套挂 char；NPC 有房上下文就归岛（'sandbox'），
+           没有就保原状不动（跟上面 parentId 的口径一致）。 */
+        if (kind === 'npc' && sandboxId) {
+          payload.parentType = 'sandbox';
+        } else if (kind !== 'main') {
           payload.parentType = parentType || 'char';
         }
         if (sandboxId) payload.sandboxId = sandboxId;
@@ -1228,10 +1290,13 @@
   };
 
   /* 角色文件的导入导出出口。名片夹下线之后，这两个动作的入口在
-     **岛屿配置台**（「往这间房加人」），所以由它来调。 */
+     **岛屿配置台**（「往这间房加人」），所以由它来调。
+     parseFileText / importItems 也给冒烟当纯函数断言用。 */
   Sleepy.charIO = {
     importInto: importInto,
-    exportAll: exportAll
+    exportAll: exportAll,
+    parseFileText: parseFileText,
+    importItems: importItems
   };
 
 })(window);

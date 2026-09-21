@@ -143,14 +143,15 @@
     var entities = [];
     var isl = island();
     core.charsOfSandbox(sb.id).forEach(function (m) {
-      var kids = isl
-        ? isl.offspringOf(sb.id, m.id, 'char')
-        : core.subChars(m.id).concat(core.npcChars(m.id));
-      var subs = kids.filter(function (k) { return (k.kind || '') === 'sub'; });
+      var subs = isl
+        ? isl.childrenOf(sb.id, m.id, 'sub', 'char')
+        : core.subChars(m.id);
       entities.push({ main: m, subs: subs });
     });
 
-    var npcs = isl ? isl.npcsOfRoom(sb) : [];
+    /* NPC 唯一口径 core.npcsOfRoom：属于整座岛（含老数据兜底），
+       不再按「挂在谁名下」分组 */
+    var npcs = core.npcsOfRoom(sb);
     return { ok: true, sb: sb, masks: masks, entities: entities, npcs: npcs };
   }
 

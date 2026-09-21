@@ -100,7 +100,6 @@
       }
 
       var mains = core.charsOfSandbox(sb.id);
-      var me = core.masksOfSandbox(sb)[0] || core.activeUser();
 
       var g = h('div', 'addr-group');
       g.appendChild(h('p', 'addr-group-title', '这间房里的人'));
@@ -135,25 +134,24 @@
 
       mains.forEach(function (m) {
         g.appendChild(personRow(m, '大号'));
-        /* 皮套和 NPC 也**平铺**排在这里，只是带个角标注明身份 ——
-           缩进就变树了，而树是配置台的事。 */
-        var kids = [];
-        if (Sleepy.island) {
-          kids = Sleepy.island.offspringOf(sb.id, m.id, 'char');
-        } else {
-          kids = core.subChars(m.id).concat(core.npcChars(m.id));
-        }
-        kids.forEach(function (k) {
-          g.appendChild(personRow(k, k.kind === 'sub' ? '皮套' : 'NPC'));
+        /* 皮套**平铺**排在这里，带个角标注明身份 —— 缩进就变树了，
+           树是配置台的事。NPC 不跟任何人（属于整座岛），在下面单独一组。 */
+        var subs = Sleepy.island
+          ? Sleepy.island.childrenOf(sb.id, m.id, 'sub', 'char')
+          : core.subChars(m.id);
+        subs.forEach(function (k) {
+          g.appendChild(personRow(k, '皮套'));
         });
       });
       panel.appendChild(g);
 
-      var mine = core.userNpcs(me ? me.id : '');
-      if (mine.length) {
+      /* 岛内成员：唯一口径 core.npcsOfRoom（sandbox 新语义 + 老数据兜底）。
+         以前这里分「角色名下 NPC」和「我这边的人」两组，口径收掉后合并。 */
+      var npcs = core.npcsOfRoom ? core.npcsOfRoom(sb) : [];
+      if (npcs.length) {
         var g2 = h('div', 'addr-group');
-        g2.appendChild(h('p', 'addr-group-title', '我这边的人'));
-        mine.forEach(function (k) { g2.appendChild(personRow(k, 'NPC')); });
+        g2.appendChild(h('p', 'addr-group-title', '岛内成员'));
+        npcs.forEach(function (k) { g2.appendChild(personRow(k, 'NPC')); });
         panel.appendChild(g2);
       }
 

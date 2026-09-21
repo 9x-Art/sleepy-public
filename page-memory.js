@@ -148,33 +148,20 @@
     }
     /* 按岛过滤（用户 09-19 定稿：留痕这类 App 显示「打开的那座岛」的数据，
        全局的只有浮岛/设置/外观/世界书/预设）。
-       范围 = 当前岛的主要角色 + 岛内全体 NPC：
-       新 NPC 归属整座岛（parentType='sandbox'）；老数据挂 char/user 名下的照收，
-       兼容不丢。没降落在任何岛上时回落老行为（全部主要角色）。 */
+       范围 = 当前岛的主要角色 + 岛内全体 NPC（唯一口径 core.npcsOfRoom：
+       sandbox 新语义 + 挂 char/user 名下的老数据兜底）。
+       没降落在任何岛上时回落老行为（全部主要角色）。 */
     var sb = coreO.activeSandbox();
-    var me = coreO.activeUser ? coreO.activeUser() : null;
     var islandName = '';
     try { if (Sleepy.island && sb) islandName = Sleepy.island.roomTitle(sb); } catch (e) { /* 忽略 */ }
     function npcTag(n) { return (n.content || '').split('\n')[0].slice(0, 16) || 'NPC'; }
-    function sameIsland(c) { return !c.sandboxId || !sb || c.sandboxId === sb.id; }
     if (sb) {
       (coreO.charsOfSandbox(sb) || []).forEach(function (m) {
         pushChar(m, false, '');
-        (coreO.npcChars(m.id) || []).forEach(function (n) {
-          if (!sameIsland(n)) return;
-          pushChar(n, true, npcTag(n));
-        });
       });
-      (coreO.allChars() || []).forEach(function (c) {
-        if (c.kind !== 'npc') return;
-        if (c.parentType === 'sandbox' && c.parentId === sb.id) pushChar(c, true, npcTag(c));
+      (coreO.npcsOfRoom ? coreO.npcsOfRoom(sb) : []).forEach(function (n) {
+        pushChar(n, true, npcTag(n));
       });
-      if (me) {
-        (coreO.userNpcs(me.id) || []).forEach(function (n) {
-          if (!sameIsland(n)) return;
-          pushChar(n, true, npcTag(n));
-        });
-      }
     } else {
       (coreO.mainChars() || []).forEach(function (m) {
         pushChar(m, false, '');

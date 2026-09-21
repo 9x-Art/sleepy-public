@@ -540,7 +540,7 @@
 
     /* ③ 岛内 NPC：只把「认识 TA」的人的资料发给这位角色（demo 规则：
        没勾选的人不会自动获得 NPC 的资料）。 */
-    (Sleepy.island.npcsOfRoom(sb) || []).forEach(function (n) {
+    (core.npcsOfRoom(sb) || []).forEach(function (n) {
       var knownBy = Array.isArray(n.knownBy) ? n.knownBy : [];
       if (knownBy.indexOf(selfRoot.id) < 0 && knownBy.indexOf(charId) < 0) return;
       var desc = (n.content || '').trim();

@@ -415,6 +415,59 @@
     return true;
   }
 
+  /* ---------------------------- 硬翻（2026-09-21 拍板） ----------------------------
+     不知道密码时强行进手机，进入那一刻掷骰。方案：docs/方案-查手机硬翻-v1.md。
+     基础档是 **OOC 玩法难度**（user 可调，安乐提议「概率做成可调整」，
+     入口在锁屏右上角的小设置浮层——不在全局设置 app）；加成是**角色侧状态**，
+     不归 user 调。被发现后「他怎么反应」交给 char 决定（模型即时演出），
+     本地不写死惩罚。 */
+
+  var FLIP_TIERS = { mild: 0.20, standard: 0.30, spicy: 0.40 };
+  var FLIP_TIER_LABELS = { mild: '温和', standard: '标准', spicy: '刺激' };
+
+  function flipTier() {
+    var t = store.get('flipRisk');
+    return FLIP_TIERS[t] !== undefined ? t : 'standard';
+  }
+
+  function setFlipTier(t) {
+    if (FLIP_TIERS[t] === undefined) return flipTier();
+    store.set('flipRisk', t);
+    return t;
+  }
+
+  /* 掷骰概率 = 基础档 + 情境加成，封顶 85%（永远留一线没被发现的可能）。 */
+  function flipProb(ph) {
+    var p = FLIP_TIERS[flipTier()];
+    if (ph && ph.lastExitedAt && (Date.now() - ph.lastExitedAt) < 10 * 60 * 1000) p += 0.15;
+    if (ph && lockEnabled(ph)) p += 0.10;   /* 有防备的人警觉（硬翻只在有锁时出现） */
+    if (ph) {
+      var suspicion = pick('phoneTraces', function (t) {
+        return t.phoneId === ph.id && t.type === 'pin_fail' && !t.detectedAt;
+      }).length;
+      if (suspicion) p += 0.10;             /* 他可能已经起疑 */
+    }
+    return Math.min(p, 0.85);
+  }
+
+  /* 硬翻一次：掷骰 + 记账。
+     得手 → 轻痕迹照留（他事后凭痕迹起疑，走既有察觉机制，不当场抓包）；
+     被抓 → 会话当场标记 caughtOnScene 并收束，重痕迹 immediate detected。 */
+  function forceFlip(ph) {
+    var caught = Math.random() < flipProb(ph);
+    var s = startSession(ph, 'peek', 'force');
+    if (caught) {
+      patch('phoneSessions', s.id, { caughtOnScene: true, riskStage: 3 });
+      var t = addTrace(s, { type: 'read', app: null,
+        detail: '硬翻手机时被他抓了现行', detectable: true });
+      if (t) patch('phoneTraces', t.id, { detectedAt: Date.now() });
+      endSession(s.id, 'caught');
+      return { caught: true, session: getSession(s.id) };
+    }
+    addTrace(s, { type: 'recent', app: null, detail: '硬翻着进入了手机，他没在场' });
+    return { caught: false, session: getSession(s.id) };
+  }
+
   /* ---------------------------- 派生内容（第 2 批生成，先落结构） ----------------------------
      kind: 'derived' 幕后交流（char 和合法联系人的幕后对话）
            'draft'  未发送草稿
@@ -571,17 +624,26 @@
     if (!sid) return null;
     var names = [];
     try {
+      /* 名字池：大号 + 皮套 + 岛内全体 NPC（唯一口径 core.npcsOfRoom）+ 马甲。
+         以前用 universeOf（带出挂在 char 名下的 NPC）+ userNpcs，
+         岛级 NPC 完全进不了池子；universeOf 还不按岛过滤，有跨岛泄漏。 */
       core.charsOfSandbox(sid).forEach(function (c) {
         if (!c) return;
         if (c.name) names.push(c.name);
-        core.universeOf(c.id).forEach(function (u) {   /* 皮套 + 名下 NPC */
-          if (u && u !== c && u.name) names.push(u.name);
-        });
+        (Sleepy.island
+          ? Sleepy.island.childrenOf(sid, c.id, 'sub', 'char')
+          : core.subChars(c.id)).forEach(function (s) {
+            if (s && s.name) names.push(s.name);
+          });
       });
+      if (core.npcsOfRoom) {
+        core.npcsOfRoom(sid).forEach(function (n) {
+          if (n && n.name) names.push(n.name);
+        });
+      }
       core.masksOfSandbox(sid).forEach(function (u) {
         if (!u) return;
         if (u.name) names.push(u.name);
-        core.userNpcs(u.id).forEach(function (n) { if (n && n.name) names.push(n.name); });
       });
     } catch (e) { return null; }
     return names.length ? names : null;
@@ -931,6 +993,13 @@
     spendAction: spendAction,
     recordPinFail: recordPinFail,
     maybeCaught: maybeCaught,
+    /* 硬翻（方案-查手机硬翻-v1） */
+    FLIP_TIERS: FLIP_TIERS,
+    FLIP_TIER_LABELS: FLIP_TIER_LABELS,
+    flipTier: flipTier,
+    setFlipTier: setFlipTier,
+    flipProb: flipProb,
+    forceFlip: forceFlip,
     derivedMsgs: derivedMsgs,
     addDerived: addDerived,
     PLAN_STATUS: PLAN_STATUS,

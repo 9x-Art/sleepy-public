@@ -327,7 +327,9 @@
   }
 
   /* 这间房里「能发动态 / 能互动」的所有人：
-     我（当前马甲）打头，后面是全部角色（大号 / 皮套 / NPC 平铺）。
+     我（当前马甲）打头，然后是全部角色（大号 / 皮套平铺），
+     最后是岛内全体 NPC（唯一口径 core.npcsOfRoom —— 以前这里只认
+     挂在名下的老 NPC，岛级 NPC 完全发不了动态，2026-09-21 收敛修掉）。
      造物主可以替任何一个角色发和说话 —— 这是配置台的自然延伸。 */
   function peopleIn(sb) {
     var me = core.activeUser();
@@ -337,12 +339,12 @@
     mains.forEach(function (m) {
       out.push({ kind: 'char', refId: m.id, name: m.name });
       if (Sleepy.island) {
-        Sleepy.island.offspringOf(sb.id, m.id, 'char').forEach(function (k) {
+        Sleepy.island.childrenOf(sb.id, m.id, 'sub', 'char').forEach(function (k) {
           out.push({ kind: 'char', refId: k.id, name: k.name });
         });
       }
     });
-    (core.userNpcs(me ? me.id : '') || []).forEach(function (k) {
+    (core.npcsOfRoom ? core.npcsOfRoom(sb) : []).forEach(function (k) {
       out.push({ kind: 'char', refId: k.id, name: k.name });
     });
     return out;

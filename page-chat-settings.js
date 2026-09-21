@@ -160,8 +160,9 @@
   }
 
   /* 选人面板按岛隔离（2026-09-19 用户抓的 bug：别的孤岛的角色混了进来）。
-     在某间房里时只给：房内大号+皮套 / 房内 NPC（沙盒归属+老数据兜底）/
-     当前 user 的 NPC。没进任何房才回落全量（老存档兼容）。 */
+     在某间房里时只给：房内大号 + 皮套 / 岛内全体 NPC（唯一口径
+     core.npcsOfRoom：sandbox 新语义 + 挂 char/user 名下的老数据兜底）。
+     没进任何房才回落全量（老存档兼容）。 */
   function scopeToRoom(list) {
     var core = Sleepy.core;
     if (!core || !core.scopeId || !core.scopeId()) return list;
@@ -169,15 +170,10 @@
     var ok = {};
     core.charsOfSandbox(sid).forEach(function (c) {
       ok[c.id] = true;
-      var kids = (Sleepy.island ? Sleepy.island.offspringOf(sid, c.id, 'char') : []);
-      kids.forEach(function (k) { ok[k.id] = true; });
+      var subs = (Sleepy.island ? Sleepy.island.childrenOf(sid, c.id, 'sub', 'char') : []);
+      subs.forEach(function (k) { ok[k.id] = true; });
     });
-    if (Sleepy.island && Sleepy.island.npcsOfRoom) {
-      var sb = core.findSandbox(sid);
-      Sleepy.island.npcsOfRoom(sb || { id: sid }).forEach(function (n) { ok[n.id] = true; });
-    }
-    var me = core.activeUser && core.activeUser();
-    if (me) (core.userNpcs ? core.userNpcs(me.id) : []).forEach(function (n) { ok[n.id] = true; });
+    if (core.npcsOfRoom) core.npcsOfRoom(sid).forEach(function (n) { ok[n.id] = true; });
     return list.filter(function (c) { return ok[c.id]; });
   }
 

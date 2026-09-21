@@ -97,9 +97,12 @@
   function contactsOf(sbId, charId) {
     var out = [];
     try {
-      /* 岛里的合法联系人：NPC（按岛登记的）+ 其他主角色（群岛） */
-      if (Sleepy.island && Sleepy.island.npcsOfRoom) {
-        Sleepy.island.npcsOfRoom(charId).forEach(function (n) {
+      /* 岛里的合法联系人：NPC（岛内全体，唯一口径 core.npcsOfRoom）
+         + 其他主角色（群岛）。
+         ⚠️ 以前这里把 charId 当岛 id 传了进去（npcsOfRoom 找不到这段存档
+         返回空），岛级 NPC 一直进不了联系人池 —— 2026-09-21 修掉。 */
+      if (core.npcsOfRoom) {
+        core.npcsOfRoom(sbId).forEach(function (n) {
           if (n && n.name) out.push(n.name + (n.speech ? '（' + String(n.speech).slice(0, 40) + '）' : ''));
         });
       }
@@ -261,6 +264,39 @@
     });
   }
 
+  /* 被抓现行：char 的即时反应（方案-查手机硬翻-v1，2026-09-21 拍板：
+     「被发现我觉得要交给 char 决定要怎么做」）。只生成「他说什么做什么」，
+     不决定玩法惩罚 —— 手机怎么处置由剧情接着演。
+     返回 Promise<{ok, text}> 或 {ok:false, error}（'noapi' 或 describeError 的人话）。 */
+  function caughtReaction(sbId, charId, caughtCtx) {
+    var char = core.findChar(charId);
+    if (!char) return Promise.resolve({ ok: false, error: '找不到角色' });
+    var cand = candFor();
+    if (!cand) return Promise.resolve({ ok: false, error: 'noapi' });
+    var where = (caughtCtx && caughtCtx.where) || 'lock';
+    var WHERE_TXT = {
+      lock: '手机还停在密码界面，屏幕上是输错的痕迹',
+      desktop: '他回来的时候，手机就在你手里',
+      messages: '你正停在「消息」里',
+      taobao: '你正停在「淘宝」里',
+      notes: '你正停在「备忘录」里',
+      browser: '你正停在「浏览器」里',
+      health: '你正停在「健康打卡」里',
+      gallery: '你正在翻他的相册'
+    };
+    var sys = [Sleepy.promptEngine.cardBody('phoneCaught')];
+    if (char.content) sys.push('[CHARACTER]\n' + String(char.content).slice(0, 800) + '\n[/CHARACTER]');
+    var user = ['[SCENE]\n你回到房间，发现 user 正拿着你的手机 —— ' +
+      (WHERE_TXT[where] || WHERE_TXT.desktop) + '。'];
+    var recent = recentContext(sbId, char.id);
+    if (recent.length) user.push('[RECENT]\n你们最近的互动（只做语境）：\n' + recent.join('\n'));
+    user.push('（直接输出你这一刻的反应。）');
+    return callOnce(cand, [
+      { role: 'system', content: sys.join('\n\n') },
+      { role: 'user', content: user.join('\n\n') }
+    ]);
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.phoneAI = {
@@ -268,6 +304,7 @@
     parseSettlementJson: parseSettlementJson,
     settle: settle,
     bootstrapPhone: bootstrapPhone,
+    caughtReaction: caughtReaction,
     gateFor: function (charId) { return phone.gateFor(charId); },
     onChatTurn: onChatTurn
   };

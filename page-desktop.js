@@ -715,14 +715,17 @@
     return b;
   }
 
-  /* 删掉的组件记一笔 —— 组件商城以后要拿它当「你手里有过哪些」的清单。
-     现在只留下记录，没有恢复入口（商城是后面那批）。
+  /* 删掉的组件记一笔 —— 组件商城的「你删过的」用它装回来。
+     x/y/pi 必须带上：不带的话装回来只能「找第一块空位」，
+     用户精心摆的位置就回不去了（清查报告 §8.1）。
      记录盖当前房的章（tagScope）：删岛时按章清掉，不留幽灵岛的回收站。 */
-  function rememberRemoved(cell) {
+  function rememberRemoved(cell, pi) {
     var list = store.get('desktopRemoved') || [];
     var rec = {
       type: cell.type, app: cell.app || '', label: cell.label || '',
-      w: cell.w, h: cell.h, at: Date.now()
+      w: cell.w, h: cell.h,
+      x: cell.x, y: cell.y, pi: typeof pi === 'number' ? pi : null,
+      at: Date.now()
     };
     if (core.tagScope) core.tagScope(rec);
     list.push(rec);
@@ -743,7 +746,7 @@
       /* 整体写回 —— 走 setDesktop（岛覆盖 > 全局，写错层 = 改了别的岛）
          store.get 给的是副本，改完要 set 一次 */
       setDesktop(d);
-      rememberRemoved(cell);
+      rememberRemoved(cell, pi);
 
       if (ctx.repaint) ctx.repaint();
       /* 删完还留在编辑态 —— 不然想连着删第二个得重新长按一次 */

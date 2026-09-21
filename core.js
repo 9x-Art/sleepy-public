@@ -291,6 +291,32 @@
       removed.desktopRemoved = dr.length - drKeep.length;
     }
 
+    /* 按房动态拼出来的键（不在 scoped 名单里 —— 它们的键名里就带着 sbId）：
+       charRel:<sbId> 是群岛关系三态 / 身份归属判断 / 写在红线上的关系的宿主。
+       不清的话 localStorage 里留一堆幽灵岛的关系数据。 */
+    var rel = store.get('charRel:' + id);
+    if (rel !== null && rel !== undefined) {
+      if (store.remove) store.remove('charRel:' + id);
+      removed.charRel = 1;
+    }
+
+    /* 挂在角色 id 上的悬空引用：charAppearance.byChar（角色外观按 charId 存，
+       键名里没有 sbId，scoped 名单抓不到）。characters 刚才已按岛章连人清掉，
+       留下的配置成了幽灵 —— 按「还活着的角色」过滤一遍。 */
+    var ap = store.get('charAppearance');
+    if (ap && ap.byChar && typeof ap.byChar === 'object') {
+      var alive = {};
+      arr(store.get('characters')).forEach(function (c) { alive[c.id] = 1; });
+      var goneAp = 0;
+      for (var ak in ap.byChar) {
+        if (has(ap.byChar, ak) && !alive[ak]) { delete ap.byChar[ak]; goneAp++; }
+      }
+      if (goneAp) {
+        store.set('charAppearance', ap);
+        removed.charAppearance = goneAp;
+      }
+    }
+
     if (store.get('activeSandboxId') === id) store.set('activeSandboxId', null);
 
     return { ok: true, removed: removed };
@@ -384,7 +410,8 @@
     });
   }
 
-  /* 挂在这个大号名下的 NPC */
+  /* 挂在这个大号名下的 NPC（**只读老数据**：新口径 NPC 归岛，
+     用 npcsOfRoom 查；这两个函数留着是为了老存档里的 NPC 不凭空消失） */
   function npcChars(mainId) {
     return allChars().filter(function (c) {
       return c.kind === 'npc' && c.parentId === mainId &&
@@ -392,15 +419,46 @@
     });
   }
 
-  /* 挂在「我」（User 马甲）名下的 NPC。
-     关系树里「我」下面也能加人 —— 邻居、同事、楼下咖啡店的人，
-     他们跟角色无关，是「我这边」的人。 */
+  /* 挂在「我」（User 马甲）名下的 NPC（**只读老数据**，新口径见 npcsOfRoom）。
+     关系树里「我」下面曾经也能加人 —— 邻居、同事、楼下咖啡店的人。
+     2026-09-21 起不再产生这种数据（NPC 归岛），查询并入 npcsOfRoom。 */
   function userNpcs(userId) {
     if (!userId) return [];
     return allChars().filter(function (c) {
       return c.kind === 'npc' && c.parentId === userId &&
         c.parentType === 'user';
     });
+  }
+
+  /* 岛内全体 NPC —— **全仓唯一口径**（四.2 收敛，2026-09-21 用户拍板）。
+     新归属（09-19 定稿）：NPC 属于整座岛（parentType='sandbox'，parentId=sb.id），
+     不属于 user 或 char 的任何一方 —— 谁认识他由 knownBy 决定。
+     老数据（挂在房内 char / user 名下的）仍然收进来，别让老 NPC 凭空消失。
+     sb 传对象或 id 都行。没降落在任何岛上时照样可以按 id 查。 */
+  function npcsOfRoom(sb) {
+    if (!sb) return [];
+    var room = typeof sb === 'object' ? sb : findSandbox(sb);
+    if (!room) return [];
+    var roomId = room.id;
+    var inRoom = function (c) { return !c.sandboxId || c.sandboxId === roomId; };
+    var out = allChars().filter(function (c) {
+      return c.kind === 'npc' && (c.parentType || '') === 'sandbox' &&
+        c.parentId === roomId && inRoom(c);
+    });
+    charsOfSandbox(room).forEach(function (m) {
+      allChars().forEach(function (c) {
+        if (c.kind !== 'npc' || !inRoom(c)) return;
+        if (c.parentId === m.id && (c.parentType || 'char') === 'char') out.push(c);
+      });
+    });
+    var me = activeUser();
+    if (me) {
+      allChars().forEach(function (c) {
+        if (c.kind !== 'npc' || !inRoom(c)) return;
+        if (c.parentId === me.id && c.parentType === 'user') out.push(c);
+      });
+    }
+    return out;
   }
 
   /* 大号 + 它的全部皮套 + NPC，这是一个「宇宙」的全体成员 */
@@ -1081,6 +1139,7 @@
     subChars: subChars,
     npcChars: npcChars,
     userNpcs: userNpcs,
+    npcsOfRoom: npcsOfRoom,
     universeOf: universeOf,
     switchableOf: switchableOf,
     rootOf: rootOf,

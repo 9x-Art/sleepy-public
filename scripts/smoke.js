@@ -830,6 +830,64 @@ t('岛覆盖：deskCfg 岛覆盖叠全局 + 拆岛清覆盖层', () => {
   return { 岛覆盖生效: true, 回落全局: true, 拆岛清覆盖: true };
 });
 
+/* 拆岛清扫补漏（清查报告 §8.1 剩余项）：
+   charRel:<sbId> 是按房拼出来的键（scoped 名单抓不到）；
+   charAppearance.byChar 按 charId 存（键名里没有 sbId），角色连人清掉后成悬空。 */
+t('拆岛清扫补漏：charRel:<sbId> 整键清 + charAppearance.byChar 悬空引用清', () => {
+  const sb = S.core.createSandbox('archipelago');
+  const m = S.core.upsertChar({ name: '清扫人', kind: 'main', sandboxId: sb.id }).id;
+  S.store.set('charRel:' + sb.id, { x: 'known', ['judge:' + m + ':u']: 'same' });
+  S.store.set('charAppearance', {
+    global: null,
+    byChar: { [m]: { mode: 'photo' }, '从没存在过的幽灵': { mode: 'classic' } }
+  });
+
+  const r = S.core.removeSandbox(sb.id);
+  if (!r.ok) throw new Error(r.message);
+  if (S.store.get('charRel:' + sb.id) !== null) throw new Error('charRel:<sbId> 没被整键清掉');
+  const after = S.store.get('charAppearance');
+  if (after.byChar[m]) throw new Error('已删角色的外观配置没清');
+  if (after.byChar['从没存在过的幽灵']) throw new Error('悬空引用没清（它本来就该跟着一起走）');
+  if (r.removed.charRel !== 1 || !r.removed.charAppearance) {
+    throw new Error('removed 统计缺失：' + JSON.stringify(r.removed));
+  }
+  return { charRel整键清: true, 悬空引用清: true, 统计: true };
+});
+
+/* 导出格式 v2：皮套/NPC 头能解析回来；导入层级还原；NPC 统一归岛。 */
+t('导出 v2：皮套/NPC 头解析 + 导入层级还原 + NPC 归岛', () => {
+  const isle = S.core.createSandbox('isle', '回路岛').id;
+  const parsed = S.charIO.parseFileText(
+    '===== 角色：本体 =====\n本体人设\n' +
+    '===== 皮套：小号 | 属于：本体 =====\n小号人设\n' +
+    '===== NPC：老邻居 | 属于：本体 =====\n老邻居人设\n' +
+    '===== NPC：便利店员 | 属于：岛：回路岛 =====\n店员人设\n'
+  );
+  if (parsed.length !== 4) throw new Error('解析条数不对：' + parsed.length);
+  if (parsed[0].kind !== 'main' || parsed[0].name !== '本体') throw new Error('角色头没解析对');
+  if (parsed[1].kind !== 'sub' || parsed[1].parentName !== '本体') throw new Error('皮套头没解析对');
+  if (parsed[3].kind !== 'npc' || parsed[3].parentName !== '岛：回路岛') {
+    throw new Error('岛级 NPC 头没解析对：' + JSON.stringify(parsed[3]));
+  }
+
+  const res = S.charIO.importItems(parsed, isle);
+  if (res.added !== 4) throw new Error('没全建出来：' + res.added);
+  const all = S.core.allChars();
+  const main = all.find((c) => c.name === '本体');
+  const sub = all.find((c) => c.name === '小号');
+  const npcOld = all.find((c) => c.name === '老邻居');
+  const npcIsle = all.find((c) => c.name === '便利店员');
+  if (!main || main.kind !== 'main' || main.sandboxId !== isle) throw new Error('本体没打岛章');
+  if (!sub || sub.kind !== 'sub' || sub.parentId !== main.id) throw new Error('皮套没挂回本体');
+  if (!npcOld || npcOld.parentType !== 'sandbox' || npcOld.parentId !== isle) {
+    throw new Error('老式 NPC 导入后没归岛');
+  }
+  if (!npcIsle || npcIsle.parentType !== 'sandbox') throw new Error('岛级 NPC 导入后没归岛');
+  if (res.ids.length !== 1 || res.ids[0] !== main.id) throw new Error('名册只该收大号');
+  S.core.removeSandbox(isle);
+  return { 解析: 4, 层级还原: true, NPC归岛: true, 名册只收大号: true };
+});
+
 /* 指针卫兵（第 2 批）：群岛落岛有意不替人选 → 全局指针停在上一个岛的人身上，
    读侧必须按「没选人」处理，绝不顺着旧指针显示/写数据。 */
 t('指针卫兵：本岛有效、别岛指针拦下、switchTo 恢复', () => {
@@ -2094,6 +2152,38 @@ t('组件商城：删掉的组件会被记下来（小叉叉那一笔），能�
   return { 去重后: list.map((r) => r.label), 件数: list.length };
 });
 
+/* 装回原位（清查报告 §8.1：desktopRemoved 以前丢 x/y/pi，装回只能落空位） */
+t('组件商城装回：原位优先（x/y/pi），被占了才退回找空位', () => {
+  S.store.set('desktop', null);            /* 回到默认户型 */
+  const d0 = S.desktop.getDesktop();
+  const C = S.desktop.COLS, R = S.desktop.ROWS;
+  let sx = 0, sy = 0, sp = -1;
+  /* 找第一个放得下 1x1 的空格（照片墙会占满第 0 页，所以要跨页找） */
+  outer:
+  for (let pi = 0; pi < d0.pages.length; pi++) {
+    for (let y = 1; y <= R; y++) {
+      for (let x = 1; x <= C; x++) {
+        const hit = (d0.pages[pi] || []).some((c) =>
+          !(c.x + c.w <= x || x + 1 <= c.x || c.y + c.h <= y || y + 1 <= c.y));
+        if (!hit) { sx = x; sy = y; sp = pi; break outer; }
+      }
+    }
+  }
+  if (!sx) { throw new Error('默认户型居然没有空位'); }
+  const rec = { type: 'clock', label: '时间', w: 1, h: 1, x: sx, y: sy, pi: sp, at: 1 };
+  const home = S.widgetStore.restoreWidget(rec);
+  if (!home.ok || !home.home || home.page !== sp || home.cell.x !== sx || home.cell.y !== sy) {
+    throw new Error('原位没放回去：' + JSON.stringify(home));
+  }
+  /* 原位已被上一枚占住 → 再装同一格记录要退回找空位，不能硬叠上去 */
+  const again = S.widgetStore.restoreWidget(rec);
+  if (again.ok && again.home) throw new Error('原位被占还硬放回原位');
+  if (!again.ok) throw new Error('退回找空位也失败了：' + again.message);
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', []);
+  return { 原位: [sx, sy, sp], 回退找空位: true };
+});
+
 console.log('\n--- page:朋友圈（微信式发布 + 四档可见 + 赞的反应）---');
 
 console.log('\n--- page:朋友圈（反应决策步 · 活人感）---');
@@ -3193,6 +3283,52 @@ t('compileIslandKB：关系/归属/NPC 资料按规则进注入', () => {
   return { 林澈注入: forM1.split('\n').length + ' 行', 沈聿拿不到NPC: true, 总装: true };
 });
 
+t('NPC 唯一口径：core.npcsOfRoom 收齐岛级 + 老数据（char/user 名下）', () => {
+  /* 2026-09-21 四.2 收敛：NPC 属于整座岛（parentType='sandbox'），
+     关系树/通讯录/群/记忆/朋友圈/查手机 全部只查这一个口。
+     老数据（挂在 char / user 名下的）照收，别让老 NPC 凭空消失。 */
+  const m = S.core.upsertChar({ name: '口径岛主', kind: 'main' }).id;
+  const u = (S.core.userMasks()[0] || S.core.upsertUser({ name: '口径我' })).id;
+  const isle = S.core.createSandbox('isle', '口径测试岛').id;
+  S.core.setSandboxChars(isle, [m]);
+  S.core.setSandboxMasks(isle, [u]);
+  S.core.setActiveSandbox(isle);
+
+  const nNew = S.core.upsertChar({
+    name: '岛级店员', kind: 'npc',
+    parentId: isle, parentType: 'sandbox', sandboxId: isle
+  }).id;
+  const nChar = S.core.upsertChar({
+    name: '老式同事', kind: 'npc',
+    parentId: m, parentType: 'char', sandboxId: isle
+  }).id;
+  const nUser = S.core.upsertChar({
+    name: '老式邻居', kind: 'npc',
+    parentId: u, parentType: 'user', sandboxId: isle
+  }).id;
+  /* 别岛的岛级 NPC 不得混进来 */
+  const other = S.core.createSandbox('isle', '别的岛').id;
+  S.core.upsertChar({
+    name: '别岛的人', kind: 'npc',
+    parentId: other, parentType: 'sandbox', sandboxId: other
+  });
+
+  const ids = S.core.npcsOfRoom(isle).map((c) => c.id);
+  if (ids.indexOf(nNew) < 0) throw new Error('岛级 NPC 没被收进来');
+  if (ids.indexOf(nChar) < 0) throw new Error('char 名下老 NPC 没被兜底收进来');
+  if (ids.indexOf(nUser) < 0) throw new Error('user 名下老 NPC 没被兜底收进来');
+  if (ids.length !== 3) throw new Error('别岛或无关 NPC 混进来了：' + ids.length + ' 个');
+
+  /* page-island 的同名出口只是委托，别再有两套答案 */
+  if (S.island.npcsOfRoom(isle).length !== 3) throw new Error('island.npcsOfRoom 与 core 口径不一致');
+  if (S.island.offspringOf) throw new Error('offspringOf 应已删除（两套口径不许并存）');
+
+  S.core.removeSandbox(isle);
+  S.core.removeSandbox(other);
+  S.core.removeChar(m);
+  return { 收齐: ids.length, 别岛隔离: true, 出口唯一: true };
+});
+
 t('留痕首页按岛过滤（sandbox 归属的 NPC 也要收进来）', () => {
   const m = S.core.upsertChar({ name: '留痕岛主', kind: 'main' }).id;
   const u = (S.core.userMasks()[0] || S.core.upsertUser({ name: '阿乐' })).id;
@@ -4124,6 +4260,57 @@ t('查手机第 3 批：permission/grant 落权限表 → longPermFor 生效；�
   if (shop.length !== 1 || shop[0].status !== 'ordered') throw new Error('shop 读口不对');
   S.core.removeSandbox(sb.id);
   return { 权限: true, 四App: true };
+});
+
+/* 硬翻（方案-查手机硬翻-v1，2026-09-21 拍板）：
+   概率 = 三档基础（可调）+ 情境加成，封顶 85%；forceFlip 掷骰记账。 */
+t('硬翻：三档概率可调 + 情境加成 + 掷骰两路记账', () => {
+  const sb = S.core.createSandbox('isle', '硬翻测试岛');
+  S.core.setActiveSandbox(sb.id);
+  const c = S.core.upsertChar({ name: '硬翻角色', kind: 'main' }).id;
+  const ph = S.phone.ensurePhone(sb.id, c);
+
+  /* 基础档三档 + 默认标准 */
+  if (S.phone.flipTier() !== 'standard') throw new Error('默认档该是 standard');
+  const p0 = S.phone.flipProb(ph);          /* 新手机：无情境加成 */
+  if (Math.abs(p0 - 0.30) > 1e-9) throw new Error('标准档基础概率不对：' + p0);
+  S.phone.setFlipTier('mild');
+  if (Math.abs(S.phone.flipProb(ph) - 0.20) > 1e-9) throw new Error('温和档概率不对');
+  S.phone.setFlipTier('spicy');
+  if (Math.abs(S.phone.flipProb(ph) - 0.40) > 1e-9) throw new Error('刺激档概率不对');
+  if (S.phone.setFlipTier('乱填') !== 'spicy') throw new Error('坏档位该被拒并保持原档');
+
+  /* 情境加成：刚放下手机 +15，有锁 +10，有未消化的 pin_fail +10 */
+  S.phone.setFlipTier('mild');
+  const phRec = S.phone.getPhone(ph.id);
+  phRec.lastExitedAt = Date.now() - 2 * 60 * 1000;
+  S.phone.savePhone(phRec);
+  S.phone.setLockEnabled(S.phone.getPhone(ph.id), true);
+  const s0 = S.phone.startSession(S.phone.getPhone(ph.id), 'peek', 'pin_guess');
+  S.phone.recordPinFail(s0.id);
+  S.phone.endSession(s0.id, 'giveup');
+  const p1 = S.phone.flipProb(S.phone.getPhone(ph.id));
+  if (Math.abs(p1 - 0.55) > 1e-9) throw new Error('加成合计不对：' + p1 + '（该是 0.55）');
+  if (p1 > 0.85) throw new Error('超过封顶');
+
+  /* 掷骰两路：压住随机数，各走一遍 */
+  const realRandom = Math.random;
+  Math.random = () => 0.99;                  /* 永远不被抓 */
+  const okFlip = S.phone.forceFlip(S.phone.getPhone(ph.id));
+  if (okFlip.caught) throw new Error('0.99 还被抓了');
+  if (!okFlip.session || okFlip.session.caughtOnScene) throw new Error('得手路径会话不对');
+  Math.random = () => 0.01;                  /* 必被抓 */
+  const badFlip = S.phone.forceFlip(S.phone.getPhone(ph.id));
+  Math.random = realRandom;
+  if (!badFlip.caught) throw new Error('0.01 都没被抓');
+  const sBad = S.phone.getSession(badFlip.session.id);
+  if (!sBad.caughtOnScene || !sBad.endedAt) throw new Error('被抓会话没标记/没收束');
+  const traces = S.phone.tracesOf(sBad.id);
+  const heavy = traces.find((t) => t.type === 'read' && t.detectedAt);
+  if (!heavy) throw new Error('被抓没留当场察觉的重痕迹');
+  S.phone.setFlipTier('standard');
+  S.core.removeSandbox(sb.id);
+  return { 三档: true, 加成: 0.55, 得手留轻痕: true, 被抓收束: true };
 });
 
 t('工坊（第 4 批）：同模板装两人实例隔离；custom delta 按模板名落库；卸载归档', () => {

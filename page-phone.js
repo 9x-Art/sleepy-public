@@ -574,6 +574,79 @@
         paint(true);
       }
 
+      /* ---- 硬翻（方案-查手机硬翻-v1）----
+         不知道密码时的第三条路：趁他不注意强行进。进入那一刻掷骰（phone.forceFlip），
+         概率 = 基础档（user 可调）+ 情境加成（角色侧，不归 user 调）。
+         硬要求（安乐拍的）：确认弹窗必须写明「可能会被 TA 发现」。 */
+      function forceFlipFlow() {
+        ui.confirm({
+          title: '趁他不注意，硬翻？',
+          note: '有被 TA 发现的风险 —— 被发现了会当场中断，TA 会知道你翻过。' +
+            '（现在约 ' + Math.round(phone.flipProb(ph) * 100) + '%）',
+          ok: '硬翻',
+          danger: true
+        }).then(function (yes) {
+          if (!yes) return;
+          var r = phone.forceFlip(ph);
+          session = r.session;
+          if (r.caught) {
+            caughtInfo = { where: 'lock', stage: 3, force: true };
+            mode = 'caught';
+            paint();
+            return;
+          }
+          mode = 'desktop';
+          curApp = null; curView = null;
+          paint();
+          if (Sleepy.phoneAI && Sleepy.phoneAI.gateFor(ownerId).allowed) {
+            try { Sleepy.phoneAI.settle(sb.id, ownerId); } catch (e) { /* 兜底结算不拦 */ }
+          }
+        });
+      }
+
+      /* 锁屏右上角的小设置浮层：硬翻风险三档（OOC 难度，安乐提议的概率可调）。
+       * 放锁屏不放全局设置 app —— 调它的人就是正盯着锁屏犹豫的那个人。 */
+      function flipGear() {
+        var wrap = h('div', 'ph-flip-wrap');
+        var btn = h('button', 'ph-flip-gear');
+        btn.type = 'button';
+        btn.setAttribute('aria-label', '硬翻风险设置');
+        btn.innerHTML = ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>');
+        btn.addEventListener('click', function () {
+          var old = wrap.querySelector('.ph-flip-pop');
+          if (old) { wrap.removeChild(old); return; }
+          var pop = h('div', 'ph-flip-pop');
+          pop.appendChild(h('p', 'ph-flip-pop-t', '硬翻风险'));
+          var seg = h('div', 'seg');
+          ['mild', 'standard', 'spicy'].forEach(function (k) {
+            var b = h('button', 'seg-btn' + (phone.flipTier() === k ? ' is-on' : ''),
+              phone.FLIP_TIER_LABELS[k]);
+            b.type = 'button';
+            b.addEventListener('click', function () {
+              phone.setFlipTier(k);
+              var kids = seg.querySelectorAll('.seg-btn');
+              for (var i = 0; i < kids.length; i++) kids[i].classList.remove('is-on');
+              b.classList.add('is-on');
+              refreshProb();
+            });
+            seg.appendChild(b);
+          });
+          pop.appendChild(seg);
+          var probLine = h('p', 'ph-flip-pop-note', '');
+          pop.appendChild(probLine);
+          pop.appendChild(h('p', 'ph-flip-pop-note',
+            '基础风险是玩法难度。他刚放下手机、起过疑心时会更高 —— 那部分不归你调。'));
+          function refreshProb() {
+            probLine.textContent = '现在硬翻：约 ' +
+              Math.round(phone.flipProb(ph) * 100) + '% 会被发现（含当前情境）。';
+          }
+          refreshProb();
+          wrap.appendChild(pop);
+        });
+        wrap.appendChild(btn);
+        return wrap;
+      }
+
       /* ---------- 行动 ---------- */
 
       function doAction(action, o, after) {
@@ -663,6 +736,7 @@
 
         root.appendChild(h('div', 'ph-lock-time', timeStr()));
         root.appendChild(h('div', 'ph-lock-date', dateStr()));
+        root.appendChild(flipGear());
 
         var locked = lockOn();
         var openNow = canOpenNow();
@@ -707,6 +781,9 @@
             if (ph.knownPin) {
               root.appendChild(actionBtn('使用你记得的密码', 'ghost', unlockKnown));
             }
+            /* 硬翻：不知道密码时赌一把。按钮放 ghost 位偏下、文案带画面感，
+               真正的风险提示在确认弹窗里（那是硬要求，不能省）。 */
+            root.appendChild(actionBtn('趁他不注意，硬翻', 'danger', forceFlipFlow));
             /* 定案 §F：不试密码也能收手 —— 停在锁屏只看预览 */
             root.appendChild(actionBtn('只看一眼，然后放回去', 'ghost', onlyLook));
           }
@@ -1719,10 +1796,36 @@
         root.appendChild(h('div', 'ph-caught-card'));
         root.lastChild.appendChild(h('p', 'ph-caught-k', '被发现了'));
         root.lastChild.appendChild(h('p', 'ph-caught-t', whereText));
+        /* 他这一刻怎么反应，交给 char 自己演（2026-09-21 拍板：
+           「被发现我觉得要交给 char 决定要怎么做」）。本地不写死惩罚。 */
+        var react = h('p', 'ph-caught-react', '他正站在你身后……');
+        root.lastChild.appendChild(react);
         root.lastChild.appendChild(h('p', 'ph-caught-s',
-          '他会怎么反应，等你回到聊天里就知道了。'));
+          '手机怎么处置，也由他决定。'));
         root.appendChild(actionBtn('放回手机', 'putback', putBack));
         body.appendChild(root);
+        loadCaughtReaction(react);
+      }
+
+      /* 拉 char 的即时反应（page-phone-ai 的 caughtReaction）。
+         没配 API / 生成失败都老实说 —— 不编一句假台词糊弄（六.1 的教训）。 */
+      function loadCaughtReaction(el) {
+        if (!Sleepy.phoneAI || !Sleepy.phoneAI.caughtReaction) {
+          el.textContent = '他的反应，等你回到聊天里就知道了。';
+          return;
+        }
+        Sleepy.phoneAI.caughtReaction(sb.id, ownerId, caughtInfo)
+          .then(function (r) {
+            if (r && r.ok && r.text) {
+              el.textContent = r.text;
+            } else if (r && r.error === 'noapi') {
+              el.textContent = '（还没配 API —— 他的反应，等你回到聊天里就知道了。）';
+            } else {
+              el.textContent = '（这次没能生成他的反应' +
+                (r && r.error ? '：' + r.error : '') +
+                ' —— 等你回到聊天里，他会让你知道的。）';
+            }
+          });
       }
 
       /* ---------- 小工具 ---------- */

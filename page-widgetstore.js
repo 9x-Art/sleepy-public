@@ -139,6 +139,36 @@
     return { ok: true, cell: cell, page: spot.pi };
   }
 
+  /* 装回删掉的组件：**原位优先** —— 记录里带了 x/y/pi（page-desktop 记的），
+     当初从哪拿掉的就放回哪；位置被人占了或户型改了放不下，才退回找空位。
+     直接 addWidget 的话永远落在第一块空位，用户摆好的桌面就乱了。 */
+  function restoreWidget(r) {
+    var d = Sleepy.desktop.getDesktop();
+    var w = Math.min(r.w || 1, cols());
+    var hh = Math.min(r.h || 1, rows());
+    if (typeof r.pi === 'number' && r.pi >= 0 && d.pages[r.pi] &&
+      typeof r.x === 'number' && typeof r.y === 'number') {
+      var probe = { x: r.x, y: r.y, w: w, h: hh };
+      var hit = false;
+      (d.pages[r.pi] || []).forEach(function (c) {
+        if (overlap(probe, c)) hit = true;
+      });
+      if (!hit && r.x + w - 1 <= cols() && r.y + hh - 1 <= rows()) {
+        var cell = {
+          i: core.newId('w'),
+          type: r.type,
+          x: r.x, y: r.y, w: w, h: hh,
+          label: r.label || ''
+        };
+        if (r.app) cell.app = r.app;
+        d.pages[r.pi].push(cell);
+        Sleepy.desktop.setDesktop(d);
+        return { ok: true, cell: cell, page: r.pi, home: true };
+      }
+    }
+    return addWidget(r);
+  }
+
   function countOnDesktop() {
     var d = Sleepy.desktop.getDesktop();
     var n = 0;
@@ -152,6 +182,7 @@
     removed: removed,
     findSpot: findSpot,
     addWidget: addWidget,
+    restoreWidget: restoreWidget,
     countOnDesktop: countOnDesktop
   };
 
@@ -168,7 +199,7 @@
         /* ---- 你删过的 ---- */
         var gone = removed();
         var g1 = group('你删过的',
-          gone.length ? '点一下装回桌面（放在第一块放得下的空位）。'
+          gone.length ? '点一下装回桌面（尽量放回原来的位置，被占了就找空位）。'
             : '还没删过东西 —— 长按桌面进编辑态，每个组件角上都有一个小叉叉。');
         if (gone.length) {
           gone.forEach(function (r) {
@@ -177,7 +208,7 @@
               hint: (r.w || 1) + '×' + (r.h || 1) + ' · 从桌面上拿掉的',
               value: '装回来',
               onClick: function () {
-                var res = addWidget(r);
+                var res = restoreWidget(r);
                 if (!res.ok) { ctx.toast(res.message, 'warn'); return; }
                 dropRemoved(r);
                 ctx.toast('装回桌面了 · 第 ' + (res.page + 1) + ' 屏', 'ok');

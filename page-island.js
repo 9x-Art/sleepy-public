@@ -147,9 +147,8 @@
   }
 
   /* 这间房里某个人名下的成员。
-     parentType：'char' = 挂在角色名下（默认）/ 'user' = 挂在「我」名下。
-     暂时在这里过滤而不是改 core 的 subChars/npcChars —— 让 core 全面按房
-     过滤属于 S4b（角色树与马甲的作用域），那是一次数据模型变更。
+     parentType：'char' = 挂在角色名下（皮套）/ 'sandbox' = 属于整座岛（NPC）。
+     NPC 的查询**唯一口径在 core.npcsOfRoom**（2026-09-21 收敛，这里不再另查）。
      没打标签的（迁移前的老数据）也带上，免得老存档里的皮套凭空消失。 */
   function childrenOf(roomId, parentId, kind, parentType) {
     var pt = parentType || 'char';
@@ -159,15 +158,6 @@
       if ((c.parentType || 'char') !== pt) return false;
       return !c.sandboxId || c.sandboxId === roomId;
     });
-  }
-
-  /* 某个人名下的全部下属（皮套 + NPC），顺序固定：先皮套后 NPC */
-  function offspringOf(roomId, parentId, parentType) {
-    if (parentType === 'user') {
-      return childrenOf(roomId, parentId, 'npc', 'user');
-    }
-    return childrenOf(roomId, parentId, 'sub', 'char')
-      .concat(childrenOf(roomId, parentId, 'npc', 'char'));
   }
 
   function sky() {
@@ -613,6 +603,44 @@
       var treeHint = h('p', 'tree-hint', '');
       body.appendChild(treeHint);
 
+      /* ---- 岛内成员（NPC）----
+         NPC 属于整座岛，不挂在树上的任何人名下（2026-09-21 用户拍板）。
+         照群岛总览的样子给一条横排栏：点卡片进档案，＋ 进 island-npc 页。 */
+      var npcSec = h('p', 'iol-drawer-sec', '');
+      var npcStrip = h('div', 'iol-strip');
+      body.appendChild(npcSec);
+      body.appendChild(npcStrip);
+
+      function paintNpcs() {
+        sb = core.findSandbox(roomId) || sb;
+        var npcs = core.npcsOfRoom(sb);
+        npcSec.textContent = '岛内成员 · ' + npcs.length + ' 位 NPC（属于这座' +
+          metaOf(sb.kind).title + '，不属于任何一方）';
+        npcStrip.innerHTML = '';
+        if (!npcs.length) {
+          npcStrip.appendChild(h('p', 'iol-empty', '还没有 NPC · 点「＋」让第一位住进岛里'));
+        }
+        npcs.forEach(function (n) {
+          var card = h('button', 'iol-member');
+          card.type = 'button';
+          card.appendChild(h('span', 'iol-member-ava', (n.name || '?').charAt(0)));
+          card.appendChild(h('strong', '', n.name));
+          card.appendChild(h('small', '', clip(n.content || 'NPC', 18)));
+          card.addEventListener('click', function () {
+            ctx.open('island-char', { sbId: sb.id, charId: n.id });
+          });
+          npcStrip.appendChild(card);
+        });
+        var addNpc = h('button', 'iol-member is-add');
+        addNpc.type = 'button';
+        addNpc.appendChild(h('span', 'iol-add-mark', '＋'));
+        addNpc.appendChild(h('small', '', '添加 NPC'));
+        addNpc.addEventListener('click', function () {
+          ctx.open('island-npc', { id: sb.id });
+        });
+        npcStrip.appendChild(addNpc);
+      }
+
       /* 「加人设」这一行随房型变。
          孤岛住满之后**整行换掉**：留着的话那就是个按不动的按钮
          （点了只弹「孤岛只住得下一个人」），用户看到会问「为啥右边还有加人设」
@@ -811,7 +839,8 @@
       /* ==================== 关系树绘制 ====================
 
          **「我」永远在页面正中**，角色往左右两侧长（右 1、左 1、右 2、左 2…）：
-           我 → 角色 的红线，和「谁挂在我下面」的绿细线，画法见下面各自的注释。
+           我 → 角色 的红线，和「皮套挂在角色下面」的绿细线，画法见下面各自的注释。
+           NPC **不上树**（属于整座岛）—— 在树下面的「岛内成员」栏里横排。
 
          为什么是「我」居中而不是像树干一样排在最左：
             用户原话「我需要 user 和 char 的这个在页面中间呀」
@@ -821,8 +850,8 @@
          节点点击：
            我        → 管马甲
            角色      → 加人设那一页（改人设）
-           NPC / 皮套 → 同上的简化样式（名字 + 人设，没有身份/城市/状态那些）
-           虚线位    → 就在那个位置加人
+           皮套      → 同上的简化样式（名字 + 人设，没有身份/城市/状态那些）
+           虚线位    → 角色下面加皮套
          红线点击 → 写关系 */
 
       var R_ME = 30, R_CHAR = 24, R_KID = 17, R_ADD = 15;
@@ -983,17 +1012,9 @@
         /* 「我」 */
         nodes += person(xMe, y0, R_ME, 'tree-me', me, 'mask-list', '我');
 
-        /* 「我」名下的 NPC */
-        var myKids = offspringOf(sb.id, me.id, 'user');
-        myKids.forEach(function (k) {
-          var y = colNext(xMe, 'me');
-          lines += line(xMe, y - GAP_Y + R_KID + 6, xMe, y - R_KID - 3, 'tree-line tree-line-v');
-          nodes += person(xMe, y, R_KID, 'tree-kid tree-npc', k, 'simple:' + k.id, k.name);
-        });
-        var myAddY = colNext(xMe, 'me');
-        lines += line(xMe, myAddY - GAP_Y + R_KID + 6, xMe, myAddY - R_ADD - 3, 'tree-line tree-line-v tree-dash');
-        nodes += addSlot(xMe, myAddY, '加 NPC', 'add-npc-me:' + me.id);
-        maxY = Math.max(maxY, myAddY);
+        /* NPC 不再挂树上（2026-09-21 用户拍板）：NPC 属于整座岛，
+           不属于 user 或 char 的任何一方 —— 在下面「岛内成员」那一栏里，
+           照群岛总览的样子横排。树上的绿细线只表达「皮套属于谁」。 */
 
         /* 角色 + 关系连线 */
         mains.forEach(function (m, i) {
@@ -1044,19 +1065,17 @@
 
           nodes += person(x, y0, R_CHAR, 'tree-char', m, 'char:' + m.id, m.name);
 
-          /* 这个角色名下的人 */
-          var kids = offspringOf(sb.id, m.id, 'char');
+          /* 这个角色名下的皮套。NPC 不在这里（属于整座岛，见「岛内成员」栏） */
+          var kids = childrenOf(sb.id, m.id, 'sub', 'char');
           kids.forEach(function (k) {
             var y = colNext(x, m.id);
             lines += line(x, y - GAP_Y + R_KID + 6, x, y - R_KID - 3, 'tree-line tree-line-v');
-            nodes += person(x, y, R_KID,
-              'tree-kid' + (k.kind === 'sub' ? ' tree-sub' : ' tree-npc'),
-              k, 'simple:' + k.id, k.name);
+            nodes += person(x, y, R_KID, 'tree-kid tree-sub', k, 'simple:' + k.id, k.name);
           });
           var ay = colNext(x, m.id);
           lines += line(x, ay - GAP_Y + R_KID + 6, x, ay - R_ADD - 3,
             'tree-line tree-line-v tree-dash');
-          nodes += addSlot(x, ay, '加 NPC', 'add-npc:' + m.id);
+          nodes += addSlot(x, ay, '加皮套', 'add-sub:' + m.id);
           maxY = Math.max(maxY, ay);
         });
 
@@ -1116,16 +1135,11 @@
             ctx.open('contact-edit', { id: act.slice(7), sandboxId: sb.id, simple: true });
             return;
           }
-          if (act.indexOf('add-npc-me:') === 0) {
+          if (act.indexOf('add-sub:') === 0) {
+            /* 树上角色名下的虚线位现在是「加皮套」—— 皮套才属于某个角色。
+               NPC 走「岛内成员」栏的 ＋ 添加（island-npc 页，归岛）。 */
             ctx.open('contact-edit', {
-              id: '', kind: 'npc', parentType: 'user', parentId: act.slice(11),
-              sandboxId: sb.id, simple: true
-            });
-            return;
-          }
-          if (act.indexOf('add-npc:') === 0) {
-            ctx.open('contact-edit', {
-              id: '', kind: 'npc', parentType: 'char', parentId: act.slice(8),
+              id: '', kind: 'sub', parentType: 'char', parentId: act.slice(8),
               sandboxId: sb.id, simple: true
             });
             return;
@@ -1171,6 +1185,7 @@
       function redraw() {
         sb = core.findSandbox(roomId) || sb;
         paintTree();
+        paintNpcs();
         paintAddRow();
         paintMasks();
         paintLocks();
@@ -1250,18 +1265,9 @@
   function avatarLetter(c) {
     return (c && c.name ? c.name : '?').charAt(0);
   }
-  /* 岛内全体 NPC。
-     新归属（09-19 定稿）：NPC 属于整座岛（parentType='sandbox'，parentId=sb.id），
-     不属于 user 或 char 的任何一方 —— 谁认识他由 knownBy 决定。
-     旧数据（挂在 char / user 名下的）仍然收进来，别让老 NPC 凭空消失。 */
+  /* 岛内全体 NPC —— 委托给 core 的唯一口径（本文件不再自己查） */
   function npcsOfRoom(sb) {
-    var out = childrenOf(sb.id, sb.id, 'npc', 'sandbox');
-    core.charsOfSandbox(sb).forEach(function (m) {
-      out = out.concat(childrenOf(sb.id, m.id, 'npc', 'char'));
-    });
-    var me = core.activeUser ? core.activeUser() : null;
-    if (me) out = out.concat(childrenOf(sb.id, me.id, 'npc', 'user'));
-    return out;
+    return core.npcsOfRoom(sb);
   }
   /* 孤岛里「我」当前用的马甲名（没选就是「我」） */
   function currentMaskName(sb) {
@@ -2030,7 +2036,7 @@
     roomTitle: roomTitle,
     canAddChar: canAddChar,
     childrenOf: childrenOf,
-    offspringOf: offspringOf,
+    /* NPC 查询唯一口径在 core.npcsOfRoom；这里保留同名出口给老调用方过渡 */
     /* K03 二期注入侧（page-switch 认知编译）要读的关系数据：
        群岛关系三态、身份归属判断、岛内 NPC（含 knownBy/npcVis）。 */
     REL_LABELS: REL_LABELS,

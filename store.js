@@ -329,8 +329,7 @@
   }
 
   /* 批量写：只落一次盘、只通知一次，避免表单保存时连环触发渲染 */
-  function setMany(pairs) {
-    var touched = {};
+  function setMany(pairs) {    var touched = {};
     var keys = [];
     var i;
 
@@ -359,6 +358,26 @@
       if (!persist(keys[i])) ok = false;
     }
     notify('*', ok);
+    return ok;
+  }
+
+  /* 整键删除。给「按房动态拼出来」的键用（charRel:<sbId> 这种没登记进
+     DEFAULTS 的），删房时把键整个摘掉 —— set 一个 null 只会占着位，
+     还会进 exportAll 的兜底扫描。键不存在时是安静的无操作。 */
+  function remove(top) {
+    delete cache[top];
+    var ok = true;
+    try {
+      global.localStorage.removeItem(NS + top);
+    } catch (e) {
+      ok = false;
+      lastError = {
+        type: 'remove',
+        key: top,
+        message: (e && e.message) ? e.message : String(e)
+      };
+    }
+    notify(top, ok);
     return ok;
   }
 
@@ -727,6 +746,7 @@
     get: get,
     set: set,
     setMany: setMany,
+    remove: remove,
     exportAll: exportAll,
     importAll: importAll,
     usage: usage,

@@ -9735,6 +9735,9 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
   /* 顶栏给足外壳状态栏的高度：context 条/时钟不能被 20:14 那行压住 */
   padding:calc(env(safe-area-inset-top) + 40px) 18px calc(env(safe-area-inset-bottom) + 18px);
   color:#3B342A;
+  /* 锁屏右上角的小齿轮（硬翻风险）是 absolute 定位，锚点必须是它自己 ——
+     真机截图抓的：没有这条时齿轮跑到时钟下面、浮层被顶出屏幕左缘 */
+  position:relative;
 }
 .ph-wall-0{background:linear-gradient(168deg,#F3EBDD,#E7DBC5);}
 .ph-wall-1{background:linear-gradient(168deg,#F6E3DA,#EED2C4);}
@@ -9764,6 +9767,43 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-btn-primary{background:var(--ph-accent,#B08A5E);color:#FFFDF8;}
 .ph-btn-ghost{background:rgba(255,255,255,.6);color:#3B342A;}
 .ph-btn-putback{background:rgba(59,52,42,.08);color:#3B342A;opacity:.75;}
+/* 硬翻：危险动作要一眼和「只看一眼」分得开 */
+.ph-btn-danger{background:rgba(154,66,52,.14);color:#8A3B2E;}
+
+/* 硬翻风险设置：锁屏右上角的小齿轮 + 浮层（OOC 难度，别做得太显眼）。
+   ⚠️ 特异度必须钉死成 .ph-root>.ph-flip-wrap（0-2-0）：下面「屏幕暗角」那段
+   有 .ph-root>*{position:relative;z-index:1}（0-1-1），齿轮是直接子元素，
+   用单类名会被它按回 relative —— 真机截图抓过：齿轮掉进时钟下面居中。
+   ⚠️ top 必须让开 #statusbar（透明状态栏 absolute 盖住顶部，z-index 60），
+   不然齿轮看得见点不到 —— 五.17 同款坑，真机脚本抓过。 */
+.ph-root>.ph-flip-wrap{
+  position:absolute;top:calc(env(safe-area-inset-top) + 44px);right:14px;
+  z-index:3;text-align:left;
+}
+.ph-flip-gear{
+  width:32px;height:32px;border:0;border-radius:50%;cursor:pointer;
+  background:rgba(255,255,255,.35);color:rgba(59,52,42,.5);
+  display:flex;align-items:center;justify-content:center;padding:0;
+}
+.ph-flip-gear svg{width:16px;height:16px;}
+.ph-flip-pop{
+  position:absolute;top:38px;right:0;width:230px;
+  background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+  border-radius:14px;padding:12px;box-shadow:0 8px 24px rgba(59,52,42,.18);
+  /* 别继承锁屏的 #FFFDF6 —— 白底白字，真机截图抓的 */
+  color:#3B342A;
+}
+.ph-flip-pop-t{font-size:12px;font-weight:600;margin-bottom:8px;}
+.ph-flip-pop .seg{justify-content:flex-start;}
+.ph-flip-pop-note{font-size:11px;opacity:.65;margin-top:8px;line-height:1.6;}
+
+/* 被抓现行的 char 反应（他说什么做什么，模型即时演） */
+.ph-caught-react{
+  font-size:14px;line-height:1.8;margin-top:14px;
+  color:#3B342A;opacity:.92;
+  padding:12px 14px;border-radius:12px;
+  background:rgba(255,255,255,.55);
+}
 
 /* 密码盘 */
 .ph-pin{margin:22px auto 0;width:min(300px,86%);}
