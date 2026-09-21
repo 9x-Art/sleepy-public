@@ -492,32 +492,75 @@
     setTimeout(function () { nameInput.focus(); }, 60);
   }
 
-  async function removeRoom(ctx, sb) {
+  function removeRoom(ctx, sb) {
+    var host = ctx.el;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    /* 列清楚这座岛里有什么 —— 弹窗里让用户看到「没掉的是什么」，
+       比一句抽象的「所有数据都会删掉」更有分量。 */
     var counts = [];
+    var nChars = core.charsOfSandbox(sb).length;
+    if (nChars) counts.push('角色 ' + nChars + ' 位');
     ['chats', 'memories', 'photos', 'diaries', 'todos', 'favorites'].forEach(function (k) {
       var n = (store.get(k) || []).filter(function (r) { return r && r.sandboxId === sb.id; }).length;
       if (n) counts.push(storeLabel(k) + ' ' + n + ' 条');
     });
-    var yes = await ui.confirm({
-      title: '拆掉「' + roomTitle(sb) + '」？',
-      note: counts.length
-        ? ('这一段里的 ' + counts.join('、') + ' 会一起没掉，别的存档不受影响。')
-        : '这一段还没装东西，拆掉不可撤销。',
-      ok: '拆掉',
-      danger: true
-    });
-    if (!yes) return;
 
-    var r = core.removeSandbox(sb.id);
-    if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-    ctx.toast('已拆掉', 'ok');
+    /* v2 抽屉（跟「新建存档」同一套壳），不用系统 confirm。
+       2026-09-21 拍板：确定 → 全删（岛 + 岛上的人 + 全部岛级数据）；
+       取消 → 什么都不动。 */
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', '拆掉「' + roomTitle(sb) + '」？'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '拆掉后，这座岛的一切都会删掉：岛本身、住在岛上的人、所有设置和记录。找不回来。'));
 
-    if (ctx.id === 'island-config') {
-      Sleepy.nav.closeAll();
-      Sleepy.nav.open('island');
-    } else if (ctx.rebuild) {
-      ctx.rebuild();
+    if (counts.length) {
+      var delBox = h('div', 'iol-del-list');
+      counts.forEach(function (c) { delBox.appendChild(h('span', 'iol-del-item', c)); });
+      panel.appendChild(delBox);
+    } else {
+      panel.appendChild(h('p', 'iol-drawer-desc', '这座岛还是空的，拆掉不可撤销。'));
     }
+
+    panel.appendChild(h('p', 'iol-drawer-hint',
+      '只是想让某个人搬走的话，先别拆 —— 进岛在 TA 的档案页选「移出这座岛」，那个不删岛。'));
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不拆');
+    var save = h('button', 'iol-drawer-save is-danger', '全部删掉');
+    cancel.type = 'button';
+    save.type = 'button';
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
+    save.addEventListener('click', function () {
+      close();
+      var r = core.removeSandbox(sb.id);
+      if (!r.ok) { ctx.toast(r.message, 'err'); return; }
+      ctx.toast('已拆掉', 'ok');
+
+      if (ctx.id === 'island-config') {
+        Sleepy.nav.closeAll();
+        Sleepy.nav.open('island');
+      } else if (ctx.rebuild) {
+        ctx.rebuild();
+      }
+    });
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
   }
 
   function storeLabel(k) {
@@ -1551,7 +1594,10 @@
 
         /* ---- 危险操作（第三梯队 6）：把主要角色移出这座岛 ----
            角色本体和留痕档案保留，只解除「在这座岛里」的关系；
-           TA 在这座岛里的对话一起清掉，不然聊天列表会出现孤儿。 */
+           TA 在这座岛里的对话一起清掉，不然聊天列表会出现孤儿。
+           2026-09-21 拍板：大号按岛打章 —— 移出时把 TA（连同皮套/NPC）
+           的章摘掉，变成无主档案；不然之后拆这座岛会把已移出的 TA
+           连带删掉。以后再加进别的岛时会打新章。 */
         if (c.kind === 'main') {
           var dz = h('div', 'ipro-danger-zone');
           var outBtn = h('button', 'ipro-danger-btn',
@@ -1573,6 +1619,11 @@
               store.set('chats', (store.get('chats') || []).filter(function (ct) {
                 return !(ct && ct.sandboxId === sbId && ct.characterId === charId);
               }));
+              /* 摘章：本体 + 皮套/NPC（挂在 TA 名下的）都不再属于这座岛。
+                 岛级 NPC（parentType='sandbox'）不算 TA 的人，留在岛上。 */
+              core.universeOf(charId).forEach(function (x) {
+                core.upsertChar({ id: x.id, sandboxId: null });
+              });
               ctx.toast('已移出这座岛', 'ok');
               ctx.back();
             });

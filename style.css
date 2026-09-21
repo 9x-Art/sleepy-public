@@ -8723,6 +8723,18 @@ div.pp-row:active{background:none;}
 .iol-drawer-actions button{flex:1;padding:12px;border-radius:13px;font-family:inherit;font-size:12.5px;cursor:pointer;}
 .iol-drawer-cancel{background:#eef2eb;color:#988f82;border:0;}
 .iol-drawer-save{background:#a98458;color:#fff;border:0;letter-spacing:.08em;}
+.iol-drawer-save.is-danger{background:#b5645a;box-shadow:0 8px 18px rgba(155,84,74,.22);}
+
+/* 删岛确认抽屉：清单小胶囊 + 温和的替代方案提示 */
+.iol-del-list{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 2px;}
+.iol-del-item{
+  padding:6px 11px;border-radius:999px;
+  background:rgba(181,100,90,.1);color:#9c5a52;font-size:11px;
+}
+.iol-drawer-hint{
+  margin:12px 0 0;padding:10px 12px;border-radius:12px;
+  background:rgba(125,148,130,.1);font-size:10.5px;color:#8a9384;line-height:1.7;
+}
 
 /* NPC 抽屉 · 照 demo 加的部分（09-19）：分区小标 / 勾选人 / 可见性开关 */
 .iol-drawer-sec{

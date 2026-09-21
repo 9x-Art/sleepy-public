@@ -723,6 +723,45 @@ t('大号进房之后 charsOfSandbox 才认它（加人设必须补这一步）'
   return { 进房前: before, 进房后: names.join('、') };
 });
 
+/* 2026-09-21 拍板（大号按岛）：新建大号即打当前岛的章；没有全局大号。
+   拆岛 = 岛上的人（大号含内）跟着清。 */
+t('大号按岛：新建即打章 + 拆岛连人一起清', () => {
+  const sb = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sb.id);
+  const m = S.core.upsertChar({ name: '打章测试', kind: 'main' });
+  if (m.sandboxId !== sb.id) throw new Error('新建大号没打上岛的章');
+  const r = S.core.removeSandbox(sb.id);
+  if (!r.ok) throw new Error(r.message);
+  if (S.core.findChar(m.id)) throw new Error('拆岛后岛上的大号还留着');
+  return { 新建打章: m.sandboxId === sb.id, 拆岛清人: true };
+});
+
+/* 移出岛的语义：本体保留（无主档案），但章要摘掉 ——
+   不然之后拆岛会把已移出的 TA 连带删掉。 */
+t('移出岛：本体保留、章摘掉（universeOf 一起摘）', () => {
+  const sb = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sb.id);
+  const m = S.core.upsertChar({ name: '移出测试', kind: 'main' });
+  const sub = S.core.upsertChar({ name: '移出皮套', kind: 'sub', parentId: m.id });
+  S.core.setSandboxChars(sb.id, [m.id]);
+
+  /* 模拟档案页「移出」的动作：名册去掉 + 摘章 */
+  S.core.setSandboxChars(sb.id, []);
+  S.core.universeOf(m.id).forEach((x) => S.core.upsertChar({ id: x.id, sandboxId: null }));
+
+  if (!S.core.findChar(m.id)) throw new Error('移出后本体不该被删');
+  if (S.core.findChar(m.id).sandboxId) throw new Error('移出后大号的章没摘掉');
+  if (S.core.findChar(sub.id).sandboxId) throw new Error('移出后皮套的章没摘掉');
+
+  const r = S.core.removeSandbox(sb.id);
+  if (!r.ok) throw new Error(r.message);
+  if (!S.core.findChar(m.id)) throw new Error('拆岛把已移出的角色连带删了');
+  if (!S.core.findChar(sub.id)) throw new Error('拆岛把已移出角色的皮套连带删了');
+
+  S.core.removeChar(m.id);
+  return { 本体保留: true, 章已摘: true, 拆岛不误删: true };
+});
+
 /* 小号是「大号对外用的另一张脸」：挂在大号名下、按房建，
    但**不是房成员** —— 它在哪儿出场由它的大号决定。 */
 t('小号挂在大号名下、按房建，但不占房成员名额', () => {
@@ -1829,8 +1868,8 @@ t('migrateToSandbox 一条不少 + 连跑两次幂等', () => {
   const subChar = chars.filter((c) => c.id === subId)[0];
   const mainChar = chars.filter((c) => c.id === g1)[0];
   if (!subChar || subChar.sandboxId !== sb.id) throw new Error('皮套没挂到房里');
-  /* 大号本体是全局共用的，**不该**带 sandboxId（决策 3） */
-  if (mainChar && mainChar.sandboxId) throw new Error('大号不该带 sandboxId');
+  /* 2026-09-21 拍板：大号也按岛（每岛一份，没有全局大号）—— 迁移收编时一起打章 */
+  if (!mainChar || mainChar.sandboxId !== sb.id) throw new Error('大号没挂到房里');
 
   /* 房型按大号数量推断：这里两个大号 → 群岛 */
   if (sb.kind !== S.core.KIND_ARCHI) throw new Error('房型推断错了：' + sb.kind);

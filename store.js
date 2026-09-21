@@ -48,8 +48,9 @@
 
       「存档 = 平行存档」：同一个角色住在两间房里是两段互不知情的人生，
       所以 chats / memories / links / photos / diaries / todos / favorites /
-      userMasks 都要带 sandboxId（S4 落地）；characters 里只有
-      kind='sub'|'npc' 带 sandboxId，大号本体（kind='main'）是全局共用的。
+      userMasks 都要带 sandboxId（S4 落地）；characters 里大号、皮套、NPC
+      **全部**带 sandboxId（2026-09-21 拍板：大号也是每岛一份，没有全局大号
+      —— 想玩同一个人设就是再建一个新的人）。
    ============================================================ */
 (function (global) {
   'use strict';
@@ -625,8 +626,9 @@
      3. **只打标签，不删不改任何既有字段**。回退到旧版本照样能读
 
      房型：大号 >= 2 个 → 群岛，否则孤岛。
-     成员只收大号（kind='main'）；皮套和 NPC 只被打上 sandboxId、不进 charIds
+     成员只收大号（kind='main'）；皮套和 NPC 不进 charIds
      —— 它们是「挂在房里那个大号名下」的，不是房的成员（决策 3）。
+     角色记录（大号含内）一律打上 sandboxId：大号也按岛（2026-09-21 拍板）。
   */
   function migrateToSandbox() {
     try {
@@ -687,14 +689,15 @@
           touched.push(key + ' ' + changed);
         });
 
-      /* 角色树特殊：只有皮套和 NPC 挂到房里，大号本体全局共用。 */
-      var subs = 0;
+      /* 角色树：大号、皮套、NPC 全部挂到房里（2026-09-21 拍板：大号按岛，
+         没有全局大号 —— 老存档收编时一起打章，跟新 semantics 一致）。 */
+      var stamped = 0;
       chars.forEach(function (c) {
-        if ((c.kind || 'main') !== 'main' && !c.sandboxId) { c.sandboxId = sb.id; subs++; }
+        if (!c.sandboxId) { c.sandboxId = sb.id; stamped++; }
       });
-      if (subs) {
+      if (stamped) {
         set('characters', chars);
-        touched.push('characters ' + subs + '（皮套/NPC）');
+        touched.push('characters ' + stamped);
       }
 
       set('sandboxes', [sb]);

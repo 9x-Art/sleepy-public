@@ -237,7 +237,9 @@
 
     /* 这一串是「按房切开」的数据键。**新增带 sandboxId 的键要记得加进来** ——
        漏了的话删房时它不会跟着清，会在 localStorage 里越积越多，
-       而且下次有人建同 id 的房（id 是随机的，概率极低）会看到幽灵数据。 */
+       而且下次有人建同 id 的房（id 是随机的，概率极低）会看到幽灵数据。
+       characters 也在名单里：大号、皮套、NPC 全都打岛的章（2026-09-21 拍板），
+       拆岛 = 岛上的人跟着没。没有章的记录（迁移前的老全局数据）不会被动。 */
     var removed = {};
     var scoped = ['chats', 'memories', 'links', 'photos', 'diaries',
                   'todos', 'favorites', 'userMasks', 'characters', 'moments',
@@ -453,11 +455,11 @@
           item[j] = data[j];
         }
       }
-      /* 皮套和 NPC 是**按房建**的（决策 3）：调用方没显式给 sandboxId 时，
-         盖上当前这间房的章。漏了的话它不属于任何房 ——
-         在房内的树、通讯录、切号器里全看不见，等于白建。
-         大号本体（kind='main'）例外：它是全局共用的，不能带房标签。 */
-      if (item.kind !== 'main' && !item.sandboxId) tagScope(item);
+      /* 全部按房建（2026-09-21 拍板：大号也是每岛一份，**没有全局大号** ——
+         想玩同一个人设就是再建一个新的人，各长各的）。调用方没显式给
+         sandboxId 时，盖上当前这间房的章。漏了的话它不属于任何房 ——
+         在房内的树、通讯录、切号器里全看不见，等于白建；拆岛也不会跟着清。 */
+      if (!item.sandboxId) tagScope(item);
       list.push(item);
       hit = item;
     }
@@ -539,6 +541,11 @@
         avatar: has(data, 'avatar') ? data.avatar : '',
         persona: has(data, 'persona') ? data.persona : '',
         note: has(data, 'note') ? data.note : '',
+        /* 常驻地点三件套随档案走（方案-浮岛时区）。city 以前在新建分支
+           被丢掉 —— 编辑页传了、库里没有，读回去永远是空。 */
+        city: has(data, 'city') ? data.city : '',
+        region: has(data, 'region') ? data.region : '',
+        timezone: has(data, 'timezone') ? data.timezone : '',
         isDefault: !!data.isDefault,
         createdAt: Date.now(),
         updatedAt: Date.now()

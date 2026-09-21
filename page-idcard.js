@@ -106,48 +106,36 @@
     try { JSON.parse(t); return true; } catch (e) { return false; }
   }
 
-  /* 导入的角色一律作为**大号**进来（导入文件里没有层级信息）。
-     同名覆盖，新名新增。 */
-  function importItems(items) {
+  /* 导入的角色一律作为**新的大号**进来（2026-09-21 拍板：没有「导入别岛的
+     已有大号」这回事 —— 想玩同一个人设就是新建一个新的人，各长各的，
+     所以**不再同名覆盖**，永远新建）。导入即打上目标岛的章：
+     「导入人设」是往这间房加人的动作，不是往某个总库导数据。 */
+  function importItems(items, sandboxId) {
     var list = core.allChars();
     var added = 0;
-    var updated = 0;
-    /* 把碰到过的角色 id 一起返回 —— 调用方（配置台）要拿它把导进来的
-       角色放进当前这间房，光知道「加了几个」没用。 */
+    /* 把建出来的角色 id 一起返回 —— 调用方（配置台）要拿它把导进来的
+       角色放进当前这间房。 */
     var ids = [];
 
-    items.forEach(function (it) {
-      var hit = null;
-      for (var i = 0; i < list.length; i++) {
-        if (list[i].name === it.name && (list[i].kind || 'main') === 'main') {
-          hit = list[i];
-          break;
-        }
-      }
-      if (hit) {
-        hit.content = it.content;
-        hit.updatedAt = Date.now();
-        updated++;
-        ids.push(hit.id);
-      } else {
-        var created = {
-          id: core.newId('ch'),
-          name: it.name,
-          kind: 'main',
-          parentId: null,
-          boundUserId: null,
-          content: it.content,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-        list.push(created);
-        added++;
-        ids.push(created.id);
-      }
+    items.forEach(function (it, i) {
+      var created = {
+        id: core.newId('ch'),
+        name: it.name || ('导入的角色 ' + (i + 1)),
+        kind: 'main',
+        parentId: null,
+        boundUserId: null,
+        sandboxId: sandboxId || null,
+        content: it.content,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      list.push(created);
+      added++;
+      ids.push(created.id);
     });
 
     core.saveChars(list);
-    return { added: added, updated: updated, ids: ids };
+    return { added: added, updated: 0, ids: ids };
   }
 
   function stamp() {
@@ -193,8 +181,9 @@
     else ctx.toast('导出失败：浏览器拦下了下载', 'err');
   }
 
-  /* 导入角色文件。**导入进来的角色会直接进这间房** ——
-     这是配置台的动作（「往这间房加人」），不是全局导数据。
+  /* 导入角色文件。**导入进来的都是新建的角色，直接算这间房的人** ——
+     这是配置台的动作（「往这间房加人」），不是全局导数据；
+     同名也是新的人（2026-09-21 拍板：各岛各的，分开看）。
      sandboxId 为空时只入库、不进房（留给以后的总库视图用）。 */
   function importInto(ctx, sandboxId) {
     pickTextFile('.txt,.md,.markdown,text/plain,text/markdown', function (text, fileName) {
@@ -211,9 +200,9 @@
         if (!it.name) it.name = items.length === 1 ? nameFromFile(fileName) : ('导入的角色 ' + (i + 1));
       });
 
-      var res = importItems(items);
+      var res = importItems(items, sandboxId);
 
-      /* 把导进来的角色放进这间房。
+      /* 把导进来的角色放进这间房（章在 importItems 里已经打了，这里补名册）。
          孤岛只能装一个（这是硬约束，core 会拒），所以先自己判断一下，
          给出人话提示而不是把 core 的报错直接糊到用户脸上。 */
       var note = '';
@@ -221,7 +210,7 @@
         var sb = core.findSandbox(sandboxId);
         if (sb) {
           if (sb.kind === core.KIND_ISLE && (sb.charIds || []).length >= 1) {
-            note = ' · 孤岛只能装一个角色，导进来的留在库里没放进去';
+            note = ' · 孤岛已经住着人，导进来的没放进来（想换人的话先把现在的移出）';
           } else {
             var next = (sb.charIds || []).slice();
             var take = sb.kind === core.KIND_ISLE ? res.ids.slice(0, 1) : res.ids;
@@ -235,10 +224,10 @@
         }
       }
 
-      var parts = [];
-      if (res.added) parts.push('新增 ' + res.added + ' 个');
-      if (res.updated) parts.push('覆盖 ' + res.updated + ' 个');
-      ctx.toast('导入完成：' + (parts.join('，') || '没变化') + note, 'ok');
+      /* 永远新建，没有「覆盖」这回事了 */
+      ctx.toast(res.added
+        ? '导入完成：新增 ' + res.added + ' 个' + note
+        : '导入完成：没变化' + note, 'ok');
       if (ctx.redraw) ctx.redraw();
       else if (ctx.rebuild) ctx.rebuild();
     }, function (msg) {
@@ -408,12 +397,12 @@
         avatar: String(f.avatar.get() || '').trim(),
         content: f.content.get()
       };
-      /* 皮套 / NPC 按房建；parentType 决定挂在谁名下。
-         大号本体（kind='main'）不带 sandboxId —— 它是全局共用的。 */
+      /* 大号、皮套、NPC 都按岛建（2026-09-21 拍板：每岛一份，无全局大号）。
+         parentType 只在「不是大号」时有意义。 */
       if (kind !== 'main') {
         payload.parentType = parentType || 'char';
-        if (sandboxId) payload.sandboxId = sandboxId;
       }
+      if (sandboxId) payload.sandboxId = sandboxId;
       var saved = core.upsertChar(payload);
       if (!saved) { ctx.toast('保存失败', 'err'); return; }
 
@@ -469,9 +458,9 @@
       var kind = existing ? (existing.kind || 'main') : (ctx.params.kind || 'main');
       var parentId = existing ? existing.parentId : (ctx.params.parentId || null);
 
-      /* 这间房 —— 配置台带进来的。皮套和 NPC **按房建**（决策 3），
-         所以新建时得知道是哪间房，否则它们不属于任何房、在哪都看不见。
-         大号本体是全局共用的，**绝对不能**带 sandboxId。 */
+      /* 这间房 —— 配置台带进来的。所有角色都**按房建**（2026-09-21 拍板：
+         大号也是每岛一份，没有全局大号），新建时得知道是哪间房，
+         否则它不属于任何房、在哪都看不见，拆岛也不会跟着清。 */
       var sandboxId = ctx.params.sandboxId || (existing ? existing.sandboxId : null) || null;
 
       /* 父亲是「人」还是「角色」。关系树里「我」下面也能挂 NPC，
@@ -817,14 +806,13 @@
           faceLockImage: String(f.faceLockImage.get() || '').trim()
         };
 
-        /* 皮套 / NPC 按房建（决策 3）：新建时必须带上房 id。
-           大号本体全局共用，**不带** —— core 的更新分支是按「键在不在」
-           覆盖的，给大号塞一个 sandboxId 会让它变成某一间房的私有角色。
+        /* 全部按房建（2026-09-21 拍板：大号也是每岛一份，没有全局大号）。
+           core 的更新分支是按「键在不在」覆盖的，这里只在新键里带 sandboxId。
            parentType 同理：它只在「不是大号」时有意义。 */
         if (kind !== 'main') {
           payload.parentType = parentType || 'char';
-          if (sandboxId) payload.sandboxId = sandboxId;
         }
+        if (sandboxId) payload.sandboxId = sandboxId;
 
         core.upsertChar(payload);
 
