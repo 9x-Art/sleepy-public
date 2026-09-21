@@ -1048,30 +1048,73 @@ body{
 }
 .chat-item:active{background:var(--bg-2);}
 .chat-item-main{flex:1;min-width:0;}
+/* 第一行：名字在左、时间在最右上角（微信那样，时间跟名字同一行、贴顶），
+   下一行才是预览。以前是「名字独占一行 + 时间跟在预览前面」——
+   预览一长，时间就被推到屏幕中间，看着不像手机。 */
+.chat-item-top{display:flex;align-items:baseline;gap:10px;}
 .chat-item-name{
-  display:block;font-size:15px;
-  margin-bottom:4px;color:var(--text);
+  flex:1;min-width:0;font-size:15px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:var(--text);
 }
-.chat-item-meta{
-  display:flex;align-items:center;gap:8px;
-  font-size:12px;color:var(--text-faint);
+/* 时间不参与收缩：名字太长宁可截名字，也别把「周五」挤没 */
+.chat-item-time{flex:none;font-size:12px;color:var(--text-faint);}
+/* 第二行：预览占满整宽，太长由 CSS 省略号收尾（JS 不再截字） */
+.chat-item-preview{
+  display:block;margin-top:5px;font-size:13px;
+  color:var(--text-faint);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.chat-item-time{flex:none;}
-.chat-item-preview{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* 会话列表项的头像用的 .chat-item-ava 定义在通讯录那一段 ——
    它和 .addr-av 共用同一条规则（首字圆头像 / 有图就用图），
    别在这儿再写一份，两边会长得不一样。
    右侧那个「删」按钮（.chat-item-del）已经删掉了：现在删除走长按条目。 */
 
+/* ============================================================
+   聊天详情：**只留一层滚动**（用户五.10「点一下内容就往上弹」）
+   ------------------------------------------------------------
+   以前是两层滚动容器：.page 自己 overflow-y:auto，里面 .msg-wrap 又是一个
+   overflow-y:auto。但 .page-inner 只有 min-height:100% 没有确定高度，
+   .app-body{flex:1} 于是长成「内容那么高」—— .msg-wrap 永远拿不到有界高度，
+   它那个滚动条从头到尾没出现过：所有 `msgWrap.scrollTop = …` 全打在空处，
+   真正在滚的是外层 .page。
+   后果就是用户看到的那样：输入框一聚焦、或重新渲染，浏览器去滚外层，
+   整屏内容被带着跳，而且「滚到底」根本不生效。
+
+   现在把这一页钉成「页高固定、谁都别滚」：
+   .page 不滚、.page-inner 撑满且有界、.app-body 允许被压缩到
+   剩下多少就多少（min-height:0 是必须的 —— flex 子项默认 min-height:auto，
+   不写这一条它就还是会按内容撑高，白改）。
+   滚动只留给 .msg-wrap。
+   ⚠️ 只在这一页这么干。别的页面靠 .page 滚内容，全局改会把它们全弄坏。 */
+.page[data-page="chat-detail"]{overflow:hidden;}
+.page[data-page="chat-detail"] .page-inner{
+  height:100%;min-height:0;
+  /* 底部留给 .input-area 自己（它带了 safe-area），这里再留一次就双份了 */
+  padding-bottom:0;
+}
+.page[data-page="chat-detail"] .app-body{min-height:0;}
+
 /* 消息气泡 */
 .msg-wrap{
   flex:1;overflow-y:auto;
-  padding:16px 18px 8px;
+  /* 左右各留 16（原来是 18）：气泡的最大宽度是按这个盒子的百分比算的，
+     两侧的留白直接吃掉正文的可用宽度（用户五.11「长回复气泡很窄」）。 */
+  padding:16px 16px 8px;
   display:flex;flex-direction:column;gap:12px;
+  /* 滚到底／回弹时的连锁滚动别传给外层页面 —— 上面那层已经不滚了，
+     留着这条是防 iOS 的橡皮筋把整页拖出来 */
+  overscroll-behavior:contain;
 }
 .msg-bubble{
-  max-width:82%;display:flex;flex-direction:column;
+  /* 82% → 90%（用户五.11「回复很长时气泡很窄，每个聊天框里东西太少」）。
+     注意这个百分比是**含头像**的：角色气泡里的 32px 头像 + 8px 间距
+     是从这 90% 里再扣掉的，所以正文实际拿到的比看上去少一截 ——
+     这也是为什么只加到 90% 就够用：再多就把对方的气泡顶到自己那头去了。
+     短句不受影响：助手/自己的气泡都是按内容宽度收缩的（见下面两行的
+     align-self），这里只管长句子在哪里折行。 */
+  max-width:90%;display:flex;flex-direction:column;
   position:relative;word-break:break-word;
   /* 触摸行为（用户五.8/9：「文字被拖拽、拖不动」）：
      竖向滚动留给页面，横向手势留给「左滑引用」。
@@ -1088,9 +1131,9 @@ body{
 .msg-bubble.is-swiping{transition:none;}
 /* 角色的气泡：头像在左，引用条 / 正文 / 时间在右 */
 /* align-self:flex-start 不能省：.msg-wrap 是 flex 列，默认 align-items:stretch，
-   所以每个助手气泡都会被拉到 max-width(82%) 那么宽 —— 短句子的纸色气泡块
+   所以每个助手气泡都会被拉到 max-width(90%) 那么宽 —— 短句子的纸色气泡块
    会横着占掉大半个屏幕（自定义聊天背景时特别明显），多选的勾也会飘到
-   远离文字的地方。收成按内容宽度，长句照样在 82% 处折行。 */
+   远离文字的地方。收成按内容宽度，长句照样在 90% 处折行。 */
 .msg-assistant{flex-direction:row;align-items:flex-start;align-self:flex-start;}
 .msg-body{display:flex;flex-direction:column;min-width:0;}
 .msg-user{align-self:flex-end;}
@@ -1128,23 +1171,46 @@ body{
   padding:0 4px;
 }
 
-/* 输入区域 */
+/* 输入区域：**一行** —— 加号在左、输入框居中（表情包在框里）、发送在右。
+   用户五.2 之前是「笑脸 + 加号」两个 40px 圆钮并排在输入框左边：
+   一行里两个同尺寸的大圆坨，既挤又分不清谁是谁，还白吃掉 88px 宽度。
+
+   底部内边距自己带上 safe-area：聊天页是「页高固定 + 底部这一条贴底」
+   （见下面 chat-detail 那段），.page-inner 的 padding-bottom 已经撤了，
+   所以这一条要自己留出刘海屏底部那条的位置。 */
 .input-area{
-  padding:12px 16px 20px;margin:0 0 -8px;
+  padding:10px 14px calc(env(safe-area-inset-bottom) + 14px);
   background:var(--bg-2);
   border-top:1px solid var(--line);
   display:flex;align-items:flex-end;gap:8px;
 }
+/* 输入框 + 框内右侧那枚小笑脸。笑脸绝对定位在框里，所以包一层当定位上下文 */
+.chat-input-wrap{position:relative;flex:1;min-width:0;display:flex;}
 .chat-input{
   flex:1;min-width:0;
   background:var(--surface);border:1px solid var(--g-glass-line);
-  border-radius:16px;padding:10px 14px;
+  border-radius:16px;padding:10px 42px 10px 14px;   /* 右边让出笑脸那 30px */
   color:var(--text);font-family:inherit;font-size:14px;
   line-height:20px;
   min-height:42px;      /* rows=1 时也要有个像样的高度，别被 autoGrow 算成 0 */
   resize:none;outline:none;max-height:120px;
 }
 .chat-input:focus{border-color:var(--amber);}
+/* 框内的表情包入口：纯图标、没有底色，不跟加号/发送抢视线。
+   贴底 5px —— 单行时输入框 42px 高、这枚 30px，正好跟文字垂直居中。 */
+.emo-btn{
+  position:absolute;right:6px;bottom:5px;
+  width:30px;height:30px;padding:0;flex:none;
+  border-radius:50%;border:0;background:none;
+  /* text-dim 而不是 text-faint：它是个能点的控件，太淡会像禁用态
+     （用户原话是「图标太小、不明显」） */
+  color:var(--text-dim);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  transition:color .15s var(--ease), background .15s var(--ease);
+}
+.emo-btn:active{background:var(--bg-3);color:var(--text);}
+.emo-btn svg{width:20px;height:20px;}
 .send-btn{
   width:44px;height:44px;
   border-radius:50%;border:0;
@@ -1164,13 +1230,15 @@ body{
 @keyframes paw-wait{0%,100%{opacity:.4}50%{opacity:.95}}
 
 /* 加号面板（+）v0.2 — UI 微调 */
-/* 加号按钮：输入区里的普通按钮。
-   老版把它 position:absolute 到页面右下角，正好压在发送键上。 */
+/* 加号按钮：输入区里最左那枚。
+   老版把它 position:absolute 到页面右下角，正好压在发送键上。
+   40 → 44 —— 跟右侧发送键同高，这一行两头才对得上；
+   里面是 SVG 而不是文字「+」（文字加号各字体粗细不一、还偏细）。 */
 .plus-btn{
-  width:40px;height:40px;flex:none;
+  width:44px;height:44px;flex:none;
   border-radius:50%;border:0;
   background:var(--bg-3);color:var(--text-dim);
-  font-size:19px;line-height:1;font-family:inherit;
+  line-height:1;font-family:inherit;
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;
   transition:background .15s var(--ease), transform .12s var(--ease);

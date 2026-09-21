@@ -468,24 +468,59 @@
     return { role: 'system', content: note };
   }
 
-  /* 列表预览：**只给最后一个气泡**。
-     一次模型输出在存档里是用 '||' 把多个气泡拼成一整串（见 prompt-engine
-     的 splitBubblesT），直接 slice 就会把 `消息1||消息2` 原样显示出来 ——
-     那是协议分隔符，不该给用户看见。2026-09-21 修。 */
+  /* 会话列表的预览。三条规矩（用户 2026-09-21 拍板，照微信来）：
+     1) **不带「你说：/对方回：」这种前缀** —— 名字和时间已经把「谁」交代
+        清楚了，前缀只是噪音；这也是微信的样子。
+     2) **只给最后一个气泡**。一次模型输出在存档里是用 '||' 把多个气泡拼成
+        一整串（见 prompt-engine 的 splitBubblesT），直接 slice 就会把
+        `消息1||消息2` 原样显示出来 —— 那是协议分隔符，不该给用户看见。
+        用 splitBubblesT 而不是 splitBubbles：前者会把 [译]…[/译] 标签剥掉，
+        否则最后一句带译文时，预览里会冒出「[译]…」。
+     3) **不在 JS 里截断**，长了交给 CSS 的 ellipsis（.chat-item-preview）。
+        JS 截 20 个字在不同字号/宽度下要么留白要么还是溢出。
+
+     附件类不写「你发了…」：一来微信是方括号占位，二来老实现不管角色是谁
+     都写「你」——TA 发来的图会被说成「你发的张照片」。 */
   function previewOf(msg) {
     if (!msg) return '空对话';
-    if (msg.type === 'photo') return '你发了张照片';
-    if (msg.type === 'file') return '你发了个文件';
-    if (msg.type === 'transfer') return '你转了 ¥' + (Number(msg.amount) || 0).toFixed(2);
-    if (msg.type === 'sticker') return '你发了个表情' + (msg.name ? '「' + msg.name + '」' : '');
-    if (msg.type === 'pat') return (msg.content || '拍一拍');
+    if (msg.type === 'photo') return '[图片]';
+    if (msg.type === 'file') return '[文件]' + (msg.name ? ' ' + msg.name : '');
+    if (msg.type === 'transfer') return '[转账] ¥' + (Number(msg.amount) || 0).toFixed(2);
+    if (msg.type === 'sticker') return '[表情]' + (msg.name ? ' ' + msg.name : '');
+    if (msg.type === 'pat') return (msg.content || '拍了拍');
+    if (msg.type === 'checkin') return '[查岗]' + (msg.caption ? ' ' + msg.caption : '');
+    if (msg.type === 'phone-invite') return '[手机邀请]' + (msg.content ? ' ' + msg.content : '');
     var raw = String(msg.content || '');
-    if (msg.role === 'assistant' && Sleepy.promptEngine && Sleepy.promptEngine.splitBubbles) {
-      var arr = Sleepy.promptEngine.splitBubbles(raw);
-      if (arr && arr.length) raw = arr[arr.length - 1] || raw;
+    var pe = Sleepy.promptEngine;
+    if (pe && pe.splitBubblesT) {
+      var b = pe.splitBubblesT(raw).bubbles;
+      if (b && b.length) raw = b[b.length - 1] || raw;
     }
-    var t = raw.replace(/\s+/g, ' ').slice(0, 20);
-    return (msg.role === 'user' ? '你说：' : '对方回：') + t;
+    return raw.replace(/\s+/g, ' ').trim();
+  }
+
+  /* 会话列表右上角的时间。照微信：今天给钟点（上午 10:23）、昨天给「昨天」、
+     一周内给星期几、今年更早给「9月12日」、跨年给「2025年9月」。
+     和 ui.relativeTime（「3 天前」）不是一回事，所以单独一个 ——
+     那个是给收藏夹那种「多久以前」的场景用的，别混着改。 */
+  function chatListTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    var now = new Date();
+    var day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    var t0 = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    var days = Math.round((day0 - t0) / 86400000);
+    if (days <= 0) {
+      var hh = d.getHours();
+      var ap = hh < 6 ? '凌晨' : hh < 12 ? '上午' : hh < 18 ? '下午' : '晚上';
+      var h12 = hh % 12;
+      if (h12 === 0) h12 = 12;
+      return ap + ' ' + h12 + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+    }
+    if (days === 1) return '昨天';
+    if (days < 7) return '周' + '日一二三四五六'.charAt(d.getDay());
+    if (d.getFullYear() === now.getFullYear()) return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
   }
 
   function copyText(text) {
@@ -799,22 +834,24 @@
           item.appendChild(Sleepy.groupUI.collageEl(g.id, 'list'));
 
           var main = h('div', 'chat-item-main');
-          main.appendChild(h('span', 'chat-item-name', g.name));
-          var meta = h('div', 'chat-item-meta');
-          meta.appendChild(h('span', 'chat-item-time', relativeTime(g.updatedAt)));
+          var gtop = h('div', 'chat-item-top');
+          gtop.appendChild(h('span', 'chat-item-name', g.name));
+          gtop.appendChild(h('span', 'chat-item-time', chatListTime(g.updatedAt)));
+          main.appendChild(gtop);
           var last = Sleepy.groupStore.lastMessage(g.id);
           var preview = '';
           if (last) {
             if (last.type === 'system') preview = last.content;
             else if (last.recalledAt) preview = '撤回了一条消息';
             else {
+              /* 群里保留「谁：说了什么」—— 这是微信群聊的样子，也确实有用
+                 （私聊才需要去掉前缀，因为只有两个人，名字已经写在上面了）。 */
               var lm = Sleepy.groupStore.findMember(g.id, last.senderAccountId);
               preview = (lm ? Sleepy.groupStore.accountMeta(lm).name : '?') +
-                '：' + String(last.content || '').slice(0, 24);
+                '：' + String(last.content || '').replace(/\s+/g, ' ').trim();
             }
           }
-          meta.appendChild(h('span', 'chat-item-preview', preview));
-          main.appendChild(meta);
+          main.appendChild(h('span', 'chat-item-preview', preview));
           item.appendChild(main);
 
           /* 同私聊：删除走长按，不再挂一个容易误触的「删」按钮 */
@@ -857,13 +894,13 @@
         item.appendChild(ava);
 
         var main = h('div', 'chat-item-main');
-        main.appendChild(h('span', 'chat-item-name', chat.name));
-
-        var meta = h('div', 'chat-item-meta');
-        meta.appendChild(h('span', 'chat-item-time', relativeTime(chat.updatedAt)));
+        /* 名字在左、时间在右上角（微信那种），预览另起一行占满整宽 */
+        var top = h('div', 'chat-item-top');
+        top.appendChild(h('span', 'chat-item-name', chat.name));
+        top.appendChild(h('span', 'chat-item-time', chatListTime(chat.updatedAt)));
+        main.appendChild(top);
         var msgs = Array.isArray(chat.messages) ? chat.messages : [];
-        meta.appendChild(h('span', 'chat-item-preview', previewOf(msgs[msgs.length - 1])));
-        main.appendChild(meta);
+        main.appendChild(h('span', 'chat-item-preview', previewOf(msgs[msgs.length - 1])));
         item.appendChild(main);
 
         /* 删除改成**长按条目**（原来右侧那个 32px 的「删」字又隐蔽又容易误触，
@@ -1076,22 +1113,37 @@
       sendBtn.innerHTML = PAW_SVG;
       sendBtn.setAttribute('aria-label', '发送');
 
-      var plusBtn = h('button', 'plus-btn', '+');
+      /* 加号用真的 SVG 而不是文字「+」——
+         文字加号在不同字体下粗细/居中都不一样，而且偏细，看着像个小符号，
+         跟旁边那枚笑脸挤在一起分不出主次（用户五.2）。
+         描边 2px 的几何加号在任何字号下都是同一个形状。 */
+      var plusBtn = h('button', 'plus-btn');
       plusBtn.type = 'button';
       plusBtn.title = '更多';
+      plusBtn.setAttribute('aria-label', '更多');
+      plusBtn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" ' +
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+        '<path d="M12 5.2v13.6M5.2 12h13.6"/></svg>';
 
-      /* ---- 输入框左下角：表情笑脸（用户定的）----
-         表情包入口从加号面板挪到这里；切换账号不在聊天页做了，
-         去「我」那一页。 */
-      var emoBtn = h('button', 'plus-btn emo-btn');
+      /* ---- 表情包：挪进输入框**里面**（用户五.2 要的新布局）----
+         以前是「笑脸 + 加号」两个 40px 圆钮并排在输入框左边：一行里塞了
+         两个同尺寸的大圆坨，既挤又分不清哪个是哪个，还白白吃掉 88px 宽度。
+         现在是 —— **最左加号、中间输入框、最右发送**，表情包做成框内右侧
+         一枚 30px 的纯图标小钮：不占行上的宽度，又离手最近。
+         放右侧而不是左侧：打字是从左往右长的，右边才是「还没用到的空间」。
+         （切换账号不在聊天页做了，去「我」那一页。） */
+      var inputWrap = h('div', 'chat-input-wrap');
+      var emoBtn = h('button', 'emo-btn');
       emoBtn.type = 'button';
       emoBtn.title = '表情包';
+      emoBtn.setAttribute('aria-label', '表情包');
       emoBtn.innerHTML = PLUS_ICON.sticker;
       emoBtn.addEventListener('click', openStickerPanel);
-      /* 笑脸在左下角、加号次之、输入框居中、爪印在右。 */
-      inputArea.appendChild(emoBtn);
+      inputWrap.appendChild(textarea);
+      inputWrap.appendChild(emoBtn);
+
       inputArea.appendChild(plusBtn);
-      inputArea.appendChild(textarea);
+      inputArea.appendChild(inputWrap);
       inputArea.appendChild(sendBtn);
       foot.appendChild(inputArea);
       body.appendChild(foot);
@@ -3116,7 +3168,12 @@
        取决于上一条是谁发的 —— 搞错会让模型无视我刚连发的那几条。 */
     proactiveHintFor: proactiveHintFor,
     PROACTIVE_HINT: PROACTIVE_HINT,
-    PROACTIVE_HINT_REPLY: PROACTIVE_HINT_REPLY
+    PROACTIVE_HINT_REPLY: PROACTIVE_HINT_REPLY,
+    /* 会话列表的两个纯函数，同样导出给冒烟打表：
+       previewOf 不许再冒出「对方回：」前缀、不许漏出 '||' 和 [译]…[/译] 标签；
+       chatListTime 是照微信那套（今天给钟点、一周内给星期几）。 */
+    previewOf: previewOf,
+    chatListTime: chatListTime
   };
 
 })(window);

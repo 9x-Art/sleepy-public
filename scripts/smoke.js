@@ -907,6 +907,48 @@ t('空发送的提示词按「上一条是谁发的」分流', () => {
   return { 空对话: '主动', 我发的: '我说完了', 他发的: '主动' };
 });
 
+/* 会话列表的预览（用户 2026-09-21：「对方回：」这几个字不要显示，照微信）。
+   三条不许退回去的规矩：不带角色前缀、只给最后一个气泡、不漏 [译] 标签。 */
+t('会话列表预览：无前缀 / 只取最后一句 / 不漏译文标签', () => {
+  const P = S.chatApp.previewOf;
+  const T = S.chatApp.chatListTime;
+
+  const asst = P({ role: 'assistant', content: '灯还亮着 || 你要现在过来吗' });
+  if (asst !== '你要现在过来吗') throw new Error('没只取最后一个气泡：' + asst);
+  if (/对方回|你说/.test(asst)) throw new Error('前缀还挂着：' + asst);
+  if (asst.indexOf('||') >= 0) throw new Error('把协议分隔符显示出来了：' + asst);
+
+  const usr = P({ role: 'user', content: '睡了没' });
+  if (usr !== '睡了没') throw new Error('自己发的也带了前缀：' + usr);
+
+  /* [译]…[/译] 是协议，不是正文。用 splitBubbles 会把它当正文显示出来，
+     所以这里必须走 splitBubblesT。 */
+  const tr = P({ role: 'assistant', content: 'Hello[译]你好[/译] || 晚安' });
+  if (tr !== '晚安') throw new Error('译文标签没剥干净：' + tr);
+  const tr2 = P({ role: 'assistant', content: '你好[译]Hi[/译]' });
+  if (tr2 !== '你好') throw new Error('只有译文没有原文时该回原文：' + tr2);
+
+  /* 附件类：老实现不管角色是谁都写「你发了…」，TA 发来的图会被说成你发的 */
+  if (P({ role: 'assistant', type: 'photo' }) !== '[图片]') throw new Error('图片预览不对');
+  if (P({ role: 'user', type: 'file', name: 'a.pdf' }) !== '[文件] a.pdf') throw new Error('文件预览不对');
+  if (P({ role: 'assistant', type: 'transfer', amount: 30 }) !== '[转账] ¥30.00') throw new Error('转账预览不对');
+  if (P(null) !== '空对话') throw new Error('空对话兜底没了');
+
+  /* 时间：今天给钟点、昨天、一周内给星期几、更早给日期 */
+  const now = new Date();
+  const at = (d) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14, 3).getTime();
+  const tToday = T(today);
+  if (!/^(凌晨|上午|下午|晚上) \d{1,2}:0?3$/.test(tToday)) throw new Error('今天该给钟点：' + tToday);
+  if (T(at(-1).getTime()) !== '昨天') throw new Error('昨天不对：' + T(at(-1).getTime()));
+  const wk = T(at(-3).getTime());
+  if (!/^周[日一二三四五六]$/.test(wk)) throw new Error('一周内该给星期几：' + wk);
+  const old = T(at(-40).getTime());
+  if (!/月\d+日$/.test(old)) throw new Error('更早该给日期：' + old);
+  if (T(0) !== '') throw new Error('没有时间戳时该给空串');
+  return { 最后一句: asst, 今天: tToday, 三天前: wk, 更早: old };
+});
+
 /* 余额按房存（一间房一条）。写入必须拿全量按房找那条 ——
    拿 core.scoped() 过滤过的列表回写会把别的房的记录抹掉（S4a 的老坑）。 */
 t('钱包余额按房隔离', () => {

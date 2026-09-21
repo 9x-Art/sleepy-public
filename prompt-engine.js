@@ -1439,6 +1439,10 @@
     parseOfflineReply: parseOfflineReply,
     parseReply: parseReply,
     splitBubbles: splitBubbles,
+    /* splitBubblesT 比上面那个多干两件事：剥掉 [译]…[/译] 标签、顺带给出译文。
+       凡是「要把气泡正文拿去给人看」的地方都该用它 —— 会话列表的预览就是：
+       用 splitBubbles 会把 [译]…[/译] 当成正文原样显示出来。 */
+    splitBubblesT: splitBubblesT,
     awarenessOf: awarenessOf
   };
 
