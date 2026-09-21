@@ -575,14 +575,13 @@
       head.appendChild(h('p', 'cfg-poem-from', meta.from));
       body.appendChild(head);
 
-      /* ---- 关系树 ---- */
-      var treeWrap = h('div', 'tree-wrap');
-      var treeScroll = h('div', 'tree-scroll');
-      treeScroll.appendChild(treeWrap);
-      body.appendChild(treeScroll);
-
-      var treeHint = h('p', 'tree-hint', '');
-      body.appendChild(treeHint);
+      /* ---- 人物（2026-09-21 重做，原来是「关系树」）----
+         放射树结构上只装得下两个角色（左一右一），第三个没地方放 ——
+         改成和下面「岛内成员」同款的横排条。见 paintPeople。 */
+      var peopleSec = h('p', 'iol-drawer-sec', '');
+      var peopleStrip = h('div', 'iol-strip cfg-people');
+      body.appendChild(peopleSec);
+      body.appendChild(peopleStrip);
 
       /* ---- 岛内成员（NPC）----
          NPC 属于整座岛，不挂在树上的任何人名下（2026-09-21 用户拍板）。
@@ -595,11 +594,10 @@
       function paintNpcs() {
         sb = core.findSandbox(roomId) || sb;
         var npcs = core.npcsOfRoom(sb);
-        npcSec.textContent = '岛内成员 · ' + npcs.length + ' 位 NPC（属于这座' +
-          metaOf(sb.kind).title + '，不属于任何一方）';
+        npcSec.textContent = '岛内成员 · ' + npcs.length + ' 位 NPC';
         npcStrip.innerHTML = '';
         if (!npcs.length) {
-          npcStrip.appendChild(h('p', 'iol-empty', '还没有 NPC · 点「＋」让第一位住进岛里'));
+          npcStrip.appendChild(h('p', 'iol-empty', '还没有 NPC'));
         }
         npcs.forEach(function (n) {
           var card = h('button', 'iol-member');
@@ -624,38 +622,13 @@
         npcStrip.appendChild(addNpc);
       }
 
-      /* 「加人设」这一行随房型变。
-         孤岛住满之后**整行换掉**：留着的话那就是个按不动的按钮
-         （点了只弹「孤岛只住得下一个人」），用户看到会问「为啥右边还有加人设」
-         （原话）。不如直接写清楚为什么加不了。 */
-      var addRow = h('div', 'cfg-add-row');
-      body.appendChild(addRow);
-
-      function paintAddRow() {
-        addRow.innerHTML = '';
-        if (!canAddChar(sb)) {
-          addRow.appendChild(h('p', 'cfg-empty',
-            '孤岛只住得下一个人 · 想再放人，去开一片群岛'));
-          return;
-        }
-        var addBtn = h('button', 'cfg-add-main');
-        addBtn.type = 'button';
-        addBtn.innerHTML = ic('<path d="M12 6.5v11M6.5 12h11"/>', 18);
-        addBtn.appendChild(h('span', '', '加人设'));
-        addBtn.addEventListener('click', function () { openChar(ctx, sb, ''); });
-        addRow.appendChild(addBtn);
-        if (Sleepy.charIO) {
-          var impBtn = h('button', 'cfg-add-sub', '导入人设');
-          impBtn.type = 'button';
-          impBtn.addEventListener('click', function () { Sleepy.charIO.importInto(ctx, sb.id); });
-          addRow.appendChild(impBtn);
-        }
-      }
+      /* 「加人设 / 导入人设」原来在这里占一整行大按钮（孤岛住满时整行换成
+         一句说明）—— 那两件事已经并进上面**人物条末尾**的 ＋ / ↓，
+         不用占两处版面。 */
 
       /* ---- 我的马甲 ---- */
       var gMask = group('我的马甲',
-        '这座岛自己的马甲 —— 别岛的不带过来（岛与岛隔绝往来）。' +
-        '想要同一个人设，点「从别的岛复制一件」；也可以就在这里直接新建。');
+        '这座岛自己的马甲 · 同一个人设可以从别的岛复制，或直接新建。');
       var maskBox = h('div', 'cfg-masks');
       gMask.card.appendChild(maskBox);
 
@@ -720,7 +693,7 @@
               sb = r.sandbox;
               copyOpen = false;
               ctx.toast('已复制「' + nu.name + '」到这座岛', 'ok');
-              paintMasks(); paintCopyList(); paintLocks(); paintTree();
+              paintMasks(); paintCopyList(); paintLocks(); paintPeople();
             });
             copyList.appendChild(line);
           });
@@ -762,7 +735,7 @@
             var r = core.setSandboxMasks(sb.id, next);
             if (!r.ok) { ctx.toast(r.message, 'err'); return; }
             sb = r.sandbox;
-            paintMasks(); paintLocks(); paintTree();
+            paintMasks(); paintLocks(); paintPeople();
           });
           maskBox.appendChild(item);
         });
@@ -855,354 +828,140 @@
            虚线位    → 角色下面加皮套
          红线点击 → 写关系 */
 
-      var R_ME = 30, R_CHAR = 24, R_KID = 17, R_ADD = 15;
-      /* STEP_X 是相邻两列的距离。它同时决定了两件事：
-         「我」两侧各站得下几列才不用滚动，以及**两边圆之间留得下多长的
-         关系文字**（6 个字 ≈ 76px，见下面 clip(rel, 6)）。
-         130 是这样凑出来的：130 - R_ME(30) - R_CHAR(24) = 76，正好够 6 个字；
-         而「我」两侧各一列时画布要 2×(130+24+24)=356，塞得进 414 宽的手机屏。 */
-      var PAD = 24, STEP_X = 130, GAP_Y = 62, ROW_GAP = 80;
+      /* ==================== 人物（2026-09-21 重做）====================
 
-      /* 第 i 个角色排在哪一列、哪一侧：偶数往右、奇数往左，左右交替。
-         这样两个角色时正好一左一右对称，一个角色时在右边（用户要的「右边是爱人」）。 */
-      function sideOf(i) {
-        return i % 2 === 0 ? 1 : -1;
-      }
-      function colOf(i) {
-        return Math.floor(i / 2) + 1;
-      }
-      /* 第 i 个人（或第 i 个空位）相对「我」的横向偏移 */
-      function slotOff(i) {
-        return sideOf(i) * colOf(i) * STEP_X;
-      }
+         **原来是「我」居中、角色左右交替长出去的放射树** —— 结构上只装得下
+         两个角色（左一右一），第三个就没地方了（用户原话：「user 但凡想要
+         三个 char，都没地方放了」）。
+         现在是和下面「岛内成员」同款的横排条：一件一张卡，横排、宽了就横滑，
+         **想加几个加几个**。NPC 不进这条（属于整座岛，在下面那一栏）。
 
-      /* 红线要**向上拱**，不能向下弯：
-         节点下方挂着自己的名字，向下弯的那条会正好从前面那个人的名字上
-         压过去（第一版就是这样，「顾清和」被压在带子底下）。
-         上方是空的，所以只有往上抬才躲得开。
-
-         抬多高**不是写死的** —— 对前面每一个人算出「从 TA 头顶过去至少要多高」，
-         取最大值。写死一个数字的话，人一多（弧线拉长、经过第三个人时抬得不够）
-         就会撞上，而且换个人名字长短又会变。 */
-      function bowFor(x1, x2, targets) {
-        var cx = (x1 + x2) / 2;
-        var need = 26;                 /* 下限：总得有点弧，不然是根直棍 */
-        targets.forEach(function (tx) {
-          /* 在这条二次贝塞尔上找 x == tx 的那点，取它的 2t(1-t) ——
-             抬升量就是 bow × 2t(1-t)，所以 bow 至少要 (要躲的高度) / 这个系数。
-             两侧都要能用，所以按「离起点的距离」扫，不假设 x 递增。 */
-          for (var s = 1; s <= 250; s++) {
-            var t = s / 500;          /* (0, 0.5] */
-            var xt = (1 - t) * (1 - t) * x1 + 2 * t * (1 - t) * cx + t * t * x2;
-            if (Math.abs(xt - tx) > 0.6) continue;
-            var k = 2 * t * (1 - t);
-            if (k > 0.02) need = Math.max(need, (R_CHAR + 6) / k);
-            break;
-          }
-        });
-        return need;
-      }
-
-      function paintTree() {
-        /* 树中间的「我」= 这间房的**大号**（用户 2026-09-21：降落时用的就是
-           大号）。配置台渲染的是被点开的那间房，所以按 sb 取，不看活动岛。 */
+         卡上各处的点击：
+           我        → 管马甲（mask-list）
+           角色      → 档案（island-char）
+           角色小字  → 写关系（link.relation，「青梅竹马」那句）
+           皮套      → 档案，小字标它挂在谁名下
+           末尾 ＋   → 加人设；末尾 ↓ 导入人设
+         红线不再画：「谁认识谁」那套在总览的「群岛关系」里已经完整，
+         这里只留「我 × 角色」那一句注解 —— 它原本只有树上那条红线能点，
+         换条之后挪到卡上的小字，功能不丢。 */
+      function paintPeople() {
+        peopleStrip.innerHTML = '';
         var me = core.defaultUserOfSandbox(sb) || core.activeUser();
+        var masks = core.masksOfSandbox(sb);
         var mains = core.charsOfSandbox(sb.id);
-        var canAdd = canAddChar(sb);
-
-        /* ---- 位置：让**整棵树的整体**落在页面正中 ----
-
-           注意不是「我」居中。用户原话：
-             「不是指 user 一定要在中间，是整体！不然你不觉得视觉偏了么」
-           他说得对：只把「我」摆在正中、角色全在右边的话，重心是往右倒的
-           （两个元素时，右边那个人会把视觉重量压到右半边）。
-
-           做法是先算出相对于「我」的**包围盒**（把每个人的半径也算进去），
-           再整体平移 (W/2 − 包围盒中点)。于是「我」会自己漂到该在的地方：
-             空房 / 一个角色 → 空位在左、人在右，两边对称，「我」≈ 正中
-             两个角色       → 一左一右，「我」正好在正中
-             三个以上       → 「我」随包围盒偏，「整体」始终居中
-
-           画布至少跟视口一样宽（不然没地方平移），人多了比视口宽就横向滚动，
-           滚动位置每次摆正到中间（见 centerScroll）。 */
-        var VIEW = (treeScroll.clientWidth ? treeScroll.clientWidth - 12 : 0) ||
-          Math.max(300, (window.innerWidth || 375) - 48);
-
-        var offs = [];        /* 每个人相对「我」的横向偏移 */
-        var offR = [];        /* 对应的半径 */
-
-        /* 「加人设」那个虚线位排在哪 —— 见下面它出现的地方的注释。
-           要先定下来，因为它也算进包围盒（它是看得见的东西，
-           不算的话整体居中了它却被挤出屏幕）。两侧第一格都有人时不画。 */
-        var slotAt = (canAdd && mains.length < 2) ? mains.length : -1;
-
-        mains.forEach(function (m, i) {
-          offs.push(slotOff(i));
-          offR.push(R_CHAR);
-        });
-        if (slotAt >= 0) {
-          offs.push(slotOff(slotAt));
-          offR.push(R_ADD);
-        }
-        var lo = -R_ME, hi = R_ME;
-        offs.forEach(function (d, k) {
-          lo = Math.min(lo, d - offR[k]);
-          hi = Math.max(hi, d + offR[k]);
+        var subs = [];
+        mains.forEach(function (m) {
+          core.subChars(m.id).forEach(function (s) {
+            if (s.sandboxId && s.sandboxId !== sb.id) return;
+            subs.push({ c: s, parent: m });
+          });
         });
 
-        var W = Math.max(VIEW, (hi - lo) + 2 * PAD);
-        var xMe = W / 2 - (lo + hi) / 2;               /* ★ 整体居中，不是「我」居中 */
-        var charX = function (i) { return xMe + slotOff(i); };
-
-        /* 先把每条红线的弓高都算出来，才知道画布顶部要留多少 ——
-           不然人一多，最长那条弧的顶会被 viewBox 切掉一截。 */
-        var bows = [];
-        var maxBow = 0;
-        mains.forEach(function (m, i) {
-          var prevs = [];
-          for (var pi = 0; pi < i; pi++) prevs.push(charX(pi));
-          var dir = sideOf(i);
-          /* 半径要按**背离「我」的方向**取：左边的角色，圆心在「我」左边，
-             两个端点也跟着镜像，不然红线会从左边的圆里穿出来。 */
-          bows[i] = bowFor(xMe + dir * R_ME, charX(i) - dir * R_CHAR, prevs);
-          maxBow = Math.max(maxBow, bows[i]);
-        });
-
-        var y0 = Math.max(PAD + R_ME, maxBow / 2 + 10);
-        var maxY = y0 + ROW_GAP;
-
-        var lines = '', nodes = '';
-        var col = {};      /* 每一列的「下一个空位」y */
-        var avaJobs = [];  /* 这一遍画出来的头像待填表（fillTreeAvatars 用） */
-
-        function colNext(x, key) {
-          if (col[key] === undefined) col[key] = y0 + ROW_GAP;
-          var y = col[key];
-          col[key] += GAP_Y;
-          return y;
-        }
-
-        function line(x1, y1, x2, y2, cls) {
-          return '<line class="' + (cls || 'tree-line') + '" x1="' + x1.toFixed(1) +
-            '" y1="' + y1.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) + '"/>';
-        }
-
-        function person(x, y, r, cls, c, act, name) {
-          var s = '<g class="tree-node' + (act ? ' tree-click' : '') + '"' +
-            (act ? ' data-act="' + esc(act) + '"' : '') + '>';
-          s += '<circle class="tree-disc ' + cls + '" cx="' + x.toFixed(1) +
-            '" cy="' + y.toFixed(1) + '" r="' + r + '"/>';
-          /* 头像（用户 2026-09-21：补了头像但是 user 看不到）：
-             有图就叠一层圆形裁剪的 <image>，首字母垫在底下（图挂了还能看）。 */
-          if (c && (c.avatarMedia || c.avatar)) {
-            var cid = 'tclip' + avaJobs.length;
-            s += '<clipPath id="' + cid + '"><circle cx="' + x.toFixed(1) + '" cy="' +
-              y.toFixed(1) + '" r="' + (r - 1.6).toFixed(1) + '"/></clipPath>';
-            s += '<image class="tree-ava" clip-path="url(#' + cid + ')" x="' +
-              (x - r + 1.6).toFixed(1) + '" y="' + (y - r + 1.6).toFixed(1) +
-              '" width="' + (2 * r - 3.2).toFixed(1) + '" height="' + (2 * r - 3.2).toFixed(1) +
-              '" preserveAspectRatio="xMidYMid slice" data-ava="' + avaJobs.length + '"/>';
-            avaJobs.push(c);
+        /* 一张卡。o.sub 是小字那行；给了 onSub 就整行可点（用来写关系）。 */
+        function cardFor(o) {
+          var card = h('button', 'iol-member cfg-p' + (o.me ? ' is-me' : ''));
+          card.type = 'button';
+          var ava = h('span', 'iol-member-ava', (o.name || '?').charAt(0));
+          card.appendChild(ava);
+          if (o.avatarOf) core.setAvatarBg(ava, o.avatarOf);
+          card.appendChild(h('strong', '', o.name || '未命名'));
+          var sub = h('small', '', o.sub);
+          if (o.subIsHint) sub.classList.add('is-hint');
+          if (o.onSub) {
+            sub.classList.add('cfg-p-rel');
+            sub.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              o.onSub();
+            });
           }
-          s += '<text class="tree-initial" x="' + x.toFixed(1) + '" y="' +
-            (y + 1).toFixed(1) + '" text-anchor="middle" dominant-baseline="middle">' +
-            esc(core.initialOf(name)) + '</text>';
-          s += '<text class="tree-name" x="' + x.toFixed(1) + '" y="' +
-            (y + r + 14).toFixed(1) + '" text-anchor="middle">' + esc(clip(name, 7)) + '</text>';
-          s += '</g>';
-          return s;
+          card.appendChild(sub);
+          card.addEventListener('click', o.onTap);
+          return card;
         }
 
-        /* innerHTML 之后异步把 <image> 的 href 填上（图库头像是 IndexedDB 的
-           objectURL，得等 Promise）。桩的 querySelectorAll 返回 []，天然跳过。 */
-        function fillTreeAvatars() {
-          var imgs = treeWrap.querySelectorAll('image[data-ava]');
-          for (var i = 0; i < imgs.length; i++) {
-            (function (img) {
-              var rec = avaJobs[parseInt(img.getAttribute('data-ava'), 10)];
-              if (!rec) return;
-              core.avatarSrc(rec).then(function (u) {
-                if (!u || !img.parentNode) return;
-                img.setAttribute('href', u);
-                if (img.parentNode.classList) img.parentNode.classList.add('has-ava');
-              });
-            })(imgs[i]);
-          }
-        }
-
-        function addSlot(x, y, label, act) {
-          var s = '<g class="tree-node tree-click" data-act="' + esc(act) + '">';
-          s += '<circle class="tree-disc tree-plus" cx="' + x.toFixed(1) + '" cy="' +
-            y.toFixed(1) + '" r="' + R_ADD + '"/>';
-          s += '<text class="tree-glyph" x="' + x.toFixed(1) + '" y="' +
-            (y + 1).toFixed(1) + '" text-anchor="middle" dominant-baseline="middle">+</text>';
-          s += '<text class="tree-name" x="' + x.toFixed(1) + '" y="' +
-            (y + R_ADD + 13).toFixed(1) + '" text-anchor="middle">' + esc(label) + '</text>';
-          s += '</g>';
-          return s;
-        }
+        peopleSec.textContent = '人物 · 我 + ' + mains.length + ' 位角色' +
+          (subs.length ? '（含 ' + subs.length + ' 张皮套）' : '');
 
         /* 「我」 */
-        nodes += person(xMe, y0, R_ME, 'tree-me', me, 'mask-list', '我');
+        peopleStrip.appendChild(cardFor({
+          me: true,
+          name: me ? me.name : '我',
+          avatarOf: me,
+          sub: masks.length ? (masks.length + ' 件马甲 ›') : '还没有马甲 ›',
+          subIsHint: !masks.length,
+          onTap: function () { ctx.open('mask-list'); }
+        }));
 
-        /* NPC 不再挂树上（2026-09-21 用户拍板）：NPC 属于整座岛，
-           不属于 user 或 char 的任何一方 —— 在下面「岛内成员」那一栏里，
-           照群岛总览的样子横排。树上的绿细线只表达「皮套属于谁」。 */
-
-        /* 角色 + 关系连线 */
-        mains.forEach(function (m, i) {
-          var x = charX(i);
-          var rel = core.relationOf(m.id, me.id, sb.id);
-
-          /* 「我」和每个角色之间是**红线**（月老那种意象）。
-             画法是两条平行的弧 —— 一条丝带的两边，中间留出位置写关系。
-             注意这里是**红线**，不属于这个范畴的线不染红：
-               我 → 角色        红线（这是「我和你」）
-               我 → NPC         淡绿细线（这是「谁属于谁」）
-               角色 → 皮套/NPC   淡绿细线
-             两种线一眼分得开，才不会把「归属」看成「关系」。
-
-             弧**向上拱**，理由和算法见上面 bowFor 的注释。
-             关系文字放在弧的最高点（t=0.5）—— 两个圆之间的正中间。
-             底下垫一块和页面同色的矩形把红线截断，省得给文字描边
-             （.tree-rel-bg 的 fill 必须跟 .page 的底色一致，换主题时要一起改）。 */
-          /* 左侧的角色要**镜像**：圆心在「我」左边，两个端点也跟着往左取，
-             不然红线会从左边那个圆里穿出来（端点的内/外侧搞反了）。 */
-          var dir = sideOf(i);
-          var x1 = xMe + dir * R_ME, x2 = x - dir * R_CHAR;
-          var bow = bows[i];
-          var cx1 = (x1 + x2) / 2;
-          var cy = y0 - bow;
-
-          var tt = 0.5, t1 = 1 - tt;
-          var midX = t1 * t1 * x1 + 2 * t1 * tt * cx1 + tt * tt * x2;
-          var midY = (t1 * t1 + tt * tt) * y0 + 2 * t1 * tt * cy;
-
-          lines += '<path class="tree-tie' + (rel ? '' : ' tree-tie-dash') +
-            '" d="M' + x1.toFixed(1) + ' ' + y0 + ' Q ' + cx1.toFixed(1) + ' ' +
-            cy.toFixed(1) + ' ' + x2.toFixed(1) + ' ' + y0 + '"/>';
-          lines += '<path class="tree-tie tree-tie-b' + (rel ? '' : ' tree-tie-dash') +
-            '" d="M' + x1.toFixed(1) + ' ' + (y0 - 3.2) + ' Q ' + cx1.toFixed(1) + ' ' +
-            (cy - 3.2).toFixed(1) + ' ' + x2.toFixed(1) + ' ' + (y0 - 3.2) + '"/>';
-
-          /* 关系文字最多显 6 个字：再长就会顶到两边的圆上
-             （「我」到第一个角色之间就那么宽）。完整的写在 prompt 里能看。 */
-          var label = rel ? clip(rel, 6) : '写关系';
-          var lw = label.length * 11 + 10;
-          nodes += '<g class="tree-node tree-click" data-act="rel:' + esc(m.id) + '">' +
-            '<rect class="tree-rel-bg" x="' + (midX - lw / 2).toFixed(1) + '" y="' +
-            (midY - 9).toFixed(1) + '" width="' + lw + '" height="18" rx="9"/>' +
-            '<text class="tree-rel' + (rel ? '' : ' tree-rel-empty') +
-            '" x="' + midX.toFixed(1) + '" y="' + (midY + 1).toFixed(1) +
-            '" text-anchor="middle" dominant-baseline="middle">' + esc(label) + '</text></g>';
-
-          nodes += person(x, y0, R_CHAR, 'tree-char', m, 'char:' + m.id, m.name);
-
-          /* 这个角色名下的皮套。NPC 不在这里（属于整座岛，见「岛内成员」栏） */
-          var kids = childrenOf(sb.id, m.id, 'sub', 'char');
-          kids.forEach(function (k) {
-            var y = colNext(x, m.id);
-            lines += line(x, y - GAP_Y + R_KID + 6, x, y - R_KID - 3, 'tree-line tree-line-v');
-            nodes += person(x, y, R_KID, 'tree-kid tree-sub', k, 'simple:' + k.id, k.name);
-          });
-          var ay = colNext(x, m.id);
-          lines += line(x, ay - GAP_Y + R_KID + 6, x, ay - R_ADD - 3,
-            'tree-line tree-line-v tree-dash');
-          nodes += addSlot(x, ay, '加皮套', 'add-sub:' + m.id);
-          maxY = Math.max(maxY, ay);
+        /* 大号：小字那行是「我 × TA」的关系，点一下写 / 改 */
+        mains.forEach(function (c) {
+          var rel = me ? core.relationOf(c.id, me.id, sb.id) : '';
+          peopleStrip.appendChild(cardFor({
+            name: c.name,
+            avatarOf: c,
+            sub: rel || (me ? '写关系' : '大号'),
+            subIsHint: !rel,
+            onSub: me ? function () { writeRelation(ctx, sb, c.id); } : null,
+            onTap: function () { ctx.open('island-char', { sbId: sb.id, charId: c.id }); }
+          }));
         });
 
-        /* 「加人设」的虚线位 —— 排在**最近的那一格空位上**：
-             还没人     → 右边第一格
-             有一个了   → 左边第一格（这时两边正好对称）
-             两侧第一格都有人 → **不画**（人多时本来就不该再往两边挤，
-                                  加人走下面那个大按钮）
-           为什么不让它一直往外排（右 2、左 2…）：树会越来越宽、要横向滚动，
-           而且虚线位容易被挤出屏幕外 —— 那就又变成「点哪里加呢」。
-           它是虚线圆圈 + 一行小字，**不连线**：人数一多，从「我」连过去的线
-           必然从别人身上穿过去。空房例外 —— 那时它就在隔壁，一根短短的虚线
-           正好把「我」和它连起来（用户认可的那张图的样子）。 */
-        if (slotAt >= 0) {
-          var ax = charX(slotAt);
-          if (!mains.length) {
-            lines += line(xMe + R_ME, y0, ax - R_ADD - 4, y0, 'tree-line tree-dash');
-          }
-          nodes += addSlot(ax, y0, '加人设', 'add-char');
-        }
+        /* 皮套：挂在某个大号名下，小字标出来 */
+        subs.forEach(function (it) {
+          peopleStrip.appendChild(cardFor({
+            name: it.c.name,
+            avatarOf: it.c,
+            sub: '皮套 · ' + (it.parent.name || ''),
+            onTap: function () {
+              ctx.open('island-char', { sbId: sb.id, charId: it.c.id });
+            }
+          }));
+        });
 
-        var H = maxY + R_ADD + 30;
-        treeWrap.innerHTML = '<svg class="tree-svg" viewBox="0 0 ' + W + ' ' + H + '" ' +
-          'style="width:' + W + 'px;height:' + H + 'px" role="img" ' +
-          'aria-label="这间房的关系树"><title>关系树</title>' +
-          lines + nodes + '</svg>';
+        /* 末尾：加人设 / 导入人设 —— 原来那整行大按钮并进这里（同样两件事，
+           不占两处版面）。孤岛住满时不给这个位，跟 canAddChar 判定一致，
+           免得点了只弹一句「住不下」。 */
+        if (canAddChar(sb)) {
+          var addBtn = h('button', 'iol-member is-add');
+          addBtn.type = 'button';
+          addBtn.appendChild(h('span', 'iol-add-mark', '＋'));
+          addBtn.appendChild(h('small', '', '加人设'));
+          addBtn.addEventListener('click', function () { openChar(ctx, sb, ''); });
+          peopleStrip.appendChild(addBtn);
 
-        wireTree();
-        fillTreeAvatars();
-        centerScroll();
-        treeHint.textContent = mains.length
-          ? '红线上的字就是你和他的关系 · 点人可以改'
-          : '这一段还很空 · 点「加人设」开始捏第一个人';
-      }
-
-      /* 画布比视口宽时（人多），把滚动位置摆到正中间 ——
-         「我」在画布正中，所以摆正之后它就在**屏幕**正中。
-         不摆的话会从最左边开始看，一眼看到的是最边上的角色。 */
-      function centerScroll() {
-        var over = treeWrap.offsetWidth - treeScroll.clientWidth;
-        if (over <= 1) { treeScroll.scrollLeft = 0; return; }
-        treeScroll.scrollLeft = over / 2;
-      }
-
-      /* SVG 是字符串拼的，点击用一次事件委托接住（节点会整体重画） */
-      function wireTree() {
-        var svg = treeWrap.querySelector('.tree-svg');
-        if (!svg) return;
-        svg.addEventListener('click', function (e) {
-          var g = e.target.closest ? e.target.closest('[data-act]') : null;
-          if (!g) return;
-          var act = g.getAttribute('data-act');
-
-          if (act === 'mask-list') { ctx.open('mask-list'); return; }
-          if (act === 'add-char') { openChar(ctx, sb, ''); return; }
-          if (act.indexOf('char:') === 0) { openChar(ctx, sb, act.slice(5)); return; }
-          if (act.indexOf('simple:') === 0) {
-            ctx.open('contact-edit', { id: act.slice(7), sandboxId: sb.id, simple: true });
-            return;
-          }
-          if (act.indexOf('add-sub:') === 0) {
-            /* 树上角色名下的虚线位现在是「加皮套」—— 皮套才属于某个角色。
-               NPC 走「岛内成员」栏的 ＋ 添加（island-npc 页，归岛）。 */
-            ctx.open('contact-edit', {
-              id: '', kind: 'sub', parentType: 'char', parentId: act.slice(8),
-              sandboxId: sb.id, simple: true
+          if (Sleepy.charIO) {
+            var impBtn = h('button', 'iol-member is-add');
+            impBtn.type = 'button';
+            impBtn.appendChild(h('span', 'iol-add-mark', '↓'));
+            impBtn.appendChild(h('small', '', '导入人设'));
+            impBtn.addEventListener('click', function () {
+              Sleepy.charIO.importInto(ctx, sb.id);
             });
-            return;
+            peopleStrip.appendChild(impBtn);
           }
-          if (act.indexOf('rel:') === 0) { writeRelation(ctx, sb, act.slice(4)); return; }
-        });
+        }
       }
 
-      /* 写关系：点连线中间那一小段文字。
+      /* 写关系：原本点树上的红线，现在点角色卡的小字。
          存在 links 上，所以它天然是「我 × 这个角色」这一段关系的注解。 */
       async function writeRelation(ctx, sb, charId) {
-        /* 「我 × TA」的注解写到**这间房的大号**身上（与树中间那个「我」同一件，
-           否则点出来的关系跟看到的人对不上）。 */
+        /* 「我 × TA」的注解写到**这间房的大号**身上（跟卡上那个「我」同一件，
+           否则写出来的关系跟看到的人对不上）。 */
         var me = core.defaultUserOfSandbox(sb) || core.activeUser();
         var ch = core.findChar(charId);
         var cur = core.relationOf(charId, me.id, sb.id);
         var next = await ui.prompt({
           title: '你和「' + (ch ? ch.name : '对方') + '」是什么关系？',
-          note: '写在线上的那句话。留空就清掉。比如：青梅竹马、上下级、前男友',
+          note: '写一句话。留空就清掉。比如：青梅竹马、上下级、前男友',
           value: cur,
           ok: '写上'
         });
         if (next === null) return;
         var r = core.setRelation(charId, me.id, next, sb.id);
         if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-        paintTree();
+        paintPeople();
         ctx.toast(r.relation ? ('写上了：' + r.relation) : '关系清掉了', 'ok');
       }
-
       /* 点「加人设」或者点某个角色 —— 都走**加人设那一页**（名字 / 头像 / 人设，
          外加一个「有小号吗」的开关），不走那个带三选一身份切换器的大表单。
          大表单是「角色骨架总面板」，从那一页底部的入口才进得去。
@@ -1220,9 +979,8 @@
 
       function redraw() {
         sb = core.findSandbox(roomId) || sb;
-        paintTree();
+        paintPeople();
         paintNpcs();
-        paintAddRow();
         paintMasks();
         paintLocks();
       }

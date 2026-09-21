@@ -5549,13 +5549,57 @@ span.msg-avatar-initial{
 .cfg-land-title{display:block;font-size:17px;font-weight:500;letter-spacing:3px;}
 .cfg-land-sub{display:block;margin-top:5px;font-size:11.5px;opacity:.86;}
 
-/* ==================== 简化人设页 ==================== */
+/* ==================== 简化人设页 · 同学录排版（2026-09-21）====================
 
-.simple-parent{
-  margin:0 0 18px;padding:11px 14px;border-radius:12px;
-  font-size:12px;line-height:1.7;color:var(--text-dim);
-  background:rgba(176,138,94,.1);border:1px solid rgba(176,138,94,.2);
+   原来：名字 / 头像地址 / 微信名 / 人设 四段，每段一个圆角输入框、
+   底下再压一行灰字解释，字段之间还有分隔线 —— 整页都是框和说明。
+   现在：左边一个**能点的方头像**（贴网址 / 选本地图都从它进），
+   右边文字栏去框改**下划线**，解释挪进 placeholder，分隔线全删，
+   靠留白分层（项目的视觉约定：「能靠留白分层就别包卡片」）。 */
+
+.simple-where{
+  margin:0 0 18px;font-size:11.5px;line-height:1.65;
+  color:var(--text-dim);
 }
+.face-row{display:flex;gap:16px;align-items:flex-start;margin-bottom:20px;}
+.face-field{flex:none;width:92px;}
+.face-box{
+  width:92px;height:92px;border-radius:10px;
+  border:1px solid var(--g-glass-line);
+  background:rgba(255,255,255,.62);
+  background-size:cover;background-position:center;
+  display:grid;place-items:center;
+  font-family:inherit;font-size:28px;font-weight:500;color:var(--g-accent-deep);
+  padding:0;cursor:pointer;
+}
+.face-box.has-img{color:transparent;}
+.face-box:active{opacity:.86;}
+.face-acts{display:flex;gap:12px;margin-top:8px;justify-content:center;}
+.face-act{
+  border:0;background:none;padding:0 0 1px;cursor:pointer;
+  font-family:inherit;font-size:10.5px;color:var(--text-dim);
+  border-bottom:1px solid rgba(180,166,147,.45);
+}
+.face-cols{flex:1;min-width:0;}
+
+/* 表单里的字段：去框改下划线、不留解释行 */
+.simple-form .set-field{padding:0;margin:0 0 16px;}
+.simple-form .set-label{font-size:11.5px;color:var(--text-dim);margin-bottom:2px;}
+.simple-form .set-input{
+  background:none;border:0;border-radius:0;
+  border-bottom:1px solid var(--g-glass-line);
+  padding:7px 0;font-size:14.5px;
+}
+.simple-form .set-input:focus{border-bottom-color:var(--g-accent);box-shadow:none;}
+.simple-form .set-hint{display:none;}
+/* 人设是整段文字，光一条底线不知道哪儿能打字 —— 给一层浅面（无边框、无圆角框感） */
+.simple-form .set-textarea{
+  background:rgba(249,247,243,.92);
+  border:0;border-radius:6px;
+  padding:11px 12px;font-size:14px;line-height:1.75;
+}
+.simple-form .set-textarea:focus{box-shadow:0 0 0 1px rgba(176,138,94,.35);}
+
 .simple-more{
   display:block;width:100%;margin-top:14px;padding:12px;
   border:1px dashed var(--g-glass-line);border-radius:14px;
@@ -8544,6 +8588,23 @@ div.pp-row:active{background:none;}
 
 .iol-strip{display:flex;gap:9px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:none;}
 .iol-strip::-webkit-scrollbar{display:none;}
+
+/* ---- 配置台「人物」条（2026-09-21：替换原来的放射关系树）----
+   放射树结构上只装得下两个角色（左一右一），换成这条横排：一件一张卡、
+   宽了就横滑，想加几个加几个。卡沿用 .iol-member 的形，只按用途给小字
+   两种颜色：有内容（关系 / 马甲数）= 焦糖（说明能点），空 = 弱灰占位。 */
+.cfg-people{padding-bottom:14px;}
+.cfg-p{min-width:104px;max-width:132px;}
+.cfg-p.is-me{
+  border-color:rgba(176,138,94,.55);
+  background:rgba(247,242,234,.92);
+}
+.cfg-p-rel{
+  color:var(--g-accent-deep);
+  border-bottom:1px dashed rgba(176,138,94,.5);
+  padding-bottom:1px;
+}
+.cfg-p small.is-hint{color:var(--text-faint);}
 .iol-empty{margin:6px 2px;font-size:11px;color:var(--text-faint);}
 .iol-member{
   min-width:98px;flex:none;padding:12px 11px;text-align:left;

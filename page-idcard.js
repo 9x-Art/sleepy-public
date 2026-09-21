@@ -129,6 +129,112 @@
     return f;
   }
 
+  /* 头像框（点框换图）—— 给编辑页的同学录排版用。
+     跟 avatarFieldLocal 的差别：那边是「地址输入框 + 选本地图」两件控件、
+     每个都是一条框；这边只有**一个方头像**，点框 = 选本地图，
+     框下一行小字 = 贴网址 / 移除。
+     存的口子完全一样（avatar 字符串 + avatarMedia 的 mediaId），
+     所以 doSave 那边不用改。 */
+  function faceField(existing, opts) {
+    opts = opts || {};
+    var toast = opts.toast || function () {};
+    var mediaId = (existing && existing.avatarMedia) || '';
+    var url = existing ? (existing.avatar || '') : '';
+    var initial = (existing && existing.name) ? existing.name.charAt(0) : (opts.empty || '＋');
+
+    var wrap = h('div', 'face-field');
+    var box = h('button', 'face-box');
+    box.type = 'button';
+    box.title = '点一下换一张本地图';
+
+    function paintBox() {
+      box.textContent = initial;
+      box.classList.remove('has-img');
+      box.style.backgroundImage = '';
+      if (url || mediaId) core.setAvatarBg(box, { avatar: url, avatarMedia: mediaId });
+    }
+
+    var file = h('input');
+    file.type = 'file';
+    file.accept = 'image/*';
+    file.style.display = 'none';
+
+    file.addEventListener('change', function () {
+      var picked = file.files && file.files[0];
+      file.value = '';
+      if (!picked) return;
+      if (!Sleepy.media || !Sleepy.media.shrink || !Sleepy.media.put) {
+        toast('图库没就绪，选不了本地图', 'err');
+        return;
+      }
+      toast('正在处理图片…');
+      Sleepy.media.shrink(picked, 320).then(function (r) {
+        return Sleepy.media.put(r.blob, { name: '头像', kind: 'avatar', w: r.w, h: r.h });
+      }).then(function (mid) {
+        mediaId = mid;
+        url = '';
+        paintBox();
+        repaintActs();
+        toast('选好了，别忘了保存', 'ok');
+      }, function () {
+        toast('这张图读不出来', 'err');
+      });
+    });
+
+    box.addEventListener('click', function () { file.click(); });
+
+    /* 框下面那行小字：贴网址 / 移除。占位不占版面 —— 用户嫌「圆角框太多」，
+       所以这两件事做成无框的文字按钮。 */
+    var acts = h('div', 'face-acts');
+    function repaintActs() {
+      acts.innerHTML = '';
+      var urlBtn = h('button', 'face-act', '贴网址');
+      urlBtn.type = 'button';
+      urlBtn.addEventListener('click', async function () {
+        var v = await ui.prompt({
+          title: '头像网址',
+          note: '留空就用名字首字',
+          value: url,
+          ok: '用它'
+        });
+        if (v === null) return;
+        url = String(v).trim();
+        mediaId = '';
+        paintBox();
+        repaintActs();
+      });
+      acts.appendChild(urlBtn);
+
+      if (mediaId) {
+        var rm = h('button', 'face-act', '移除');
+        rm.type = 'button';
+        rm.addEventListener('click', function () {
+          mediaId = '';
+          paintBox();
+          repaintActs();
+        });
+        acts.appendChild(rm);
+      }
+    }
+    repaintActs();
+
+    wrap.appendChild(box);
+    wrap.appendChild(acts);
+    wrap.appendChild(file);
+    paintBox();
+
+    return {
+      el: wrap,
+      get: function () { return url; },
+      getMedia: function () { return mediaId; },
+      setName: function (n) {
+        if (existing && existing.avatarMedia) return;   /* 有图就别动首字 */
+        initial = (n && String(n).trim()) ? String(n).trim().charAt(0) : (opts.empty || '＋');
+        paintBox();
+      }
+    };
+  }
+
   /* ------------------------- 导出 / 解析 ------------------------- */
 
   function toFileText(items) {
@@ -415,42 +521,56 @@
         (parentIsMe ? '这是「我」这边的人，跟角色无关'
                     : (kind === 'sub' ? '这是对方的另一张脸' : '这是对方那边的人'));
     }
-    body.appendChild(h('p', 'simple-parent', line));
+    /* 他会落在哪儿 —— 一行小字，不再是个圆角说明条
+       （用户：「现在的解释太多，圆角框太多」）。 */
+    body.appendChild(h('p', 'simple-where', line));
 
+    /* ---- 同学录排版：左边一张头像框，右边两栏（名字 / 微信名）----
+       原来是「名字 / 头像地址 / 微信名 / 人设」四段，每段一个圆角输入框、
+       每段底下再压一行灰字解释，中间还有分隔线 —— 整页就是一堆框和说明。
+       现在：头像交给一个**可以点的方框**（贴网址 / 选本地图都从它进），
+       文字栏去框改下划线、不留解释（该说的塞进 placeholder）。 */
     var f = {};
+    var form = h('div', 'simple-form');
+
+    var top = h('div', 'face-row');
+    f.avatar = faceField(existing, {
+      empty: '＋',
+      toast: function (t, k) { ctx.toast(t, k); }
+    });
+    top.appendChild(f.avatar.el);
+
+    var cols = h('div', 'face-cols');
     f.name = textField({
       label: '名字',
       value: existing ? existing.name : '',
-      hint: '聊天记录里出现的名字就是它'
+      placeholder: 'TA 叫什么'
     });
-    body.appendChild(f.name.el);
+    /* 头像框里那个首字跟着名字走 —— 打字的时候就能看见 */
+    if (f.name.input) {
+      f.name.input.addEventListener('input', function () {
+        f.avatar.setName(f.name.get());
+      });
+    }
+    cols.appendChild(f.name.el);
 
-    /* 头像：网址 + 本地图都行（avatarFieldLocal，本地图存图库走 avatarMedia）。
-       以前这里的文案是「别存本地图片，5MB 配额会被撑爆」——
-       图片本来就不走 localStorage，这句话早就不成立。 */
-    f.avatar = avatarFieldLocal(existing, {
-      toast: function (t, k) { ctx.toast(t, k); }
-    });
-    body.appendChild(f.avatar.el);
-
-    /* 微信名：会话列表 / 聊天页对外显示的名字（用户 2026-09-21）。
-       留空就用上面的「名字」。 */
     f.wechatName = textField({
       label: '微信名',
       value: existing ? (existing.wechatName || '') : '',
-      hint: '会话列表里显示的名字 · 留空就用「名字」',
-      placeholder: '想让它显示成什么'
+      placeholder: '会话列表里显示的名字（留空就用名字）'
     });
-    body.appendChild(f.wechatName.el);
+    cols.appendChild(f.wechatName.el);
+    top.appendChild(cols);
+    form.appendChild(top);
 
     f.content = textArea({
       label: '人设',
       value: existing ? existing.content : '',
-      rows: 10,
+      rows: 8,
       counter: true,
       placeholder: '是谁、怎么说话、和你什么关系……'
     });
-    body.appendChild(f.content.el);
+    form.appendChild(f.content.el);
 
     /* ---- 「有小号吗」开关 + 展开的小号设置 ----
        只有大号才有这个开关：皮套本来就是「大号对外用的另一张脸」，
@@ -462,18 +582,16 @@
     if (isMain) {
       sw = ui.switchField({
         label: '有小号吗',
-        hint: '打开就能顺手给他建一张皮套 —— 对外用的另一张脸',
         value: !!mySub
       });
-      /* 开关在字段区下方：先看「他是谁」，再决定要不要顺手加一张脸 */
-      body.appendChild(sw.el);
+      form.appendChild(sw.el);
 
       subBox = h('div', 'simple-sub');
       fs = {};
       fs.name = textField({
         label: '小号的名字',
         value: mySub ? mySub.name : '',
-        hint: '留空就自动叫「（大号名）的小号」'
+        placeholder: '留空就叫「（大号名）的小号」'
       });
       subBox.appendChild(fs.name.el);
       fs.content = textArea({
@@ -484,13 +602,15 @@
         placeholder: '这张脸对外是什么样、别人眼里的他是谁……'
       });
       subBox.appendChild(fs.content.el);
-      body.appendChild(subBox);
+      form.appendChild(subBox);
 
       subBox.style.display = sw.get() ? '' : 'none';
       sw.input.addEventListener('change', function () {
         subBox.style.display = sw.get() ? '' : 'none';
       });
     }
+
+    body.appendChild(form);
 
     var btnRow = h('div', 'btn-row');
     btnRow.appendChild(button('保存', 'primary', function () { doSave(); }));
