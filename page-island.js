@@ -1673,36 +1673,47 @@
           h('p', '', 'NPC 属于整座岛，不属于 user 或 char 的任何一方。\n之后再由关系设置决定谁认识 TA。')
         ]));
 
-        /* ---- 人物资料 ---- */
+        /* ---- 人物资料（同学录排版，跟角色 / 马甲编辑页同一套）----
+           用户：「所有的加人设 char、user、npc 大号小号都这样」。 */
         body.appendChild(h('p', 'iol-drawer-sec', '人物资料'));
+        var form = h('div', 'simple-form');
+        var top = h('div', 'face-row');
+
+        /* 头像：跟大号/小号同一套入口（点框选本地图 / 框下贴网址）——
+           以前 NPC 编辑页没有头像位（用户 2026-09-21）。 */
+        var fAvatar = Sleepy.faceField ? Sleepy.faceField(null, {
+          empty: '＋',
+          toast: function (t, k) { ctx.toast(t, k); }
+        }) : null;
+        if (fAvatar) top.appendChild(fAvatar.el);
+
+        var cols = h('div', 'face-cols');
         var fName = h('div', 'iol-field');
         fName.appendChild(h('label', '', '名字'));
         var nameInput = h('input');
         nameInput.placeholder = '聊天记录里出现的名字';
+        nameInput.addEventListener('input', function () {
+          if (fAvatar) fAvatar.setName(nameInput.value);
+        });
         fName.appendChild(nameInput);
-        body.appendChild(fName);
-
-        /* 头像：跟大号/小号同一套入口（网址 + 本地图）——
-           以前 NPC 编辑页没有头像位（用户 2026-09-21）。 */
-        var fAvatar = Sleepy.avatarFieldLocal ? Sleepy.avatarFieldLocal(null, {
-          toast: function (t, k) { ctx.toast(t, k); }
-        }) : null;
-        if (fAvatar) body.appendChild(fAvatar.el);
+        cols.appendChild(fName);
 
         /* 微信名：会话列表里显示的名字（用户 2026-09-21）。 */
         var fWx = h('div', 'iol-field');
         fWx.appendChild(h('label', '', '微信名'));
         var wxInput = h('input');
-        wxInput.placeholder = '会话列表里显示的名字 · 留空就用「名字」';
+        wxInput.placeholder = '会话列表里显示的名字（留空就用名字）';
         fWx.appendChild(wxInput);
-        body.appendChild(fWx);
+        cols.appendChild(fWx);
+        top.appendChild(cols);
+        form.appendChild(top);
 
         var fBio = h('div', 'iol-field');
         fBio.appendChild(h('label', '', '人物简介'));
         var bio = h('textarea');
         bio.placeholder = 'TA 是谁，平时做什么……';
         fBio.appendChild(bio);
-        body.appendChild(fBio);
+        form.appendChild(fBio);
 
         var fSay = h('div', 'iol-field');
         fSay.appendChild(h('label', '', '说话与行为方式'));
@@ -1710,7 +1721,9 @@
         say.className = 'is-short';
         say.placeholder = 'TA 说话是什么感觉，会怎么做……';
         fSay.appendChild(say);
-        body.appendChild(fSay);
+        form.appendChild(fSay);
+
+        body.appendChild(form);
 
         /* ---- 谁认识他 ---- */
         body.appendChild(h('p', 'iol-drawer-sec', '谁认识他'));

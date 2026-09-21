@@ -5600,6 +5600,30 @@ span.msg-avatar-initial{
 }
 .simple-form .set-textarea:focus{box-shadow:0 0 0 1px rgba(176,138,94,.35);}
 
+/* NPC 添加页用的是 .iol-field 那套老字段（page-island 没引 ui.textField）——
+   组件不换，只在这里给它们接上同一套「下划线 + 浅面」的形，
+   头像框由 Sleepy.faceField 提供，于是三个加人设入口长得一样。 */
+.simple-form .iol-field{margin:0 0 16px;}
+.simple-form .iol-field label{
+  display:block;font-size:11.5px;color:var(--text-dim);margin-bottom:2px;
+}
+.simple-form .iol-field input,
+.simple-form .iol-field textarea{
+  width:100%;box-sizing:border-box;
+  background:none;border:0;border-radius:0;
+  border-bottom:1px solid var(--g-glass-line);
+  padding:7px 0;font-family:inherit;font-size:14.5px;color:var(--g-ink);
+}
+.simple-form .iol-field input:focus,
+.simple-form .iol-field textarea:focus{outline:0;border-bottom-color:var(--g-accent);}
+.simple-form .iol-field textarea,
+.simple-form .iol-field textarea.is-short{
+  background:rgba(249,247,243,.92);
+  border:0;border-radius:6px;
+  padding:11px 12px;font-size:14px;line-height:1.75;
+  resize:vertical;
+}
+
 .simple-more{
   display:block;width:100%;margin-top:14px;padding:12px;
   border:1px dashed var(--g-glass-line);border-radius:14px;

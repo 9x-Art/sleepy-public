@@ -588,12 +588,28 @@
 
       subBox = h('div', 'simple-sub');
       fs = {};
+      /* 小号也走同学录那一套（用户：「小号咋没地方加头像，其实也是做成大号的这样」）
+         —— 头像是小号这张脸最要紧的东西，原来这里只有名字和人设两个栏。 */
+      var subTop = h('div', 'face-row');
+      fs.avatar = faceField(mySub, {
+        empty: '＋',
+        toast: function (t, k) { ctx.toast(t, k); }
+      });
+      subTop.appendChild(fs.avatar.el);
+      var subCols = h('div', 'face-cols');
       fs.name = textField({
         label: '小号的名字',
         value: mySub ? mySub.name : '',
         placeholder: '留空就叫「（大号名）的小号」'
       });
-      subBox.appendChild(fs.name.el);
+      if (fs.name.input) {
+        fs.name.input.addEventListener('input', function () {
+          fs.avatar.setName(fs.name.get());
+        });
+      }
+      subCols.appendChild(fs.name.el);
+      subTop.appendChild(subCols);
+      subBox.appendChild(subTop);
       fs.content = textArea({
         label: '小号人设',
         value: mySub ? mySub.content : '',
@@ -678,6 +694,8 @@
           parentType: 'char',
           sandboxId: sandboxId || null,
           name: subName,
+          avatar: String(fs.avatar.get() || '').trim(),
+          avatarMedia: fs.avatar.getMedia(),
           content: fs.content.get()
         });
       }
@@ -1438,41 +1456,50 @@
       if (id && !existing) { ctx.toast('找不到这件马甲', 'err'); ctx.back(); return; }
 
       var f = {};
-      var g = group('马甲');
+      /* 跟角色编辑页同一套同学录排版（用户：「所有的加人设 char、user、
+         npc、大号小号都这样」）—— 左头像框 + 右下划线字段，
+         「马甲」那层分组框也就用不上了。 */
+      var form = h('div', 'simple-form');
+      var top = h('div', 'face-row');
+      f.avatar = faceField(existing, {
+        empty: '＋',
+        toast: function (t, k) { ctx.toast(t, k); }
+      });
+      top.appendChild(f.avatar.el);
+      var cols = h('div', 'face-cols');
       f.name = textField({
         label: '名字',
         value: existing ? existing.name : '',
         placeholder: '小号 A'
       });
-      g.card.appendChild(f.name.el);
-
-      /* 微信名：会话列表里这个身份显示的名字（用户 2026-09-21）。 */
+      if (f.name.input) {
+        f.name.input.addEventListener('input', function () {
+          f.avatar.setName(f.name.get());
+        });
+      }
+      cols.appendChild(f.name.el);
       f.wechatName = textField({
         label: '微信名',
         value: existing ? (existing.wechatName || '') : '',
-        hint: '会话列表里显示的名字 · 留空就用「名字」'
+        placeholder: '会话列表里显示的名字（留空就用名字）'
       });
-      g.card.appendChild(f.wechatName.el);
+      cols.appendChild(f.wechatName.el);
+      top.appendChild(cols);
+      form.appendChild(top);
 
       f.persona = textField({
         label: '一句话人设',
-        hint: '给模型看的「你在这个身份下是什么样」',
         value: existing ? (existing.persona || '') : '',
-        placeholder: '比大号话少，喜欢用句号'
+        placeholder: '比大号话少、喜欢用句号'
       });
-      g.card.appendChild(f.persona.el);
+      form.appendChild(f.persona.el);
 
       f.city = textField({
         label: '城市',
         value: existing ? (existing.city || '') : '',
         placeholder: '北京'
       });
-      g.card.appendChild(f.city.el);
-
-      f.avatar = avatarFieldLocal(existing, {
-        toast: function (t, k) { ctx.toast(t, k); }
-      });
-      g.card.appendChild(f.avatar.el);
+      form.appendChild(f.city.el);
 
       /* 这是我的大号（用户 2026-09-21）：每座岛只认一件，
          降落/换岛时「我」就归位到它 —— 所以得让人能明确指认。
@@ -1484,8 +1511,8 @@
         hint: '「我」在这座岛的主账号 · 降落时直接用它（每座岛只认一件）',
         value: existing ? !!existing.isDefault : !bigNow
       });
-      g.card.appendChild(f.big.el);
-      body.appendChild(g.wrap);
+      form.appendChild(f.big.el);
+      body.appendChild(form);
 
       var btnRow = h('div', 'btn-row');
       var delBtn = button('删除', 'danger');
@@ -1547,6 +1574,9 @@
   /* 头像字段（网址 + 本地图）—— 岛屿配置台的 NPC 编辑页也用它，
      保证「所有角色都有同一个头像入口」（用户 2026-09-21）。 */
   Sleepy.avatarFieldLocal = avatarFieldLocal;
+  /* 头像框（点框换图）：编辑页的同学录排版用它，NPC 添加页也走同一个 ——
+     头像入口全站只有一个形状 */
+  Sleepy.faceField = faceField;
 
   /* 角色文件的导入导出出口。名片夹下线之后，这两个动作的入口在
      **岛屿配置台**（「往这间房加人」），所以由它来调。
