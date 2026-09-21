@@ -825,9 +825,90 @@ body{
   overflow:auto;
 }
 .test-tip{margin:8px 0 0;font-size:11px;line-height:1.6;color:var(--text-faint);}
-/* 拉取模型列表：结果盒 + 可点的模型名行 */
-.model-pick{margin-top:8px;display:flex;flex-direction:column;gap:6px;}
-.model-pick .set-row-label{font-size:12px;}
+/* ============================================================
+   锚点浮层（模型选择器等）
+   「贴着一枚按钮弹出来的小面板」。挂在 #phone 上 —— 见 ui.js 的
+   anchorPopover：页面自身是可滚动的，挂在页面里的 absolute 元素会跟着
+   内容一起滚走（系统级切号浮层为同一件事踩过一次，注释留在 .sw-mask 那边）。
+
+   z-index 66 是挑过的：要压过状态栏（60，不然面板顶会被状态栏盖住），
+   但要待在模态浮层下面（对话框 80 / 切号 90）—— 程序化弹出来的对话框
+   不该被一个浮层盖住。
+   ============================================================ */
+.anchor-pop{
+  position:absolute;
+  z-index:66;
+  width:min(330px, calc(100% - 20px));
+  border-radius:16px;
+  padding:10px;
+  box-sizing:border-box;
+  animation:anchorPopDown .16s var(--ease);
+}
+/* ⚠️ 这一条不能省。浮层带的 .glass 自己写了 `position:relative`，而那一整块
+   玻璃规则在样式表里排在**后面** —— 两条同特异度，后者胜，于是浮层变成
+   relative，place() 算出来的 top/left 变成「相对原位偏移」，直接掉到屏幕
+   外面（实测 top:440px 把面板推到 890px）。两条同特异度时靠顺序取胜太脆，
+   这里用 .anchor-pop.glass（两个类 > 一个类）把定位钉死。 */
+.anchor-pop.glass{
+  position:absolute;
+}
+.anchor-pop.is-up{animation-name:anchorPopUp;}
+@keyframes anchorPopDown{
+  from{opacity:0;transform:translateY(-4px) scale(.985);}
+  to{opacity:1;transform:none;}
+}
+@keyframes anchorPopUp{
+  from{opacity:0;transform:translateY(4px) scale(.985);}
+  to{opacity:1;transform:none;}
+}
+/* 开着的时候给触发按钮一点状态，免得用户不知道面板是从哪冒出来的 */
+.set-mini-ic.is-pop-open{
+  border-color:var(--g-accent);
+  color:var(--g-accent-deep,#8A6844);
+}
+
+.mp-search{
+  width:100%;
+  box-sizing:border-box;
+  font-family:inherit;font-size:13.5px;
+  color:var(--text);
+  background:var(--bg-3);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:8px 10px;
+  outline:none;
+  -webkit-appearance:none;appearance:none;
+}
+.mp-search::placeholder{color:var(--text-faint);}
+.mp-search:focus{border-color:var(--g-accent-soft);}
+.mp-hint{margin:8px 2px 6px;font-size:11.5px;color:var(--text-faint);line-height:1.6;}
+
+/* 列表自己滚，**页面高度不受影响** —— 这就是把结果从页面里搬进浮层的全部意义。
+   高度刻意压到 264px（约 7~8 行）：再高的话面板整体就 400+ 像素，
+   在一个中段字段旁边无论往上还是往下放都会压住触发它的那枚按钮
+   （实测 anchor 在 414 时上下都塞不下）。搜索框在那儿摆着，多滚两下不吃亏。 */
+.mp-list{
+  max-height:min(38vh, 264px);
+  overflow-y:auto;
+  overscroll-behavior:contain;      /* 滑到底别把整页带着滚 */
+  -webkit-overflow-scrolling:touch;
+  display:flex;flex-direction:column;gap:2px;
+  margin:0 -4px;padding:0 4px;
+}
+.mp-row{
+  width:100%;
+  display:flex;align-items:center;
+  padding:9px 10px;
+  border:0;border-radius:9px;
+  background:none;
+  font-family:inherit;text-align:left;cursor:pointer;
+  color:var(--text);
+}
+.mp-row:active{background:var(--bg-3);}
+.mp-row-name{font-size:13px;line-height:1.5;word-break:break-all;}
+.mp-msg{margin:14px 2px;font-size:12.5px;line-height:1.7;color:var(--text-dim);text-align:center;}
+.mp-msg.is-bad{color:var(--g-accent-deep,#8A6844);text-align:left;}
+.mp-detail{margin:2px;font-size:11px;line-height:1.6;color:var(--text-faint);word-break:break-all;}
 
 /* 生图「试一张」的结果区：加载/成功/失败共用一个壳，
    图本身按正方形封顶，圆角跟其他图一致 */

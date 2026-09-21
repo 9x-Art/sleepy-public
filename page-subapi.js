@@ -138,61 +138,30 @@
     return '已启用 ' + enabledCount + ' / ' + list.length + ' 组';
   }
 
-  /* 拉取模型列表：用表单里当前的地址和 Key，点返回的模型名直接填进输入框。
-     点完即收起列表（和生图/主 API 同款交互）。 */
-  function attachModelPicker(f, pickBtn, pickBox) {
-    pickBtn.addEventListener('click', function () {
-      pickBtn.disabled = true;
-      pickBox.innerHTML = '';
-      pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
-      Sleepy.api.fetchModels({
-        baseUrl: f.baseUrl.get(),
-        apiKey: f.apiKey.get()
-      }).then(function (res) {
-        pickBtn.disabled = false;
-        pickBox.innerHTML = '';
-        if (!res.ok) {
-          pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message));
-          if (res.detail) pickBox.appendChild(h('p', 'test-detail', res.detail));
-          return;
-        }
-        if (!res.models.length) {
-          pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表'));
-          return;
-        }
-        pickBox.appendChild(h('p', 'test-tip',
-          '拉到 ' + res.models.length + ' 个，点一个填进模型名'));
-        res.models.slice(0, 60).forEach(function (id) {
-          var r = h('button', 'set-row model-pick-row');
-          r.type = 'button';
-          r.appendChild(h('span', 'set-row-label', id));
-          r.addEventListener('click', function () {
-            f.model.input.value = id;
-            pickBox.innerHTML = '';      /* 选完即收起 */
-          });
-          pickBox.appendChild(r);
-        });
-      });
-    });
-  }
+  /* 模型名输入框 + 小圆钮拉取，插进 g.card。
+     拉取结果走**浮层**（ui.modelPickButton → ui.modelPicker），不再铺在卡片里 ——
+     拉一次可能回 60 个模型名，铺在卡片里整页会被拉得很长，用户得一直往下滚
+     整页。浮层里自己滚 + 顶部搜索框，点一个填进去、框随即收掉。
 
-  /* 模型名输入框 + 小圆钮拉取（和生图/主 API 同款）+ 结果盒，插进 g.card */
-  function modelFieldWithPicker(gCard, value) {
+     connOf 是**调用方**传进来的取连接信息的函数（返回 {baseUrl, apiKey}）。
+     为什么不能在这个函数里直接读 f.baseUrl —— 这里的 f 是**本函数内部的
+     另一个对象**，调用方那套 f.baseUrl / f.apiKey 根本不在它身上（以前就是
+     这么写的，点「拉取」直接 `undefined.get()` 抛错，被 P0-2 的崩掩盖着，
+     2026-09-21 一并修掉）。 */
+  function modelFieldWithPicker(gCard, value, connOf) {
     var f = {};
     f.model = textField({ label: '模型名', value: value || '', placeholder: '' });
     gCard.appendChild(f.model.el);
-    var mini = h('button', 'set-mini-ic');
-    mini.type = 'button';
-    mini.title = '拉取模型列表';
-    mini.setAttribute('aria-label', '拉取模型列表');
-    mini.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
-      'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
-      'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
+    var mini = ui.modelPickButton({
+      load: function () {
+        var conn = connOf ? connOf() : null;
+        if (!conn || !conn.baseUrl) return { ok: false, message: '先填接口地址' };
+        return Sleepy.api.fetchModels(conn);
+      },
+      onPick: function (id) { f.model.input.value = id; }
+    });
     f.model.el.querySelector('.set-line').appendChild(mini);
-    var pickBox = h('div', 'model-pick');
-    gCard.appendChild(pickBox);
-    attachModelPicker(f, mini, pickBox);
-    return { f: f, pickBtn: mini, pickBox: pickBox };
+    return { f: f };
   }
 
   /* ==================== 页面：副 API 列表（二级） ==================== */
@@ -295,12 +264,14 @@
       });
       g.card.appendChild(f.apiKey.el);
 
-      /* modelFieldWithPicker 返回 {f:{model:字段}} 这种嵌套，且**内部已经把
-         picker 绑好了**（见 :194）。所以这里要取 .f.model，且不能再绑一次 ——
+      /* modelFieldWithPicker 返回 {f:{model:字段}} 这种嵌套，而且要传一个
+         「取连接信息」的函数（它内部的 f 不是这里的 f，读不到 baseUrl）——
          以前写成 f.model = mp.f + 重复 attachModelPicker，后果是
          f.model.input / f.model.get() 全是 undefined：
          模型选项点不动、点保存必抛错（2026-09-21 修）。 */
-      var mp = modelFieldWithPicker(g.card, '');
+      var mp = modelFieldWithPicker(g.card, '', function () {
+        return { baseUrl: f.baseUrl.get(), apiKey: f.apiKey.get() };
+      });
       f.model = mp.f.model;
       body.appendChild(g.wrap);
 
@@ -432,8 +403,10 @@
       });
       g.card.appendChild(f.apiKey.el);
 
-      /* 同新增页：取 .f.model，且不重复绑定 picker（2026-09-21 修）。 */
-      var mp = modelFieldWithPicker(g.card, item.model);
+      /* 同新增页：取 .f.model，并把「取连接信息」的函数传进去（2026-09-21 修）。 */
+      var mp = modelFieldWithPicker(g.card, item.model, function () {
+        return { baseUrl: f.baseUrl.get(), apiKey: f.apiKey.get() };
+      });
       f.model = mp.f.model;
       body.appendChild(g.wrap);
 

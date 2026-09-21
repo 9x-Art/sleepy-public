@@ -355,54 +355,18 @@
     });
     gCard.appendChild(f.model.el);
 
-    /* 拉取模型：模型名旁边的小圆钮（和生图设置同款交互），
-       用表单里当前的地址和 Key，不用先保存。
-       点返回的模型名填进输入框，列表随即收起（用户：选完别杵着）。 */
-    var mini = h('button', 'set-mini-ic');
-    mini.type = 'button';
-    mini.title = '拉取模型列表';
-    mini.setAttribute('aria-label', '拉取模型列表');
-    mini.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
-      'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
-      'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
-    f.model.el.querySelector('.set-line').appendChild(mini);
-
-    var pickBox = h('div', 'model-pick');
-    gCard.appendChild(pickBox);
-
-    mini.addEventListener('click', function () {
-      mini.disabled = true;
-      pickBox.innerHTML = '';
-      pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
-      Sleepy.api.fetchModels({
-        baseUrl: f.baseUrl.get(),
-        apiKey: f.apiKey.get()
-      }).then(function (res) {
-        mini.disabled = false;
-        pickBox.innerHTML = '';
-        if (!res.ok) {
-          pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message));
-          if (res.detail) pickBox.appendChild(h('p', 'test-detail', res.detail));
-          return;
-        }
-        if (!res.models.length) {
-          pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表'));
-          return;
-        }
-        pickBox.appendChild(h('p', 'test-tip',
-          '拉到 ' + res.models.length + ' 个，点一个填进模型名'));
-        res.models.slice(0, 60).forEach(function (id) {
-          var r = h('button', 'set-row model-pick-row');
-          r.type = 'button';
-          r.appendChild(h('span', 'set-row-label', id));
-          r.addEventListener('click', function () {
-            f.model.input.value = id;
-            pickBox.innerHTML = '';      /* 选完即收起 */
-          });
-          pickBox.appendChild(r);
-        });
-      });
+    /* 拉取模型：模型名旁边的小圆钮，用表单里当前的地址和 Key，不用先保存。
+       结果是**浮层**（ui.modelPickButton → ui.modelPicker），不是铺在页面里 ——
+       拉一次可能回 60 个模型名，铺在页面里整页会被拉得很长，用户得一直往下滚
+       **整页**（用户原话：「现在是直接全部铺在屏幕上，就会很长」）。
+       浮层里自己滚 + 顶部搜索框，点一个填进去、框随即收掉。 */
+    var mini = ui.modelPickButton({
+      load: function () {
+        return Sleepy.api.fetchModels({ baseUrl: f.baseUrl.get(), apiKey: f.apiKey.get() });
+      },
+      onPick: function (id) { f.model.input.value = id; }
     });
+    f.model.el.querySelector('.set-line').appendChild(mini);
 
     return f;
   }

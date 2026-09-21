@@ -1322,41 +1322,20 @@
         modelInput.placeholder = '可手填，或点右边圆钮拉取';
         var modelLine = h('div', 'off-model-line');
         modelLine.appendChild(modelInput);
-        var mini = h('button', 'set-mini-ic');
-        mini.type = 'button';
-        mini.title = '拉取模型列表';
-        mini.setAttribute('aria-label', '拉取模型列表');
-        mini.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
-          'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
-          'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
-        modelLine.appendChild(mini);
-        var pickBox = h('div', 'model-pick');
-        modelSec.appendChild(modelLine);
-        modelSec.appendChild(pickBox);
-        mini.addEventListener('click', function () {
-          var cfg = cfgOf(current.label);
-          if (!cfg || !cfg.baseUrl) { pickBox.innerHTML = ''; pickBox.appendChild(h('p', 'test-tip', '先选一个接口')); return; }
-          mini.disabled = true;
-          pickBox.innerHTML = '';
-          pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
-          Sleepy.api.fetchModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey }).then(function (res) {
-            mini.disabled = false;
-            pickBox.innerHTML = '';
-            if (!res.ok) { pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message)); return; }
-            if (!res.models.length) { pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表')); return; }
-            pickBox.appendChild(h('p', 'test-tip', '拉到 ' + res.models.length + ' 个，点一个选用'));
-            res.models.slice(0, 40).forEach(function (mid) {
-              var r = h('button', 'set-row model-pick-row');
-              r.type = 'button';
-              r.appendChild(h('span', 'set-row-label', mid));
-              r.addEventListener('click', function () {
-                modelInput.value = mid;
-                pickBox.innerHTML = '';      /* 选完即收起 */
-              });
-              pickBox.appendChild(r);
-            });
-          });
+        /* 拉取模型走**浮层**（ui.modelPickButton）—— 以前结果平铺在这一段下面，
+           回 40 个就把整页拉长（用户：「别铺在屏幕上」）。下拉函数仍然用
+           「当前选中的接口」，没选接口就同步返回一个失败结果（浮层里显示）。 */
+        var mini = ui.modelPickButton({
+          tip: '用上面选中的接口去拉；也可以直接手填',
+          load: function () {
+            var cfg = cfgOf(current.label);
+            if (!cfg || !cfg.baseUrl) return { ok: false, message: '先选一个接口' };
+            return Sleepy.api.fetchModels({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
+          },
+          onPick: function (mid) { modelInput.value = mid; }
         });
+        modelLine.appendChild(mini);
+        modelSec.appendChild(modelLine);
         modelInput.addEventListener('change', function () { current.model = modelInput.value.trim(); });
 
         choices.forEach(function (c) {

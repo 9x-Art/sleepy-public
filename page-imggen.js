@@ -32,21 +32,9 @@
   var switchField = ui.switchField;
   var button = ui.button;
 
-  /* 小图标按钮（32px 圆钮，放输入框旁边）。icon 是 svg path 字符串。 */
-  var MINI_ICONS = {
-    refresh: 'M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6'
-  };
-  function miniIconBtn(icon, title, onClick) {
-    var b = h('button', 'set-mini-ic');
-    b.type = 'button';
-    b.title = title || '';
-    b.setAttribute('aria-label', title || '');
-    b.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" '
-      + 'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
-      + 'stroke-linejoin="round"><path d="' + icon + '"/></svg>';
-    b.addEventListener('click', onClick);
-    return b;
-  }
+  /* 那枚「拉取模型」小圆钮现在统一由 ui.modelPickButton 提供
+     （含图标 + 接浮层）—— 这里原来有一份 MINI_ICONS + miniIconBtn，
+     收敛到 ui 之后就没人用了，删掉免得日后有人照着它再抄一份。 */
 
   /* 可收起的一组（点头部行展开/收起）。精致原则：默认收起。 */
   function foldGroup(title, hint, defaultOpen) {
@@ -277,64 +265,35 @@
     if (api.kind === 'nai') {
       f.model = textField({
         label: '模型',
-        hint: '点下面一个直接填',
+        hint: '点右边的按钮挑一个，也可以直接手填',
         value: api.model,
         placeholder: 'nai-diffusion-3'
       });
       g.card.appendChild(f.model.el);
-      var pickBox = h('div', 'model-pick');
-      imggen.NAI_MODELS.forEach(function (m) {
-        var r = h('button', 'set-row model-pick-row');
-        r.type = 'button';
-        r.appendChild(h('span', 'set-row-label', m));
-        r.addEventListener('click', function () { f.model.input.value = m; });
-        pickBox.appendChild(r);
-      });
-      g.card.appendChild(pickBox);
+      /* NAI 这一支没有接口可拉，模型名是内置的 4 个。
+         仍然走同一枚按钮 + 同一个浮层 —— 以前是把 4 行列在字段下面，
+         和别的分支两种交互（用户要的是「别铺在页面上」，统一成浮层）。
+         ⚠️ 待办（审查报告一.4）：这里以后应该也能拉 /ai/models。 */
+      f.model.el.querySelector('.set-line').appendChild(ui.modelPickButton({
+        tip: 'Nightly 内置的这几个；接口支持的话也能直接手填',
+        load: function () {
+          return { ok: true, models: (imggen.NAI_MODELS || []).slice() };
+        },
+        onPick: function (m) { f.model.input.value = m; }
+      }));
     } else {
       f.model = textField({ label: '模型名', value: api.model, placeholder: '' });
       g.card.appendChild(f.model.el);
 
       /* 拉取模型是模型名旁边的小圆钮（用户：「能简化成小的按钮会更舒适」），
-         调 {base}/models，用表单里当前的地址和 Key，不用先保存 */
-      var line = f.model.el.querySelector('.set-line');
-      var pickBox = h('div', 'model-pick');
-      var pickBtn = miniIconBtn(MINI_ICONS.refresh, '拉取模型列表', function () {
-        pickBtn.disabled = true;
-        pickBox.innerHTML = '';
-        g.card.appendChild(pickBox);
-        pickBox.appendChild(h('p', 'test-tip', '正在拉取…'));
-        Sleepy.api.fetchModels({
-          baseUrl: f.baseUrl.get(),
-          apiKey: f.apiKey.get()
-        }).then(function (res) {
-          pickBtn.disabled = false;
-          pickBox.innerHTML = '';
-          if (!res.ok) {
-            pickBox.appendChild(h('p', 'test-tip', '没拉到：' + res.message));
-            if (res.detail) pickBox.appendChild(h('p', 'test-detail', res.detail));
-            return;
-          }
-          if (!res.models.length) {
-            pickBox.appendChild(h('p', 'test-tip', '接口返回了空列表'));
-            return;
-          }
-          pickBox.appendChild(h('p', 'test-tip',
-            '拉到 ' + res.models.length + ' 个，点一个填进模型名'));
-          res.models.slice(0, 60).forEach(function (id) {
-            var r = h('button', 'set-row model-pick-row');
-            r.type = 'button';
-            r.appendChild(h('span', 'set-row-label', id));
-            r.addEventListener('click', function () {
-              f.model.input.value = id;
-              pickBox.innerHTML = '';   /* 选完即收起 */
-            });
-            pickBox.appendChild(r);
-          });
-        });
-      });
-      line.appendChild(pickBtn);
-      g.card.appendChild(pickBox);
+         调 {base}/models，用表单里当前的地址和 Key，不用先保存。
+         结果走**浮层**：拉一次可能回 60 个，铺在页面里整页会被拉长。 */
+      f.model.el.querySelector('.set-line').appendChild(ui.modelPickButton({
+        load: function () {
+          return Sleepy.api.fetchModels({ baseUrl: f.baseUrl.get(), apiKey: f.apiKey.get() });
+        },
+        onPick: function (id) { f.model.input.value = id; }
+      }));
     }
 
     f.size = textField({

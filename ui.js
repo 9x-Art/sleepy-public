@@ -481,6 +481,247 @@
     return openDialog(o);
   }
 
+  /* ==================== 锚点浮层 / 模型选择 ====================
+     「贴着一个元素弹出来的小面板」。模型名旁边那枚小圆钮用它，
+     以后的聊天长按菜单也用同一套定位（别各写一份）。 */
+
+  var activePop = null;
+
+  function closePopover() {
+    if (!activePop) return;
+    var pop = activePop;
+    activePop = null;
+    if (pop.cleanup) pop.cleanup();
+    if (pop.el && pop.el.parentNode) pop.el.parentNode.removeChild(pop.el);
+  }
+
+  /* anchorPopover(anchorEl, {className, width})
+       返回 { el, place(), close() }。el 是面板本体，往里塞内容；
+       内容尺寸变了（比如列表填进去之后）要再调一次 place() 重新贴。
+     同一时刻只允许一个浮层 —— 开新的会把旧的收掉。
+
+     ⚠️ 面板挂到 #phone 上，**不能挂进页面里**：页面自身是可滚动的
+     （.page 有 overflow-y:auto），挂在页面里的 absolute 元素会跟着内容
+     一起滚走。聊天记录搜索（page-chat 的 openSearch）已经为这个坑返工过，
+     注释留在那边；这里做成通用件，别再踩第三次。 */
+  function anchorPopover(anchorEl, opt) {
+    opt = opt || {};
+    closePopover();
+
+    var host = (document.getElementById && document.getElementById('phone')) || document.body;
+    var pop = h('div', 'anchor-pop glass' + (opt.className ? ' ' + opt.className : ''));
+    pop.setAttribute('role', 'dialog');
+    if (opt.width) pop.style.width = opt.width;
+    host.appendChild(pop);
+
+    var GAP = 8, EDGE = 10;
+    /* 上边界要避开状态栏（它是 absolute、高约 32px，而浮层 z-index 更高，
+       压上去会盖住时间和电量）。这里给 44 = 状态栏 + 一点余量。 */
+    var TOP_MIN = 44;
+
+    function place() {
+      /* 元素已经不在文档里（页面被 rebuild / 切走了）→ 自己收掉，
+         否则浮层会孤零零地飘在新页面上面 */
+      if (!anchorEl || anchorEl.isConnected === false) { closePopover(); return; }
+      var r = anchorEl.getBoundingClientRect();
+      var hr = host.getBoundingClientRect();
+      if (!r || !hr) return;
+
+      /* 锚点被滚出手机框了就别贴了 */
+      if (r.bottom < hr.top || r.top > hr.bottom) { closePopover(); return; }
+
+      var pw = pop.offsetWidth || 260;
+      var ph = pop.offsetHeight || 200;
+
+      var left = r.left - hr.left;
+      var maxLeft = hr.width - pw - EDGE;
+      left = Math.max(EDGE, Math.min(left, Math.max(EDGE, maxLeft)));
+
+      var below = hr.bottom - r.bottom - GAP;
+      var above = r.top - hr.top - GAP;
+      /* 下面**装不下整个面板**、且上面更宽裕 → 往上翻。
+         判据要用完整高度（ph + GAP + EDGE），不能只比一个固定的小阈值：
+         面板三四百像素高的时候，只比 200 会判成「放得下」，然后被
+         clamp 到贴底，正好糊住输入框那一栏。 */
+      var need = ph + GAP + EDGE;
+      var up = (below < need) && (above > below);
+      var top = up ? (r.top - hr.top - ph - GAP) : (r.bottom - hr.top + GAP);
+      top = Math.max(TOP_MIN, Math.min(top, Math.max(TOP_MIN, hr.height - ph - EDGE)));
+
+      pop.style.left = Math.round(left) + 'px';
+      pop.style.top = Math.round(top) + 'px';
+      pop.classList.toggle('is-up', up);
+    }
+
+    /* 浮层里的滚动不该被当成「页面滚了」→ 只认浮层外面的滚动 */
+    function onScroll(e) {
+      if (pop.contains && e && e.target && pop.contains(e.target)) return;
+      place();
+    }
+    function onKey(e) { if (e && e.key === 'Escape') closePopover(); }
+    function onDown(e) {
+      if (pop.contains && e && e.target && pop.contains(e.target)) return;
+      if (anchorEl && e && (e.target === anchorEl || (anchorEl.contains && anchorEl.contains(e.target)))) return;
+      closePopover();
+    }
+
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', place);
+    document.addEventListener('keydown', onKey);
+    /* capture 阶段：比元素自己的 click 更早拿到，点哪儿都能收 */
+    document.addEventListener('pointerdown', onDown, true);
+
+    anchorEl.classList.add('is-pop-open');
+    activePop = {
+      el: pop, anchor: anchorEl,
+      cleanup: function () {
+        window.removeEventListener('scroll', onScroll, true);
+        window.removeEventListener('resize', place);
+        document.removeEventListener('keydown', onKey);
+        document.removeEventListener('pointerdown', onDown, true);
+        if (anchorEl.classList) anchorEl.classList.remove('is-pop-open');
+      }
+    };
+
+    return { el: pop, place: place, close: closePopover };
+  }
+
+  /* modelPicker({anchor, load, onPick, tip})
+       点小圆钮 → 贴着一个浮层，框里自己滚动 + 顶部搜索框即时筛，
+       点一个就填进去、框消失。
+
+     为什么做成浮层而不是把结果铺在页面上：拉一次可能回 60 个模型名，
+     铺在页面里 = 整页被拉得很长，用户得一直往下滚**整页**（用户原话：
+     「现在是直接全部铺在屏幕上，就会很长，我要一直往下拉」）。
+     浮层里自己滚，页面高度一点不变。
+
+     ui 这一层不发请求（见文件头）—— load() 由调用方传进来。 */
+  /* 拉取模型的刷新图标。四处共用一份 —— 以前这段 SVG 连同按钮一起抄了四遍。 */
+  var REFRESH_SVG = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+    'stroke-linejoin="round"><path d="M4 10a6 6 0 0 1 10.4-4.1M16 10a6 6 0 0 1-10.4 4.1M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg>';
+
+  /* modelPickButton({load, onPick, tip})
+       造那枚「拉取模型」小圆钮（含图标）并接好浮层，返回按钮元素。
+       设置主 API / 副 API / 生图 / 线下四处共用这一个。 */
+  function modelPickButton(o) {
+    o = o || {};
+    var b = h('button', 'set-mini-ic');
+    b.type = 'button';
+    b.title = '拉取模型列表';
+    b.setAttribute('aria-label', '拉取模型列表');
+    b.innerHTML = REFRESH_SVG;
+    b.addEventListener('click', function () {
+      modelPicker({ anchor: b, load: o.load, onPick: o.onPick, tip: o.tip });
+    });
+    return b;
+  }
+
+  function modelPicker(o) {
+    o = o || {};
+    var anchor = o.anchor;
+    if (!anchor) return null;
+
+    /* 再点一次就收起来（开关语义） */
+    if (activePop && activePop.anchor === anchor) { closePopover(); return null; }
+
+    var pop = anchorPopover(anchor, { className: 'mp-pop' });
+
+    var head = h('div', 'mp-head');
+    var search = h('input', 'mp-search');
+    search.type = 'text';
+    search.placeholder = '搜索模型名';
+    search.setAttribute('autocapitalize', 'off');
+    search.setAttribute('autocorrect', 'off');
+    search.setAttribute('spellcheck', 'false');
+    head.appendChild(search);
+    pop.el.appendChild(head);
+
+    var hint = h('p', 'mp-hint', o.tip || '');
+    if (!o.tip) hint.style.display = 'none';
+    pop.el.appendChild(hint);
+
+    var list = h('div', 'mp-list');
+    pop.el.appendChild(list);
+
+    var all = [];
+    var loading = false;
+
+    function showMsg(text, cls) {
+      list.innerHTML = '';
+      list.appendChild(h('p', 'mp-msg' + (cls ? ' ' + cls : ''), text));
+    }
+
+    function renderBox(q) {
+      q = String(q || '').trim().toLowerCase();
+      var hits = q ? all.filter(function (m) {
+        return String(m).toLowerCase().indexOf(q) >= 0;
+      }) : all;
+      list.innerHTML = '';
+      if (!hits.length) { list.appendChild(h('p', 'mp-msg', '没有匹配的')); return; }
+      /* 一次最多渲染 200 条：真拿到几百个也不至于卡 */
+      hits.slice(0, 200).forEach(function (id) {
+        var row = h('button', 'mp-row');
+        row.type = 'button';
+        row.appendChild(h('span', 'mp-row-name', id));
+        row.addEventListener('click', function () {
+          if (o.onPick) o.onPick(id);
+          closePopover();               /* 选完即收（用户点名要的） */
+        });
+        list.appendChild(row);
+      });
+    }
+
+    function run() {
+      if (loading) return;
+      loading = true;
+      showMsg('正在拉取…');
+      pop.place();
+
+      var out = null;
+      try { out = o.load ? o.load() : null; } catch (e) {
+        loading = false;
+        showMsg('没拉到：' + ((e && e.message) || '拉取出错'), 'is-bad');
+        pop.place();
+        return;
+      }
+      /* load() 允许直接返回结果对象（比如「先选一个接口」这种同步失败），
+         不强制调用方包 Promise */
+      var p = (out && typeof out.then === 'function') ? out : Promise.resolve(out);
+
+      p.then(function (res) {
+        loading = false;
+        if (!res) { showMsg('没拉到：没有返回', 'is-bad'); pop.place(); return; }
+        if (!res.ok) {
+          /* 失败原因原样透出来（别让「连不上/401/超时」都被吞成一句话） */
+          showMsg('没拉到：' + (res.message || res.error || '未知错误'), 'is-bad');
+          if (res.detail) list.appendChild(h('p', 'mp-detail', String(res.detail).slice(0, 300)));
+          pop.place();
+          return;
+        }
+        all = Array.isArray(res.models) ? res.models : [];
+        if (!all.length) { showMsg('接口返回了空列表，可以直接手填模型名'); pop.place(); return; }
+        hint.textContent = '拉到 ' + all.length + ' 个，点一个填进模型名（用上面的框搜）';
+        hint.style.display = '';
+        renderBox('');
+        pop.place();
+        /* 故意不自动聚焦搜索框：手机上聚焦会弹键盘，正好把浮层盖掉一半 */
+      }, function (e) {
+        loading = false;
+        showMsg('没拉到：' + ((e && e.message) || '请求出错'), 'is-bad');
+        pop.place();
+      });
+    }
+
+    search.addEventListener('input', function () {
+      renderBox(search.value);
+      pop.place();
+    });
+
+    run();
+    return pop.el;
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.ui = {
@@ -504,7 +745,12 @@
     pickTextFile: pickTextFile,
     /* 应用内弹层。注意是 Promise 版，不是原生 prompt / confirm */
     prompt: prompt,
-    confirm: confirmBox
+    confirm: confirmBox,
+    /* 锚点浮层：模型选择器用，聊天长按菜单以后也用同一套定位 */
+    anchorPopover: anchorPopover,
+    modelPicker: modelPicker,
+    modelPickButton: modelPickButton,
+    closePopover: closePopover
   };
 
 })(window);
