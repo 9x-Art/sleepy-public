@@ -420,6 +420,8 @@
     els.note.style.display = o.note ? '' : 'none';
     els.okBtn.textContent = o.ok || (kind === 'confirm' ? '确定' : '保存');
     els.okBtn.className = 'dl-btn dl-btn-ok' + (o.danger ? ' is-danger' : '');
+    /* 宽版：编辑长文本（比如聊天里的一个气泡）时单行卡片太局促 */
+    if (els.card && els.card.classList) els.card.classList[o.wide ? 'add' : 'remove']('is-wide');
 
     /* 多字段模式：o.fields = [{key,label,value,placeholder}, ...]。
        resolve 出来的是对象（键 = key），单输入框路径照旧返回字符串 ——
@@ -435,17 +437,22 @@
     if (fields) {
       fields.forEach(function (f) {
         var lab = h('label', 'dl-field');
-        lab.appendChild(h('span', 'dl-field-label', f.label || ''));
-        var inp = h('input', 'dl-input');
-        inp.type = 'text';
+        if (f.label) lab.appendChild(h('span', 'dl-field-label', f.label));
+        /* f.multiline → 多行（编辑聊天气泡这种长句子用）。
+           多行**不接 Enter 提交** —— 换行是内容的一部分。 */
+        var inp = f.multiline ? h('textarea', 'dl-input dl-textarea') : h('input', 'dl-input');
+        if (!f.multiline) inp.type = 'text';
+        else inp.rows = Math.max(2, Number(f.rows) || 4);
         inp.value = f.value == null ? '' : String(f.value);
         inp.placeholder = f.placeholder || '';
         inp.setAttribute('autocapitalize', 'off');
         inp.setAttribute('autocorrect', 'off');
         inp.setAttribute('spellcheck', 'false');
-        inp.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { e.preventDefault(); els.submit(); }
-        });
+        if (!f.multiline) {
+          inp.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); els.submit(); }
+          });
+        }
         lab.appendChild(inp);
         els.fieldsWrap.appendChild(lab);
         live.push({ key: f.key || 'value', input: inp });

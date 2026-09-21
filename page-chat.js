@@ -413,6 +413,22 @@
     return m.content || '';
   }
 
+  /* 取「一条消息里第 idx 个气泡」的纯文本。idx 不传 = 整条。
+     ⚠️ 以后**只准从这里取正文**。一次模型输出在存档里是 '||' 拼起来的一整串
+     （见 prompt-engine 的 splitBubblesT），而引用 / 编辑 / 复制 / 收藏 / 回喂模型
+     过去各自抄了一遍 `m.type ? attachText(m) : m.content` —— 一共五份，
+     全都取到了整串。用户报的「引用的是『消息1||消息2』这种分层结构，
+     而不是我引用的那个气泡」就是这么来的（2026-09-21 修）。 */
+  function bubbleText(m, idx) {
+    if (!m) return '';
+    if (m.type) return attachText(m) || '';
+    var raw = m.content || '';
+    if (idx === null || idx === undefined || m.role !== 'assistant') return raw;
+    var arr = (Sleepy.promptEngine && Sleepy.promptEngine.splitBubbles)
+      ? Sleepy.promptEngine.splitBubbles(raw) : [raw];
+    return (arr[idx] === null || arr[idx] === undefined) ? raw : arr[idx];
+  }
+
   /* 日记事件：user 写了新日记 → 下一轮 TA 会知道「写了」，但看不看是 TA 的事
      （偷看 / 尊重隐私 / 直接问，模型按人设自己选）。一次性：注入后摘旗。
      日记带配图（生图插画 / 相册贴图）时把真图一起带上 —— 偷看才看得到内容，
@@ -616,6 +632,58 @@
   /* 刚长按完紧接着的那次 click 要忽略，否则会连点两次 */
   function wasLongPressed(el) {
     return Date.now() - (el.__lpAt || 0) < 700;
+  }
+
+  /* 左滑这个气泡 = 引用它（微信的手感；用户报的五.14「左滑引用没做好」）。
+     三条要点，缺一条就废：
+       · 竖向位移一旦超过横向就撒手 —— 那是在滚消息，不是在滑气泡
+       · 要过阈值才算，免得手抖就引用
+       · 气泡上必须有 touch-action:pan-y（在 CSS 里），否则浏览器先把横滑
+         手势吃掉，touchmove 根本不派发过来 */
+  function bindSwipeQuote(el, fn) {
+    var x0 = 0, y0 = 0, dx = 0, armed = false, alive = false;
+    var THRESHOLD = 44;      /* 往左滑多少算数 */
+
+    function reset() {
+      alive = false; armed = false; dx = 0;
+      el.style.transform = '';
+      el.classList.remove('is-swiping');
+    }
+
+    el.addEventListener('touchstart', function (e) {
+      var t = e.touches && e.touches[0];
+      if (!t) return;
+      x0 = t.clientX; y0 = t.clientY;
+      dx = 0; alive = true; armed = false;
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!alive) return;
+      var t = e.touches && e.touches[0];
+      if (!t) return;
+      var mx = t.clientX - x0;
+      if (!armed) {
+        if (Math.abs(t.clientY - y0) > Math.abs(mx)) { alive = false; return; }
+        if (mx > -10) return;                    /* 只认左滑 */
+        armed = true;
+        el.classList.add('is-swiping');
+      }
+      dx = Math.max(mx, -76);
+      el.style.transform = 'translateX(' + Math.round(dx) + 'px)';
+    }, { passive: true });
+
+    el.addEventListener('touchend', function () {
+      var fire = armed && dx <= -THRESHOLD;
+      if (fire) el.__swipeAt = Date.now();
+      reset();
+      if (fire) fn();
+    });
+    el.addEventListener('touchcancel', reset);
+  }
+
+  /* 刚左滑过紧接着的那次 click 也要忽略（同 wasLongPressed） */
+  function swipedRecently(el) {
+    return Date.now() - (el.__swipeAt || 0) < 700;
   }
 
   /* 打开「挑个人来聊」的浮层。面板本身在 page-chat-settings.js ——
@@ -1028,16 +1096,10 @@
       foot.appendChild(inputArea);
       body.appendChild(foot);
 
-      /* 长按菜单：底部弹出的动作表 */
-      var menuMask = h('div', 'msg-menu-mask');
-      var menu = h('div', 'msg-menu');
-      var menuList = h('div', 'msg-menu-list');
-      var menuCancel = h('button', 'msg-menu-cancel', '取消');
-      menuCancel.type = 'button';
-      menu.appendChild(menuList);
-      menu.appendChild(menuCancel);
-      body.appendChild(menuMask);
-      body.appendChild(menu);
+      /* 长按菜单现在是一个**贴着被长按气泡的浮层**（ui.anchorPopover），
+         不再是自己搭的整宽底部动作表 —— 以前那个必然铺满整屏、把消息全挡住，
+         而且不贴被长按的那条（用户报的五.12）。DOM 也就不用在这里预先建了，
+         由 openMenu 现开现收。 */
 
       /* ======================== 渲染 ======================== */
 
@@ -1157,7 +1219,13 @@
 
         var herePending = !!(pending && pending.targetId === msg.id);
         if (herePending) bubble.classList.add('is-pending');
-        if (selecting && selected[msg.id]) bubble.classList.add('is-selected');
+        if (selecting && selected[msg.id]) {
+          bubble.classList.add('is-selected');
+          /* 多选是按**条**算的（删除也是整条删），而一条回复会被拆成好几个
+             气泡 —— 每个都打勾会让人看成「选了三条」，而计数写着 1 条。
+             所以勾只标在这条消息的**第一个**气泡上，其余气泡留描边表范围。 */
+          if (!seg || seg.idx === undefined || seg.idx === 0) bubble.classList.add('is-sel-lead');
+        }
 
         if (role === 'assistant') {
           /* 头像包一层：未读心声光点挂这里（用户定的位置 —— 不在顶栏），
@@ -1250,9 +1318,17 @@
         bubble.appendChild(content);
 
         if (role !== 'system') {
-          bindLongPress(bubble, function () { openMenu(msg); });
+          /* 长按菜单**贴着这个气泡**弹，所以要把气泡元素和它的下标一起带上
+             —— 引用 / 编辑 / 复制 / 收藏都只作用于这一句，不是整轮
+             （用户报的五.14~16；以前菜单里带的只有整条 msg）。 */
+          bindLongPress(bubble, function () { openMenu(msg, seg, bubble); });
+          /* 左滑引用：同样带上下标 */
+          bindSwipeQuote(bubble, function () {
+            startQuote(msg, seg ? seg.idx : null);
+          });
           bubble.addEventListener('click', function () {
             if (wasLongPressed(bubble)) return;
+            if (swipedRecently(bubble)) return;
             if (selecting) toggleSelect(msg.id);
           });
         }
@@ -1496,49 +1572,53 @@
         selBar.appendChild(cancel);
       }
 
-      /* ======================== 长按菜单 ======================== */
+      /* ======================== 长按菜单 ========================
+         菜单是**贴着被长按的那个气泡**弹出的浮层（ui.anchorPopover）。
+         以前是自己搭的整宽底部动作表 + 全屏遮罩：必然铺满整屏、把消息
+         全挡住，而且根本不贴被长按的那条（用户报的五.12）。
+         浮层的关闭交给 anchorPopover（点外面 / ESC / 滚动出视野都收）。 */
 
-      function openMenu(msg) {
-        menuList.innerHTML = '';
+      function openMenu(msg, seg, bubbleEl) {
+        var idx = (seg && seg.idx !== undefined) ? seg.idx : null;
+        var pop = ui.anchorPopover(bubbleEl, { className: 'msg-pop' });
+        var list = h('div', 'msg-pop-list');
 
         var items = [
-          { label: '引用回复', run: function () { startQuote(msg); } },
+          { label: '引用', run: function () { startQuote(msg, idx); } },
+          { label: '复制', run: function () { copyMsg(msg, idx); } },
+          { label: '收藏', run: function () { favorite(msg, idx); } },
+          { label: '编辑', run: function () { editMsg(msg, idx); } },
           { label: '多选', run: function () { enterSelect(msg.id); } },
-          { label: '收藏', run: function () { favorite(msg); } },
-          { label: '编辑', run: function () { editMsg(msg); } },
-          { label: '复制', run: function () { copyMsg(msg); } },
           { label: '删除', kind: 'danger', run: function () { removeMsg(msg); } }
         ];
-
         items.forEach(function (it) {
-          var b = h('button', 'msg-menu-item' + (it.kind ? ' is-' + it.kind : ''), it.label);
+          var b = h('button', 'msg-pop-item' + (it.kind ? ' is-' + it.kind : ''), it.label);
           b.type = 'button';
           b.addEventListener('click', function () {
-            closeMenu();
+            pop.close();               /* 先收菜单再动作，免得弹层叠弹层 */
             it.run();
           });
-          menuList.appendChild(b);
+          list.appendChild(b);
         });
-
-        menu.classList.add('is-open');
-        menuMask.classList.add('is-open');
+        pop.el.appendChild(list);
+        pop.place();
       }
 
-      function closeMenu() {
-        menu.classList.remove('is-open');
-        menuMask.classList.remove('is-open');
-      }
+      function closeMenu() { ui.closePopover(); }
 
-      menuMask.addEventListener('click', closeMenu);
-      menuCancel.addEventListener('click', closeMenu);
-
-      function startQuote(msg) {
+      function startQuote(msg, idx) {
+        var text = bubbleText(msg, idx);
         quote = {
           role: msg.role,
-          content: (msg.type ? attachText(msg) : (msg.content || '')).slice(0, 140)
+          content: text.slice(0, 140),
+          /* 存下来源，方便以后「点引用条跳回原气泡」——
+             以前只存 role + 正文，引用回喂给模型时也看不出引的是哪一句。 */
+          msgId: msg.id,
+          bubbleIndex: (idx === undefined) ? null : idx
         };
         renderQuote();
         textarea.focus();
+        ctx.toast('已引用这一句 · 输入框空着点发送就是让 TA 回这句', 'ok');
       }
 
       function clearQuote() {
@@ -1562,7 +1642,7 @@
         quoteBar.appendChild(x);
       }
 
-      function favorite(msg) {
+      function favorite(msg, idx) {
         /* 写入方：拿全量 → 改 → 整表落盘（不能拿过滤过的列表） */
         var list = store.get('favorites');
         if (!Array.isArray(list)) list = [];
@@ -1572,7 +1652,8 @@
           chatId: chatId,
           chatName: c ? c.name : '',
           role: msg.role,
-          content: (msg.type ? attachText(msg) : (msg.content || '')),
+          /* 收的是被点中的**那一个气泡**，不是整轮（同引用/复制） */
+          content: bubbleText(msg, idx),
           savedAt: Date.now()
         };
         if (Sleepy.core && Sleepy.core.tagScope) Sleepy.core.tagScope(fav);
@@ -1581,29 +1662,54 @@
         ctx.toast('已收藏，右上角 ★ 里能查到', 'ok');
       }
 
-      async function editMsg(msg) {
+      async function editMsg(msg, idx) {
         if (msg.type) {
           ctx.toast('附件气泡先不支持编辑', 'warn');
           return;
         }
-        var next = await ui.prompt({
-          title: '编辑这条消息',
-          value: msg.content || '',
-          ok: '保存'
+        var single = (idx !== null && idx !== undefined && msg.role === 'assistant');
+        /* 用**多行**弹层编辑（以前是单行 input，长句子根本看不清 —— 用户五.15）。
+           fields + multiline 是新加的支持，见 ui.js openDialog。 */
+        var out = await ui.prompt({
+          title: single ? '编辑这一句' : '编辑这条消息',
+          ok: '保存',
+          wide: true,
+          fields: [{
+            key: 'text', value: bubbleText(msg, idx),
+            multiline: true, rows: 5, placeholder: '改这一句…'
+          }]
         });
-        if (next === null) return;
-        next = String(next).trim();
+        if (out === null) return;
+        var next = String((out && out.text) || '').trim();
         if (!next) {
           ctx.toast('内容不能为空', 'err');
           return;
         }
-        patchMessage(chatId, msg.id, { content: next });
+
+        if (!single) {
+          patchMessage(chatId, msg.id, { content: next });
+        } else {
+          /* 只改被点中的那一段，再用 '||' 拼回去 —— 正文的存储格式就是
+             `a || b || c`（见 prompt-engine 的 splitBubblesT）。
+             以前是整条一起改，所以用户「编辑这一句」时看到的是整轮的分层结构。 */
+          var arr = Sleepy.promptEngine.splitBubbles(msg.content || '');
+          arr[idx] = next;
+          var patch = { content: arr.join(' || ') };
+          /* ⚠️ 译文是按**下标**对齐的（msg.trans[i] ↔ 第 i 个气泡），
+             被改的那段译文已经对不上了，清掉它（别的段保留）。 */
+          if (Array.isArray(msg.trans)) {
+            var tr = msg.trans.slice();
+            tr[idx] = null;
+            patch.trans = tr;
+          }
+          patchMessage(chatId, msg.id, patch);
+        }
         renderMessages();
         ctx.toast('已更新', 'ok');
       }
 
-      function copyMsg(msg) {
-        var text = msg.type ? attachText(msg) : (msg.content || '');
+      function copyMsg(msg, idx) {
+        var text = bubbleText(msg, idx);
         if (!text) return;
         copyText(text).then(
           function () { ctx.toast('已复制', 'ok'); },
@@ -1989,7 +2095,14 @@
           content: content,
           timestamp: Date.now()
         };
-        if (quote) msg.quote = { role: quote.role, content: quote.content };
+        if (quote) {
+          /* 连带来源一起记（msgId + 气泡下标）—— 以前只存 role + 正文，
+             整轮拼起来的那一串进来之后就分不清引的是哪一句了 */
+          msg.quote = {
+            role: quote.role, content: quote.content,
+            msgId: quote.msgId || null, bubbleIndex: (quote.bubbleIndex === undefined ? null : quote.bubbleIndex)
+          };
+        }
 
         addMessage(chatId, msg);
         commitMemory(chatId, 'user', content);
@@ -2888,7 +3001,9 @@
     },
     onShow: function (ctx) { if (ctx.reload) ctx.reload(); },
     onHide: function (ctx) {
-      /* 离开页面时把菜单和心声浮层收掉，免得回来还开着 */
+      /* 离开页面时把菜单和心声浮层收掉，免得回来还开着。
+         长按菜单现在是挂在 #phone 上的浮层（不在 ctx.el 里），所以要显式收。 */
+      ui.closePopover();
       if (ctx.el) {
         var m = ctx.el.querySelector('.msg-menu.is-open');
         var k = ctx.el.querySelector('.msg-menu-mask.is-open');

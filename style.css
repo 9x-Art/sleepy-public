@@ -910,6 +910,24 @@ body{
 .mp-msg.is-bad{color:var(--g-accent-deep,#8A6844);text-align:left;}
 .mp-detail{margin:2px;font-size:11px;line-height:1.6;color:var(--text-faint);word-break:break-all;}
 
+/* ---- 长按消息的动作菜单（同一种锚点浮层的另一个用途）----
+   贴着**被长按的那个气泡**弹。以前这里是整宽的底部动作表 + 全屏遮罩：
+   必然盖住整屏、而且根本不贴被长按的那条（用户报的五.12）。
+   窄一点、竖着排，像微信长按出来的那排小动作。 */
+.msg-pop{width:auto;min-width:128px;padding:5px;}
+.msg-pop-list{display:flex;flex-direction:column;gap:1px;}
+.msg-pop-item{
+  width:100%;
+  padding:9px 14px;
+  border:0;border-radius:10px;
+  background:none;
+  font-family:inherit;font-size:13.5px;
+  color:var(--text);
+  text-align:left;white-space:nowrap;cursor:pointer;
+}
+.msg-pop-item:active{background:var(--bg-3);}
+.msg-pop-item.is-danger{color:var(--coral);}
+
 /* 生图「试一张」的结果区：加载/成功/失败共用一个壳，
    图本身按正方形封顶，圆角跟其他图一致 */
 .imggen-out{margin-top:10px;}
@@ -1055,9 +1073,25 @@ body{
 .msg-bubble{
   max-width:82%;display:flex;flex-direction:column;
   position:relative;word-break:break-word;
+  /* 触摸行为（用户五.8/9：「文字被拖拽、拖不动」）：
+     竖向滚动留给页面，横向手势留给「左滑引用」。
+     user-select:none —— 长按是要唤菜单的，不能先弹出原生选择框（复制走菜单）；
+     callout 关掉，否则 iOS 长按会先弹系统的「拷贝/查询」。
+     ⚠️ touch-action:pan-y 是左滑引用能成立的前提：不写的话浏览器会先把
+     横滑当成它的手势吃掉，touchmove 根本不派发。 */
+  touch-action:pan-y;
+  -webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;
+  transition:transform .16s var(--ease);
 }
+/* 手指还在滑的时候别加过渡，否则跟手感变成拖影 */
+.msg-bubble.is-swiping{transition:none;}
 /* 角色的气泡：头像在左，引用条 / 正文 / 时间在右 */
-.msg-assistant{flex-direction:row;align-items:flex-start;}
+/* align-self:flex-start 不能省：.msg-wrap 是 flex 列，默认 align-items:stretch，
+   所以每个助手气泡都会被拉到 max-width(82%) 那么宽 —— 短句子的纸色气泡块
+   会横着占掉大半个屏幕（自定义聊天背景时特别明显），多选的勾也会飘到
+   远离文字的地方。收成按内容宽度，长句照样在 82% 处折行。 */
+.msg-assistant{flex-direction:row;align-items:flex-start;align-self:flex-start;}
 .msg-body{display:flex;flex-direction:column;min-width:0;}
 .msg-user{align-self:flex-end;}
 .msg-user .msg-text{
@@ -1637,6 +1671,20 @@ span.msg-avatar-initial{
   outline:1.5px solid var(--amber);
   outline-offset:2px;
 }
+/* 多选时选中态要一眼看得出来（用户五.13「长按多选没做好」）：
+   光一条 1.5px 的 outline 太弱，圈里圈外都容易看漏，所以补一枚实心勾。
+   ⚠️ 勾只挂在 .is-sel-lead（这条消息的**第一个**气泡）上：多选按「条」计数，
+   一条回复拆成三个气泡的话，每个都打勾会看成「选了三条」。
+   （绝对定位的伪元素不挤进 flex 流，不影响气泡排版。） */
+.msg-bubble.is-sel-lead::after{
+  content:"✓";
+  position:absolute;top:-5px;right:-5px;
+  width:19px;height:19px;border-radius:50%;
+  background:var(--amber);color:#2A2118;
+  font-size:11px;font-weight:600;
+  line-height:19px;text-align:center;
+  box-shadow:0 1px 3px rgba(120,132,156,.32);
+}
 .msg-quote{
   font-size:11.5px;line-height:1.45;
   color:var(--text-faint);
@@ -2164,6 +2212,18 @@ span.msg-avatar-initial{
 }
 .dl-input:focus{border-color:rgba(232,184,123,.55);}
 .dl-input::placeholder{color:var(--text-faint);}
+
+/* 多行字段（编辑聊天气泡这种长句子）。用户五.15：原来的单行框
+   「框太小，难以显示所有字」。给足高度 + 内部滚动，别撑破卡片。 */
+.dl-textarea{
+  min-height:104px;max-height:44vh;
+  line-height:1.65;
+  resize:none;
+  overflow-y:auto;
+  margin-bottom:10px;
+}
+/* 编辑长文本时卡片放宽一点，单行那套 320px 放不下几行字 */
+.dl-card.is-wide{width:min(380px, 90%);}
 
 .dl-acts{display:flex;gap:8px;}
 .dl-btn{
