@@ -2520,7 +2520,7 @@ span.msg-avatar-initial{
 }
 .set-input:focus,.set-textarea:focus{
   border-color:var(--g-accent);
-  box-shadow:0 0 0 3px rgba(111,184,106,.16);
+  box-shadow:0 0 0 3px rgba(176,138,94,.16);
 }
 
 /* 按钮：主按钮是实心青提绿（浅底上要有唯一一个最重的色块） */
@@ -2609,7 +2609,7 @@ span.msg-avatar-initial{
    原来这里写的是 `color:var(--g-accent-deep)`（爪印也绿）——
    后来 `--amber` 也被重映射成了同一个绿，于是绿底绿爪、爪印整个隐形，
    用户以为小猫爪丢了。教训：**给底色配字色时，两边不能引用同一个变量**。 */
-.send-btn{color:#F4FCF3;}
+.send-btn{color:#FFFDF9;}
 .send-btn.is-busy{color:var(--g-ink-3);}
 
 /* 空心纸：夜灯时期是米色便签，浅色主题下要能看见 */
@@ -3958,7 +3958,7 @@ span.msg-avatar-initial{
 .w-cal-today{
   background:var(--g-accent);
   color:#fff;
-  box-shadow:0 4px 8px rgba(111,184,106,.42);
+  box-shadow:0 4px 8px rgba(176,138,94,.42);
 }
 
 /* ---------------- 待办 ---------------- */
@@ -4784,7 +4784,7 @@ span.msg-avatar-initial{
   color:var(--g-ink);
   border-bottom:1px solid var(--g-glass-line);
 }
-.sw-main.is-on{background:rgba(111,184,106,.13);}
+.sw-main.is-on{background:rgba(176,138,94,.13);}
 .sw-av{
   flex:none;
   display:flex;align-items:center;justify-content:center;
@@ -4879,7 +4879,7 @@ span.msg-avatar-initial{
 }
 .wh-item.is-on{
   border-color:var(--g-accent);
-  background:rgba(111,184,106,.14);
+  background:rgba(176,138,94,.14);
 }
 .wh-av{
   flex:none;
@@ -4942,7 +4942,7 @@ span.msg-avatar-initial{
   cursor:pointer;
   border-bottom:1px solid var(--g-glass-line);
 }
-.idc-main.is-active{background:rgba(111,184,106,.12);}
+.idc-main.is-active{background:rgba(176,138,94,.12);}
 .idc-main-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
 .idc-name-row{display:flex;align-items:center;gap:7px;}
 .idc-name{
@@ -4954,7 +4954,7 @@ span.msg-avatar-initial{
   font-size:9.5px;font-weight:700;
   padding:2px 7px;border-radius:8px;
 }
-.idc-kind-main{background:rgba(111,184,106,.20);color:var(--g-accent-deep);}
+.idc-kind-main{background:rgba(176,138,94,.20);color:var(--g-accent-deep);}
 .idc-kind-sub{background:rgba(92,134,168,.16);color:var(--mist);}
 .idc-kind-npc{background:rgba(185,145,63,.16);color:var(--gold);}
 .idc-cur{
@@ -5058,7 +5058,7 @@ span.msg-avatar-initial{
 }
 .cog-opt.is-on{
   border-color:var(--g-accent);
-  background:rgba(111,184,106,.14);
+  background:rgba(176,138,94,.14);
 }
 .cog-opt.is-danger.is-on{
   border-color:var(--coral);
@@ -5099,7 +5099,7 @@ span.msg-avatar-initial{
 }
 .pick-line:last-child{border-bottom:0;}
 .pick-line:active{background:var(--g-glass-2);}
-.pick-line.is-on{background:rgba(111,184,106,.13);}
+.pick-line.is-on{background:rgba(176,138,94,.13);}
 .pick-box{
   flex:none;
   width:17px;height:17px;
@@ -5381,8 +5381,8 @@ span.msg-avatar-initial{
 .isl-isle-name{font-family:var(--ff-serif);font-size:22px;letter-spacing:4px;color:var(--text);}
 .isl-isle-badge{
   padding:1px 8px;border-radius:999px;font-size:10.5px;
-  color:var(--g-accent-deep);background:rgba(111,184,106,.16);
-  border:1px solid rgba(111,184,106,.28);
+  color:var(--g-accent-deep);background:rgba(176,138,94,.16);
+  border:1px solid rgba(176,138,94,.28);
 }
 /* 岛上那句诗 —— 这一层的灵魂，别再写说明书 */
 .isl-poem{margin:12px 0 0;font-family:var(--ff-serif);font-size:16px;letter-spacing:3px;color:var(--g-accent-deep);}
@@ -5469,17 +5469,17 @@ span.msg-avatar-initial{
 .tree-tie-b{opacity:.3;}
 .tree-tie-dash{stroke-dasharray:4 5;opacity:.42;}
 
-.tree-disc{fill:#F5FCF5;stroke:rgba(139,108,76,.34);stroke-width:1;}
-.tree-me{fill:#DCF0DE;stroke:var(--g-accent);stroke-width:1.4;}
-.tree-char{fill:#EAF8E8;stroke:rgba(139,108,76,.46);}
-.tree-kid{fill:#F3FAF3;}
+.tree-disc{fill:#FBF8F3;stroke:rgba(139,108,76,.34);stroke-width:1;}
+.tree-me{fill:#F1E7D8;stroke:var(--g-accent);stroke-width:1.4;}
+.tree-char{fill:#F8F3EA;stroke:rgba(139,108,76,.46);}
+.tree-kid{fill:#FCFAF6;}
 .tree-sub{stroke-dasharray:3 3;}
 .tree-npc{stroke:rgba(139,108,76,.28);}
 .tree-plus{fill:rgba(255,255,255,.55);stroke:rgba(139,108,76,.42);stroke-dasharray:3 4;}
 
-.tree-initial{font-size:13px;font-weight:500;fill:#2E4B30;}
+.tree-initial{font-size:13px;font-weight:500;fill:#8A6844;}
 .tree-glyph{font-size:17px;fill:var(--g-accent-deep);}
-.tree-name{font-size:10px;fill:#6B806C;}
+.tree-name{font-size:10px;fill:#8A7A67;}
 /* 写在红线上的那句话 —— 用暖色（跟线同族），跟绿色的归属线区分开 */
 .tree-rel{
   font-size:11px;fill:#B45C55;
@@ -5502,7 +5502,7 @@ span.msg-avatar-initial{
   flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;
   padding:14px;border:0;border-radius:16px;
   background:linear-gradient(140deg,var(--g-accent),var(--g-accent-deep));
-  color:#F4FCF3;font-family:inherit;font-size:14px;letter-spacing:1px;
+  color:#FFFDF9;font-family:inherit;font-size:14px;letter-spacing:1px;
   cursor:pointer;box-shadow:0 8px 20px rgba(139,108,76,.24);
 }
 .cfg-add-main svg{display:block;}
@@ -5518,7 +5518,7 @@ span.msg-avatar-initial{
   padding:9px 10px;border-radius:12px;border:1px solid var(--g-glass-line);
   background:rgba(255,255,255,.5);font-family:inherit;text-align:left;cursor:pointer;
 }
-.cfg-mask.is-on{border-color:rgba(111,184,106,.5);background:rgba(111,184,106,.12);}
+.cfg-mask.is-on{border-color:rgba(176,138,94,.5);background:rgba(176,138,94,.12);}
 /* 配置台的「从别的岛复制一件马甲」行：虚线边 + 淡字，跟上面的勾选行区分开 */
 .cfg-mask-copy{border-style:dashed;background:transparent;}
 .cfg-mask-copy .cfg-char-name{color:var(--text-dim);}
@@ -5544,7 +5544,7 @@ span.msg-avatar-initial{
   display:block;width:100%;padding:16px;border:0;border-radius:20px;
   font-family:inherit;cursor:pointer;
   background:linear-gradient(140deg,var(--g-accent),var(--g-accent-deep));
-  color:#F4FCF3;box-shadow:0 10px 26px rgba(139,108,76,.28);
+  color:#FFFDF9;box-shadow:0 10px 26px rgba(139,108,76,.28);
 }
 .cfg-land-title{display:block;font-size:17px;font-weight:500;letter-spacing:3px;}
 .cfg-land-sub{display:block;margin-top:5px;font-size:11.5px;opacity:.86;}
@@ -5554,7 +5554,7 @@ span.msg-avatar-initial{
 .simple-parent{
   margin:0 0 18px;padding:11px 14px;border-radius:12px;
   font-size:12px;line-height:1.7;color:var(--text-dim);
-  background:rgba(111,184,106,.1);border:1px solid rgba(111,184,106,.2);
+  background:rgba(176,138,94,.1);border:1px solid rgba(176,138,94,.2);
 }
 .simple-more{
   display:block;width:100%;margin-top:14px;padding:12px;
@@ -5567,8 +5567,8 @@ span.msg-avatar-initial{
    不是一个独立区块。 */
 .simple-sub{
   margin:2px 0 10px 6px;padding:2px 0 2px 12px;
-  border-left:2px solid rgba(111,184,106,.34);
-  background:linear-gradient(90deg,rgba(111,184,106,.07),rgba(111,184,106,0) 70%);
+  border-left:2px solid rgba(176,138,94,.34);
+  background:linear-gradient(90deg,rgba(176,138,94,.07),rgba(176,138,94,0) 70%);
 }
 
 /* ============================================================
@@ -5630,7 +5630,7 @@ span.msg-avatar-initial{
   transition:color .18s var(--ease),background .18s var(--ease);
 }
 .tab-btn.is-on{color:var(--g-accent-deep);}
-.tab-btn:active{background:rgba(111,184,106,.1);}
+.tab-btn:active{background:rgba(176,138,94,.1);}
 .tab-ic{display:block;width:23px;height:23px;}
 .tab-ic svg{display:block;width:100%;height:100%;}
 .tab-tx{font-size:10.5px;letter-spacing:.4px;}
@@ -5655,14 +5655,14 @@ span.msg-avatar-initial{
   font-family:inherit;text-align:left;cursor:pointer;
   transition:background .18s var(--ease);
 }
-.addr-row:active{background:rgba(111,184,106,.12);}
+.addr-row:active{background:rgba(176,138,94,.12);}
 /* 首字圆头像。会话列表（.chat-item-ava）和通讯录（.addr-av）共用这一条 ——
    两处的视觉本来就该一致，分开写只会慢慢漂移。 */
 .chat-item-ava,.addr-av{
   flex:none;width:38px;height:38px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:500;color:#2E4B30;
-  background:linear-gradient(140deg,#E9F7E6,#BFE3C4);
+  font-size:15px;font-weight:500;color:#8A6844;
+  background:linear-gradient(140deg,#F7F2EA,#EAD9C2);
   border:1px solid rgba(139,108,76,.2);
   background-size:cover;background-position:center;
 }
@@ -5680,8 +5680,8 @@ span.msg-avatar-initial{
 .addr-badge{
   flex:none;padding:0 7px;border-radius:999px;
   font-size:10px;letter-spacing:.3px;
-  color:var(--g-accent-deep);background:rgba(111,184,106,.14);
-  border:1px solid rgba(111,184,106,.26);
+  color:var(--g-accent-deep);background:rgba(176,138,94,.14);
+  border:1px solid rgba(176,138,94,.26);
 }
 .addr-sub{
   font-size:11.5px;color:var(--text-faint);
@@ -5704,8 +5704,8 @@ span.msg-avatar-initial{
 .moment-avatar{
   flex:none;width:28px;height:28px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  font-size:12px;color:#2E4B30;
-  background:linear-gradient(140deg,#E9F7E6,#BFE3C4);
+  font-size:12px;color:#8A6844;
+  background:linear-gradient(140deg,#F7F2EA,#EAD9C2);
   background-size:cover;background-position:center;
 }
 .moment-avatar.has-img{color:transparent;}
@@ -5725,7 +5725,7 @@ span.msg-avatar-initial{
   border:1px solid var(--g-glass-line);background:rgba(255,255,255,.62);
   font-family:inherit;font-size:12px;color:var(--g-accent-deep);cursor:pointer;
 }
-.me-switch:active{background:rgba(111,184,106,.16);}
+.me-switch:active{background:rgba(176,138,94,.16);}
 
 /* ---- 「我」页 v2（09-19 照 demo 重排）----
    demo 的配色没搬（主题色归外观管），只搬结构与交互；
@@ -5836,14 +5836,14 @@ span.msg-avatar-initial{
   border-radius:18px;
   background:linear-gradient(140deg,var(--g-accent),var(--g-accent-deep));
   box-shadow:0 10px 26px rgba(139,108,76,.24);
-  color:#F4FCF3;
+  color:#FFFDF9;
 }
 .wallet-lab{font-size:11.5px;opacity:.85;}
 .wallet-amt{font-size:30px;font-weight:700;letter-spacing:.5px;}
 .wallet-edit{
   align-self:flex-start;margin-top:10px;
   padding:6px 14px;border-radius:999px;border:0;
-  background:rgba(255,255,255,.22);color:#F4FCF3;
+  background:rgba(255,255,255,.22);color:#FFFDF9;
   font-family:inherit;font-size:12px;cursor:pointer;
 }
 .wallet-edit:active{background:rgba(255,255,255,.34);}
@@ -5911,8 +5911,8 @@ span.msg-avatar-initial{
 .mo-me-av{
   flex:none;width:58px;height:58px;border-radius:8px;
   display:flex;align-items:center;justify-content:center;
-  font-size:21px;font-weight:500;color:#2E4B30;
-  background:linear-gradient(140deg,#E9F7E6,#BFE3C4);
+  font-size:21px;font-weight:500;color:#8A6844;
+  background:linear-gradient(140deg,#F7F2EA,#EAD9C2);
   border:2px solid #fff;
   background-size:cover;background-position:center;
   box-shadow:0 3px 10px rgba(0,0,0,.16);
@@ -6137,7 +6137,7 @@ span.msg-avatar-initial{
   padding:6px 8px;margin:-6px -8px;border:0;border-radius:11px;
   background:none;font-family:inherit;text-align:left;cursor:pointer;
 }
-.stk-group-toggle:active{background:rgba(111,184,106,.12);}
+.stk-group-toggle:active{background:rgba(176,138,94,.12);}
 .stk-group-arrow{
   flex:none;display:block;width:15px;height:15px;color:var(--text-faint);
   transition:transform .18s var(--ease);
@@ -6154,7 +6154,7 @@ span.msg-avatar-initial{
   background:none;font-family:inherit;font-size:11px;
   color:var(--text-faint);cursor:pointer;
 }
-.stk-group-op:active{background:rgba(111,184,106,.14);}
+.stk-group-op:active{background:rgba(176,138,94,.14);}
 
 /* 本地图取不到时的占位（图库清过、或者记录来自别的设备） */
 .stk-av.is-missing{
@@ -6198,7 +6198,7 @@ span.msg-avatar-initial{
   background:rgba(255,255,255,.45);
   color:var(--g-accent-deep);
 }
-.stk-cell-add:active{background:rgba(111,184,106,.14);}
+.stk-cell-add:active{background:rgba(176,138,94,.14);}
 .stk-cell-add svg{display:block;width:22px;height:22px;}
 .stk-cell-name{
   font-size:10.5px;line-height:1.3;text-align:center;
@@ -6290,7 +6290,7 @@ span.msg-avatar-initial{
   font-family:inherit;font-size:12px;color:var(--text-dim);cursor:pointer;
 }
 .stk-panel-chip.is-on{
-  background:var(--g-accent);border-color:var(--g-accent-deep);color:#F4FCF3;
+  background:var(--g-accent);border-color:var(--g-accent-deep);color:#FFFDF9;
 }
 .stk-panel-grid{
   flex:1;min-height:0;overflow-y:auto;
@@ -6314,7 +6314,7 @@ span.msg-avatar-initial{
   padding:6px 10px;border:0;border-radius:10px;background:none;
   font-family:inherit;font-size:12px;color:var(--g-accent-deep);cursor:pointer;
 }
-.stk-panel-mgr:active{background:rgba(111,184,106,.14);}
+.stk-panel-mgr:active{background:rgba(176,138,94,.14);}
 
 /* ============================================================
    朋友圈：带图 · 表情评论 · 回复 · 删除
@@ -6345,7 +6345,7 @@ span.msg-avatar-initial{
 .mo-replying{
   display:flex;align-items:center;gap:8px;
   margin-bottom:8px;padding:5px 9px;border-radius:9px;
-  background:rgba(111,184,106,.12);
+  background:rgba(176,138,94,.12);
   font-size:11.5px;color:var(--g-accent-deep);
 }
 .mo-replying-x{
@@ -6363,7 +6363,7 @@ span.msg-avatar-initial{
   cursor:pointer;
 }
 .mo-cstk svg{display:block;width:19px;height:19px;}
-.mo-cstk:active{background:rgba(111,184,106,.16);}
+.mo-cstk:active{background:rgba(176,138,94,.16);}
 
 /* 快捷条里的「删除」——红色（跟赞/评论区分开） */
 .mo-quick-btn.is-danger{color:var(--coral);}
@@ -6407,7 +6407,7 @@ span.msg-avatar-initial{
   font-family:inherit;font-size:13px;color:var(--text);cursor:pointer;
   text-align:left;white-space:nowrap;
 }
-.mo-cmenu-item:active{background:rgba(111,184,106,.14);}
+.mo-cmenu-item:active{background:rgba(176,138,94,.14);}
 .mo-cmenu-item.is-danger{color:var(--coral);}
 
 /* ---- 「另有 N 条没让你看」 ---- */
@@ -6641,8 +6641,8 @@ span.msg-avatar-initial{
   font-family:inherit;text-align:left;cursor:pointer;
   transition:border-color .16s var(--ease),background .16s var(--ease);
 }
-.look-card:active{background:rgba(111,184,106,.12);}
-.look-card.is-on{border-color:var(--g-accent);background:rgba(111,184,106,.14);}
+.look-card:active{background:rgba(176,138,94,.12);}
+.look-card.is-on{border-color:var(--g-accent);background:rgba(176,138,94,.14);}
 .look-sw{
   display:block;height:40px;border-radius:11px;margin-bottom:8px;
   border:1px solid rgba(0,0,0,.06);
@@ -6656,9 +6656,9 @@ span.msg-avatar-initial{
   border:1px solid var(--g-glass-line);background:var(--g-glass-2);
   font-family:inherit;font-size:13px;color:var(--text-dim);cursor:pointer;
 }
-.look-seg-btn:active{background:rgba(111,184,106,.12);}
+.look-seg-btn:active{background:rgba(176,138,94,.12);}
 .look-seg-btn.is-on{
-  background:var(--g-accent);border-color:var(--g-accent-deep);color:#F4FCF3;
+  background:var(--g-accent);border-color:var(--g-accent-deep);color:#FFFDF9;
 }
 
 .look-demo{
@@ -6816,7 +6816,7 @@ span.msg-avatar-initial{
 }
 .lk-pill.on{
   background:var(--g-accent);border-color:var(--g-accent-deep,#8A6B48);
-  color:#F4FCF3;
+  color:#FFFDF9;
 }
 
 /* ---- 自定义图加号框（表情包第一个那种）：和壁纸格同尺寸，
@@ -6858,7 +6858,7 @@ span.msg-avatar-initial{
   background:var(--g-accent);border-color:var(--g-accent-deep,#8A6B48);
 }
 .lk-save-main{font-size:14px;font-weight:600;color:var(--text);}
-.lk-save.is-dirty .lk-save-main{color:#F4FCF3;}
+.lk-save.is-dirty .lk-save-main{color:#FFFDF9;}
 .lk-save-sub{font-size:10.5px;color:var(--text-faint);}
 .lk-save.is-dirty .lk-save-sub{color:rgba(244,252,243,.75);}
 
@@ -8523,7 +8523,7 @@ div.pp-row:active{background:none;}
   border-radius:17px 6px 17px 6px;
   border-top:1px solid rgba(255,255,255,.7);
   border-bottom:1px solid var(--line);
-  box-shadow:0 10px 24px rgba(82,103,87,.08);
+  box-shadow:0 10px 24px rgba(84,70,52,.08);
 }
 .iol-core.is-archi{justify-content:flex-start;overflow-x:auto;scrollbar-width:none;padding:16px 12px;}
 .iol-core.is-archi::-webkit-scrollbar{display:none;}
@@ -8531,10 +8531,10 @@ div.pp-row:active{background:none;}
 .iol-ava{
   width:46px;height:46px;margin:0 auto 7px;
   display:grid;place-items:center;border-radius:50%;
-  border:1.5px solid #c4a878;background:#e3f2e7;
-  color:#6a806d;font-size:15px;
+  border:1.5px solid #c4a878;background:#F5EFE4;
+  color:#8A6844;font-size:15px;
 }
-.iol-person.is-me .iol-ava{border-color:#b9c6aa;background:#eef1dd;}
+.iol-person.is-me .iol-ava{border-color:#D8C6AA;background:#F2EBDD;}
 .iol-person b{font-size:12.5px;font-weight:400;color:var(--text);}
 .iol-person small{display:block;margin-top:3px;font-size:9.5px;color:var(--text-faint);}
 .iol-line{
@@ -8555,8 +8555,8 @@ div.pp-row:active{background:none;}
 .iol-member-ava{
   width:32px;height:32px;margin-bottom:7px;
   display:grid;place-items:center;border-radius:50%;
-  border:1px solid rgba(128,151,132,.28);background:#eef1dd;
-  font-size:12px;color:#6a806d;
+  border:1px solid rgba(139,108,76,.28);background:#F2EBDD;
+  font-size:12px;color:#8A6844;
 }
 .iol-member strong{display:block;font-size:12px;font-weight:400;}
 .iol-member small{display:block;margin-top:3px;font-size:9px;color:var(--text-faint);line-height:1.6;}
@@ -8662,9 +8662,9 @@ div.pp-row:active{background:none;}
 .ipro-ava{
   width:58px;height:58px;margin:0 auto 9px;
   display:grid;place-items:center;border-radius:50%;
-  background:linear-gradient(145deg,#e4f1e6,#f2ecdc);
+  background:linear-gradient(145deg,#F7F2EA,#EAD9C2);
   border:1.5px solid rgba(158,127,82,.5);
-  font-size:17px;color:#6d7d6d;
+  font-size:17px;color:#8A6844;
 }
 .ipro-hero h2{
   margin:0;font-size:17px;font-weight:500;letter-spacing:.08em;color:var(--text);
@@ -8700,13 +8700,13 @@ div.pp-row:active{background:none;}
   border-radius:14px 5px 14px 5px;
   background:rgba(255,255,255,.55);
   border:1px solid rgba(255,255,255,.68);
-  box-shadow:0 5px 14px rgba(84,104,89,.07);
+  box-shadow:0 5px 14px rgba(84,70,52,.07);
   font-family:inherit;color:var(--text);cursor:pointer;
 }
 .ipro-mini{
   width:28px;height:28px;margin-bottom:7px;
   display:grid;place-items:center;border-radius:50%;
-  background:#dcece1;font-size:10px;color:#6a806d;
+  background:#EFE7DB;font-size:10px;color:#8A6844;
 }
 .ipro-identity b{display:block;font-size:10px;font-weight:500;}
 .ipro-identity small{display:block;margin-top:3px;font-size:8px;color:var(--text-faint);}
@@ -8736,7 +8736,7 @@ div.pp-row:active{background:none;}
   background:rgba(255,255,255,.5);
   border-top:1px solid rgba(255,255,255,.8);
   border-bottom:1px solid var(--line);
-  box-shadow:0 10px 24px rgba(82,103,87,.09);
+  box-shadow:0 10px 24px rgba(84,70,52,.09);
 }
 .ipro-editor textarea{
   width:100%;min-height:300px;padding:0;border:0;resize:none;outline:none;
@@ -8746,7 +8746,7 @@ div.pp-row:active{background:none;}
 .ipro-editor-foot{display:flex;justify-content:space-between;margin-top:8px;font-size:8.5px;color:var(--text-faint);}
 .ipro-guide{
   margin-top:15px;padding:11px 13px;
-  background:rgba(222,236,224,.5);
+  background:rgba(234,217,194,.5);
   border-radius:14px 5px 14px 5px;
   color:#716b62;font-size:9px;line-height:1.75;
 }
@@ -8764,7 +8764,7 @@ div.pp-row:active{background:none;}
 .iol-drawer{
   position:fixed;inset:0;z-index:110;
   display:flex;align-items:flex-end;
-  background:rgba(67,79,70,.2);
+  background:rgba(70,58,44,.2);
   opacity:0;pointer-events:none;transition:opacity .22s;
   max-width:420px;margin:0 auto;
   /* 软键盘避让：--kb-inset 由 app.js 的 visualViewport 监听写进 :root。
@@ -8781,7 +8781,7 @@ div.pp-row:active{background:none;}
   padding:22px 20px 30px;
   border-radius:22px 22px 0 0;
   background:#fbfbf4;
-  box-shadow:0 -10px 34px rgba(71,94,77,.18);
+  box-shadow:0 -10px 34px rgba(84,70,52,.18);
   transform:translateY(100%);
   transition:transform .28s cubic-bezier(.32,.72,0,1);
 }
@@ -8791,7 +8791,7 @@ div.pp-row:active{background:none;}
 .iol-field{margin-top:15px;}
 .iol-field label{display:block;margin-bottom:7px;font-size:11px;color:#988f82;}
 .iol-field input,.iol-field textarea{
-  width:100%;border:1px solid rgba(125,148,130,.22);outline:none;
+  width:100%;border:1px solid rgba(139,108,76,.22);outline:none;
   border-radius:12px;padding:11px 12px;color:#514c43;background:#fff;
   font-size:12.5px;line-height:1.7;font-family:inherit;
 }
@@ -8811,7 +8811,7 @@ div.pp-row:active{background:none;}
 }
 .iol-drawer-hint{
   margin:12px 0 0;padding:10px 12px;border-radius:12px;
-  background:rgba(125,148,130,.1);font-size:10.5px;color:#8a9384;line-height:1.7;
+  background:rgba(139,108,76,.1);font-size:10.5px;color:#8A7A67;line-height:1.7;
 }
 
 /* NPC 抽屉 · 照 demo 加的部分（09-19）：分区小标 / 勾选人 / 可见性开关 */
@@ -8823,22 +8823,22 @@ div.pp-row:active{background:none;}
 .iol-people{display:grid;gap:7px;margin-top:11px;}
 .iol-person-pick{
   display:grid;grid-template-columns:30px 1fr 22px;align-items:center;gap:9px;
-  padding:10px 9px;border:1px solid rgba(125,148,130,.22);
+  padding:10px 9px;border:1px solid rgba(139,108,76,.22);
   border-radius:13px 5px 13px 5px;background:rgba(255,255,255,.4);
   text-align:left;cursor:pointer;font-family:inherit;
 }
-.iol-person-pick.is-on{background:rgba(232,242,232,.72);border-color:rgba(117,153,124,.35);}
+.iol-person-pick.is-on{background:rgba(247,242,234,.72);border-color:rgba(176,138,94,.35);}
 .iol-pick-ava{
   width:30px;height:30px;display:grid;place-items:center;border-radius:50%;
-  background:#eef1dd;font-size:10px;color:#6a806d;
+  background:#F2EBDD;font-size:10px;color:#8A6844;
 }
 .iol-pick-body b{display:block;font-size:10.5px;font-weight:500;color:#514c43;}
 .iol-pick-body small{display:block;margin-top:3px;font-size:8.5px;color:#988f82;}
 .iol-check{
-  width:18px;height:18px;border:1px solid rgba(126,147,129,.32);
+  width:18px;height:18px;border:1px solid rgba(139,108,76,.32);
   border-radius:50%;position:relative;
 }
-.iol-person-pick.is-on .iol-check{border-color:#8fa98f;background:#8fa98f;}
+.iol-person-pick.is-on .iol-check{border-color:#B08A5E;background:#B08A5E;}
 .iol-person-pick.is-on .iol-check:after{
   content:"";position:absolute;width:7px;height:4px;left:4px;top:5px;
   border-left:1px solid #fff;border-bottom:1px solid #fff;transform:rotate(-45deg);
@@ -8846,13 +8846,13 @@ div.pp-row:active{background:none;}
 .iol-opt{
   display:flex;align-items:center;justify-content:space-between;gap:10px;
   min-height:46px;padding:9px 2px;
-  border-bottom:1px solid rgba(125,148,130,.16);
+  border-bottom:1px solid rgba(139,108,76,.16);
 }
 .iol-opt-body b{display:block;font-size:11.5px;font-weight:500;color:#514c43;}
 .iol-opt-body small{display:block;margin-top:3px;font-size:8.5px;color:#988f82;}
 .iol-switch{
   width:34px;height:20px;flex:none;border:0;border-radius:20px;
-  background:#d4ddd5;padding:2px;cursor:pointer;position:relative;
+  background:#E8E0D3;padding:2px;cursor:pointer;position:relative;
   transition:background .15s;
 }
 .iol-switch:after{
@@ -8860,7 +8860,7 @@ div.pp-row:active{background:none;}
   border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12);
   transition:transform .15s;
 }
-.iol-switch.on{background:#9cbba3;}
+.iol-switch.on{background:#B08A5E;}
 .iol-switch.on:after{transform:translateX(14px);}
 .iol-drawer-hint{
   margin:12px 0 0;text-align:center;
@@ -8871,12 +8871,12 @@ div.pp-row:active{background:none;}
 .iol-npc-context{display:flex;align-items:center;gap:10px;padding:16px 2px 2px;}
 .iol-npc-isle{
   width:40px;height:25px;flex:none;border-radius:50%;
-  background:linear-gradient(#eff9ef,#bdddc5);position:relative;
-  box-shadow:inset 0 -5px 8px rgba(116,159,126,.13);
+  background:linear-gradient(#FBF7F0,#E3D5BE);position:relative;
+  box-shadow:inset 0 -5px 8px rgba(176,138,94,.13);
 }
 .iol-npc-isle:after{
   content:"";position:absolute;width:2px;height:14px;left:19px;top:-10px;
-  background:#78a184;
+  background:#B08A5E;
 }
 .iol-npc-context-copy b{display:block;font-size:12px;font-weight:500;color:#514c43;}
 .iol-npc-context-copy small{display:block;margin-top:4px;font-size:9px;color:#988f82;}
@@ -8893,11 +8893,11 @@ div.pp-row:active{background:none;}
 .iol-kind-list{display:grid;gap:7px;margin-top:12px;}
 .iol-kind{
   display:flex;align-items:center;justify-content:space-between;gap:9px;
-  padding:11px;border:1px solid rgba(125,148,130,.22);
+  padding:11px;border:1px solid rgba(139,108,76,.22);
   border-radius:13px 5px 13px 5px;background:rgba(255,255,255,.4);
   text-align:left;cursor:pointer;font-family:inherit;
 }
-.iol-kind.is-on{background:rgba(232,242,232,.72);border-color:rgba(117,153,124,.35);}
+.iol-kind.is-on{background:rgba(247,242,234,.72);border-color:rgba(176,138,94,.35);}
 .iol-kind b{display:block;font-size:11.5px;font-weight:500;color:#514c43;}
 .iol-kind small{display:block;margin-top:3px;font-size:8.5px;color:#988f82;}
 /* 角色档案底部的危险操作：一行小字，不加框 */
