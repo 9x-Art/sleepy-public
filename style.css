@@ -5591,7 +5591,15 @@ span.msg-avatar-initial{
   padding:7px 0;font-size:14.5px;
 }
 .simple-form .set-input:focus{border-bottom-color:var(--g-accent);box-shadow:none;}
-.simple-form .set-hint{display:none;}
+/* 下拉也走同一形 —— 完整页有三个 select，别一个带框一个带线。
+   （不隐藏 .set-hint：简化页那边是**源头不传** hint，而完整页字段多、
+   有些说明必须留着 —— 见 gPlace 的「留空就用时区表里的地名」。） */
+.simple-form .set-select{
+  background:none;border:0;border-radius:0;
+  border-bottom:1px solid var(--g-glass-line);
+  padding:7px 0;font-size:14.5px;color:var(--g-ink);
+}
+.simple-form .set-select:focus{outline:0;border-bottom-color:var(--g-accent);}
 /* 人设是整段文字，光一条底线不知道哪儿能打字 —— 给一层浅面（无边框、无圆角框感） */
 .simple-form .set-textarea{
   background:rgba(249,247,243,.92);

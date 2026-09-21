@@ -746,6 +746,12 @@
                     : (kind === 'npc' ? '新建 NPC' : '新建大号'));
       }
 
+      /* 整页都用 .simple-form 那一形（下划线字段 + 浅面文本域）——
+         用户：「完整页的话头像那些也是和现在这样」。
+         **分组卡片保留**：这一页字段多（身份 / 常驻地点 / 绑定马甲 / 人设 /
+         锁脸与红线），分门别类本身就是有用的信息架构，拉平反而更难找。 */
+      body.classList.add('simple-form');
+
       var f = {};
 
       /* ---- 身份 ---- */
@@ -786,27 +792,34 @@
         gKind.card.appendChild(pw);
       }
 
+      /* 名字 / 头像 / 微信名 = 跟其他加人设入口同一套同学录：
+         左头像框（点框选本地图、框下贴网址），右边两栏。 */
+      var fRow = h('div', 'face-row');
+      f.avatar = faceField(existing, {
+        empty: '＋',
+        toast: function (t, k) { ctx.toast(t, k); }
+      });
+      fRow.appendChild(f.avatar.el);
+      var fCols = h('div', 'face-cols');
       f.name = textField({
         label: '名字',
         value: existing ? existing.name : '',
-        hint: '聊天记录里出现的名字就是它'
+        placeholder: '聊天记录里出现的名字'
       });
-      gKind.card.appendChild(f.name.el);
-
-      /* 头像：网址 + 本地图都行（avatarFieldLocal，本地图存图库走 avatarMedia）。 */
-      f.avatar = avatarFieldLocal(existing, {
-        toast: function (t, k) { ctx.toast(t, k); }
-      });
-      gKind.card.appendChild(f.avatar.el);
-
-      /* 微信名：会话列表 / 聊天页对外显示的名字（用户 2026-09-21）。 */
+      if (f.name.input) {
+        f.name.input.addEventListener('input', function () {
+          f.avatar.setName(f.name.get());
+        });
+      }
+      fCols.appendChild(f.name.el);
       f.wechatName = textField({
         label: '微信名',
         value: existing ? (existing.wechatName || '') : '',
-        hint: '会话列表里显示的名字 · 留空就用「名字」',
-        placeholder: '想让它显示成什么'
+        placeholder: '会话列表里显示的名字（留空就用名字）'
       });
-      gKind.card.appendChild(f.wechatName.el);
+      fCols.appendChild(f.wechatName.el);
+      fRow.appendChild(fCols);
+      gKind.card.appendChild(fRow);
 
       /* `city` 不再放这里 —— 它已经升格成「常驻地点」那一组（见下面 gPlace）。
          原本的 hint 写着「用在桌面的双城时间」，那个组件早撤了。 */
