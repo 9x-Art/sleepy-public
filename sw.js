@@ -13,6 +13,15 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v15（2026-09-21 第 14 批）：图片出 localStorage —— ①群头像改存图库
+   （IndexedDB 的 mediaId，老 dataURL 首次显示时自动搬家）；②头像 /
+   faceLockImage 之外的三处头像字段都能选本地图了（avatarFieldLocal），
+   显示统一走 core.avatarSrc/setAvatarBg/setAvatarImg（本地图优先）；
+   ③聊天流式输出不再每个 delta 整页重画（只更新 pending 气泡那一个
+   .msg-text，长对话不再接近 O(n²)）；④密码叙事化：[手机] lock/set ——
+   char 在剧情里自己设锁/改密码/去锁，旧密码进 pinHistory。
+   → 必须跳版本：core.js / phone.js / prompt-engine.js / 多个 page-*.js 都改了。
+
    v9（2026-09-21 第 6 批）：大号按岛（2026-09-21 拍板：没有全局大号，想玩
    同一个人设就是新建一个新的人）—— 新建大号一律打当前岛的章；拆岛连岛上的
    人一起清；「移出岛」保留本体但摘掉岛的章；导入人设不再同名覆盖、导入即
@@ -75,7 +84,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v74';
+var CACHE = 'sleepy-v76';
 var CORE = [
   './',
   './index.html',

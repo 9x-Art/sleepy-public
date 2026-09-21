@@ -70,14 +70,16 @@
 
   /* ==================== 通用小组件 ==================== */
 
-  /* 单个头像格：有图用图，没图用首字 + 暖色底 */
+  /* 单个头像格：有图用图，没图用首字 + 暖色底。
+     图的地址走 core.setAvatarImg（avatarMedia 图库优先，回落网址）——
+     别直接读 meta.avatar 当 src，本地图会显示不出来。 */
   function tileEl(meta, size) {
     var el = h('span', 'gu-tile' + (size ? ' gu-tile-' + size : ''));
     el.style.background = gs().tileColor(meta.name);
-    if (meta.avatar) {
+    if (meta.avatar || meta.avatarMedia) {
       var img = h('img', 'gu-tile-img');
       img.alt = '';
-      img.src = meta.avatar;
+      core.setAvatarImg(img, meta);
       el.appendChild(img);
     } else {
       el.appendChild(h('span', 'gu-tile-tx', meta.initial));
@@ -85,17 +87,53 @@
     return el;
   }
 
+  /* 群自定义头像的三种来源与统一取址：
+     avatarMedia（本地图，IndexedDB —— 正确做法）/
+     avatar（http 链接）/ 老存档残留的 data: base64。
+     老的 base64 在首次显示时顺手搬进图库，搬完清掉群记录里的 base64
+     （群记录在 localStorage，塞二进制迟早爆 5MB 配额）。
+     搬家失败就原样返回，至少还能显示，下次再试。 */
+  var avatarMigrating = {};
+  function groupAvatarSrc(g) {
+    if (g.avatarMedia && Sleepy.media && Sleepy.media.url) {
+      return Sleepy.media.url(g.avatarMedia);
+    }
+    var legacy = g.avatar || '';
+    if (!/^data:/.test(legacy)) return Promise.resolve(legacy);
+    if (!Sleepy.media || !Sleepy.media.put || !Sleepy.media.available ||
+        typeof fetch !== 'function' || avatarMigrating[g.id]) {
+      return Promise.resolve(legacy);
+    }
+    avatarMigrating[g.id] = true;
+    Sleepy.media.available().then(function (okd) {
+      if (!okd) return legacy;
+      return fetch(legacy).then(function (res) { return res.blob(); })
+        .then(function (blob) {
+          return Sleepy.media.put(blob, { name: '群头像', kind: 'avatar' });
+        })
+        .then(function (mid) {
+          return gs().updateGroup(g.id, { avatar: '', avatarMedia: mid, avatarMode: 'custom' });
+        });
+    }).catch(function () { /* 迁移失败保留原样，下次显示再试 */ }).then(function () {
+      delete avatarMigrating[g.id];
+    });
+    return Promise.resolve(legacy);
+  }
+  function hasCustomAvatar(g) {
+    return !!(g && (g.avatarMedia || g.avatar));
+  }
+
   /* 拼图头像：前四个成员的 2×2。群在任何列表里的脸就是它。
-     群自定义过头像（g.avatar）就整格换成那一张图。 */
+     群自定义过头像（avatarMedia / avatar）就整格换成那一张图。 */
   function collageEl(groupId, size) {
     var g = gs().findGroup(groupId);
-    if (g && g.avatar) {
+    if (hasCustomAvatar(g)) {
       var single = h('span', 'gu-collage is-single' + (size ? ' gu-collage-' + size : ''));
       var el = h('span', 'gu-tile');
       el.style.background = gs().tileColor(g.id);
       var img = h('img', 'gu-tile-img');
       img.alt = '';
-      img.src = g.avatar;
+      groupAvatarSrc(g).then(function (src) { if (src) img.src = src; });
       el.appendChild(img);
       single.appendChild(el);
       return single;
@@ -1298,7 +1336,7 @@
       /* ---------- 动作 ---------- */
       function syncRows() {
         ui.setRowValue(rowName, g.name);
-        ui.setRowValue(rowAvatar, g.avatar ? '自定义头像' : '成员拼图');
+        ui.setRowValue(rowAvatar, hasCustomAvatar(g) ? '自定义头像' : '成员拼图');
         var mine = gs().userAccountsOf(groupId);
         ui.setRowValue(rowMine, mine.length ? mine.map(function (m) {
           return gs().accountMeta(m).name;
@@ -1329,15 +1367,16 @@
       }
 
       /* 群头像：页面正中的两选弹窗（用户定的交互）——
-         传照片（压到 240px 存 dataURL，群记录在 localStorage 里，
-         塞原图会把存档撑爆）或贴图片链接；用腻了可恢复成员拼图。 */
+         传照片（压到 240px 存进图库 IndexedDB，群记录里只留 mediaId，
+         localStorage 里塞 base64 会把整个存档撑爆）或贴图片链接；
+         用腻了可恢复成员拼图。 */
       function openAvatarFlow() {
         var host = document.getElementById('phone') || document.body;
         var mask = h('div', 'dl-mask');
         var cardEl = h('div', 'dl-card');
         cardEl.appendChild(h('p', 'dl-title', '群头像'));
         cardEl.appendChild(h('p', 'dl-note',
-          g.avatar ? '当前使用自定义头像。' : '当前使用成员头像拼图。'));
+          hasCustomAvatar(g) ? '当前使用自定义头像。' : '当前使用成员头像拼图。'));
 
         var fileIn = h('input');
         fileIn.type = 'file';
@@ -1353,31 +1392,33 @@
           }, 200);
         }
 
-        function applyAvatar(value) {
-          var r = gs().updateGroup(groupId, { avatar: value, avatarMode: value ? 'custom' : 'collage' });
+        function applyAvatar(opts) {
+          opts = opts || {};
+          var r = gs().updateGroup(groupId, {
+            avatar: opts.url || '',
+            avatarMedia: opts.mediaId || '',
+            avatarMode: (opts.url || opts.mediaId) ? 'custom' : 'collage'
+          });
           if (!r.ok) { toast(r.message); return; }
           g = gs().findGroup(groupId);
           close();
           syncRows();
-          toast(value ? '群头像已更新' : '已恢复成员拼图头像', 'ok');
+          toast(opts.url || opts.mediaId ? '群头像已更新' : '已恢复成员拼图头像', 'ok');
         }
 
         fileIn.addEventListener('change', function () {
           var file = fileIn.files && fileIn.files[0];
           if (!file) return;
-          if (Sleepy.media && Sleepy.media.shrink) {
-            Sleepy.media.shrink(file, 240).then(function (r) {
-              return blobDataURL(r.blob);
-            }).then(function (durl) {
-              if (!durl) { toast('这张图读不出来', 'err'); return; }
-              applyAvatar(durl);
-            }, function () { toast('这张图读不出来', 'err'); });
-          } else {
-            blobDataURL(file).then(function (durl) {
-              if (!durl) { toast('这张图读不出来', 'err'); return; }
-              applyAvatar(durl);
-            });
+          if (!Sleepy.media || !Sleepy.media.shrink || !Sleepy.media.put) {
+            toast('图库没就绪，传不了照片', 'err');
+            return;
           }
+          toast('正在处理图片…');
+          Sleepy.media.shrink(file, 240).then(function (r) {
+            return Sleepy.media.put(r.blob, { name: '群头像', kind: 'avatar', w: r.w, h: r.h });
+          }).then(function (mid) {
+            applyAvatar({ mediaId: mid });
+          }, function () { toast('这张图读不出来', 'err'); });
         });
 
         var upBtn = h('button', 'gd-av-opt', '上传照片');
@@ -1398,14 +1439,14 @@
           if (u === null) return;
           u = String(u).trim();
           if (!u) { toast('没有填链接'); return; }
-          applyAvatar(u);
+          applyAvatar({ url: u });
         });
 
         cardEl.appendChild(upBtn);
         cardEl.appendChild(urlBtn);
         cardEl.appendChild(fileIn);
 
-        if (g.avatar) {
+        if (hasCustomAvatar(g)) {
           var resetBtn = h('button', 'gd-av-opt is-dim', '恢复成员拼图头像');
           resetBtn.type = 'button';
           resetBtn.addEventListener('click', function () { applyAvatar(''); });
@@ -1421,18 +1462,6 @@
         mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
         host.appendChild(mask);
         setTimeout(function () { mask.classList.add('is-open'); cardEl.classList.add('is-open'); }, 20);
-      }
-
-      /* 小图统一走 dataURL：群记录存 localStorage，objectURL 活不过刷新 */
-      function blobDataURL(blob) {
-        return new Promise(function (res) {
-          try {
-            var fr = new FileReader();
-            fr.onload = function () { res(String(fr.result || '')); };
-            fr.onerror = function () { res(''); };
-            fr.readAsDataURL(blob);
-          } catch (e) { res(''); }
-        });
       }
 
       function openInvite() {

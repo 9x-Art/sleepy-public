@@ -286,8 +286,9 @@
         var row = h('button', 'ph-entry-row');
         row.type = 'button';
         var ava = h('span', 'ph-entry-ava');
-        if (c.avatar) {
-          var img = h('img'); img.src = c.avatar; img.alt = '';
+        if (c.avatar || c.avatarMedia) {
+          var img = h('img'); img.alt = '';
+          core.setAvatarImg(img, c);
           ava.appendChild(img);
         } else {
           ava.textContent = (c.name || '?').slice(0, 1);

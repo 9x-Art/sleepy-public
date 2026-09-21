@@ -528,6 +528,8 @@
         parentType: has(data, 'parentType') ? data.parentType : 'char',
         boundUserId: has(data, 'boundUserId') ? data.boundUserId : null,
         name: data.name || '未命名角色',
+        /* 微信名：会话列表/聊天页对外显示的名字（用户 2026-09-21）。 */
+        wechatName: data.wechatName || '',
         content: data.content || '',
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -623,7 +625,11 @@
       hit = {
         id: data.id || newId('um'),
         name: data.name || '我',
+        /* 微信名：会话列表/聊天页对外显示的名字（用户 2026-09-21）。
+           留空就回落 name。 */
+        wechatName: has(data, 'wechatName') ? data.wechatName : '',
         avatar: has(data, 'avatar') ? data.avatar : '',
+        avatarMedia: has(data, 'avatarMedia') ? data.avatarMedia : '',
         persona: has(data, 'persona') ? data.persona : '',
         note: has(data, 'note') ? data.note : '',
         /* 常驻地点三件套随档案走（方案-浮岛时区）。city 以前在新建分支
@@ -1098,6 +1104,37 @@
     return '还没写设定';
   }
 
+  /* ---------------------------- 头像取图 ---------------------------- */
+
+  /* 头像可存两处（2026-09-21 起补齐本地图这一环）：
+     avatarMedia = 图库（IndexedDB）里的 mediaId —— 本地选图走这里；
+     avatar      = 图片网址（也兜老存档里的 data: base64）。
+     显示时本地图优先。别在渲染点直接读 rec.avatar 当 src —— 用下面三个。 */
+  function avatarSrc(rec) {
+    if (rec && rec.avatarMedia && Sleepy.media && Sleepy.media.url) {
+      return Sleepy.media.url(rec.avatarMedia);
+    }
+    return Promise.resolve((rec && rec.avatar) || '');
+  }
+
+  /* 背景图式头像（.addr-av / .chat-item-ava / 朋友圈这一类）。
+     has-img 类由这里加 —— 以前是渲染点同步判 rec.avatar 加的，
+     本地图是异步取的，得等 url 回来再加。 */
+  function setAvatarBg(el, rec) {
+    return avatarSrc(rec).then(function (u) {
+      if (!u || !el) return;
+      el.classList.add('has-img');
+      el.style.backgroundImage = 'url("' + String(u).replace(/"/g, '%22') + '")';
+    });
+  }
+
+  /* <img> 式头像（tile / 桌面 / 查手机这一类） */
+  function setAvatarImg(img, rec) {
+    return avatarSrc(rec).then(function (u) {
+      if (u && img) img.src = u;
+    });
+  }
+
   var KIND_LABEL = { main: '大号', sub: '皮套', npc: 'NPC' };
 
   function kindLabel(k) { return KIND_LABEL[k] || '大号'; }
@@ -1189,7 +1226,11 @@
     makeGroupName: makeGroupName,
 
     initialOf: initialOf,
-    summaryOf: summaryOf
+    summaryOf: summaryOf,
+
+    avatarSrc: avatarSrc,
+    setAvatarBg: setAvatarBg,
+    setAvatarImg: setAvatarImg
   };
 
 })(window);

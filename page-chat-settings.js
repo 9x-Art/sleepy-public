@@ -674,13 +674,16 @@
           (coreRef.rootIdOf ? coreRef.rootIdOf(charId) : '') || charId
         );
         /* 密码**不在这里明文写出来** —— 查手机里那套「试试你们的日子」
-           是个玩法（定案 §E），写在这儿就白玩了。 */
+           是个玩法（定案 §E），写在这儿就白玩了。
+           密码叙事化（2026-09-21 拍板）：他也会在剧情里自己设锁/改密码
+           （[手机] lock/set → phone.applyLock），这个开关是 OOC 手动兜底，
+           两边写的是同一个 lock.enabled。 */
         var phLocked = Sleepy.phone.lockEnabled(phRec);
         secPh.appendChild(demoRow({
           label: '锁屏密码',
           note: phLocked
             ? '设了 —— 查手机之前要先过四位数字（可以猜，也可能他早告诉过你）'
-            : '没设 —— 查手机不用输密码，直接翻开',
+            : '没设 —— 查手机不用输密码，直接翻开（剧情里他也可能自己设）',
           switched: phLocked,
           onSwitch: function (v) {
             Sleepy.phone.setLockEnabled(phRec, v);
@@ -688,6 +691,20 @@
             if (ctx.rebuild) ctx.rebuild();
           }
         }));
+        /* 叙事留痕：他在剧情里亲手设过/改过密码的话，这里把事实亮出来 ——
+           「旧密码作废了」本身可玩，user 至少得知道有这么回事（OOC 视角）。
+           pin 不明文出现，只给说法和次数。 */
+        if (phRec.lock && (phRec.lock.pinNote || (phRec.lock.pinHistory || []).length)) {
+          var narrParts = [];
+          if (phRec.lock.pinNote) narrParts.push('他的说法：' + phRec.lock.pinNote);
+          if ((phRec.lock.pinHistory || []).length) {
+            narrParts.push('之前换过 ' + phRec.lock.pinHistory.length + ' 次密码');
+          }
+          secPh.appendChild(demoRow({
+            label: '剧情里他自己设的',
+            note: narrParts.join(' · ')
+          }));
+        }
         if (phLocked) {
           secPh.appendChild(demoRow({
             label: '他给过你密码',

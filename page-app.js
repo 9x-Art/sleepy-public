@@ -105,18 +105,16 @@
       g.appendChild(h('p', 'addr-group-title', '这间房里的人'));
 
       if (!mains.length) {
-        g.appendChild(h('p', 'addr-empty',
-          '这间房里还没有角色 · 去浮岛的配置台放一个'));
+        g.appendChild(h('p', 'addr-empty', '这间房里还没有角色'));
       }
 
       function personRow(c, badge) {
         var row = h('button', 'addr-row');
         row.type = 'button';
 
-        var av = h('span', 'addr-av' + (c.avatar ? ' has-img' : ''), core.initialOf(c.name));
-        if (c.avatar) {
-          av.style.backgroundImage = 'url("' + String(c.avatar).replace(/"/g, '%22') + '")';
-        }
+        /* has-img 由 core.setAvatarBg 异步加（本地图要等 objectURL 回来） */
+        var av = h('span', 'addr-av', core.initialOf(c.name));
+        core.setAvatarBg(av, c);
         row.appendChild(av);
 
         var body = h('span', 'addr-body');
@@ -155,8 +153,6 @@
         panel.appendChild(g2);
       }
 
-      panel.appendChild(h('p', 'set-group-note',
-        '通讯录只是「抬头能看见谁」· 加人、建小号、改认知都在浮岛的配置台里'));
     }
 
     build();

@@ -599,7 +599,8 @@
   }
 
   /* op 白名单：搜索≠购买、草稿≠发送 —— 语义在数据层就锁死。
-     permission/grant = char 在聊天里主动递手机（邀请授权流） */
+     permission/grant = char 在聊天里主动递手机（邀请授权流）；
+     lock/set = 密码叙事化：char 在剧情里自己设锁 / 改密码 / 去掉锁。 */
   var PHONE_OPS = {
     messages: ['add_derived', 'add_draft'],
     browser:  ['add_history', 'add_bookmark'],
@@ -607,7 +608,8 @@
     health:   ['add_day'],
     shop:     ['add_order', 'order_status', 'add_fav', 'add_cart'],
     permission: ['grant', 'set'],
-    custom:   ['add_record']
+    custom:   ['add_record'],
+    lock:     ['set']
   };
 
   function clipStr(v, n) {
@@ -744,6 +746,17 @@
       if (['open', 'hidden', 'revoked'].indexOf(st) < 0) return null;
       out.data = { scope: p.scope === 'all' ? 'all' : clipStr(p.scope, 30),
         state: st, note: clipStr(p.note || p.reason, 60) };
+    } else if (app === 'lock' && op === 'set') {
+      /* 密码叙事化（2026-09-21 拍板）：锁由 char 在剧情里自己设 / 改 / 去 ——
+         不是 user 在设置页 OOC 扳开关。pin 是 4 位数字（他会在意的一个日子，
+         MMDD 口径，与锁屏密码盘一致）；不传 pin 就沿用现有密码。
+         改密码是剧情事件：旧 pin 进 pinHistory，「旧密码作废了」本身可玩。 */
+      var on = p.enabled === true || p.enabled === 'true';
+      var off = p.enabled === false || p.enabled === 'false';
+      if (!on && !off) return null;
+      var npin = clipStr(p.pin, 4);
+      if (on && npin && !/^\d{4}$/.test(npin)) return null;
+      out.data = { enabled: on, pin: npin, note: clipStr(p.note || p.reason, 60) };
     } else { return null; }
     return out;
   }
@@ -835,10 +848,45 @@
     }).sort(function (a, b) { return b.at - a.at; });
   }
 
+  /* 密码叙事化落库（lock/set）。改密码时旧 pin 进 pinHistory ——
+     「旧密码作废了」是剧情事实，user 之后拿旧密码去猜，失败也是真实事件。
+     pinNote 留他设锁/改密码时说的一句话（OOC 设置页展示，不进提示词）。 */
+  function applyLock(phone, d, at) {
+    var hit = getPhone(phone.id);
+    if (!hit) return null;
+    if (!hit.lock) hit.lock = {};
+    if (d.enabled) {
+      var old = hit.lock.pin;
+      var changing = d.pin && d.pin !== old;
+      if (d.pin) {
+        hit.lock.pin = d.pin;
+      } else if (!old) {
+        /* 「有锁没密码」是死路 —— 保底派生一个 */
+        hit.lock.pin = derivePin(hit.sandboxId, hashOf(hit.sandboxId + ':' + hit.charId));
+      }
+      if (changing) {
+        hit.lock.pinHistory = (hit.lock.pinHistory || []).slice(-4).concat([{
+          pin: old,
+          note: hit.lock.pinNote || '',
+          changedAt: hit.lock.changedAt || null
+        }]);
+      }
+      hit.lock.enabled = true;
+      if (d.note) hit.lock.pinNote = d.note;
+      hit.lock.changedAt = at;
+      hit.lock.narrative = true;
+    } else {
+      hit.lock.enabled = false;
+    }
+    savePhone(hit);
+    return hit;
+  }
+
   /* 应用一条已校验的 delta。来源记进 generationRunId 语义位。 */
   function applyDelta(phone, v, runId) {
     if (!v) return null;
     var at = atOf(v);
+    if (v.app === 'lock') return applyLock(phone, v.data, at);
     if (v.app === 'messages') {
       return addDerived(phone.id, {
         charId: phone.charId, kind: v.data.kind,
@@ -1017,6 +1065,7 @@
     PHONE_OPS: PHONE_OPS,
     validateDelta: validateDelta,
     applyDelta: applyDelta,
+    applyLock: applyLock,
     applySettlement: applySettlement,
     addNote: addNote,
     addHistory: addHistory,

@@ -4076,6 +4076,43 @@ t('validateDelta：语义红线（坏 app 拒/幕后须一来一回/草稿只是
   return { ok: true };
 });
 
+t('密码叙事化：lock/set 设锁换码 + 坏 pin 拒 + 旧密码进 pinHistory + 去锁不清 pin', () => {
+  const sb = S.core.createSandbox('isle', '锁叙事岛');
+  S.core.setActiveSandbox(sb.id);
+  const c = S.core.upsertChar({ name: '锁角色', kind: 'main' }).id;
+  S.core.setSandboxChars(sb.id, [c]);
+  const ph = S.phone.ensurePhone(sb.id, c);
+  const oldPin = ph.lock.pin;
+  /* 剧情里他设锁 + 换成自己在意的日子 */
+  const v1 = S.phone.validateDelta({ app: 'lock', op: 'set',
+    payload: { enabled: true, pin: '0612', note: '生日那天就不怕你看了' } });
+  if (!v1 || v1.app !== 'lock') throw new Error('合法 lock/set 该过');
+  const r1 = S.phone.applyLock(ph, v1.data, Date.now());
+  if (!r1 || !S.phone.lockEnabled(r1)) throw new Error('设锁没生效');
+  if (r1.lock.pin !== '0612') throw new Error('密码没换成他挑的日子');
+  if (r1.lock.pinNote !== '生日那天就不怕你看了') throw new Error('note 没记下来');
+  if (!r1.lock.pinHistory || r1.lock.pinHistory[0].pin !== oldPin) throw new Error('旧密码没进 pinHistory');
+  /* 语义红线：非 4 位 / 缺 enabled 都拒 */
+  if (S.phone.validateDelta({ app: 'lock', op: 'set', payload: { enabled: true, pin: '61' } })) {
+    throw new Error('非 4 位 pin 该拒');
+  }
+  if (S.phone.validateDelta({ app: 'lock', op: 'set', payload: { note: 'x' } })) {
+    throw new Error('缺 enabled 该拒');
+  }
+  /* 去锁：锁关，pin 留着（再开时现成，不然是「有锁没密码」的死路） */
+  const v2 = S.phone.validateDelta({ app: 'lock', op: 'set', payload: { enabled: false } });
+  const r2 = S.phone.applyLock(r1, v2.data, Date.now());
+  if (S.phone.lockEnabled(r2)) throw new Error('去锁没生效');
+  if (!r2.lock.pin) throw new Error('去锁不该清 pin');
+  /* [手机] 全链路：正文抽取 → 校验都认这条线 */
+  const ex = S.phone.extractPhoneDeltas(
+    '我把密码改了。\n[手机] {"app":"lock","op":"set","payload":{"enabled":true,"pin":"0307","note":"相熟的日子"}}');
+  if (ex.list.length !== 1 || !S.phone.validateDelta(ex.list[0])) throw new Error('全链路抽取/校验失败');
+  if (ex.text.indexOf('我把密码改了') < 0) throw new Error('正文被误伤');
+  S.store.set('charSettings', null);
+  return { 旧密码: '进 pinHistory', 全链路: '通' };
+});
+
 t('applySettlement：注入合法/非法混合 → 合法落库、非法丢弃、settledUntil 推进、幂等补结算语义', () => {
   const sb = S.core.createSandbox('isle', '结算测试岛');
   S.core.setActiveSandbox(sb.id);

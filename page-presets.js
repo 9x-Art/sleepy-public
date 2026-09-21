@@ -109,7 +109,7 @@
         /* ---- 注入序列（线上）---- */
         var seq = h('div', 'pp-sec');
         seq.appendChild(h('p', 'pp-sec-title', '注入序列 · 线上'));
-        seq.appendChild(h('p', 'pp-sec-note', '自上而下即注入顺序。灰的是这轮没命中的。'));
+        seq.appendChild(h('p', 'pp-sec-note', '自上而下即注入顺序。'));
 
         E.onlineSlots.forEach(function (def) {
           if (def.id === 'custom' || def.id === 'history') return;
@@ -138,7 +138,7 @@
         /* ---- 注入序列（线下）---- */
         var seqOff = h('div', 'pp-sec');
         seqOff.appendChild(h('p', 'pp-sec-title', '注入序列 · 线下'));
-        seqOff.appendChild(h('p', 'pp-sec-note', '线下场景每轮的装配顺序。程序槽由线下页在装配时生成。'));
+        seqOff.appendChild(h('p', 'pp-sec-note', '线下每轮的装配顺序。'));
 
         E.offlineSlots.forEach(function (def) {
           if (def.id === 'history') return;
@@ -170,7 +170,7 @@
         addBtn.addEventListener('click', function () { ctx.open('preset-custom-edit', {}); });
         cusHead.appendChild(addBtn);
         cus.appendChild(cusHead);
-        cus.appendChild(h('p', 'pp-sec-note', '你自己写的注入卡，插在关系记忆之后、输出协议之前。'));
+        cus.appendChild(h('p', 'pp-sec-note', '插在关系记忆之后、输出协议之前。'));
 
         if (!E.customCards().length) {
           cus.appendChild(h('p', 'pp-empty', '还没有自定义注入'));
@@ -191,7 +191,6 @@
         /* ---- 调试预览 ---- */
         var dbg = h('div', 'pp-sec');
         dbg.appendChild(h('p', 'pp-sec-title', '调试预览'));
-        dbg.appendChild(h('p', 'pp-sec-note', '选一个对话，看引擎实际组装出的完整输入。'));
         var pv = h('button', 'pp-row pp-row-active');
         pv.type = 'button';
         var pm = h('span', 'pp-row-main');

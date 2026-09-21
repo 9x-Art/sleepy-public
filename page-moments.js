@@ -352,15 +352,13 @@
 
   function avatarEl(who, cls) {
     var av = h('span', cls, core.initialOf(who.name || '?'));
-    var url = who.avatar || '';
-    if (!url && who.refId) {
+    var rec = who;
+    if (!(who.avatar || who.avatarMedia) && who.refId) {
       var c = core.findChar(who.refId);
-      if (c) url = c.avatar || '';
+      if (c) rec = c;
     }
-    if (url) {
-      av.classList.add('has-img');
-      av.style.backgroundImage = 'url("' + String(url).replace(/"/g, '%22') + '")';
-    }
+    /* 本地图 avatarMedia 优先，回落网址；has-img 由 helper 异步加 */
+    core.setAvatarBg(av, rec);
     return av;
   }
 
@@ -415,7 +413,8 @@
       {
         label: '发一条动态', svg: CAM_SVG,
         /* 微信的交互（用户点名要的）：**点一下** = 选图发；**长按** = 纯文字。
-           点一下给三选一的小菜单：相册 / 本地 / 不配图。
+           点一下给四选一的小菜单：相册 / 本地 / 图片链接 / 不配图。
+           （2026-09-21 用户：要跟发消息一样能选「小手机相册 / 本地 / URL」。）
            「生成一张图发」要等生图 API 那批，这里先留了路。 */
         onClick: function () {
           if (!sb) { ctx.toast('先降落进一间房', 'warn'); return; }
@@ -448,6 +447,19 @@
           item('本地传一张', function () {
             pickLocalPic(ctx, function (pic) {
               openComposer(ctx, sb, peopleIn(sb), paint, { pic: pic });
+            });
+          });
+          item('用图片链接', function () {
+            ui.prompt({
+              title: '用图片链接',
+              placeholder: 'https://…',
+              ok: '用它'
+            }).then(function (v) {
+              if (v === null) return;
+              var t = String(v).trim();
+              if (!t) return;
+              if (!/^https?:\/\//i.test(t)) { ctx.toast('得是 http/https 开头的地址', 'err'); return; }
+              openComposer(ctx, sb, peopleIn(sb), paint, { pic: { url: t } });
             });
           });
           item('不配图，直接写', function () {

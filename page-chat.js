@@ -187,6 +187,84 @@
     return null;
   }
 
+  /* 会话显示名（2026-09-21 用户）：我给这个对话起的**备注** > 角色的
+     **微信名** > 建对话时的快照名。列表/头像首字都走这里。 */
+  function chatDisplayName(chat) {
+    if (!chat) return '';
+    if (chat.alias) return chat.alias;
+    var c = chat.characterId ? findCharacter(chat.characterId) : null;
+    if (c && c.wechatName) return c.wechatName;
+    return chat.name || '对话';
+  }
+
+  /* 会话长按菜单：改备注 / 删除（2026-09-21 用户：「长按对话框改备注」）。
+     复用朋友圈那套 .msg-menu 浮层样式。 */
+  function openChatMenu(ctx, chat, rebuild) {
+    var host = document.getElementById('phone') || ctx.el;
+    var mask = h('div', 'msg-menu-mask');
+    var sheet = h('div', 'msg-menu');
+    var closed = false;
+    function close() {
+      if (closed) return;
+      closed = true;
+      mask.classList.remove('is-open');
+      sheet.classList.remove('is-open');
+      setTimeout(function () {
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+        if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+      }, 240);
+    }
+    function item(name, run, cls) {
+      var b = h('button', 'msg-menu-item' + (cls ? ' ' + cls : ''), name);
+      b.type = 'button';
+      b.addEventListener('click', function () { close(); run(); });
+      sheet.appendChild(b);
+    }
+
+    item(chat.alias ? '改备注 · ' + chat.alias : '设个备注', function () {
+      ui.prompt({
+        title: '备注名',
+        placeholder: chatDisplayName(chat),
+        value: chat.alias || '',
+        ok: '保存'
+      }).then(function (v) {
+        if (v === null) return;
+        var t = String(v).trim();
+        var all = allChats();
+        for (var i = 0; i < all.length; i++) {
+          if (all[i].id === chat.id) all[i].alias = t;
+        }
+        saveChats(all);
+        rebuild();
+        ctx.toast(t ? '备注好了' : '备注清掉了', 'ok');
+      });
+    });
+
+    item('删除对话', function () {
+      ui.confirm({
+        title: '删除「' + chatDisplayName(chat) + '」？',
+        note: '里面的聊天记录会一起没掉。',
+        ok: '删除',
+        danger: true
+      }).then(function (yes) {
+        if (!yes) return;
+        saveChats(allChats().filter(function (c) { return c.id !== chat.id; }));
+        rebuild();
+        ctx.toast('已删除', 'ok');
+      });
+    }, 'is-danger');
+
+    var cancel = h('button', 'msg-menu-cancel', '取消');
+    cancel.type = 'button';
+    cancel.addEventListener('click', close);
+    sheet.appendChild(cancel);
+
+    mask.addEventListener('click', close);
+    host.appendChild(mask);
+    host.appendChild(sheet);
+    setTimeout(function () { mask.classList.add('is-open'); sheet.classList.add('is-open'); }, 20);
+  }
+
   /* 对话里显示的「对面是谁」：优先皮套名，兜底到大号名 */
   function charNameOf(chat) {
     var c = findCharacter(chat && chat.characterId);
@@ -884,40 +962,29 @@
 
         /* 头像：以前私聊项只有名字和时间，头像位空着（.chat-item 的 gap:14
            留出一道白），看着像漏画了东西。沿用通讯录那套首字圆头像；
-           char 有头像图就用图（.chat-item-ava.has-img 见 style.css）。 */
+           char 有头像图就用图（本地图 avatarMedia 优先，走 core.setAvatarBg，
+           has-img 由它异步加 —— .chat-item-ava.has-img 见 style.css）。 */
         var chAv = chat.characterId ? findCharacter(chat.characterId) : null;
-        var ava = h('span', 'chat-item-ava' + (chAv && chAv.avatar ? ' has-img' : ''),
-          Sleepy.core.initialOf((chAv && chAv.name) || chat.name || '?'));
-        if (chAv && chAv.avatar) {
-          ava.style.backgroundImage = 'url("' + String(chAv.avatar).replace(/"/g, '%22') + '")';
-        }
+        var dispName = chatDisplayName(chat);
+        var ava = h('span', 'chat-item-ava', Sleepy.core.initialOf(dispName || '?'));
+        Sleepy.core.setAvatarBg(ava, chAv);
         item.appendChild(ava);
 
         var main = h('div', 'chat-item-main');
         /* 名字在左、时间在右上角（微信那种），预览另起一行占满整宽 */
         var top = h('div', 'chat-item-top');
-        top.appendChild(h('span', 'chat-item-name', chat.name));
+        top.appendChild(h('span', 'chat-item-name', dispName));
         top.appendChild(h('span', 'chat-item-time', chatListTime(chat.updatedAt)));
         main.appendChild(top);
         var msgs = Array.isArray(chat.messages) ? chat.messages : [];
         main.appendChild(h('span', 'chat-item-preview', previewOf(msgs[msgs.length - 1])));
         item.appendChild(main);
 
-        /* 删除改成**长按条目**（原来右侧那个 32px 的「删」字又隐蔽又容易误触，
-           点错一次聊天记录就没了）。长按 → 二次确认；桌面端右键走同一条路
-           （bindLongPress 里已经接了 contextmenu）。 */
+        /* 长按条目弹菜单：改备注 / 删除（2026-09-21 用户要「长按对话框改备注」，
+           从原来的「直接二次确认删除」改成先弹菜单）。
+           桌面端右键走同一条路（bindLongPress 里已经接了 contextmenu）。 */
         bindLongPress(item, function () {
-          ui.confirm({
-            title: '删除「' + chat.name + '」？',
-            note: '里面的聊天记录会一起没掉。',
-            ok: '删除',
-            danger: true
-          }).then(function (yes) {
-            if (!yes) return;
-            saveChats(allChats().filter(function (c) { return c.id !== chat.id; }));
-            rebuild();
-            ctx.toast('已删除', 'ok');
-          });
+          openChatMenu(ctx, chat, rebuild);
         });
         item.addEventListener('click', function () {
           /* 长按刚触发过（480ms 计时器 fire 之后就抬手）会补一次 click，
@@ -1938,7 +2005,22 @@
           onDelta: function (delta) {
             if (mySeq !== reqSeq) return;
             pending.raw += delta;
-            renderMessages();
+            /* 流式热路径：以前每个 delta 都整页 renderMessages() ——
+               innerHTML='' 把全部消息重画一遍，长对话接近 O(n²)。
+               is-pending 气泡第一帧就画好了（类名、停止键都在它身上），
+               之后只需要更新它那一个 .msg-text。多段气泡的 reroll（罕见）
+               和首帧回落全量，免得几段文本不同步。 */
+            var lives = msgWrap.querySelectorAll('.msg-bubble.is-pending .msg-text');
+            if (lives.length === 1) {
+              /* 正文还没吐出来（模型在发心声）就保持打字点，不用重画 */
+              var shown = pendingVisible();
+              if (shown) {
+                lives[0].textContent = shown;
+                msgWrap.scrollTop = msgWrap.scrollHeight;
+              }
+            } else {
+              renderMessages();
+            }
           },
           onDone: function (cand, text) {
             if (mySeq !== reqSeq) return;
@@ -2841,9 +2923,9 @@
         var u = (Sleepy.core && Sleepy.core.findUser(c && c.userId))
              || (Sleepy.core && Sleepy.core.activeUser());
         var av;
-        if (u && u.avatar) {
+        if (u && (u.avatar || u.avatarMedia)) {
           av = h('img', 'msg-avatar');
-          av.src = u.avatar;
+          Sleepy.core.setAvatarImg(av, u);
         } else {
           av = h('span', 'msg-avatar msg-avatar-initial');
           var n = String((u && u.name) || '我').trim();

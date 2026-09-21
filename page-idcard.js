@@ -61,6 +61,74 @@
   var HEAD_RE = /^={3,}\s*(角色|皮套|NPC|预设)\s*[：:]\s*(.+?)\s*={3,}$/;
   var PARENT_MARK = ' | 属于：';
 
+  /* 头像字段：网址输入 ＋ 本地图选择（2026-09-21 补齐「缺的那一环」）。
+     本地图进图库（IndexedDB，media.js），记录里只存 mediaId（avatarMedia）——
+     base64 塞 localStorage 的老路早废弃了。网址与本地图可并存，显示时本地图优先
+     （core.avatarSrc 的口径）。三个头像字段（简化表单 / 完整表单 / 马甲编辑）共用。
+     用法：f.avatar = avatarFieldLocal(existing, {toast}); 保存时取
+     f.avatar.get()（网址）+ f.avatar.getMedia()（mediaId）。 */
+  function avatarFieldLocal(existing, opts) {
+    opts = opts || {};
+    var toast = opts.toast || function () {};
+    var f = textField({
+      label: opts.label || '头像地址',
+      hint: '留空就用名字首字。贴图片网址，或在下面选一张本地图',
+      value: existing ? (existing.avatar || '') : '',
+      placeholder: 'https://…',
+      inputmode: 'url'
+    });
+    var mediaId = (existing && existing.avatarMedia) || '';
+
+    var file = h('input');
+    file.type = 'file';
+    file.accept = 'image/*';
+    file.style.display = 'none';
+
+    var state = h('span', 'av-local-state');
+    var clearBtn = button('移除本地图', 'ghost', function () {
+      mediaId = '';
+      clearBtn.style.display = 'none';
+      state.textContent = '已移除，保存后用网址或首字头像';
+    });
+    clearBtn.style.display = mediaId ? '' : 'none';
+    function paintState() {
+      state.textContent = mediaId ? '已选本地图（保存后生效）' : '';
+    }
+    paintState();
+
+    file.addEventListener('change', function () {
+      var picked = file.files && file.files[0];
+      file.value = '';
+      if (!picked) return;
+      if (!Sleepy.media || !Sleepy.media.shrink || !Sleepy.media.put) {
+        toast('图库没就绪，选不了本地图', 'err');
+        return;
+      }
+      toast('正在处理图片…');
+      Sleepy.media.shrink(picked, 320).then(function (r) {
+        return Sleepy.media.put(r.blob, { name: '头像', kind: 'avatar', w: r.w, h: r.h });
+      }).then(function (mid) {
+        mediaId = mid;
+        clearBtn.style.display = '';
+        paintState();
+        toast('选好了，别忘了保存', 'ok');
+      }, function () {
+        toast('这张图读不出来', 'err');
+      });
+    });
+
+    var pickBtn = button('选本地图', 'ghost', function () { file.click(); });
+    var actions = h('div', 'btn-row av-local');
+    actions.appendChild(pickBtn);
+    actions.appendChild(clearBtn);
+    actions.appendChild(state);
+    f.el.appendChild(actions);
+    f.el.appendChild(file);
+
+    f.getMedia = function () { return mediaId; };
+    return f;
+  }
+
   /* ------------------------- 导出 / 解析 ------------------------- */
 
   function toFileText(items) {
@@ -357,20 +425,23 @@
     });
     body.appendChild(f.name.el);
 
-    /* 头像：**目前只收 URL**。
-       ⚠️ 缺口：图库（IndexedDB，media.js）已经做好了，缺的是
-       「选本地图 → 存 mediaId → 显示时取 objectURL」这一步。
+    /* 头像：网址 + 本地图都行（avatarFieldLocal，本地图存图库走 avatarMedia）。
        以前这里的文案是「别存本地图片，5MB 配额会被撑爆」——
-       图片本来就不走 localStorage，这句话早就不成立了，删掉免得误导
-       （2026-09-21）。 */
-    f.avatar = textField({
-      label: '头像地址',
-      hint: '留空就用名字首字。目前只收图片网址',
-      value: existing ? (existing.avatar || '') : '',
-      placeholder: 'https://…',
-      inputmode: 'url'
+       图片本来就不走 localStorage，这句话早就不成立。 */
+    f.avatar = avatarFieldLocal(existing, {
+      toast: function (t, k) { ctx.toast(t, k); }
     });
     body.appendChild(f.avatar.el);
+
+    /* 微信名：会话列表 / 聊天页对外显示的名字（用户 2026-09-21）。
+       留空就用上面的「名字」。 */
+    f.wechatName = textField({
+      label: '微信名',
+      value: existing ? (existing.wechatName || '') : '',
+      hint: '会话列表里显示的名字 · 留空就用「名字」',
+      placeholder: '想让它显示成什么'
+    });
+    body.appendChild(f.wechatName.el);
 
     f.content = textArea({
       label: '人设',
@@ -443,7 +514,9 @@
         kind: kind,
         parentId: parentId || null,
         name: name,
+        wechatName: String(f.wechatName.get() || '').trim(),
         avatar: String(f.avatar.get() || '').trim(),
+        avatarMedia: f.avatar.getMedia(),
         content: f.content.get()
       };
       /* 大号、皮套、NPC 都按岛建（2026-09-21 拍板：每岛一份，无全局大号）。
@@ -582,19 +655,20 @@
       });
       gKind.card.appendChild(f.name.el);
 
-      /* 头像：**目前只收 URL**。
-         ⚠️ 缺口：图库（IndexedDB）已经有了，本地上传缺的是「选图 → 存 mediaId
-         → 显示时取 objectURL」这一环。
-         旧注释的理由（「localStorage 只有 5MB，塞一张原图就可能撑爆配额」）
-         已经不成立 —— 图片本来就不进 localStorage（2026-09-21）。 */
-      f.avatar = textField({
-        label: '头像地址',
-        hint: '留空就用名字首字。目前只收图片网址',
-        value: existing ? (existing.avatar || '') : '',
-        placeholder: 'https://…',
-        inputmode: 'url'
+      /* 头像：网址 + 本地图都行（avatarFieldLocal，本地图存图库走 avatarMedia）。 */
+      f.avatar = avatarFieldLocal(existing, {
+        toast: function (t, k) { ctx.toast(t, k); }
       });
       gKind.card.appendChild(f.avatar.el);
+
+      /* 微信名：会话列表 / 聊天页对外显示的名字（用户 2026-09-21）。 */
+      f.wechatName = textField({
+        label: '微信名',
+        value: existing ? (existing.wechatName || '') : '',
+        hint: '会话列表里显示的名字 · 留空就用「名字」',
+        placeholder: '想让它显示成什么'
+      });
+      gKind.card.appendChild(f.wechatName.el);
 
       /* `city` 不再放这里 —— 它已经升格成「常驻地点」那一组（见下面 gPlace）。
          原本的 hint 写着「用在桌面的双城时间」，那个组件早撤了。 */
@@ -775,7 +849,10 @@
       f.faceLockImage = textField({
         label: '图片锁脸（地址）',
         value: existing ? (existing.faceLockImage || '') : '',
-        hint: '先只收网址 · 本地上传还没接（图库已经有了，缺这一环）',
+        /* 这格目前**没有任何地方读**（生图锁脸用的是 faceLockSelfie/faceLockFull
+           文字特征，见 imggen.js faceLockOf）。别接图库 —— 会变成新的「只写不读」。
+           等生图支持参考图（img2img）时再接。 */
+        hint: '预留 · 生图锁脸目前用下面的文字特征，这格还没接进生图',
         placeholder: 'https://…',
         inputmode: 'url'
       });
@@ -849,7 +926,9 @@
           kind: kind,
           parentId: parent,
           name: name,
+          wechatName: String(f.wechatName.get() || '').trim(),
           avatar: String(f.avatar.get() || '').trim(),
+          avatarMedia: f.avatar.getMedia(),
           city: String(f.city.get() || '').trim(),
           status: String(f.status.get() || '').trim() || (kind === 'sub' ? '小号' : '在线'),
           /* 常驻地点：日历/时区/以后的语言档都从这三个字段推 */
@@ -1214,6 +1293,14 @@
       });
       g.card.appendChild(f.name.el);
 
+      /* 微信名：会话列表里这个身份显示的名字（用户 2026-09-21）。 */
+      f.wechatName = textField({
+        label: '微信名',
+        value: existing ? (existing.wechatName || '') : '',
+        hint: '会话列表里显示的名字 · 留空就用「名字」'
+      });
+      g.card.appendChild(f.wechatName.el);
+
       f.persona = textField({
         label: '一句话人设',
         hint: '给模型看的「你在这个身份下是什么样」',
@@ -1229,11 +1316,8 @@
       });
       g.card.appendChild(f.city.el);
 
-      f.avatar = textField({
-        label: '头像地址',
-        value: existing ? (existing.avatar || '') : '',
-        placeholder: 'https://…',
-        inputmode: 'url'
+      f.avatar = avatarFieldLocal(existing, {
+        toast: function (t, k) { ctx.toast(t, k); }
       });
       g.card.appendChild(f.avatar.el);
       body.appendChild(g.wrap);
@@ -1267,9 +1351,11 @@
         var item = core.upsertUser({
           id: existing ? existing.id : core.newId('um'),
           name: name,
+          wechatName: String(f.wechatName.get() || '').trim(),
           persona: String(f.persona.get() || '').trim(),
           city: String(f.city.get() || '').trim(),
-          avatar: String(f.avatar.get() || '').trim()
+          avatar: String(f.avatar.get() || '').trim(),
+          avatarMedia: f.avatar.getMedia()
         });
         /* 第一件马甲自动成为当前使用，否则切号器会指向不存在的 id */
         if (!store.get('activeUserId')) core.switchTo(undefined, item.id);
@@ -1288,6 +1374,10 @@
     initialOf: core.initialOf,
     summaryOf: core.summaryOf
   };
+
+  /* 头像字段（网址 + 本地图）—— 岛屿配置台的 NPC 编辑页也用它，
+     保证「所有角色都有同一个头像入口」（用户 2026-09-21）。 */
+  Sleepy.avatarFieldLocal = avatarFieldLocal;
 
   /* 角色文件的导入导出出口。名片夹下线之后，这两个动作的入口在
      **岛屿配置台**（「往这间房加人」），所以由它来调。

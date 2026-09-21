@@ -131,6 +131,7 @@
     return {
       name: (rec && rec.name) || '?',
       avatar: (rec && rec.avatar) || '',
+      avatarMedia: (rec && rec.avatarMedia) || '',
       initial: core.initialOf((rec && rec.name) || '?'),
       kind: p.kind,
       npc: p.kind === 'npc' || ((rec || {}).kind === 'npc')
@@ -142,6 +143,7 @@
     return {
       name: (u && u.name) || '我',
       avatar: (u && u.avatar) || '',
+      avatarMedia: (u && u.avatarMedia) || '',
       initial: core.initialOf((u && u.name) || '我')
     };
   }
@@ -685,16 +687,17 @@
     /* 头像格：**一人一色**（跟群聊里的格子同一套色 —— `groupStore.tileColor`
        按名字哈希，同名恒同色）。Demo 里每个人的头像都有自己的颜色，一排脸才认得出
        谁是谁；以前全部一个暖棕，四个同样的方块并排等于没有信息。
-       有头像图就用图（char.avatar）。色走 CSS 变量而不是直接写 background，
+       有头像图就用图（走 core.setAvatarImg：本地图 avatarMedia 优先，回落网址）。
+       色走 CSS 变量而不是直接写 background，
        这样 `.is-waiting`（在路上 = 灰掉）那类状态类还能盖得住。 */
     function avaEl(meta, cls) {
       var el = h('span', cls);
       var name = (meta && meta.name) || '?';
       try { el.style.setProperty('--ava-bg', Sleepy.groupStore.tileColor(name)); } catch (e) { /* 拿不到就落回默认色 */ }
-      if (meta && meta.avatar) {
+      if (meta && (meta.avatar || meta.avatarMedia)) {
         var img = h('img', 'gof-ava-img');
         img.alt = '';
-        img.src = meta.avatar;
+        core.setAvatarImg(img, meta);
         el.appendChild(img);
       } else {
         el.appendChild(h('span', 'gof-ava-tx', String((meta && meta.initial) || '?').charAt(0)));

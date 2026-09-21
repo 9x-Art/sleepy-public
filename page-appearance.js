@@ -35,20 +35,27 @@
   var group = ui.group;
 
   /* 四套配色。chip 是那张色卡的预览渐变；bg 是预览卡的底（近似主题底色，
-     预览不能依赖当前激活主题的变量 —— 草稿主题可能和激活主题不同）。 */
+     预览不能依赖当前激活主题的变量 —— 草稿主题可能和激活主题不同）。
+     accent / ink / ink2 抄自 style.css 各主题块的 --g-accent / --g-ink / --g-ink-2：
+     预览把这三个 inline 设到预览容器上，壁纸铺上后**配色差异**也能看见
+     （用户 2026-09-21：壁纸+配色同时选，预览看不出配色影响）。 */
   var THEMES = [
     { id: 'grape', name: '纯白', hint: '纯白底 · 暖棕字 · 焦糖点缀',
       chip: 'linear-gradient(140deg,#B08A5E,#FFFFFF)',
-      bg: 'linear-gradient(165deg,#FBFAF7 0%,#F1EDE4 100%)', dark: false },
+      bg: 'linear-gradient(165deg,#FBFAF7 0%,#F1EDE4 100%)', dark: false,
+      accent: '#B08A5E', ink: '#43382C', ink2: '#8A7A67' },
     { id: 'night', name: '夜灯', hint: '深色，晚上看不刺眼',
       chip: 'linear-gradient(140deg,#7FC97A,#252F27)',
-      bg: 'linear-gradient(165deg,#232E29 0%,#31403B 100%)', dark: true },
+      bg: 'linear-gradient(165deg,#232E29 0%,#31403B 100%)', dark: true,
+      accent: '#8FE08A', ink: '#E7EFE8', ink2: '#A9B9AB' },
     { id: 'peach', name: '蜜桃', hint: '暖粉，软一点',
       chip: 'linear-gradient(140deg,#E8846B,#FFE6DC)',
-      bg: 'linear-gradient(165deg,#F9E9E2 0%,#F4EDE3 100%)', dark: false },
+      bg: 'linear-gradient(165deg,#F9E9E2 0%,#F4EDE3 100%)', dark: false,
+      accent: '#E8846B', ink: '#3E2F2A', ink2: '#806A62' },
     { id: 'sea', name: '海盐', hint: '冷蓝，安静',
       chip: 'linear-gradient(140deg,#4C86B8,#DCEAF6)',
-      bg: 'linear-gradient(165deg,#E6EFF3 0%,#EDF0EA 100%)', dark: false }
+      bg: 'linear-gradient(165deg,#E6EFF3 0%,#EDF0EA 100%)', dark: false,
+      accent: '#5B93C4', ink: '#28394A', ink2: '#5F7A92' }
   ];
 
   var FONTS = [
@@ -496,6 +503,16 @@
 
     var dark = (wall && wall.dark) || (!wall || wall.id === 'auto') && theme && theme.dark;
     var pv = h('div', 'lk-preview' + (dark ? ' is-dark' : ''));
+    /* 草稿态就把图标风格挂到预览容器上 —— 样式选择器认 [data-icstyle]，
+       不然点了预设要保存后才看得出区别（用户 2026-09-21）。 */
+    pv.setAttribute('data-icstyle', cfg.icons || 'glass');
+    /* 草稿配色的三个关键色 inline 到预览容器上 —— 预览里的文字/图标/色样
+       都引 var(--g-ink)/(--g-accent)，换配色预览就跟着变。 */
+    if (theme) {
+      pv.style.setProperty('--g-ink', theme.ink);
+      pv.style.setProperty('--g-ink-2', theme.ink2);
+      pv.style.setProperty('--g-accent', theme.accent);
+    }
     /* ⚠️ 判断要用 cfg.wall，不能写 `wall && wall.id === 'custom'`：
        'custom' 是**伪 id**，WALLS 表里根本没有这一项，上面那个 forEach
        查完 wall 还是 null —— 于是预览永远落到「跟随主题」的底色，
@@ -542,6 +559,14 @@
       apps.appendChild(cell);
     });
     pv.appendChild(apps);
+
+    /* 配色样：壁纸铺上后底色看不出主题差异，显式给一条强调色 + 正文色，
+       让「配色」这个选择在预览里看得见（用户 2026-09-21）。 */
+    var sw = h('div', 'lk-preview-swatch');
+    sw.appendChild(h('span', 'lk-pv-dot'));
+    sw.appendChild(h('span', 'lk-pv-ink', '正文'));
+    sw.appendChild(h('span', 'lk-pv-accent', '强调'));
+    pv.appendChild(sw);
 
     var scopeText = t.scope === 'island' ? '正在编辑 · 这座岛' : '正在编辑 · 全局默认';
     if (t.scope === 'island') {
@@ -642,12 +667,23 @@
         var islandsRow = h('div', 'lk-islands');
         var islandList = [];
         try { islandList = Sleepy.core.listSandboxes() || []; } catch (e) { /* 忽略 */ }
+        /* 岛名：没起名就用房里的人指代（跟浮岛同一套 roomTitle），
+           再加房型后缀区分孤岛/群岛（用户：「安乐 · 孤岛」）。 */
+        function islandLabel(s) {
+          if (s.name) return s.name;
+          var nm = '';
+          try { if (Sleepy.island) nm = Sleepy.island.roomTitle(s) || ''; } catch (e) { /* 忽略 */ }
+          var chars = [];
+          try { chars = Sleepy.core.charsOfSandbox(s.id) || []; } catch (e) { /* 忽略 */ }
+          if (nm && chars.length) nm += ' · ' + (s.kind === Sleepy.core.KIND_ARCHI ? '群岛' : '孤岛');
+          return nm || '未命名';
+        }
         if (draft.scope === 'island') {
           if (!islandList.length) {
             islandsRow.appendChild(h('p', 'lk-notice', '还没有岛 —— 去浮岛 App 建一座。'));
           }
           islandList.forEach(function (s) {
-            var nm = s.name || s.title || '未命名';
+            var nm = islandLabel(s);
             var p = h('button', 'lk-pill' + (draft.selIsland === s.id ? ' on' : ''), nm);
             p.type = 'button';
             p.addEventListener('click', function () {
@@ -662,7 +698,7 @@
         var notice = h('p', 'lk-notice');
         if (t.scope === 'island') {
           var sbName = '这座岛';
-          islandList.forEach(function (s) { if (s.id === t.sbId) sbName = s.name || s.title || sbName; });
+          islandList.forEach(function (s) { if (s.id === t.sbId) sbName = islandLabel(s); });
           notice.innerHTML = '<b>' + sbName + '</b> 只覆盖本岛改过的项目，其余继续跟随全局。';
         } else {
           notice.innerHTML = '<b>全局默认</b>会被所有没单独设置的岛继承。';

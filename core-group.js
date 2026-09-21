@@ -112,6 +112,9 @@
       name: name,
       avatarMode: 'collage',
       avatar: '',
+      /* 本地头像走图库（IndexedDB），这里只存 mediaId —— 群记录在 localStorage，
+         塞 base64 会把整个存档撑向 5MB 配额。avatar 字段只留给 http 链接。 */
+      avatarMedia: '',
       ownerAccountId: opts.ownerAccountId || null,
       settings: Object.assign({}, DEFAULT_SETTINGS,
         opts.opening ? { opening: opts.opening } : null),
@@ -167,7 +170,7 @@
   /* 改群资料 / 设置。patch 只接受白名单字段 ——
      settings 整体替换会导致并发写互相覆盖，所以分开收。 */
   /* lastUserId：user 在这个群里最后一次用的发言账号（＋面板切身份后记住） */
-  var GROUP_FIELDS = ['name', 'avatarMode', 'avatar', 'ownerAccountId', 'lastUserId'];
+  var GROUP_FIELDS = ['name', 'avatarMode', 'avatar', 'avatarMedia', 'ownerAccountId', 'lastUserId'];
   var SETTINGS_FIELDS = ['opening', 'rhythm', 'privateFollow', 'naturalTopic',
     'crossChannel', 'mute'];
 
@@ -401,13 +404,14 @@
   /* 账号的展示名 / 头像。三种 kind 各查各的表；
      查不到记录（被删号）时回落到账号 id，宁可显示难看也别渲染成 undefined。 */
   function accountMeta(member) {
-    if (!member) return { name: '?', avatar: '', initial: '?' };
+    if (!member) return { name: '?', avatar: '', avatarMedia: '', initial: '?' };
     var kind = member.kind;
     if (kind === 'user') {
       var u = core.findUser(member.accountId);
       return {
         name: (u && u.name) || '我',
         avatar: (u && u.avatar) || '',
+        avatarMedia: (u && u.avatarMedia) || '',
         initial: core.initialOf((u && u.name) || '我')
       };
     }
@@ -416,6 +420,7 @@
       return {
         name: (n && n.name) || 'NPC',
         avatar: (n && n.avatar) || '',
+        avatarMedia: (n && n.avatarMedia) || '',
         initial: core.initialOf((n && n.name) || 'N')
       };
     }
@@ -423,6 +428,7 @@
     return {
       name: (c && c.name) || '角色',
       avatar: (c && c.avatar) || '',
+      avatarMedia: (c && c.avatarMedia) || '',
       initial: core.initialOf((c && c.name) || '角')
     };
   }

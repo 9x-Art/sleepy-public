@@ -770,6 +770,11 @@ body{
 }
 
 .btn-row{display:flex;gap:10px;padding:14px;}
+/* 头像字段的本地图操作行（page-idcard 的 avatarFieldLocal）——
+   嵌在 set-field 里，别吃 .btn-row 的 14px 大内边距；按钮不拉伸 */
+.av-local{padding:8px 0 0;}
+.av-local .btn{flex:0 0 auto;padding:9px 14px;}
+.av-local-state{font-size:11px;color:var(--text-faint);line-height:1.5;}
 .btn{
   flex:1;
   border:0;
@@ -2928,9 +2933,12 @@ span.msg-avatar-initial{
 
 .w-app-name{
   margin-top:6px;
-  font-size:10.5px;
+  /* 桌面 App 名字也算「界面正文」：跟正文字号缩放 + 自定义字体 + 正文字色
+     （用户 2026-09-21：改了字号/字色/字体，桌面 App 名字没跟着变）。 */
+  font-size:calc(10.5px * var(--fs-scale,1));
   font-weight:500;
-  color:var(--g-ink-2);
+  font-family:var(--ff);
+  color:var(--g-ink);
   letter-spacing:.3px;
 }
 .w-dead{opacity:.35;}
@@ -6685,17 +6693,17 @@ span.msg-avatar-initial{
 .lk-preview.is-dark{border-color:rgba(255,255,255,.08);}
 .lk-preview-top{
   display:flex;justify-content:space-between;
-  font-size:10px;color:#6E6558;
+  font-size:10px;color:var(--g-ink-2,#6E6558);
   text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
 .lk-preview-hello{margin:16px 0 18px;display:flex;flex-direction:column;gap:3px;}
 .lk-preview-hello b{
   font-family:var(--ff-serif,Georgia,serif);font-size:17px;font-weight:600;
-  color:#4A4238;
+  color:var(--g-ink,#4A4238);
   text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
 .lk-preview-hello span{
-  font-size:10px;color:#6E6558;
+  font-size:10px;color:var(--g-ink-2,#6E6558);
   text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
 /* 深底（暮色壁纸 / 夜灯主题）整组翻浅 + 光晕翻黑 */
@@ -6711,7 +6719,7 @@ span.msg-avatar-initial{
 }
 /* 预览里的图标字色跟预览明暗走（压过 data-icstyle 的主题感知字色；
    纸片/夜色两款自带底色，被覆盖的色和它们自己的差不多，无碍） */
-.lk-preview .lk-preview-ic{color:#4A4238 !important;}
+.lk-preview .lk-preview-ic{color:var(--g-ink,#4A4238) !important;}
 .lk-preview.is-dark .lk-preview-ic{color:#EFE9DE !important;}
 .lk-preview-apps{
   display:flex;gap:16px;
@@ -6720,9 +6728,22 @@ span.msg-avatar-initial{
 .lk-preview-ic svg{width:15px;height:15px;}
 .lk-preview-tag{
   position:absolute;right:11px;bottom:9px;
-  font-size:9px;letter-spacing:.4px;color:#6E6558;
+  font-size:9px;letter-spacing:.4px;color:var(--g-ink-2,#6E6558);
   text-shadow:0 0 1px rgba(255,255,255,.9),0 1px 6px rgba(255,255,255,.55);
 }
+/* 配色样：圆点 = 强调色，两行字 = 正文色/强调色 —— 壁纸盖住底色后，
+   配色差异靠它体现（色值由 JS inline 到预览容器上）。 */
+.lk-preview-swatch{
+  display:flex;align-items:center;gap:8px;margin-top:13px;
+  font-size:10px;letter-spacing:.3px;
+}
+.lk-preview-swatch .lk-pv-dot{
+  width:13px;height:13px;border-radius:50%;
+  background:var(--g-accent,#B08A5E);
+  box-shadow:0 0 0 2px rgba(255,255,255,.55);
+}
+.lk-preview-swatch .lk-pv-ink{color:var(--g-ink,#4A4238);}
+.lk-preview-swatch .lk-pv-accent{color:var(--g-accent,#B08A5E);}
 
 /* ---- 桌面体验：动效行 ---- */
 .lk-mt{margin-top:4px;padding-top:2px;}
@@ -6900,25 +6921,25 @@ span.msg-avatar-initial{
    glass 是默认（见 .w-app-ic 本体那段的注释，别在那边加东西）。
    其余三款只在 data-icstyle 命中时覆盖填充/边框/字色，
    backdrop 一律关掉 —— 线框/纸片/夜色都不该有玻璃的折射。 */
-#phone[data-icstyle="line"] .w-app-ic,
-#phone[data-icstyle="line"] .dt-dock-ic,
-#phone[data-icstyle="line"] .lk-preview-ic{
+[data-icstyle="line"] .w-app-ic,
+[data-icstyle="line"] .dt-dock-ic,
+[data-icstyle="line"] .lk-preview-ic{
   background:rgba(255,255,255,.34);
   border:1.2px solid var(--g-ink-3,#B7AC9C);
   backdrop-filter:none;-webkit-backdrop-filter:none;
   color:var(--g-ink);
 }
-#phone[data-icstyle="paper"] .w-app-ic,
-#phone[data-icstyle="paper"] .dt-dock-ic,
-#phone[data-icstyle="paper"] .lk-preview-ic{
+[data-icstyle="paper"] .w-app-ic,
+[data-icstyle="paper"] .dt-dock-ic,
+[data-icstyle="paper"] .lk-preview-ic{
   background:linear-gradient(160deg,#F3EADC,#E9DBC4);
   border:1px solid rgba(122,96,66,.22);
   backdrop-filter:none;-webkit-backdrop-filter:none;
   color:#6B5842;
 }
-#phone[data-icstyle="night"] .w-app-ic,
-#phone[data-icstyle="night"] .dt-dock-ic,
-#phone[data-icstyle="night"] .lk-preview-ic{
+[data-icstyle="night"] .w-app-ic,
+[data-icstyle="night"] .dt-dock-ic,
+[data-icstyle="night"] .lk-preview-ic{
   background:linear-gradient(160deg,#2E3A3C,#3D4B4A);
   border:1px solid rgba(255,255,255,.12);
   backdrop-filter:none;-webkit-backdrop-filter:none;
@@ -6977,7 +6998,7 @@ span.msg-avatar-initial{
 
 /* ---- 较大桌面文字：只放 App 名和日期头（demo 的 large） ---- */
 .page[data-page="home"].dt-large .w-app-name{
-  font-size:12.5px;letter-spacing:.4px;
+  font-size:calc(12.5px * var(--fs-scale,1));letter-spacing:.4px;
 }
 .page[data-page="home"].dt-large .w-hdr-date{font-size:12.5px;}
 .page[data-page="home"].dt-large .w-hdr-greet{font-size:15px;}
@@ -11035,60 +11056,61 @@ button.cal-ev:active{background:var(--g-glass-2);}
    ============================================================ */
 
 /* ---------- 桌面上的入口（主屏第 6 行那条通栏） ----------
-   这是整个桌面唯一一块深色组件，而且**刻意不跟主题翻**：帷境在哪儿
-   都是「夜里的一处空间」，于是它在白桌面上是一道深色的缝，在夜灯
-   主题下又自然融进底色 —— 两种情况下都不别扭。
-   画的是两片幕布中间那道缝，不是图标：它要的是入口的暗示，不是
-   「又一个 App」。 */
+   2026-09-21 改：以前是写死深蓝 + 两片幕布（「夜里的一处空间」），
+   用户觉得在白桌面上太突兀、换配色也不跟着变。现在跟其他 App 图标
+   同一套玻璃材质（--tk-*），字色跟主题（--g-ink），幕布两层已删。 */
 .w-wj{
   padding:0 18px;
-  background:linear-gradient(90deg,#141d31,#263756 30%,#2b3d5e 52%,#1a2740);
-  border-color:rgba(211,220,237,.2);
-  color:#eef1f6;
+  /* 跟其他 App 图标同一套玻璃材质（--tk-*）+ 字色跟主题（--g-ink）——
+     用户 2026-09-21：以前写死深蓝太突兀，且换配色不跟着变。
+     幕布两层已删（深色装饰，和「透明」冲突）。 */
+  background:linear-gradient(160deg,
+    var(--tk-a) 0%,var(--tk-b) 42%,var(--tk-c) 78%,var(--tk-d) 100%);
+  border-color:var(--tk-line);
+  backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
+  -webkit-backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
+  color:var(--g-ink);
   cursor:pointer;
 }
-.w-wj-curtain{
-  position:absolute;top:-16%;bottom:-16%;width:44%;pointer-events:none;
-  background:linear-gradient(90deg,#0f1830,#263756 74%,#18253d);
-}
-.w-wj-curtain.is-left{left:-22%;transform:skewX(7deg);border-right:1px solid rgba(211,220,237,.16);}
-.w-wj-curtain.is-right{right:-22%;transform:skewX(-7deg);border-left:1px solid rgba(211,220,237,.16);}
 .w-wj-copy{position:relative;z-index:1;display:flex;align-items:baseline;gap:11px;}
 .w-wj-name{
   font-family:var(--ff-serif);font-size:20px;font-weight:500;
-  letter-spacing:.24em;color:#eef1f6;
+  letter-spacing:.24em;color:var(--g-ink);
 }
-.w-wj-line{font-size:10.5px;letter-spacing:.04em;color:rgba(237,241,247,.6);}
+.w-wj-line{font-size:10.5px;letter-spacing:.04em;color:var(--g-ink-3);}
 
 .page[data-page^="wj-"]{
-  --wj-night:#0d1424;
-  --wj-night-2:#17233a;
-  --wj-night-3:#253652;
-  --wj-line:rgba(209,218,236,.17);
-  --wj-line-soft:rgba(209,218,236,.1);
-  --wj-text:#edf0f6;
-  --wj-dim:#95a2b6;
-  --wj-dimmer:#6f7d93;
-  --wj-silver:#bdc9df;
-  --wj-wine:#78505b;
-  --wj-wine-lite:#c6a4ac;
-  --wj-paper:#eee8dc;
-  --wj-paper-2:#dcd4c5;
-  --wj-ink:#292823;
-  --wj-green:#91aa9c;
+  /* 2026-09-21（用户：「太深了，但原本的颜色真的很好看」）：整体提亮一档 ——
+     夜蓝 → 靛蓝（色相不动，只提亮度）；纸本从米色改冷灰白
+     （用户：「不要再用米色或者奶油色了」），正文/次级字跟着调冷。 */
+  --wj-night:#16203a;
+  --wj-night-2:#202e4c;
+  --wj-night-3:#2f4064;
+  --wj-line:rgba(214,223,240,.19);
+  --wj-line-soft:rgba(214,223,240,.11);
+  --wj-text:#eef2f8;
+  --wj-dim:#a3b0c4;
+  --wj-dimmer:#7d8ba1;
+  --wj-silver:#c7d2e4;
+  --wj-wine:#8a5f6b;
+  --wj-wine-lite:#d0b0b8;
+  --wj-paper:#e6e9ef;
+  --wj-paper-2:#d2d7e0;
+  --wj-ink:#20262f;
+  --wj-green:#9db5a8;
 
-  --bg:#0d1424;
-  --bg-2:rgba(255,255,255,.06);
-  --bg-3:rgba(255,255,255,.1);
-  --text:#edf0f6;
-  --text-dim:rgba(237,240,246,.6);
-  --surface-solid:#111a2b;
-  --g-glass-line:rgba(209,218,236,.16);
-  --g-glass-edge:rgba(209,218,236,.2);
-  --g-glass:rgba(255,255,255,.045);
-  --g-glass-2:rgba(255,255,255,.085);
+  --bg:#16203a;
+  --bg-2:rgba(255,255,255,.07);
+  --bg-3:rgba(255,255,255,.11);
+  --text:#eef2f8;
+  --text-dim:rgba(238,242,248,.62);
+  --surface-solid:#1a2440;
+  --g-glass-line:rgba(214,223,240,.18);
+  --g-glass-edge:rgba(214,223,240,.22);
+  --g-glass:rgba(255,255,255,.05);
+  --g-glass-2:rgba(255,255,255,.09);
 
-  background:radial-gradient(circle at 52% 4%,#293c5d 0,#17243b 32%,#0d1425 72%);
+  background:radial-gradient(circle at 52% 4%,#33476b 0,#1e2c48 32%,#16203a 72%);
 }
 .page[data-page^="wj-"] .app-title{letter-spacing:.08em;}
 .wj-head-btn{
@@ -11131,8 +11153,8 @@ button.cal-ev:active{background:var(--g-glass-2);}
   font-family:inherit;cursor:pointer;white-space:nowrap;
 }
 .wj-btn:active{background:rgba(255,255,255,.07);}
-.wj-btn-solid{background:#e0ddd5;color:#202a3b;border-color:#e0ddd5;}
-.wj-btn-solid:active{background:#f2eee6;}
+.wj-btn-solid{background:#dde3ec;color:#202a3b;border-color:#dde3ec;}
+.wj-btn-solid:active{background:#e9eef5;}
 .wj-btn-ghost{width:100%;margin-top:12px;}
 .wj-quiet{
   border:0;background:transparent;color:var(--wj-dim);padding:11px;
@@ -11154,7 +11176,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .wj-cover:before,.wj-cover:after{
   content:"";position:absolute;top:-12%;bottom:-12%;width:57%;
-  background:linear-gradient(90deg,#111a2c,#2b3d5e);
+  background:linear-gradient(90deg,#1a2440,#2f4064);
 }
 .wj-cover:before{left:-30%;transform:skewX(8deg);}
 .wj-cover:after{right:-30%;transform:skewX(-8deg);}
@@ -11196,7 +11218,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   color:var(--wj-dim);padding:8px 12px;font-size:11px;letter-spacing:.04em;
   border-radius:4px;font-family:inherit;cursor:pointer;white-space:nowrap;
 }
-.wj-filter.is-on{background:#dad8d2;color:#222b3a;border-color:#dad8d2;}
+.wj-filter.is-on{background:#d5dce6;color:#222b3a;border-color:#d5dce6;}
 .wj-shelf{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;}
 .wj-work-card{
   padding:0;border:1px solid var(--wj-line);background:rgba(255,255,255,.022);
@@ -11308,7 +11330,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   content:"";display:block;width:17px;height:17px;border-radius:50%;
   background:#78869e;transition:.2s;
 }
-.wj-switch.is-on{background:#d6d9dc;border-color:#d6d9dc;}
+.wj-switch.is-on{background:#d2d9e3;border-color:#d2d9e3;}
 .wj-switch.is-on:before{transform:translateX(17px);background:#263148;}
 
 .wj-role-grid{display:flex;flex-direction:column;gap:9px;}
@@ -11489,7 +11511,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wj-rule-confirm{color:var(--wj-green);}
 .wj-rule-text,.wj-rule-strength{
   width:100%;padding:9px;border:1px solid var(--wj-line);border-radius:3px;
-  background:#172238;color:var(--wj-text);font-size:10.5px;font-family:inherit;
+  background:#202e4c;color:var(--wj-text);font-size:10.5px;font-family:inherit;
 }
 .wj-rule-strength{color-scheme:dark;}
 .wj-rule-del{
@@ -11519,7 +11541,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wjr-curtains{position:absolute;inset:0;z-index:9;pointer-events:none;overflow:hidden;}
 .wjr-curtain{
   position:absolute;top:-8%;bottom:-8%;width:58%;
-  background:linear-gradient(90deg,#0a1020,#1a2740);
+  background:linear-gradient(90deg,#121a30,#202e4c);
 }
 .wjr-curtain.is-left{left:-4%;transform:skewX(7deg);
   border-right:1px solid rgba(211,220,237,.14);
@@ -11616,7 +11638,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .wjr-mask.show{opacity:1;}
 .wjr-sheet{
-  width:100%;background:#131d30;border-top:1px solid var(--wj-line);
+  width:100%;background:#1a2440;border-top:1px solid var(--wj-line);
   border-radius:14px 14px 0 0;padding:12px 16px calc(16px + env(safe-area-inset-bottom));
   display:flex;flex-direction:column;gap:11px;
   transform:translateY(40%);transition:transform .24s cubic-bezier(.3,.7,.3,1);

@@ -410,41 +410,22 @@
   /* ---------------------------- 建 / 拆 ---------------------------- */
 
   /* 2026-09-18：新建时先让用户给岛起名（用户：「加一个新的岛的时候
-     加一个给岛屿命名」）。2026-09-19（第三梯队 6）：prompt 换成 v2 抽屉 ——
-     房型可以当场换，名字可选；建完直接进配置台。 */
+     加一个给岛屿命名」）。2026-09-19（第三梯队 6）：prompt 换成 v2 抽屉。
+     2026-09-21（用户）：从孤岛/群岛列表进来时房型**已经定了**，不再多问一遍；
+     也不主动 focus 输入框（以前一进抽屉就弹键盘）。 */
   function createRoom(ctx, kind) {
     var host = ctx.el;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 
     var sel = kind === core.KIND_ARCHI ? core.KIND_ARCHI : core.KIND_ISLE;
+    var isArchi = sel === core.KIND_ARCHI;
     var wrap = h('div', 'iol-drawer');
     var panel = h('div', 'iol-drawer-panel');
-    panel.appendChild(h('h2', '', '新建一段存档'));
-    panel.appendChild(h('p', 'iol-drawer-desc',
-      '孤岛 = 一段核心关系的绝对封闭时空；群岛 = 多位彼此未必相识的角色，共用一个我。'));
-
-    /* 房型：两个整行选项，选中态靠暖底，不加多余的框 */
-    var kindBox = h('div', 'iol-kind-list');
-    [
-      { k: core.KIND_ISLE, t: '一座孤岛', d: '只有你和我 · 绝对封闭' },
-      { k: core.KIND_ARCHI, t: '一片群岛', d: '多个角色 · 关系各自独立' }
-    ].forEach(function (o) {
-      var b = h('button', 'iol-kind' + (sel === o.k ? ' is-on' : ''));
-      b.type = 'button';
-      var left = h('span', '');
-      left.appendChild(h('b', '', o.t));
-      left.appendChild(h('small', '', o.d));
-      b.appendChild(left);
-      b.appendChild(h('i', 'iol-check'));
-      b.addEventListener('click', function () {
-        sel = o.k;
-        [].forEach.call(kindBox.children, function (x) { x.classList.remove('is-on'); });
-        b.classList.add('is-on');
-      });
-      kindBox.appendChild(b);
-    });
-    panel.appendChild(kindBox);
+    panel.appendChild(h('h2', '', isArchi ? '新建一片群岛' : '新建一座孤岛'));
+    panel.appendChild(h('p', 'iol-drawer-desc', isArchi
+      ? '多位彼此未必相识的角色，共用一个我。'
+      : '一段核心关系的绝对封闭时空。'));
 
     var fName = h('div', 'iol-field');
     fName.appendChild(h('label', '', '名字（可选）'));
@@ -479,7 +460,7 @@
     wrap.appendChild(panel);
     host.appendChild(wrap);
     requestAnimationFrame(function () { wrap.classList.add('show'); });
-    setTimeout(function () { nameInput.focus(); }, 60);
+    /* 不主动 focus：用户点输入框再弹键盘（用户 2026-09-21） */
   }
 
   function removeRoom(ctx, sb) {
@@ -722,7 +703,10 @@
                 city: u.city || '',
                 region: u.region || '',
                 timezone: u.timezone || '',
-                avatar: u.avatar || ''
+                avatar: u.avatar || '',
+                /* 头像若存的是图库（IndexedDB），复制时两件马甲共用同一张图 ——
+                   mediaId 指向的是图，不是「哪件马甲的专属文件」 */
+                avatarMedia: u.avatarMedia || ''
               });
               var next = (sb.maskIds || []).slice();
               if (next.indexOf(nu.id) < 0) next.push(nu.id);
@@ -1861,6 +1845,21 @@
         fName.appendChild(nameInput);
         body.appendChild(fName);
 
+        /* 头像：跟大号/小号同一套入口（网址 + 本地图）——
+           以前 NPC 编辑页没有头像位（用户 2026-09-21）。 */
+        var fAvatar = Sleepy.avatarFieldLocal ? Sleepy.avatarFieldLocal(null, {
+          toast: function (t, k) { ctx.toast(t, k); }
+        }) : null;
+        if (fAvatar) body.appendChild(fAvatar.el);
+
+        /* 微信名：会话列表里显示的名字（用户 2026-09-21）。 */
+        var fWx = h('div', 'iol-field');
+        fWx.appendChild(h('label', '', '微信名'));
+        var wxInput = h('input');
+        wxInput.placeholder = '会话列表里显示的名字 · 留空就用「名字」';
+        fWx.appendChild(wxInput);
+        body.appendChild(fWx);
+
         var fBio = h('div', 'iol-field');
         fBio.appendChild(h('label', '', '人物简介'));
         var bio = h('textarea');
@@ -1937,6 +1936,9 @@
           if (!name) { ctx.toast('名字总得有一个', 'warn'); return; }
           core.upsertChar({
             name: name,
+            wechatName: String(wxInput.value || '').trim(),
+            avatar: fAvatar ? String(fAvatar.get() || '').trim() : '',
+            avatarMedia: fAvatar ? fAvatar.getMedia() : '',
             kind: 'npc',
             parentId: sb.id,
             parentType: 'sandbox',
@@ -2025,7 +2027,7 @@
     wrap.appendChild(panel);
     host.appendChild(wrap);
     requestAnimationFrame(function () { wrap.classList.add('show'); });
-    setTimeout(function () { nameInput.focus(); }, 60);
+    /* 不主动 focus：用户点输入框再弹键盘（用户 2026-09-21） */
   }
 
   /* ---------------------------- 对外 ---------------------------- */

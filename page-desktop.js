@@ -782,16 +782,12 @@
     },
 
     /* ---------------- 帷境入口（主屏第六行那条通栏） ----------------
-       它跟 app 图标格的区别是有意的：帷境不是「又一个 App」，
-       是手机里唯一一处进了就换世界的地方（深夜蓝 + 幕布）。
-       所以这里画两片幕布的缝，而不是塞一个 24px 的线稿图标 ——
-       在一个纯白暖调的桌面上，这条深色通栏本身就是入口的暗示。
+       2026-09-21：改成跟其他 App 图标同一套玻璃（透明、跟主题）——
+       以前写死深蓝 + 两片幕布，用户觉得在白桌面上太突兀、换配色也不跟着变。
        样式在 style.css 的 .w-wj 那一段。 */
     wj: function (cell, ctx) {
       var box = h('button', 'widget w-wj');
       box.type = 'button';
-      box.appendChild(h('span', 'w-wj-curtain is-left'));
-      box.appendChild(h('span', 'w-wj-curtain is-right'));
       var copy = h('span', 'w-wj-copy');
       copy.appendChild(h('b', 'w-wj-name', '帷境'));
       copy.appendChild(h('span', 'w-wj-line', '今晚，想读哪一种可能？'));
@@ -804,9 +800,9 @@
       var box = h('div', 'widget w-char');
       var s = skin();
 
-      if (s.char && s.char.avatar) {
+      if (s.char && (s.char.avatar || s.char.avatarMedia)) {
         var img = h('img', 'w-char-av');
-        img.src = s.char.avatar;
+        core.setAvatarImg(img, s.char);
         img.alt = s.name;
         box.appendChild(img);
       } else {
@@ -1022,6 +1018,15 @@
        `.page` 上有 transform，所以 fixed 的包含块是**整个手机屏**而不是
        浏览器窗口，范围正好。 */
     lamp: function (cell, ctx) {
+      /* 上一帧的 box 若还在放大态（被挪到 .page），重画前先收掉 ——
+         重画只清 grid，挪出去的旧节点没人管，会一直压在屏上
+         （用户 2026-09-21：切过外观后模型变大、显示不全）。 */
+      var prev = lampState.box;
+      if (prev && prev.parentNode && prev.parentNode.classList &&
+          prev.parentNode.classList.contains('page')) {
+        prev.parentNode.removeChild(prev);
+      }
+
       var box = h('div', 'widget w-lamp');
 
       var host = lampState.host;
@@ -1056,8 +1061,17 @@
 
       if (lampState.inst) {
         publish(lampState.inst);
-        /* 换屏/换格子后容器尺寸变了，让核心重新取景 */
-        lampState.inst.resize();
+        /* 换屏/换格子后容器尺寸变了，让核心重新取景。
+           但要等 box 真的挂进 DOM 再量 —— renderCell 返回后调用方才 append，
+           这时 host.clientWidth 还是 0，直接 resize 会让核心回落到 window
+           尺寸，canvas 被撑成整窗、看着「变大又下移」
+           （用户 2026-09-21：切过外观后 3D 模型变大、显示不全）。 */
+        var inst = lampState.inst;
+        requestAnimationFrame(function () {
+          if (lampState.inst !== inst) return;
+          var hostEl = lampState.host;
+          if (hostEl && hostEl.clientWidth > 0) inst.resize();
+        });
         return box;
       }
 
@@ -2340,18 +2354,21 @@
             t = null;
             enterEdit(ctx);
           }, EDIT_MS);
+          function stop() {
+            if (t) { clearTimeout(t); t = null; }
+            screen.removeEventListener('pointermove', away);
+            screen.removeEventListener('pointerup', stop);
+            screen.removeEventListener('pointercancel', stop);
+          }
           function away(ev) {
-            if (Math.abs(ev.clientX - sx) > MOVE_TOL || Math.abs(ev.clientY - sy) > MOVE_TOL) {
-              if (t) { clearTimeout(t); t = null; }
-              screen.removeEventListener('pointermove', away);
-            }
+            if (Math.abs(ev.clientX - sx) > MOVE_TOL || Math.abs(ev.clientY - sy) > MOVE_TOL) stop();
           }
           screen.addEventListener('pointermove', away);
-          screen.addEventListener('pointerup', function up() {
-            screen.removeEventListener('pointerup', up);
-            screen.removeEventListener('pointermove', away);
-            if (t) { clearTimeout(t); t = null; }
-          });
+          screen.addEventListener('pointerup', stop);
+          /* 触摸横滑时浏览器接管滚动，派发的是 pointercancel（不是 pointermove），
+             以前没监听它 → 撤销不执行 → 420ms 后照样进编辑态
+             （用户：桌面一滑动就进编辑）。 */
+          screen.addEventListener('pointercancel', stop);
         });
 
         /* 编辑态下点空白 = 退出。用 click 而不是 pointerdown，
