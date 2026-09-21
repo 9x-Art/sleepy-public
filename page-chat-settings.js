@@ -668,21 +668,72 @@
       }));
       /* 「他给过你密码」是 user 声明的关系事实（分流定案 §二·C）：
          知道密码 ≠ 获得允许 —— 打开后查手机多一个「使用你记得的密码」入口，
-         但没被允许时照样算未经允许查看。 */
+         但没被允许时照样算未经允许查看。
+         ⚠️ 但这一条**得排在他「设没设密码」后面**：他没设密码的话，
+         「知不知道密码」根本无从谈起（用户六.2 报的「角色没设密码却要他
+         输密码」，缺的就是上面那个开关这一层状态）。 */
       if (Sleepy.phone && coreRef && coreRef.scopeId && coreRef.scopeId() && charId) {
         var phRec = Sleepy.phone.ensurePhone(
           coreRef.scopeId(),
           (coreRef.rootIdOf ? coreRef.rootIdOf(charId) : '') || charId
         );
+        /* 密码**不在这里明文写出来** —— 查手机里那套「试试你们的日子」
+           是个玩法（定案 §E），写在这儿就白玩了。 */
+        var phLocked = Sleepy.phone.lockEnabled(phRec);
         secPh.appendChild(demoRow({
-          label: '他给过你密码',
-          note: phRec.knownPin ? '告诉过你 —— 查手机时可以「使用你记得的密码」' : '还没给过（可以试着猜猜看）',
-          switched: !!phRec.knownPin,
+          label: '锁屏密码',
+          note: phLocked
+            ? '设了 —— 查手机之前要先过四位数字（可以猜，也可能他早告诉过你）'
+            : '没设 —— 查手机不用输密码，直接翻开',
+          switched: phLocked,
           onSwitch: function (v) {
-            phRec.knownPin = !!v;
-            Sleepy.phone.savePhone(phRec);
+            Sleepy.phone.setLockEnabled(phRec, v);
+            /* 下面「他给过你密码」那一行的显隐跟着变，所以整页重画 */
+            if (ctx.rebuild) ctx.rebuild();
           }
         }));
+        if (phLocked) {
+          secPh.appendChild(demoRow({
+            label: '他给过你密码',
+            note: phRec.knownPin ? '告诉过你 —— 查手机时可以「使用你记得的密码」' : '还没给过（可以试着猜猜看）',
+            switched: !!phRec.knownPin,
+            onSwitch: function (v) {
+              phRec.knownPin = !!v;
+              Sleepy.phone.savePhone(phRec);
+            }
+          }));
+        }
+        /* 上次生成没解析成功 —— 原文存下来了却没有任何重试入口
+           （审查报告六.1 第 3 条：`phoneRawFail:` 只写不读，
+           跟 `sumRawFail:` 那套不对称）。这里补齐，位置也跟总结那条对齐。 */
+        var rawFail = store.get('phoneRawFail:' + phRec.charId);
+        if (rawFail && rawFail.at) {
+          var pft = new Date(rawFail.at);
+          var pftText = ('0' + pft.getHours()).slice(-2) + ':' + ('0' + pft.getMinutes()).slice(-2);
+          secPh.appendChild(demoRow({
+            label: '上次生成没解析成功（' + pftText + '）',
+            note: '原文已存下来 · 点按再来一次',
+            onClick: function () {
+              if (!Sleepy.phoneAI) { ctx.toast('生成链还没加载', 'err'); return; }
+              ctx.toast('正在重试…', 'ok');
+              var run = rawFail.mode === 'bootstrap'
+                ? Sleepy.phoneAI.bootstrapPhone(coreRef.scopeId(), phRec.charId, rawFail.level || 'light')
+                : Sleepy.phoneAI.settle(coreRef.scopeId(), phRec.charId, {});
+              run.then(function (r) {
+                if (r.ok) {
+                  ctx.toast('重试成功', 'ok');
+                  ctx.rebuild();
+                } else if (r.error === 'noapi') {
+                  ctx.toast((r.reason || '还没有可用的模型') + ' · 去 设置 → 主 API 配一个', 'warn');
+                } else {
+                  ctx.toast('✗ ' + (r.error || '还是没成'), 'err');
+                }
+              })['catch'](function (e) {
+                ctx.toast('✗ 出错了：' + ((e && e.message) || '未知错误'), 'err');
+              });
+            }
+          }));
+        }
       }
       secPh.appendChild(demoRow({
         label: '去翻他的手机', note: '第 2 屏「查手机」也可以进',

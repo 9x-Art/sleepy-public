@@ -3589,6 +3589,37 @@ t('ingest：autoAnchor 开 → priority=high 入库即锚定；批量确认 pend
   return { 锚定: true, 关不锚: true, 批量确认: n };
 });
 
+/* 失败原因必须能翻成人话 —— 用户六.1：「没填副 api 生成底片失败，
+   只显示『生成失败』」，查下去发现 7 处都写 `res.message || '请求失败'`，
+   而 requestOnce 的结果里**根本没有 message 字段** → 超时 / HTTP 401 /
+   没填模型 / CORS 被拦，全都显示同一句话。 */
+t('api.describeError：每个失败阶段都给得出不同的原因', () => {
+  const D = S.api.describeError;
+  const cases = [
+    [{ ok: false, stage: 'config', error: '还没填模型名' }, '还没填模型名'],
+    [{ ok: false, stage: 'config', error: '接口地址是空的' }, '接口地址是空的'],
+    [{ ok: false, stage: 'http', status: 401, detail: '{"error":"invalid api key"}' }, /HTTP 401.*invalid api key/],
+    [{ ok: false, stage: 'timeout', error: '超时：60 秒没有响应' }, /超时/],
+    [{ ok: false, stage: 'network', error: '连不上：网络错误，或接口没有开 CORS' }, /连不上/],
+    [{ ok: false, stage: 'parse', detail: '<html>gateway</html>' }, /不是 JSON/]
+  ];
+  const outs = cases.map(([res, want]) => {
+    const got = D(res);
+    if (typeof want === 'string' ? got !== want : !want.test(got)) {
+      throw new Error(JSON.stringify(res) + ' 翻成了「' + got + '」');
+    }
+    return got;
+  });
+  /* 这一条才是重点：以前这些全是同一句「请求失败」 */
+  if (new Set(outs).size !== outs.length) {
+    throw new Error('还有原因被吞成同一句：' + JSON.stringify(outs));
+  }
+  if (D(null) !== '未知错误') throw new Error('null 兜底没了');
+  if (D(new Error('boom')) !== 'boom') throw new Error('异常对象该用自己的 message');
+  if (D({ ok: false }) !== '请求失败') throw new Error('无 stage 的退化情况该给通用文案');
+  return { HTTP401: outs[2], 六种各不相同: outs.length };
+});
+
 /* ==================== 查手机数据层（phone.js · 施工卡-查手机-v1） ==================== */
 
 t('phone.ensurePhone：建壳幂等、密码/壁纸由哈希派生（同 char 恒同脸）', () => {
@@ -3604,6 +3635,36 @@ t('phone.ensurePhone：建壳幂等、密码/壁纸由哈希派生（同 char �
     throw new Error('两次建壳外观不一致（应该走同一个哈希）');
   }
   return { phoneId: p1.id, pin: p1.lock.pin, wallpaper: p1.wallpaper };
+});
+
+/* 锁屏：**「他设没设密码」以前在数据层不存在**，于是 pin 一旦派生好就恒真，
+   所有角色一律被要求输密码 —— 用户 2026-09-21 报的「角色本身没设密码，
+   却显示输入密码解锁」。现在只看 lock.enabled，默认 false。 */
+t('phone 锁屏：默认没设密码；开了才有；老存档按没设解释', () => {
+  const P = S.phone;
+  const sb = S.core.createSandbox('isle', '锁屏测试岛');
+  S.core.setActiveSandbox(sb.id);
+  const c = S.core.upsertChar({ name: '锁屏测试主人', kind: 'main' }).id;
+
+  const rec = P.ensurePhone(sb.id, c);
+  if (!rec.lock || !/^\d{4}$/.test(rec.lock.pin)) throw new Error('密码该派生好备着');
+  if (P.lockEnabled(rec)) throw new Error('新建的手机不该默认上锁');
+
+  P.setLockEnabled(rec, true);
+  if (!P.lockEnabled(P.getPhone(rec.id))) throw new Error('开了开关却没上锁');
+  P.setLockEnabled(P.getPhone(rec.id), false);
+  if (P.lockEnabled(P.getPhone(rec.id))) throw new Error('关了开关还锁着');
+
+  /* 老存档：只有 pin、没有 enabled —— 必须按「没设锁」解释，
+     否则用户升级完还是被要求输密码 */
+  if (P.lockEnabled({ lock: { pin: '0921' } })) throw new Error('老存档该按没设锁解释');
+  if (P.lockEnabled(null) || P.lockEnabled({})) throw new Error('缺字段时别炸');
+
+  /* 开关打开时保证密码一定存在，否则会造出「有锁却没密码」的死路 */
+  const odd = { id: 'ph_odd', charId: c, lock: {} };
+  P.setLockEnabled(odd, true);
+  if (!/^\d{4}$/.test((odd.lock || {}).pin || '')) throw new Error('开锁时该补上密码');
+  return { 默认: '没锁', 打开后: '有锁', 老存档: '没锁', 补出的密码: odd.lock.pin };
 });
 
 t('phone 会话/行动/风险：authorized 恒 0 风险；偷看随行动爬阶段；疑似必抓不存在', () => {

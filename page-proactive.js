@@ -197,7 +197,7 @@
     function done(r) { evaluating[charId] = false; return r; }
 
     return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
-      if (!res.ok) return done({ ok: false, why: 'api', error: res.message || '请求失败' });
+      if (!res.ok) return done({ ok: false, why: 'api', error: Sleepy.api.describeError(res) });
       var d = parseDecision(res.content);
       if (!d) return done({ ok: false, why: 'parse' });
 

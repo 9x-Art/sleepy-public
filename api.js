@@ -90,6 +90,46 @@
     });
   }
 
+  /* ------------------------- 失败原因翻译 ------------------------- */
+  /* 把 requestOnce 的失败结果翻成**人能看懂的一句话**。页面里别自己拼。
+
+     ⚠️ 为什么必须有这个：
+     `requestOnce` resolve 的是 `{ok, stage, status, error, detail}` ——
+     **它没有 `message` 字段**（`message` 只有 `fetchModels` 才有）。
+     所以各页面里写 `res.message || '请求失败'` 的写法，等于把所有失败原因
+     都吞成同一句「请求失败」：没填模型名、接口地址是空的、HTTP 401、
+     超时 60 秒不响应、CORS 被拦 —— 用户看到的全都一样，没法自救。
+     这个坏模式当时被抄在 6 个页面里（2026-09-21 排查「底片生成失败只说
+     请求失败」时统一收敛到这里）。 */
+  function brief(s, n) {
+    var t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    n = n || 80;
+    return t.length > n ? t.slice(0, n) + '…' : t;
+  }
+
+  function describeError(res) {
+    if (!res) return '未知错误';
+    if (res.stage) {
+      if (res.stage === 'config') return res.error || '配置不完整（接口地址 / 模型名 / Key 少了一个）';
+      if (res.stage === 'http') {
+        /* HTTP 正文里通常写着真正的原因（model not found / invalid api key），
+           截一段带上比只给一个状态码有用得多 */
+        return '接口返回 HTTP ' + res.status + (res.detail ? '：' + brief(res.detail) : '');
+      }
+      if (res.stage === 'timeout') return res.error || '超时：接口没有在限定时间内响应';
+      if (res.stage === 'network') return res.error || '连不上：网络错误，或接口没有开 CORS';
+      if (res.stage === 'parse') return '接口返回的不是 JSON，可能不是兼容接口' +
+        (res.detail ? '：' + brief(res.detail) : '');
+      return res.error || res.message || '请求失败';
+    }
+    /* 走到这里说明它不是 requestOnce 的结果对象（那一定带 stage）。
+       异常对象 / fetchModels 那种带 message 的，message 就是最准的描述；
+       其它退化情况给一句通用文案，别把 [object Object] 显给用户看。 */
+    if (typeof res === 'string') return res;
+    if (res.message) return String(res.message);
+    return res.error || '请求失败';
+  }
+
   /* ------------------------- 非流式单次请求 ------------------------- */
   /* resolve({ok, stage, status, ms, data, content, error, detail, text}) */
   function requestOnce(cand, messages, ov) {
@@ -362,6 +402,9 @@
     fetchModels: fetchModels,
     candidates: candidates,
     requestOnce: requestOnce,
+    /* 失败原因翻译：所有「把错误显示给用户」的地方都走它，别再各写一份
+       `res.message || '请求失败'`（那等于把原因全吞了）。 */
+    describeError: describeError,
     streamOnce: streamOnce,
     runChat: runChat
   };

@@ -199,7 +199,7 @@
     if (!cand) return Promise.resolve({ ok: false, error: '还没有可用的模型连接' });
     return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
       if (res.ok) return { ok: true, text: res.content };
-      return { ok: false, error: res.message || '请求失败' };
+      return { ok: false, error: Sleepy.api.describeError(res) };
     }, function (e) {
       return { ok: false, error: (e && e.message) || '请求失败' };
     });

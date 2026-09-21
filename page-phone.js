@@ -149,12 +149,22 @@
                 ctx.toast(r.real ? '好，他的手机从今天开始记。' : '底片补好了 —— 再进去看看。', 'ok');
                 ctx.rebuild();
               } else if (r.error === 'noapi') {
-                ctx.toast('先去 设置 → 主 API 配一个模型', 'warn');
+                /* 原因由数据层给（用户配的可能是副 API，写死「去配主 API」会误导） */
+                ctx.toast((r.reason || '还没有可用的模型') + ' · 去 设置 → 主 API 配一个', 'warn');
+                b.disabled = false;
+              } else if (r.error === '解析失败（原文已存）') {
+                /* 别只说「失败」：告诉他原文留下来了、去哪儿重试 */
+                ctx.toast('TA 的底片没解析成功 —— 原文已存下，可以再试一次', 'warn');
                 b.disabled = false;
               } else {
                 ctx.toast('✗ ' + (r.error || '没成'), 'err');
                 b.disabled = false;
               }
+            })['catch'](function (e) {
+              /* ⚠️ 这个 catch 不能省：上面把按钮 disabled 了，promise 一旦 reject
+                 就永远卡在禁用态、一句话都不提示（审查报告六.1 第 2 条）。 */
+              ctx.toast('✗ 生成链出错了：' + ((e && e.message) || '未知错误'), 'err');
+              b.disabled = false;
             });
           });
           bs.appendChild(b);
@@ -437,14 +447,14 @@
 
       /* 打开通知：消耗行动 + 留痕，然后进对应的 App（Demo 09：
          「打开锁屏通知会直接前往对应 App，也可能改变未读或最近使用状态」）。
-         锁着的时候（没有宽限期）通知只能看预览 —— 没有权限就打不开内容。 */
+         锁着的时候（他上了锁、又不在宽限期）通知只能看预览 —— 打不开内容。 */
       function openNotice(app) {
-        if (!graceOpen) {
+        if (!canOpenNow()) {
           ctx.toast('手机锁着，通知只能看预览。', 'warn');
           if (!pinMode) { pinMode = true; paint(); }
           return;
         }
-        if (!session) session = phone.startSession(ph, 'peek', 'grace');
+        if (!session) session = phone.startSession(ph, 'peek', lockOn() ? 'grace' : 'nopin');
         doAction('openNotice', { where: app, sensitivity: 1.5 }, function () {
           phone.addTrace(session, { type: 'recent', app: app,
             detail: '从锁屏打开了一条「' + (APP_LABEL[app] || app) + '」通知' });
@@ -469,6 +479,18 @@
         }
       }
 
+      /* ---- 解锁的两个判据（都只从数据层问，页面里别自己拼）----
+         lockOn()：他到底给不给手机上锁。判据在 phone.lockEnabled ——
+         以前这里看的是「pin 存不存在」，而 pin 一直是派生好的、恒真，
+         结果就是用户报的「角色没设密码，却显示输入密码解锁」（六.2）。
+         canOpenNow()：现在能不能直接打开 —— 没设密码，或屏幕还亮着（宽限期）。 */
+      function lockOn() {
+        return !!(phone.lockEnabled && phone.lockEnabled(ph));
+      }
+      function canOpenNow() {
+        return !lockOn() || graceOpen;
+      }
+
       function tryEnter() {
         /* 入口分流（分流定案 §二）：
            longterm → 按授权直接进（authorized，不判定偷看）；
@@ -482,7 +504,8 @@
           return;
         }
         /* 宽限期掷骰（定案 §D）：首次必是「屏幕还亮着」；之后每次偷看，
-           一半概率他刚好走开没锁 —— 世界感来自情境，不是固定机关 */
+           一半概率他刚好走开没锁 —— 世界感来自情境，不是固定机关。
+           （他没设密码时这一掷用不上，见 canOpenNow。） */
         graceOpen = (ph.lastExitedAt == null) || Math.random() < 0.5;
         mode = 'lock';
         paint();
@@ -492,6 +515,16 @@
         if (!session) session = phone.startSession(ph, 'peek', 'grace');
         phone.addTrace(session, { type: 'recent', app: null, detail: '屏幕还亮着就拿起来了' });
         beginSession('peek', 'grace');
+      }
+
+      /* 他压根没设密码 → 直接翻开。
+         照样建会话、照样留痕：「没有密码」不等于「可以随便看」
+         （分流定案 §三·1：密码不需要，但锁屏这一屏要在 —— 「打开通知」
+          这个行动只在这屏存在；§三·4：三个解锁概念不合并）。 */
+      function unlockNoPin() {
+        if (!session) session = phone.startSession(ph, 'peek', 'nopin');
+        phone.addTrace(session, { type: 'recent', app: null, detail: '他没设密码，你直接翻开了' });
+        beginSession('peek', 'nopin');
       }
 
       function unlockKnown() {
@@ -522,6 +555,9 @@
       }
 
       function submitPin() {
+        /* 他没设密码时不该走到这里（面板也不渲染）。真走到了就直接放行，
+           别停在一个「怎么输都错」的死路上。 */
+        if (!lockOn()) return unlockNoPin();
         if (!session) session = phone.startSession(ph, 'peek', 'pin_guess');
         var ok = pinBuf === String((ph.lock && ph.lock.pin) || '');
         pinBuf = '';
@@ -617,7 +653,10 @@
         return paintDesktop();
       }
 
-      /* ----- 锁屏（同壁纸加深色纱，Demo 的 lock 那层） ----- */
+      /* ----- 锁屏（同壁纸加深色纱，Demo 的 lock 那层） -----
+         ⚠️ 「他没设密码」时这一屏**照样要在**（分流定案 §三·1：「打开通知」
+         这个行动只在这屏存在），要区别的不是「有没有这一屏」，而是
+         「要不要输密码」。用户六.2 报的就是没区分后者。 */
       function paintLock() {
         var root = h('div', 'ph-root ph-lock ph-wall-' + (ph.wallpaper % phone.WALLS.length));
         root.style.setProperty('--ph-accent', ph.accent);
@@ -625,19 +664,35 @@
         root.appendChild(h('div', 'ph-lock-time', timeStr()));
         root.appendChild(h('div', 'ph-lock-date', dateStr()));
 
+        var locked = lockOn();
+        var openNow = canOpenNow();
+
         /* 锁屏通知预览：真实数据的影子（消息的存在本身 + 订单状态迁移），
-           点开 = 一次行动 + 一条痕迹（Demo 09）。 */
-        root.appendChild(noticeStack(!pinMode));
+           点开 = 一次行动 + 一条痕迹（Demo 09）。
+           能不能点看 openNow：没密码的手机不存在「锁着」这个状态。 */
+        root.appendChild(noticeStack(!pinMode && openNow));
         if (!pinMode) {
           root.appendChild(h('p', 'ph-lock-hint', pinLocked ? '手机已锁定' :
-            graceOpen ? '屏幕尚未自动锁定' : '向上轻扫并输入密码'));
+            !locked ? '他没有设锁屏密码' :
+            openNow ? '屏幕尚未自动锁定' : '向上轻扫并输入密码'));
         }
 
         if (pinLocked) {
           root.appendChild(h('p', 'ph-lock-warn', '密码错误次数太多，手机被暂时锁定了。'));
           root.appendChild(actionBtn('放回手机', 'ghost', giveUp));
-        } else if (graceOpen) {
-          /* 宽限期（定案 §D）：不需要密码 ≠ 获得允许，进来照样留痕 */
+        } else if (!locked) {
+          /* 没设密码：**一个「输入密码」的入口都不出现** —— 没有码可输。
+             剩下的摩擦照旧（行动消耗 / 痕迹 / 风险 / 当场被抓），
+             不是「没密码就等于随便看」。 */
+          if (!pinMode) {
+            root.appendChild(actionBtn('向上打开', 'primary', unlockNoPin));
+            root.appendChild(actionBtn('只看一眼，然后放回去', 'ghost', onlyLook));
+          }
+          root.appendChild(actionBtn('放回原处', 'putback', giveUp));
+        } else if (openNow) {
+          /* 宽限期（定案 §D）：不需要密码 ≠ 获得允许，进来照样留痕。
+             ⚠️ 这条只在**他确实上了锁**时才有意义：有锁 + 屏幕还亮着，
+             可以「向上打开」进去，也可以老老实实输密码。 */
           if (!pinMode) {
             root.appendChild(actionBtn('向上打开', 'primary', unlockGrace));
             root.appendChild(actionBtn('输入密码解锁', 'ghost', function () { pinMode = true; paint(); }));
@@ -658,7 +713,9 @@
           root.appendChild(actionBtn('放回原处', 'putback', giveUp));
         }
 
-        if (pinMode && !pinLocked) {
+        /* 只有真的上了锁才可能走到输入面板 —— 没锁时 pin 是空的，
+           画出来就是一条「怎么输都错」的死路（审查报告六.2 第 5 条）。 */
+        if (pinMode && locked && !pinLocked) {
           root.appendChild(pinPad());
         }
         if (session && session.pinFails > 0 && !pinMode) {

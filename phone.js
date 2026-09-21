@@ -99,8 +99,51 @@
     })[0] || null;
   }
 
+  /* 锁屏密码的派生（分流定案 §E）：优先用**这座岛落成的日子**（MMDD）——
+     那是 user 合理知道的关系事实，「试试你们的日子」的候选玩法才有意义。
+     没有建档时间的极端情况才退回哈希随机。
+     ⚠️ 无符号移位：>> 会把 ≥2^31 的哈希变成负数 → 三位数密码（冒烟抓过）。 */
+  function derivePin(sbId, h) {
+    var sbRec = core.findSandbox(sbId);
+    if (sbRec && sbRec.createdAt) {
+      var d0 = new Date(sbRec.createdAt);
+      return ('0' + (d0.getMonth() + 1)).slice(-2) + ('0' + d0.getDate()).slice(-2);
+    }
+    return String(1000 + ((h >>> 3) % 9000));
+  }
+
+  /* 「他到底有没有给手机上锁」的**唯一判据**。页面里别自己拼
+     （`rec.lock && rec.lock.pin` 那种写法是没意义的 —— pin 一直是派生好的，
+     以前正是因为它恒真，才出现「角色明明没设密码，却要你输密码」）。
+     ⚠️ 老存档只有 pin、没有 enabled，这里按「没设锁」解释（!!undefined = false），
+     所以那个现象对老存档也会自动消失；用户在设置里把开关打开时 pin 现成可用。 */
+  function lockEnabled(rec) {
+    return !!(rec && rec.lock && rec.lock.enabled && rec.lock.pin);
+  }
+
+  /* 改「他有没有上锁」。打开的时候保证 pin 一定存在 ——
+     否则会造出「有锁却没有密码」的死状态（猜也猜不中）。 */
+  function setLockEnabled(rec, on) {
+    if (!rec) return null;
+    if (!rec.lock) rec.lock = {};
+    if (on) {
+      if (!rec.lock.pin) {
+        var sid = core.scopeId();
+        rec.lock.pin = derivePin(sid, hashOf(sid + ':' + rec.charId));
+      }
+      rec.lock.enabled = true;
+    } else {
+      rec.lock.enabled = false;
+    }
+    savePhone(rec);
+    return rec;
+  }
+
   /* 建壳：0 次 API、幂等。密码也由哈希派生 —— user 可以真的猜中，
-     「猜中」这个事件本身会成为关系事实（knownPin 置真）。 */
+     「猜中」这个事件本身会成为关系事实（knownPin 置真）。
+     ⚠️ pin 是**派生好的备着**，不代表他上了锁：上没上锁只看 lock.enabled
+     （见 lockEnabled）。2026-09-21 用户报的「没设密码却被要求输密码」就是
+     把「pin 存在」当成了「有锁」。 */
   function ensurePhone(sbId, charId) {
     var hit = phoneOf(sbId, charId);
     if (hit) return hit;
@@ -120,18 +163,12 @@
       wallpaper: h % WALLS.length,
       accent: ACCENTS[h % ACCENTS.length],
       appOrder: order,
-      /* 密码派生：优先用**这座岛落成的日子**（MMDD）—— 那是 user 合理知道的
-         关系事实，「试试你们的日子」的候选玩法才有意义（定案 §E）。
-         没有建档时间的极端情况才退回哈希随机。
-         ⚠️ 无符号移位：>> 会把 ≥2^31 的哈希变成负数 → 三位数密码（冒烟抓过）。 */
-      lock: { pin: (function () {
-        var sbRec = core.findSandbox(sbId);
-        if (sbRec && sbRec.createdAt) {
-          var d0 = new Date(sbRec.createdAt);
-          return ('0' + (d0.getMonth() + 1)).slice(-2) + ('0' + d0.getDate()).slice(-2);
-        }
-        return String(1000 + ((h >>> 3) % 9000));
-      })() },
+      /* enabled = 他到底给不给手机上锁。**默认 false** ——
+         用户 2026-09-21 原话：「角色本身没有设置密码，但界面仍然显示输入密码解锁」。
+         现在「设不设密码」是角色设置里一个明确的开关（聊天 → 角色设置 → 他的手机），
+         没打开就是真的没密码：锁屏那一屏照样在（「打开通知」只在这屏存在），
+         但不会有任何要你输密码的入口。 */
+      lock: { enabled: false, pin: derivePin(sbId, h) },
       knownPin: false,
       lastExitedAt: null,
       bootstrapStatus: 'none',
@@ -870,6 +907,11 @@
     phoneOf: phoneOf,
     getPhone: getPhone,
     savePhone: savePhone,
+    /* 锁屏：他有没有上锁的**唯一判据** + 改它的唯一入口。
+       页面里别自己去读 lock.pin（那恒真，就是六.2 的根）。 */
+    lockEnabled: lockEnabled,
+    setLockEnabled: setLockEnabled,
+    derivePin: derivePin,
     activePerms: activePerms,
     longPermFor: longPermFor,
     hiddenApps: hiddenApps,

@@ -41,11 +41,22 @@
     return mainCand();   /* 没指定或被删 → 主 API */
   }
 
+  /* 「一个模型都没有」时给人看的**原因**。
+     别写死「去配主 API」—— 用户很可能配的是副 API（审查报告六.1：
+     「用户配了副 API 却被要求配主 API」）。 */
+  function noApiReason() {
+    var cfg = phone.apiCfg();
+    if (cfg.mode === 'pick' && cfg.label) {
+      return '指定的副 API「' + cfg.label + '」现在找不到了（可能被删），主 API 也没配';
+    }
+    return '主 API 还没配';
+  }
+
   function callOnce(cand, messages) {
     if (!cand) return Promise.resolve({ ok: false, error: 'noapi' });
     return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
       if (res.ok) return { ok: true, text: res.content };
-      return { ok: false, error: res.message || '请求失败' };
+      return { ok: false, error: Sleepy.api.describeError(res) };
     }, function (e) {
       return { ok: false, error: (e && e.message) || '请求失败' };
     });
@@ -70,6 +81,18 @@
   }
 
   /* ---------------------------- 输入装配 ---------------------------- */
+
+  /* 三档底片。**以前 light / rich 两个按钮走的是同一句话**（档次在
+     bootstrapPhone 里就丢了，等于那一项没实现）；2026-09-21 补上。
+     差别只在「写多少」，不在「只写真实」—— 那是三条档位的共同前提。 */
+  var BOOTSTRAP_ASK = {
+    light: '请按输出协议产出初始生活底片：**只写最少、最真实的几条**' +
+      '（每个 App 最多 1~2 条，宁少勿编）。',
+    rich: '请按输出协议产出初始生活底片：**写得丰满一些**' +
+      '（几个 App 各几条记录、一两个进行中的计划），但每一条都必须是这个人这时真的会有的东西。',
+    /* 'real'（只用真实互动）根本不调模型，这里只是兜底别落空 */
+    real: '请按输出协议产出初始生活底片（数量从少）。'
+  };
 
   function contactsOf(sbId, charId) {
     var out = [];
@@ -128,7 +151,7 @@
     var from = opts.from ? new Date(opts.from).toLocaleString('zh-CN') : '角色创建以来';
     user.push('[RANGE]\n结算时间段：' + from + ' ～ 现在。只生成这段时间里合理发生的事。');
     user.push(opts.mode === 'bootstrap'
-      ? '请按输出协议产出初始生活底片（数量从少）。'
+      ? (BOOTSTRAP_ASK[opts.level] || BOOTSTRAP_ASK.light)
       : '请按输出协议结算这段时间的生活（没有合理内容就返回空 deltas）。');
 
     return [
@@ -149,11 +172,13 @@
 
     var ph = phone.ensurePhone(sbId, charId);
     var cand = candFor();
-    if (!cand) return Promise.resolve({ ok: false, error: 'noapi' });
+    /* 一个模型都没有时，连同「为什么」一起返回 —— 页面拿它给一句准确的话 */
+    if (!cand) return Promise.resolve({ ok: false, error: 'noapi', reason: noApiReason() });
 
     var from = ph.settledUntil || ph.createdAt;
     var messages = buildMessages(sbId, ph, char, {
       mode: opts.mode,
+      level: opts.level,          /* 底片档位（light / rich），别在这儿丢掉 */
       from: opts.mode === 'bootstrap' ? null : from
     });
     var runId = 'run_' + Date.now().toString(36);
@@ -164,7 +189,13 @@
       if (!r.ok) return r;                      /* 失败不推进 settledUntil，下次补 */
       var parsed = parseSettlementJson(r.text);
       if (!parsed) {
-        store.set('phoneRawFail:' + charId, { at: Date.now(), raw: String(r.text || '').slice(0, 4000) });
+        /* 原文留下来，并且记下**这次是什么活儿、哪一档** ——
+           页面上的「再试一次」要靠它复原（以前只存 at/raw，
+           phoneRawFail 全仓没有一处读，等于没有重试入口）。 */
+        store.set('phoneRawFail:' + charId, {
+          at: Date.now(), mode: opts.mode || 'settle', level: opts.level || null,
+          raw: String(r.text || '').slice(0, 4000)
+        });
         return { ok: false, error: '解析失败（原文已存）' };
       }
       /* 幂等：bootstrap 只允许成功一次 */
@@ -175,6 +206,7 @@
       var patch = { settledUntil: Date.now() };
       if (opts.mode === 'bootstrap') {
         patch.bootstrapStatus = 'completed';
+        patch.bootstrapMode = opts.level || 'light';   /* 记下用的是哪一档 */
         patch.bootstrapVersion = (ph.bootstrapVersion || 0) + 1;
         patch.bootstrapRunId = runId;
       }
@@ -195,7 +227,9 @@
       });
       return Promise.resolve({ ok: true, stat: { applied: 0 }, real: true });
     }
-    return settle(sbId, charId, { mode: 'bootstrap' });
+    /* level 一路带进 buildMessages —— 以前在这儿丢掉了，于是
+       「轻量底片」和「丰富底片」两个按钮生成的提示词一模一样。 */
+    return settle(sbId, charId, { mode: 'bootstrap', level: mode });
   }
 
   function phone_applyPatch(phoneId, patchObj) {

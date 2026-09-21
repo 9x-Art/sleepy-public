@@ -2453,7 +2453,7 @@
           { role: 'system', content: sys },
           { role: 'user', content: user }
         ], {}).then(function (res) {
-          if (!res.ok) return { ok: false, error: res.message || '想画面的时候出错了' };
+          if (!res.ok) return { ok: false, error: api.describeError(res) };
           var out = { ok: true, subject: '', caption: '', refuse: '' };
           try {
             var t = String(res.content || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');

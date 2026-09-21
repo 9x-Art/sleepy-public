@@ -247,7 +247,7 @@
       { role: 'system', content: sys },
       { role: 'user', content: user }
     ], {}).then(function (res) {
-      if (!res.ok) return { ok: false, error: res.message || '请求失败' };
+      if (!res.ok) return { ok: false, error: Sleepy.api.describeError(res) };
       var raw = String(res.content || '').trim()
         .replace(/^```(?:markdown|text)?\s*|\s*```$/g, '')
         .replace(/^["「」]+|["「」]+$/g, '').trim();
