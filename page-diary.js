@@ -142,7 +142,11 @@
     var force = !!opts.force;
     var st = settings();
     if (!st.auto && !force) return Promise.resolve({ ok: false, why: 'off' });
-    var ch = (core.activeChar && core.activeChar()) || null;
+    /* 指针卫兵：写日记的人必须在本岛名册里 —— 指针停在上一个岛的人身上时
+       宁可不写，也绝不能替别的岛的 TA 代笔（清查 §5.1）。 */
+    var ch = core.activeCharOnIsland
+      ? core.activeCharOnIsland()
+      : (core.activeChar ? core.activeChar() : null);
     if (!ch) return Promise.resolve({ ok: false, why: 'nochar' });
 
     var key = autoStateKey(ch.id);
@@ -375,8 +379,11 @@
       });
       bChar.addEventListener('click', function () {
         closeSheet();
-        var ch = (core.activeChar && core.activeChar()) || null;
-        if (!ch) { ctx.toast('先去名片夹加一个角色', 'warn'); return; }
+        /* 卫兵同 autoCheck：别岛的人不能替写 */
+        var ch = core.activeCharOnIsland
+          ? core.activeCharOnIsland()
+          : (core.activeChar ? core.activeChar() : null);
+        if (!ch) { ctx.toast('这座岛还没选人 —— 先落岛选一位，或去切号器换', 'warn'); return; }
         ctx.toast('TA 正在构思…', 'ok');
         autoCheck({ force: true }).then(function (r) {
           if (r.ok) {
@@ -563,8 +570,9 @@
         } else {
           var item = addEntry({ author: 'user', content: text, mediaId: myPic || '' });
           /* 递一张「TA 写了日记」的字条：下一轮对话里 TA 会知道，
-             可以选择偷看 / 尊重隐私 / 直接问你能不能看（见 page-chat diaryPeekMsg） */
-          var ch = (core.activeChar && core.activeChar()) || null;
+             可以选择偷看 / 尊重隐私 / 直接问你能不能看（见 page-chat diaryPeekMsg）。
+             卫兵：字条只递给本岛的人 —— 指针残留时宁可不递。 */
+          var ch = core.activeCharOnIsland ? core.activeCharOnIsland() : null;
           if (ch) store.set('diaryPeek:' + ch.id, { entryId: item.id, at: Date.now() });
         }
         ctx.toast('收进本子里了', 'ok');
@@ -644,7 +652,10 @@
         body.appendChild(g1.wrap);
 
         /* ---- 自动日记 ---- */
-        var ch = (core.activeChar && core.activeChar()) || null;
+        /* 展示也过卫兵：说的得是「这座岛会写的那个人」 */
+        var ch = core.activeCharOnIsland
+          ? core.activeCharOnIsland()
+          : (core.activeChar ? core.activeChar() : null);
         var g2 = ui.group('自动日记',
           '到点后第一次打开小手机时，「' + (ch ? ch.name : 'TA') + '」会自己补上。不弹通知，安静地写。');
 

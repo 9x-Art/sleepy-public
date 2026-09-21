@@ -643,15 +643,89 @@
 
       /* ---- 我的马甲 ---- */
       var gMask = group('我的马甲',
-        '选这间房里「我」有哪几张脸。马甲本身在「我 → 设置 → 小号」里建。');
+        '这座岛自己的马甲 —— 别岛的不带过来（岛与岛隔绝往来）。' +
+        '想要同一个人设，点「从别的岛复制一件」。新的在「我 → 设置 → 小号」里建。');
       var maskBox = h('div', 'cfg-masks');
       gMask.card.appendChild(maskBox);
 
+      var copyRow = h('button', 'cfg-mask cfg-mask-copy');
+      copyRow.type = 'button';
+      copyRow.appendChild(h('span', 'cfg-check', ''));
+      copyRow.appendChild(h('span', 'cfg-char-body'));
+      var copyOpen = false;
+      var copyList = null;
+      copyRow.addEventListener('click', function () {
+        copyOpen = !copyOpen;
+        paintCopyList();
+      });
+
+      function paintCopyList() {
+        if (copyList && copyList.parentNode) copyList.parentNode.removeChild(copyList);
+        copyList = null;
+        copyRow.classList.toggle('is-on', copyOpen);
+        copyRow.querySelector('.cfg-char-body').innerHTML = '';
+        copyRow.querySelector('.cfg-char-body').appendChild(
+          h('span', 'cfg-char-name', copyOpen ? '收起' : '从别的岛复制一件马甲'));
+        if (!copyOpen) return;
+        copyList = h('div', 'cfg-masks');
+        var found = 0;
+        (core.listSandboxes() || []).forEach(function (other) {
+          if (other.id === sb.id) return;
+          var otherName = other.name || other.title || '未命名岛';
+          /* 按**岛章**列，不按名册 —— 新建的马甲打了章还没勾进名册，
+             也应该能被复制；反过来名册里挂着但章是别岛的记录不该出现 */
+          core.userMasks().forEach(function (u) {
+            if (!u || u.sandboxId !== other.id) return;
+            found++;
+            var line = h('button', 'cfg-mask');
+            line.type = 'button';
+            line.appendChild(h('span', 'cfg-check', ''));
+            var mb = h('div', 'cfg-char-body');
+            mb.appendChild(h('span', 'cfg-char-name', u.name));
+            mb.appendChild(h('span', 'cfg-char-line', '来自 ' + otherName));
+            line.appendChild(mb);
+            line.addEventListener('click', function () {
+              /* 深拷贝成**本岛的新马甲**（新 id + 本岛章）——
+                 不是把别岛那件拉进来，两件从此各长各的 */
+              var nu = core.upsertUser({
+                name: u.name,
+                persona: u.persona || '',
+                note: u.note || '',
+                city: u.city || '',
+                region: u.region || '',
+                timezone: u.timezone || '',
+                avatar: u.avatar || ''
+              });
+              var next = (sb.maskIds || []).slice();
+              if (next.indexOf(nu.id) < 0) next.push(nu.id);
+              var r = core.setSandboxMasks(sb.id, next);
+              if (!r.ok) { ctx.toast(r.message, 'err'); return; }
+              sb = r.sandbox;
+              copyOpen = false;
+              ctx.toast('已复制「' + nu.name + '」到这座岛', 'ok');
+              paintMasks(); paintCopyList(); paintLocks(); paintTree();
+            });
+            copyList.appendChild(line);
+          });
+        });
+        if (!found) {
+          copyList.appendChild(h('p', 'cfg-empty', '别的岛上还没有马甲'));
+        }
+        maskBox.parentNode.insertBefore(copyList, copyRow.nextSibling);
+      }
+
       function paintMasks() {
         maskBox.innerHTML = '';
-        var users = core.userMasks();
+        /* 只列**本岛**的马甲（马甲按岛，2026-09-21 拍板）——
+           别岛的那件对这座岛不存在，列出来就是诱导跨岛共用一个身份 */
+        var sid = sb.id;
+        var users = core.userMasks().filter(function (u) {
+          return u && u.sandboxId === sid;
+        });
         if (!users.length) {
-          maskBox.appendChild(h('p', 'cfg-empty', '还没有马甲 · 先去「我」里建一件'));
+          maskBox.appendChild(h('p', 'cfg-empty',
+            '这座岛还没有马甲 · 在「我 → 设置 → 小号」里建，或从别的岛复制一件'));
+          paintCopyList();
           return;
         }
         var picked = sb.maskIds || [];
@@ -715,8 +789,11 @@
         });
       }
 
+      gMask.card.appendChild(copyRow);
       body.appendChild(gMask.wrap);
       body.appendChild(gLock.wrap);
+
+      paintMasks(); paintCopyList();
 
       /* ---- 降落 ---- */
       var footer = h('div', 'cfg-footer');
@@ -1130,6 +1207,9 @@
 
     Sleepy.nav.closeAll();
 
+    /* 换岛 = 换数据也换视觉：岛的穿着/主题覆盖跟着活动岛重放
+       （岛覆盖 > 全局）。不重放的话，新岛还穿着上一座岛的衣服。 */
+    if (Sleepy.appearance && Sleepy.appearance.apply) Sleepy.appearance.apply();
     var home = document.querySelector('.page[data-page="home"]');
     if (home && Sleepy.__homeCtx && Sleepy.__homeCtx.repaint) Sleepy.__homeCtx.repaint();
 

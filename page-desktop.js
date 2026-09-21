@@ -10,11 +10,11 @@
      不在代码里写死。这样以后加拖拽只要改数据，不用动渲染。
    · 自由加组件：除了 App 图标，还能加情绪印章、照片墙等大尺寸组件。
    · 原位替换：切号时格子里的**数据**和**视觉皮肤**跟着当前角色瞬间切换。
-     户型（x/y/w/h）走「**全局一份 + 按存档覆盖**」：user 没动过桌面的岛
-     大家共用同一张（升级 LAYOUT_VERSION 全员一起变）；
-     user 动过哪个岛，那个岛就按他摆的来（覆盖层只记改动的格子），
+     户型（x/y/w/h）走「**全局一份 + 按岛覆盖**」（2026-09-21 拍板：岛覆盖 > 全局）：
+     user 没动过桌面的岛大家共用同一张（升级 LAYOUT_VERSION 全员一起变）；
+     user 在哪座岛摆过，就给那座岛记一份完整布局（desktop.islands[sbId]），
+     读写都按活动岛路由（getDesktop 叠 / setDesktop 写），
      但 **App 集合永远完整** —— 改的是摆哪/长什么样，不是装了什么。
-     （覆盖层的实现归 P3「每岛独立美化」，现在还没有分叉能力。）
 
    ---- 4 屏的分工 ----
      第 0 屏（负一屏）照片墙 —— 角色愿意给你看的那些画面
@@ -101,7 +101,8 @@
   /* ---------------------------- 默认布局 ---------------------------- */
 
   /* 「户型」是 base（全局一份），切号时不动 ——
-     user 自定义了哪个岛，就给那个存档记一份覆盖（P3 做，见文件头注释）。
+     user 在哪座岛自定义过，就给那座岛记一份覆盖（desktop.islands[sbId]，
+     读写见 getDesktop/setDesktop）。
      每一格：{ i:id, app:页面id | null, type:组件类型, x,y,w,h, label }
      坐标是 1-based 的 CSS Grid 线（第 2 行起），跟 grid-area 直接对应。
 
@@ -277,7 +278,7 @@
     if (!d || !Array.isArray(d.pages) || d.pages.length !== PAGES) {
       d = defaultDesktop();
       store.set('desktop', d);
-      return d;
+      return withIslandOverlay(d);
     }
 
     /* 有存档但户型版本旧：迁移。
@@ -288,7 +289,53 @@
       d = migrateDesktop(d, LAYOUT_VERSION);
       store.set('desktop', d);
     }
-    return d;
+    return withIslandOverlay(d);
+  }
+
+  /* ---- 户型的岛覆盖层（2026-09-21 拍板：岛覆盖 > 全局）----
+     user 在哪座岛上摆过桌面，就给那座岛记一份**完整布局**
+     （desktop.islands[sbId]，跟外观穿着的 islands 同一套心智）；
+     没动过的岛继续共用全局那份 —— LAYOUT_VERSION 升级时全员一起变。
+     读：getDesktop() 按活动岛叠；写：**只能走 setDesktop()**，它负责
+     把改动落到对的层（岛覆盖 / 全局底座），别直接 store.set('desktop')。 */
+  function activeIslandId() {
+    try {
+      var sb = core.activeSandbox();
+      return sb ? sb.id : '';
+    } catch (e) { return ''; }
+  }
+
+  function withIslandOverlay(base) {
+    var sbId = activeIslandId();
+    if (!sbId || !base) return base;
+    var ov = base.islands && base.islands[sbId];
+    if (!ov || !Array.isArray(ov.pages) || ov.pages.length !== PAGES) return base;
+    /* 覆盖层也跟着户型版本走：旧了就地迁移，别让某座岛卡在老布局上 */
+    if ((ov.version || 1) < LAYOUT_VERSION) {
+      ov = migrateDesktop(ov, LAYOUT_VERSION);
+      base.islands[sbId] = ov;
+      store.set('desktop', base);
+    }
+    return ov;
+  }
+
+  function setDesktop(d) {
+    var sbId = activeIslandId();
+    if (!sbId) { store.set('desktop', d); return; }
+    var base = store.get('desktop');
+    if (!base || !Array.isArray(base.pages) || base.pages.length !== PAGES) {
+      base = defaultDesktop();
+    }
+    base.islands = base.islands || {};
+    var ov = base.islands[sbId];
+    if (!ov || !Array.isArray(ov.pages) || ov.pages.length !== PAGES) {
+      /* 这座岛第一次自定义：当前生效的布局（多半是全局那份 + 这次的改动）
+         整份复制下来当岛的底 —— 全局那份保持不动，别的岛不受牵连。 */
+      base.islands[sbId] = JSON.parse(JSON.stringify(d));
+    } else {
+      base.islands[sbId] = d;
+    }
+    store.set('desktop', base);
   }
 
   /* 把老存档迁到当前户型版本。
@@ -552,7 +599,10 @@
   }
 
   function skin() {
-    var c = core.activeChar();
+    /* 指针卫兵：当前 char 必须在本岛名册里。群岛落岛有意不替人选，
+       全局指针还停在上一个岛的人身上时，这里宁可显示「还没有角色」，
+       也不能把别的岛的人摆上来（清查 §5.1）。 */
+    var c = core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar();
     var u = core.activeUser();
     var mood = '';
     if (c) {
@@ -561,11 +611,19 @@
       mood = c.mood || MOODS[hashOf(c.id) % MOODS.length];
       if (c.mood && c.moodAt && Date.now() - c.moodAt > 86400000) mood = MOODS[hashOf(c.id) % MOODS.length];
     }
+    /* 空态文案要分清「岛上没人」和「岛上有人但还没选」——
+       后者提示去选人，别让人误以为房是空的。 */
+    var roster = 0;
+    try {
+      var sbNow = core.activeSandbox();
+      if (sbNow) roster = (core.charsOfSandbox(sbNow) || []).length;
+    } catch (e) { /* 忽略 */ }
     return {
       char: c,
       user: u,
-      name: c ? c.name : '还没有角色',
-      status: (c && c.status) || (c ? '在线' : '去浮岛开一间房'),
+      name: c ? c.name : (roster ? '还没选人' : '还没有角色'),
+      status: (c && c.status) ||
+        (c ? '在线' : (roster ? '从桌面下拉或切号器选一位' : '去浮岛开一间房')),
       mood: mood,
       battery: c && typeof c.battery === 'number' ? c.battery : 40
     };
@@ -579,7 +637,8 @@
   }
 
   function saveActive(patch) {
-    var c = core.activeChar();
+    /* 写路径同样过卫兵 —— 换心情写进上一个岛的角色是清查 §5.1 的真违规 */
+    var c = core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar();
     if (!c) return false;
     var list = core.allChars();
     for (var i = 0; i < list.length; i++) {
@@ -657,13 +716,16 @@
   }
 
   /* 删掉的组件记一笔 —— 组件商城以后要拿它当「你手里有过哪些」的清单。
-     现在只留下记录，没有恢复入口（商城是后面那批）。 */
+     现在只留下记录，没有恢复入口（商城是后面那批）。
+     记录盖当前房的章（tagScope）：删岛时按章清掉，不留幽灵岛的回收站。 */
   function rememberRemoved(cell) {
     var list = store.get('desktopRemoved') || [];
-    list.push({
+    var rec = {
       type: cell.type, app: cell.app || '', label: cell.label || '',
       w: cell.w, h: cell.h, at: Date.now()
-    });
+    };
+    if (core.tagScope) core.tagScope(rec);
+    list.push(rec);
     store.set('desktopRemoved', list.slice(-60));
   }
 
@@ -678,8 +740,9 @@
       if (at < 0) continue;
 
       list.splice(at, 1);
-      /* 整体写回（store.get 给的是副本，改完要 set 一次） */
-      store.set('desktop', d);
+      /* 整体写回 —— 走 setDesktop（岛覆盖 > 全局，写错层 = 改了别的岛）
+         store.get 给的是副本，改完要 set 一次 */
+      setDesktop(d);
       rememberRemoved(cell);
 
       if (ctx.repaint) ctx.repaint();
@@ -1616,6 +1679,9 @@
       }
       core.saveSandboxes(all);
       close();
+      /* 换岛 = 换数据也换视觉：岛的穿着/主题覆盖跟着活动岛重放
+         （岛覆盖 > 全局）。不重放的话，新岛还穿着上一座岛的衣服。 */
+      if (Sleepy.appearance && Sleepy.appearance.apply) Sleepy.appearance.apply();
       if (ctx.repaint) ctx.repaint();
       ctx.toast('降落了', 'ok');
     }
@@ -1859,8 +1925,9 @@
   }
 
   function cycleMood(ctx) {
-    var c = core.activeChar();
-    if (!c) { ctx.toast('先去浮岛开一间房、放个角色', 'warn'); return; }
+    /* 写路径过卫兵：指针停在上一个岛的人身上时，绝不能把心情写过去 */
+    var c = core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar();
+    if (!c) { ctx.toast('这座岛还没选人 —— 用桌面下拉或切号器选一位', 'warn'); return; }
     var cur = c.mood || skin().mood;
     var idx = MOODS.indexOf(cur);
     var next = MOODS[(idx + 1 + MOODS.length) % MOODS.length];
@@ -2024,9 +2091,9 @@
       if (list[i].i !== cellId) continue;
       list[i].x = x; list[i].y = y;
     }
-    /* 整体写回。store.set 存的是 JSON 字符串，改一份新的再存，
-       不去原地改深拷贝（store.get 返回的是副本）。 */
-    store.set('desktop', d);
+    /* 整体写回 —— 走 setDesktop（岛覆盖 > 全局）。store.set 存的是 JSON 字符串，
+       改一份新的再存，不去原地改深拷贝（store.get 返回的是副本）。 */
+    setDesktop(d);
   }
 
   function cancelCellDrag() {
@@ -2427,6 +2494,9 @@
   Sleepy.desktop = {
     defaultDesktop: defaultDesktop,
     getDesktop: getDesktop,
+    /* 布局写入唯一入口：活动岛有覆盖就写岛的覆盖，没有就写全局底座。
+       组件商城 addWidget 也走它 —— 别直接 store.set('desktop')。 */
+    setDesktop: setDesktop,
     skin: skin,
     ICONS: ICONS,
     icon: ic,

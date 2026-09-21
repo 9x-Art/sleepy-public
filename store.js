@@ -648,7 +648,6 @@
 
       var users = get('userMasks');
       if (!Array.isArray(users)) users = [];
-      var desk = get('desktop');
 
       var sb = {
         id: 'sbmig' + Date.now().toString(36),
@@ -660,13 +659,9 @@
           return (c.kind || 'main') === 'main';
         }).map(function (c) { return c.id; }),
         maskIds: users.map(function (u) { return u.id; }),
-        /* theme 留 null = 跟随系统外观。
-           **不是**把 appearance 抄一份进来：施工卡原文写的是「appearance 搬进 theme」，
-           但那样每间房就永久脱离了系统主题，而 P3 还没定 theme 长什么样。
-           留 null 表达「跟随系统」，P3 里用户真改过才写入 —— 行为等价，且不猜形状。 */
-        theme: null,
-        deskVersion: (desk && desk.version) || null,
-        pages: (desk && Array.isArray(desk.pages)) ? desk.pages : null,
+        /* 每岛外观/户型的权威挂点是 appearance.desktop.islands[sbId] 与
+           desktop.islands[sbId]（岛覆盖叠全局），**不**在 sandbox 记录上 ——
+           以前这里预留的 theme/deskVersion/pages 三个口子没人读，已收编删除。 */
         createdAt: Date.now(),
         updatedAt: Date.now()
       };

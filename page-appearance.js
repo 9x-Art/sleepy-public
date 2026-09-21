@@ -14,7 +14,10 @@
    其余语义：
      · 应用范围 = 全局默认 / 指定岛屿（**列出全部岛**选着改 ——
        外观是全局性 App，不绑当前激活岛）；岛只存覆盖过的键。
-     · 配色/字号是全局的，范围只管桌面穿着（壁纸/图标/大字）。
+     · 「岛覆盖 > 全局」（2026-09-21 拍板）：apply/applyDesktop 永远
+       「有岛覆盖用岛覆盖，没有回落全局」，没有第二道开关。
+     · 配色跟编辑目标走（编辑岛时色板写进岛的覆盖）；
+       字号/动效/字体/正文字色始终是全局的。
      · 单 App 覆盖（appearance-app 子页）是独立操作、即时落档，
        不走草稿 —— 「应用名称」本身就是明确的保存动作。
      · 自定义字体 URL：字体文件直链（woff2/ttf/otf），
@@ -280,7 +283,18 @@
     var a = get();
     var phone = document.getElementById('phone');
     if (phone) {
-      phone.setAttribute('data-theme', a.theme);
+      /* 配色也跟岛走（岛覆盖 > 全局）：岛覆盖里存了 theme 就用岛的，
+         没有回落全局主题。编辑入口在外观页 —— 编辑目标选了哪座岛，
+         色板就写进哪座岛的覆盖。 */
+      var sbId = '';
+      try {
+        var sb = Sleepy.core && Sleepy.core.activeSandbox();
+        if (sb) sbId = sb.id;
+      } catch (e) { /* 忽略 */ }
+      /* get() 只给缺省视图（DEFAULTS 那几个键），islands 要读原始档 */
+      var raw = store.get('appearance') || {};
+      var isl = sbId && raw.desktop && raw.desktop.islands ? raw.desktop.islands[sbId] : null;
+      phone.setAttribute('data-theme', (isl && isl.theme) || a.theme);
       phone.setAttribute('data-motion', a.motion === 'off' ? 'off' : 'on');
       phone.style.setProperty('--fs-scale', String(a.fontScale));
       /* 正文字颜色：inline 覆盖主题块的 --g-ink（--text 是它的别名）；
@@ -312,13 +326,16 @@
   function applyDesktop() {
     var a = store.get('appearance') || {};
     var d = a.desktop || {};
+    /* 岛覆盖 > 全局（2026-09-21 拍板）：只要人在某座岛上，有岛覆盖就叠上去，
+       没有就回落全局。以前这里有个全局开关 desktop.scope 闸着
+       （scope==='global' 时有覆盖也不看），那就是「换了岛桌面外观没换」的根因，
+       已删 —— 编辑目标（改全局还是改某座岛）由外观页里的应用范围选择器管，
+       消费端不再需要第二道闸。 */
     var sbId = '';
-    if (d.scope === 'island') {
-      try {
-        var sb = Sleepy.core && Sleepy.core.activeSandbox();
-        if (sb) sbId = sb.id;
-      } catch (e) { /* 忽略 */ }
-    }
+    try {
+      var sb = Sleepy.core && Sleepy.core.activeSandbox();
+      if (sb) sbId = sb.id;
+    } catch (e) { /* 忽略 */ }
     var phone = document.getElementById('phone');
     if (phone) {
       phone.setAttribute('data-icstyle', deskCfgOf(d, sbId).icons || 'glass');
@@ -468,8 +485,12 @@
   function buildPreview() {
     var t = draftTarget();
     var cfg = draftCfg(t.sbId);
+    /* 预览的是编辑目标生效中的主题（岛的覆盖优先，回落全局草稿） */
+    var themeId = t.scope === 'island'
+      ? ((draft.desktop.islands[t.sbId] || {}).theme || draft.theme)
+      : draft.theme;
     var theme = null;
-    THEMES.forEach(function (x) { if (x.id === draft.theme) theme = x; });
+    THEMES.forEach(function (x) { if (x.id === themeId) theme = x; });
     var wall = null;
     WALLS.forEach(function (w) { if (w.id === cfg.wall) wall = w; });
 
@@ -599,7 +620,7 @@
         var t = draftTarget();
 
         /* ---- 应用范围 ---- */
-        var g0 = group('应用范围', '改壁纸、图标、大字时对着谁改。配色和字号始终是全局的。');
+        var g0 = group('应用范围', '改壁纸、图标、配色时对着谁改。字号、动效、字体始终是全局的。');
         var seg = h('div', 'look-seg');
         [
           { v: 'global', n: '全局默认' },
@@ -654,11 +675,18 @@
         gP.card.appendChild(buildPreview());
         body.appendChild(gP.wrap);
 
-        /* ---- 配色（全局） ---- */
-        var g1 = group('配色', '换的是整套色板，整部手机的事 —— 不随岛变。');
+        /* ---- 配色（跟编辑目标走：编辑岛时只写岛的覆盖） ---- */
+        var g1 = group('配色',
+          t.scope === 'island'
+            ? '只换这座岛的整套色板，别的岛和全局默认不动。'
+            : '换的是整套色板。岛上单独设过配色的不受影响，没设的跟着换。');
         var wrap = h('div', 'look-grid');
+        /* 当前编辑目标生效中的主题：岛的覆盖优先，回落全局草稿 */
+        var themeId = t.scope === 'island'
+          ? ((draft.desktop.islands[t.sbId] || {}).theme || draft.theme)
+          : draft.theme;
         THEMES.forEach(function (th) {
-          var b = h('button', 'look-card' + (draft.theme === th.id ? ' is-on' : ''));
+          var b = h('button', 'look-card' + (themeId === th.id ? ' is-on' : ''));
           b.type = 'button';
           var sw = h('span', 'look-sw');
           sw.style.background = th.chip;
@@ -666,7 +694,8 @@
           b.appendChild(h('span', 'look-card-name', th.name));
           b.appendChild(h('span', 'look-card-hint', th.hint));
           b.addEventListener('click', function () {
-            draft.theme = th.id;
+            if (t.scope === 'island') draftSetDesk({ theme: th.id });
+            else draft.theme = th.id;
             markDirty();
             paint();
           });

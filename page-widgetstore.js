@@ -134,7 +134,8 @@
     };
     if (def.app) cell.app = def.app;
     d.pages[spot.pi].push(cell);
-    store.set('desktop', d);
+    /* 走 setDesktop：改的是活动岛的覆盖层还是全局底座，由它路由（岛覆盖 > 全局） */
+    Sleepy.desktop.setDesktop(d);
     return { ok: true, cell: cell, page: spot.pi };
   }
 

@@ -1083,13 +1083,19 @@
 
       var g = group('User 马甲',
         '「极致的 1:1 对称」：Char 有几个皮套，你就该有几件马甲。' +
-        '切号时，选中的马甲决定整个 OS 里「我」是谁。');
+        '切号时，选中的马甲决定整个 OS 里「我」是谁。' +
+        '马甲跟岛走：在哪座岛的界面里建就归哪座岛，别岛的不在这里出现。');
 
       var card = g.card;
 
       function rebuild() {
         card.innerHTML = '';
-        var list = core.userMasks();
+        /* 只列本岛的马甲（马甲按岛，2026-09-21 拍板）。
+           没有活动房时不过滤 —— 那是「还没分房」的状态，全列出来。 */
+        var sid = core.scopeId ? core.scopeId() : null;
+        var list = core.userMasks().filter(function (u) {
+          return u && (!sid || u.sandboxId === sid);
+        });
         var activeId = store.get('activeUserId');
         var real = core.activeUser();
         if (!activeId || !core.findUser(activeId)) {

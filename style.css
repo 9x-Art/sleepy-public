@@ -5481,6 +5481,10 @@ span.msg-avatar-initial{
   background:rgba(255,255,255,.5);font-family:inherit;text-align:left;cursor:pointer;
 }
 .cfg-mask.is-on{border-color:rgba(111,184,106,.5);background:rgba(111,184,106,.12);}
+/* 配置台的「从别的岛复制一件马甲」行：虚线边 + 淡字，跟上面的勾选行区分开 */
+.cfg-mask-copy{border-style:dashed;background:transparent;}
+.cfg-mask-copy .cfg-char-name{color:var(--text-dim);}
+.cfg-mask-copy.is-on{border-color:var(--g-glass-line);background:rgba(255,255,255,.5);}
 .cfg-check{
   flex:none;width:20px;height:20px;border-radius:6px;
   border:1px solid var(--g-glass-line);display:flex;align-items:center;

@@ -145,9 +145,10 @@
       cover: '',
       charIds: [],
       maskIds: [],
-      theme: null,       /* 每岛一套配色 + 字体，P3 填 */
-      deskVersion: null, /* 每岛一份完整户型，P3 填 */
-      pages: null,
+      /* 每岛外观/户型的**权威挂点不在这里** ——
+         外观穿着叠在 appearance.desktop.islands[sbId]、户型叠在 desktop.islands[sbId]
+         （「岛覆盖 > 全局」，2026-09-21 拍板）。以前在这里预留的
+         theme/deskVersion/pages 三个口子没人读过，已收编删除，别再加回来。 */
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -266,6 +267,29 @@
       store.set(key, keep);
       removed[key] = gone;
     });
+
+    /* 岛级覆盖层（「岛覆盖 > 全局」那套）：外观穿着叠在 appearance.desktop.islands、
+       户型叠在 desktop.islands，键就是 sbId —— 删房不清的话，下次建同 id 的房
+       （概率极低但不是零）会穿上一座幽灵岛的穿着。desktopRemoved 的记录在
+       写入时盖了章（page-desktop rememberRemoved），按章过滤。 */
+    var look = store.get('appearance');
+    if (look && look.desktop && look.desktop.islands && look.desktop.islands[id]) {
+      delete look.desktop.islands[id];
+      store.set('appearance', look);
+      removed.appearanceIslands = 1;
+    }
+    var desk = store.get('desktop');
+    if (desk && desk.islands && desk.islands[id]) {
+      delete desk.islands[id];
+      store.set('desktop', desk);
+      removed.desktopIslands = 1;
+    }
+    var dr = arr(store.get('desktopRemoved'));
+    var drKeep = dr.filter(function (r) { return !(r && r.sandboxId === id); });
+    if (drKeep.length !== dr.length) {
+      store.set('desktopRemoved', drKeep);
+      removed.desktopRemoved = dr.length - drKeep.length;
+    }
 
     if (store.get('activeSandboxId') === id) store.set('activeSandboxId', null);
 
@@ -518,6 +542,9 @@
       isDefault: true,
       createdAt: Date.now()
     };
+    /* 这件兜底「我」**故意不打章**：它是「连一件马甲都没有」时的最后兜底，
+       盖了章就只属于第一个岛，别的岛连兜底都没有了。真正的马甲走
+       upsertUser，按岛打章。 */
     saveUsers([mask]);
     return mask;
   }
@@ -550,6 +577,10 @@
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
+      /* 马甲按岛（2026-09-21 拍板：马甲是 user 的小号，跟 char 同一原理 ——
+         捆绑岛屿、各岛各的；想要别的岛也有这个人设，复制过去就是一件新的）。
+         调用方没显式给 sandboxId 时盖当前房的章，否则删岛不清、名册语义失效。 */
+      if (!hit.sandboxId) tagScope(hit);
       list.push(hit);
     }
     saveUsers(list);
@@ -578,6 +609,22 @@
       return rootOf(c.id) || c;
     }
     return c || mainChars()[0] || null;
+  }
+
+  /* ------------------------ 指针卫兵（2026-09-21 第 2 批）------------------------
+     群岛从浮岛降落时**有意不替人选**身份（landInto，身份留给切号器/桌面下拉），
+     但全局指针 activeCharId 还停在上一个岛的人身上 —— 读侧没卫兵的话，
+     桌面组件和日记就顺着错误指针显示、甚至把心情**写**进上一个岛的角色
+     （清查-换岛数据 §5.1 的两处违规）。
+     修法 = 日历 viewSyncSandbox（page-calendar.js）的模式：
+     当前 char 必须在**本岛名册**里，否则一律按「没选人」处理。
+     桌面组件、日记等所有「跟着当前身份走」的读写都从这里拿人，别直接 activeChar()。 */
+  function activeCharOnIsland() {
+    var sb = activeSandbox();
+    var c = activeChar();
+    if (!sb || !c) return null;
+    if ((c.kind || 'main') !== 'main') return null;
+    return arr(sb.charIds).indexOf(c.id) >= 0 ? c : null;
   }
 
   /* 系统级切号（时空切换器）。改的是全局的「现在是谁」——
@@ -801,7 +848,12 @@
   }
 
   function unawareNote(userId) {
-    var others = userMasks().filter(function (u) { return u.id !== userId; });
+    /* 只提**本岛**的其它马甲 —— 马甲按岛（2026-09-21 拍板），
+       别岛的马甲对这段关系来说不存在，名字不该出现在提示词里。 */
+    var sid = scopeId();
+    var others = userMasks().filter(function (u) {
+      return u.id !== userId && (!sid || u.sandboxId === sid);
+    });
     if (!others.length) return '';
     var names = others.map(function (u) { return u.name; }).join('、');
     return [
@@ -1017,6 +1069,7 @@
     charsOfSandbox: charsOfSandbox,
     masksOfSandbox: masksOfSandbox,
     needsCharPick: needsCharPick,
+    activeCharOnIsland: activeCharOnIsland,
 
     /* 作用域过滤：业务数据的读写统一走这两个 */
     scoped: scoped,

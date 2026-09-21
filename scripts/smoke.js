@@ -762,6 +762,103 @@ t('移出岛：本体保留、章摘掉（universeOf 一起摘）', () => {
   return { 本体保留: true, 章已摘: true, 拆岛不误删: true };
 });
 
+/* 2026-09-21 拍板（马甲按岛）：马甲是 user 的小号，跟 char 同一原理 ——
+   捆绑岛屿、各岛各的；想要别岛同款就复制过去（= 新建一件打新岛的章）。 */
+t('马甲按岛：新建即打章 + 复制是新记录 + 拆岛连马甲清', () => {
+  const sbA = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sbA.id);
+  const u1 = S.core.upsertUser({ name: '岛上马甲', persona: 'A 岛的我' });
+  if (u1.sandboxId !== sbA.id) throw new Error('新建马甲没打岛的章');
+
+  const sbB = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sbB.id);
+  const u2 = S.core.upsertUser({ name: '别岛马甲' });
+  if (u2.sandboxId !== sbB.id) throw new Error('B 岛新建的马甲打成了别的章');
+
+  /* 「复制过去」= 一件新的：新 id + 本岛章，两件从此各长各的 */
+  const uc = S.core.upsertUser({ name: u1.name, persona: u1.persona });
+  if (uc.id === u1.id) throw new Error('复制不该是同一条记录');
+  if (uc.sandboxId !== sbB.id) throw new Error('复制出的马甲没打本岛的章');
+
+  const r = S.core.removeSandbox(sbB.id);
+  if (!r.ok) throw new Error(r.message);
+  if (S.core.findUser(u2.id) || S.core.findUser(uc.id)) throw new Error('拆岛后马甲还留着');
+  if (!S.core.findUser(u1.id)) throw new Error('拆 B 岛不该动 A 岛的马甲');
+  S.core.removeSandbox(sbA.id);
+  return { 新建打章: true, 复制是新记录: true, 拆岛清马甲: true };
+});
+
+/* 岛覆盖 > 全局：外观穿着 / 户型的岛覆盖层叠在全局上，
+   拆岛时覆盖层跟岛一起清（appearance.desktop.islands / desktop.islands /
+   盖了章的 desktopRemoved）。 */
+t('岛覆盖：deskCfg 岛覆盖叠全局 + 拆岛清覆盖层', () => {
+  const sbA = S.core.createSandbox('archipelago');
+  const sbB = S.core.createSandbox('archipelago');
+
+  const a = S.store.get('appearance') || {};
+  a.desktop = a.desktop || {};
+  a.desktop.global = { wall: 'auto', icons: 'glass', large: false };
+  a.desktop.islands = {};
+  a.desktop.islands[sbA.id] = { wall: 'dusk', theme: 'night' };
+  S.store.set('appearance', a);
+
+  const cfgA = S.appearance.deskCfg(sbA.id);
+  const cfgB = S.appearance.deskCfg(sbB.id);
+  if (cfgA.wall !== 'dusk') throw new Error('A 岛的壁纸覆盖没生效');
+  if (cfgA.theme !== 'night') throw new Error('A 岛的主题覆盖没生效');
+  if (cfgB.wall !== 'auto') throw new Error('没覆盖的岛应回落全局');
+
+  /* 户型覆盖层 + 盖章的组件删除记录 */
+  const desk = S.store.get('desktop');
+  desk.islands = {};
+  desk.islands[sbA.id] = JSON.parse(JSON.stringify(S.desktop.defaultDesktop()));
+  S.store.set('desktop', desk);
+  S.store.set('desktopRemoved', [
+    { type: 'app', app: 'diary', sandboxId: sbA.id },
+    { type: 'app', app: 'wallet', sandboxId: sbB.id }
+  ]);
+
+  const r = S.core.removeSandbox(sbA.id);
+  if (!r.ok) throw new Error(r.message);
+  if (S.store.get('appearance').desktop.islands[sbA.id]) throw new Error('拆岛没清外观覆盖');
+  if (S.store.get('desktop').islands[sbA.id]) throw new Error('拆岛没清户型覆盖');
+  if (S.store.get('desktopRemoved').some((x) => x.sandboxId === sbA.id)) {
+    throw new Error('拆岛没清该岛的组件删除记录');
+  }
+  S.core.removeSandbox(sbB.id);
+  S.store.set('desktopRemoved', []);
+  return { 岛覆盖生效: true, 回落全局: true, 拆岛清覆盖: true };
+});
+
+/* 指针卫兵（第 2 批）：群岛落岛有意不替人选 → 全局指针停在上一个岛的人身上，
+   读侧必须按「没选人」处理，绝不顺着旧指针显示/写数据。 */
+t('指针卫兵：本岛有效、别岛指针拦下、switchTo 恢复', () => {
+  const sbA = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sbA.id);
+  const a1 = S.core.upsertChar({ name: 'A岛人', kind: 'main' });
+  S.core.setSandboxChars(sbA.id, [a1.id]);
+  S.core.switchTo(a1.id, undefined);
+  if (!S.core.activeCharOnIsland()) throw new Error('本岛的人被卫兵误拦');
+
+  const sbB = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sbB.id);
+  const b1 = S.core.upsertChar({ name: 'B岛人', kind: 'main' });
+  S.core.setSandboxChars(sbB.id, [b1.id]);
+  /* 不 switchTo —— 模拟群岛落岛不替人选：指针还停在 A 岛的人身上 */
+  const g = S.core.activeCharOnIsland();
+  if (g) throw new Error('上岛的「' + g.name + '」被卫兵放行了');
+  if (S.core.activeChar().id !== a1.id) throw new Error('前提没了：activeChar 本身就该还是 A 岛的人');
+
+  /* 桌面下拉 / 切号器选人之后恢复 */
+  S.core.switchTo(b1.id, undefined);
+  const g2 = S.core.activeCharOnIsland();
+  if (!g2 || g2.id !== b1.id) throw new Error('switchTo 之后卫兵没放行');
+  /* 皮套也不行：桌面跟大号走，但得是本岛大号 */
+  S.core.removeSandbox(sbA.id);
+  S.core.removeSandbox(sbB.id);
+  return { 本岛放行: true, 别岛拦截: true, 选人恢复: true };
+});
+
 /* 小号是「大号对外用的另一张脸」：挂在大号名下、按房建，
    但**不是房成员** —— 它在哪儿出场由它的大号决定。 */
 t('小号挂在大号名下、按房建，但不占房成员名额', () => {
