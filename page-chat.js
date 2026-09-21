@@ -164,7 +164,11 @@
   function viewChats() {
     var list = getChats();
     var core = Sleepy.core;
-    var u = core && core.activeUser && core.activeUser();
+    /* 「我」过岛卫兵（activeUserOnIsland，2026-09-21）：群岛落岛时全局指针
+       可能还停在**上一座岛**的马甲上，照它过滤会把本岛的会话全滤掉 ——
+       表现就是「落岛后进聊天列表是空的」。卫兵不过关 = 这座岛还没定我是谁，
+       那就不过滤（本岛会话都看得见），空白比串岛更不可接受。 */
+    var u = (core && core.activeUserOnIsland) ? core.activeUserOnIsland() : null;
     if (!u) return list;
     return list.filter(function (c) { return !c.userId || c.userId === u.id; });
   }
@@ -295,7 +299,10 @@
   function createChat(name, characterId) {
     var chats = allChats();          /* 写入方：必须是全量 */
     var core = Sleepy.core;
-    var activeUser = core ? core.activeUser() : null;
+    /* 「我」过岛卫兵：指针停在上一座岛的马甲上时，宁可不记 userId
+       （viewChats 把 userId 空的对话对**每张脸**都放行，不会看不见），
+       也不能把新对话挂到别座岛的人名下 —— 那是写进存档的脏数据。 */
+    var activeUser = (core && core.activeUserOnIsland) ? core.activeUserOnIsland() : null;
 
     /* 皮套绑定了自己的 User 马甲就用它 —— 这才是 1:1 对称的意思。
        没绑就退回当前选中的马甲。 */

@@ -5141,6 +5141,25 @@ span.msg-avatar-initial{
   padding:2px 7px;border-radius:8px;
   background:var(--g-accent);color:#fff;
 }
+/* 「我的大号」标（马甲列表·每座岛唯一一件）。
+   跟左边的「进行中」区分开：那个是实心焦糖，这个是焦糖淡底描边 ——
+   否则一行里出现两枚一模一样的焦糖 chip，分不清哪个是哪个。 */
+.pick-big{
+  flex:none;white-space:nowrap;
+  font-size:9.5px;
+  padding:2px 8px;border-radius:8px;
+  border:1px solid var(--g-glass-line);
+  color:var(--g-ink-3);
+  background:none;
+}
+.pick-big.is-on{
+  border-color:var(--g-accent);
+  color:var(--g-accent-deep);
+  background:rgba(176,138,94,.12);
+  letter-spacing:.5px;
+}
+.pick-big:not(.is-on){cursor:pointer;}
+.pick-big:not(.is-on):active{background:var(--g-glass-2);}
 
 /* 我（个人中心） */
 .me-hero{display:flex;align-items:center;gap:13px;padding:14px;}

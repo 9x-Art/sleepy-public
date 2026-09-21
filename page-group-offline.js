@@ -138,8 +138,10 @@
     };
   }
   function userMetaOf(s) {
+    /* 会话上记了是谁就用它；没记才回落 —— 回落那件过岛卫兵，
+       别让指针上残留的上一座岛马甲冒充「我」。 */
     var u = core.findUser(s.userIdentityAccountId) ||
-      (core.activeUser && core.activeUser()) || null;
+      ((core.activeUserOnIsland && core.activeUserOnIsland()) || null);
     return {
       name: (u && u.name) || '我',
       avatar: (u && u.avatar) || '',

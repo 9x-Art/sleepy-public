@@ -164,7 +164,9 @@
 
     return writeCharDiary(ch.id).then(function (r) {
       autoRunning[ch.id] = false;
-      if (r.ok) return r;
+      /* 名字跟着**写入的人**一起带出去 —— 调用方别再去读全局指针，
+         那时指针可能已经飘到别的岛了（清查 §5.1）。 */
+      if (r.ok) { r.who = ch.name; return r; }
       store.set(key, { lastDate: '' });   /* 失败回滚，允许重试 */
       return r;
     }, function (e) {
@@ -197,12 +199,13 @@
     return null;
   }
 
-  /* 今天的聊天节选（跟总结引擎同款格式，简版） */
-  function transcriptToday(charName) {
+  /* 今天的聊天节选（跟总结引擎同款格式，简版）。
+     人由调用方传进来（写谁的日记就采谁的聊天）—— 这里**不读全局指针**：
+     指针停在上一个岛的人身上时会采错人的聊天（清查 §5.1）。 */
+  function transcriptToday(charName, charId) {
     var chats = (core.scoped ? core.scoped(store.get('chats') || []) : (store.get('chats') || []));
-    var ch = core.activeChar();
     var chat = null;
-    chats.forEach(function (c) { if (!chat && c.characterId === ch.id) chat = c; });
+    if (charId) chats.forEach(function (c) { if (!chat && c.characterId === charId) chat = c; });
     var msgs = (chat && chat.messages) || [];
     var today = ymd(new Date());
     var lines = [];
@@ -463,7 +466,7 @@
         /* 到点补算：列表刷新时顺手喊一声，写完原地多出一篇 */
         autoCheck().then(function (r) {
           if (r && r.ok && page.isConnected) {
-            ctx.toast('「' + (core.activeChar() || {}).name + '」写了一篇日记', 'ok');
+            ctx.toast('「' + (r.who || 'TA') + '」写了一篇日记', 'ok');
             rebuild();
           }
         });

@@ -788,6 +788,59 @@ t('马甲按岛：新建即打章 + 复制是新记录 + 拆岛连马甲清', ()
   return { 新建打章: true, 复制是新记录: true, 拆岛清马甲: true };
 });
 
+/* 「我」的大号（isDefault）+ User 侧指针卫兵（2026-09-21 用户拍板：
+   落岛要用「我」的**大号**，所以先把「哪件是大号」定下来）。
+   这两条盯的是**跨岛串身份**：群岛落岛有意不替人选「对方」，
+   于是全局指针 activeUser() 还停在上一座岛的马甲上 ——
+   聊天列表（viewChats 按 activeUser 过滤）会整个空掉，
+   新建会话 / 线下会话 / 朋友圈会把名字挂到上一座岛去（写进存档的脏数据）。 */
+t('「我的大号」：本岛第一件自动是大号，设大号同岛互斥、别岛不动', () => {
+  const sbX = S.core.createSandbox('isle', 'X 岛');
+  const sbY = S.core.createSandbox('isle', 'Y 岛');
+  const a = S.core.upsertUser({ name: 'X 岛甲', sandboxId: sbX.id });
+  if (!a.isDefault) throw new Error('本岛第一件马甲没自动成为大号');
+  const far = S.core.upsertUser({ name: 'Y 岛甲', sandboxId: sbY.id });
+  const b = S.core.upsertUser({ name: 'X 岛乙', sandboxId: sbX.id });
+  /* 光打岛章还不够 —— 要让马甲**进本岛名册**（maskIds）才算「这岛的我」 */
+  S.core.setSandboxMasks(sbX.id, [a.id, b.id]);
+  S.core.setSandboxMasks(sbY.id, [far.id]);
+
+  S.core.setDefaultUser(b.id);
+  const mine = S.core.userMasks().filter((u) => u.sandboxId === sbX.id && u.isDefault);
+  if (mine.length !== 1 || mine[0].id !== b.id) {
+    throw new Error('同岛大号没互斥，现有 ' + mine.length + ' 件');
+  }
+  if (!S.core.findUser(far.id).isDefault) throw new Error('别座岛的大号被误清');
+
+  const got = S.core.defaultUserOfSandbox(sbX.id);
+  if (!got || got.id !== b.id) throw new Error('defaultUserOfSandbox 没认出新大号');
+
+  S.core.removeSandbox(sbX.id);
+  S.core.removeSandbox(sbY.id);
+  return { 同岛大号: mine.length, 别岛大号还在: true, 认得出: got.name };
+});
+
+t('activeUserOnIsland：别座岛的「我」一律挡掉，本岛的放行', () => {
+  const sbX = S.core.createSandbox('isle', '卫兵 X 岛');
+  const sbY = S.core.createSandbox('isle', '卫兵 Y 岛');
+  const mine = S.core.upsertUser({ name: '本岛的我', sandboxId: sbX.id });
+  const far = S.core.upsertUser({ name: '别岛的我', sandboxId: sbY.id });
+  S.core.setSandboxMasks(sbX.id, [mine.id]);
+  S.core.setSandboxMasks(sbY.id, [far.id]);
+
+  S.core.setActiveSandbox(sbX.id);
+  S.core.switchTo(undefined, far.id);
+  if (S.core.activeUserOnIsland() !== null) throw new Error('别座岛的马甲没被挡掉');
+
+  S.core.switchTo(undefined, mine.id);
+  const got = S.core.activeUserOnIsland();
+  if (!got || got.id !== mine.id) throw new Error('本岛的马甲被误挡');
+
+  S.core.removeSandbox(sbX.id);
+  S.core.removeSandbox(sbY.id);
+  return { 别岛: 'null', 本岛: got.name };
+});
+
 /* 岛覆盖 > 全局：外观穿着 / 户型的岛覆盖层叠在全局上，
    拆岛时覆盖层跟岛一起清（appearance.desktop.islands / desktop.islands /
    盖了章的 desktopRemoved）。 */

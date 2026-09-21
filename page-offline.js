@@ -103,9 +103,11 @@
       id: newId(),
       charId: charId,
       /* 带上马甲：记忆认知层 / I01 按当前 user 组织（缺省回落激活马甲）。
-         sandboxId：删房清理名单（core.removeSandbox 的 scoped 数组）认这个章。 */
+         sandboxId：删房清理名单（core.removeSandbox 的 scoped 数组）认这个章。
+         回落的那件**必须过岛卫兵**（activeUserOnIsland）—— 指针停在上一座岛时
+         照 activeUser() 写会把新会话挂到别座岛的人名下，那是存档里的脏数据。 */
       userId: form.userId != null ? form.userId
-        : ((core.activeUser && core.activeUser()) || {}).id || null,
+        : ((core.activeUserOnIsland && core.activeUserOnIsland()) || {}).id || null,
       sandboxId: core.scopeId ? core.scopeId() : null,
       sceneCount: count,
       sceneName: pending ? '…' : (String(form.sceneName || '').trim() || '未命名场景'),

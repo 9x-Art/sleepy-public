@@ -153,9 +153,10 @@
       item.mentions = entry.mentions.slice(0, 20);
     }
 
-    /* 我（马甲）发的记下 maskId —— 「私密」那档要靠它判断「是不是作者本人」。 */
+    /* 我（马甲）发的记下 maskId —— 「私密」那档要靠它判断「是不是作者本人」。
+       过岛卫兵：指针停在上一座岛时宁可不记，也不把动态挂到别人名下。 */
     if (!item.characterId) {
-      var meNow = core.activeUser();
+      var meNow = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
       item.maskId = entry.maskId || (meNow ? meNow.id : null);
     }
 
@@ -332,7 +333,9 @@
      挂在名下的老 NPC，岛级 NPC 完全发不了动态，2026-09-21 收敛修掉）。
      造物主可以替任何一个角色发和说话 —— 这是配置台的自然延伸。 */
   function peopleIn(sb) {
-    var me = core.activeUser();
+    /* 「我」过岛卫兵：拿不到就不把自己列进候选（造物主仍可替任意角色发/说，
+       但不硬塞一个别座岛的马甲来当「我」）。 */
+    var me = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
     var out = [];
     if (me) out.push({ kind: 'mask', refId: me.id, name: me.name });
     var mains = sb ? core.charsOfSandbox(sb.id) : [];
@@ -544,7 +547,8 @@
       });
     });
 
-    var me = core.activeUser();
+    /* 顶部那颗「我的头」也过卫兵 —— 显示成上一座岛的人比显示成「我」更糟 */
+    var me = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
     var meHead = h('div', 'mo-me');
     meHead.appendChild(h('span', 'mo-me-name', me ? me.name : '我'));
     meHead.appendChild(avatarEl(
@@ -565,7 +569,7 @@
         return (b.at || 0) - (a.at || 0);
       });
       var people = peopleIn(sb);
-      var meNow = core.activeUser();
+      var meNow = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
       var meId = meNow ? meNow.id : '';
 
       /* 按**当前这张脸**过一遍认知锁（用户：「选择允许谁可见」）。
@@ -800,7 +804,8 @@
 
     function whoNow() {
       if (commentWho) return commentWho;
-      var me = core.activeUser();
+      /* 评论的身份也过卫兵：别用上一座岛的马甲去评论 */
+      var me = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
       return { kind: 'mask', refId: me ? me.id : null, name: me ? me.name : '我' };
     }
 

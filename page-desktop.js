@@ -603,7 +603,9 @@
        全局指针还停在上一个岛的人身上时，这里宁可显示「还没有角色」，
        也不能把别的岛的人摆上来（清查 §5.1）。 */
     var c = core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar();
-    var u = core.activeUser();
+    /* 「我」也过岛卫兵：指针停在上一座岛时，双城时钟宁可写「这里」，
+       也不摆上一个别座岛的人的城市。 */
+    var u = core.activeUserOnIsland ? core.activeUserOnIsland() : core.activeUser();
     var mood = '';
     if (c) {
       /* 情绪印章优先用角色自己记的，没有就按名字稳定取一个 ——
@@ -1643,9 +1645,12 @@
          马甲本来就按房分组（决策 8），聊天里「我」是谁由它决定。 */
       if (pickChar) {
         var subs = h('div', 'dt-pull-chars');
+        /* 打「当前身份」标记也过卫兵，与 skin() 同口径 ——
+           isCur 已保证这是当前岛，指针指向别岛的人时这里自然不打标。 */
+        var curOnIsland = core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar();
         chars.forEach(function (c, j) {
           var cc = h('button', 'dt-pull-char' +
-            (isCur && c.id === (core.activeChar() || {}).id ? ' is-current' : ''));
+            (isCur && curOnIsland && c.id === curOnIsland.id ? ' is-current' : ''));
           cc.type = 'button';
           cc.style.transitionDelay = (110 + i * 45 + j * 35) + 'ms';
           cc.appendChild(h('span', 'dt-pull-char-av',
@@ -1682,11 +1687,11 @@
       var r = core.setActiveSandbox(sb.id);
       if (!r.ok) { ctx.toast(r.message, 'err'); return; }
       /* 身份跟着岛走（用户的设计）：降进哪段，「我」和「对方」就是那段里的。
-         char 是点的哪张角色卡；user 取这间房的第一件马甲 ——
-         马甲按房分组（决策 8），聊天里「我」是谁由它决定。 */
-      var masks = core.masksOfSandbox(sb);
-      core.switchTo(char ? char.id : undefined,
-        masks.length ? masks[0].id : undefined);
+         char 是点的哪张角色卡；「我」取这间房的**大号**（isDefault）——
+         马甲按房分组（决策 8），聊天里「我」是谁由它决定。
+         以前取的是名册第一件，跟「我的大号」是两回事（用户 2026-09-21 拍板）。 */
+      var bigMe = core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null;
+      core.switchTo(char ? char.id : undefined, bigMe ? bigMe.id : undefined);
       var all = core.listSandboxes();
       for (var i = 0; i < all.length; i++) {
         if (all[i].id === sb.id) {

@@ -1237,10 +1237,19 @@
           return u && (!sid || u.sandboxId === sid);
         });
         var activeId = store.get('activeUserId');
-        var real = core.activeUser();
+        /* 「我的大号」= 本岛那一件 isDefault（老存档没标过就退回名册第一件）。
+           落岛时「我」归位到它（core.defaultUserOfSandbox）。 */
+        var sbNow = core.activeSandbox ? core.activeSandbox() : null;
+        var big = sbNow && core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sbNow) : null;
+        var bigId = big ? big.id : null;
+        /* 指针指向一件**不存在**的马甲时补一次 —— 补的是**本岛的大号**，
+           不是 core.activeUser() 的全局兜底（那可能是别座岛的人）。 */
         if (!activeId || !core.findUser(activeId)) {
-          store.set('activeUserId', real.id);
-          activeId = real.id;
+          var fix = big || core.activeUser();
+          if (fix) {
+            store.set('activeUserId', fix.id);
+            activeId = fix.id;
+          }
         }
 
         list.forEach(function (u) {
@@ -1252,6 +1261,24 @@
           var b = h('span', 'pick-name', u.name);
           if (u.id === activeId) b.appendChild(h('span', 'pick-cur', '进行中'));
           line.appendChild(b);
+
+          /* 大号标（用户 2026-09-21）：一座岛里只认一件。
+             行本身是 button，HTML 不允许 button 套 button —— 用 span 接点击，
+             并 stopPropagation 免得「设为大号」顺带把「我」也切过去。 */
+          var isBig = u.id === bigId;
+          var chip = h('span', 'pick-big' + (isBig ? ' is-on' : ''),
+            isBig ? '大号' : '设为大号');
+          chip.title = isBig ? '这座岛里「我」的主账号 —— 降落时直接用它'
+            : '把「' + u.name + '」设成这座岛的大号';
+          if (!isBig) {
+            chip.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              var r = core.setDefaultUser(u.id);
+              ctx.toast(r.ok ? ('「' + u.name + '」是这座岛的大号了') : r.message, r.ok ? 'ok' : 'err');
+              if (ctx.rebuild) ctx.rebuild();
+            });
+          }
+          line.appendChild(chip);
           line.addEventListener('click', function () {
             core.switchTo(undefined, u.id);
             ctx.toast('已切换到「' + u.name + '」', 'ok');
@@ -1269,10 +1296,15 @@
       }
 
       rebuild();
+      /* rebuild 得挂到 ctx 上：①点「设为大号」要原地重画
+         ②从 mask-edit 返回时 onShow 要刷新（以前这行一直空转，
+         改完大号回到列表看不到变化）。 */
+      ctx.rebuild = rebuild;
       body.appendChild(g.wrap);
 
       body.appendChild(h('p', 'set-foot',
-        '马甲决定这座岛里「我是谁」。Char 侧的皮套和它对应。'));
+        '马甲决定这座岛里「我是谁」。带「大号」标的那件是主账号，' +
+        '降落时「我」就用它。'));
     },
     onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
@@ -1321,6 +1353,18 @@
         toast: function (t, k) { ctx.toast(t, k); }
       });
       g.card.appendChild(f.avatar.el);
+
+      /* 这是我的大号（用户 2026-09-21）：每座岛只认一件，
+         降落/换岛时「我」就归位到它 —— 所以得让人能明确指认。
+         新建时本岛还没有大号就默认打开。 */
+      var sbNow = core.activeSandbox ? core.activeSandbox() : null;
+      var bigNow = (sbNow && core.defaultUserOfSandbox) ? core.defaultUserOfSandbox(sbNow) : null;
+      f.big = ui.switchField({
+        label: '这是我的大号',
+        hint: '「我」在这座岛的主账号 · 降落时直接用它（每座岛只认一件）',
+        value: existing ? !!existing.isDefault : !bigNow
+      });
+      g.card.appendChild(f.big.el);
       body.appendChild(g.wrap);
 
       var btnRow = h('div', 'btn-row');
@@ -1356,8 +1400,12 @@
           persona: String(f.persona.get() || '').trim(),
           city: String(f.city.get() || '').trim(),
           avatar: String(f.avatar.get() || '').trim(),
-          avatarMedia: f.avatar.getMedia()
+          avatarMedia: f.avatar.getMedia(),
+          isDefault: f.big.get()
         });
+        /* 打开开关就互斥地把**同一座岛**其他件降级 —— 每岛只认一件大号，
+           别座岛的大号不动（那是别岛的「我」）。 */
+        if (f.big.get()) core.setDefaultUser(item.id);
         /* 第一件马甲自动成为当前使用，否则切号器会指向不存在的 id */
         if (!store.get('activeUserId')) core.switchTo(undefined, item.id);
         ctx.toast('已保存', 'ok');

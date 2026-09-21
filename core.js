@@ -651,6 +651,17 @@
          调用方没显式给 sandboxId 时盖当前房的章，否则删岛不清、名册语义失效。 */
       if (!hit.sandboxId) tagScope(hit);
       list.push(hit);
+      /* 不变量：**每座岛至少有一件「我的大号」**（isDefault）——
+         落岛要把「我」归位到大号，没有大号的岛就没法归位。
+         调用方显式给了 isDefault 就听它的（编辑页的开关能关掉），
+         没给才兜底：本岛一件大号都没有就给这件盖上。 */
+      if (!has(data, 'isDefault')) {
+        var sid = hit.sandboxId || '';
+        var hasBig = list.some(function (u) {
+          return u.id !== hit.id && (u.sandboxId || '') === sid && !!u.isDefault;
+        });
+        if (!hasBig) hit.isDefault = true;
+      }
     }
     saveUsers(list);
     return hit;
@@ -659,8 +670,47 @@
   function removeUser(id) {
     var list = userMasks();
     if (list.length <= 1) return { ok: false, message: '至少要留一件马甲' };
-    saveUsers(list.filter(function (u) { return u.id !== id; }));
+    var gone = findUser(id);
+    var left = list.filter(function (u) { return u.id !== id; });
+    /* 删掉的正是本岛大号 → 本岛剩下第一件顶上（守住「每岛至少一件大号」） */
+    if (gone && gone.isDefault) {
+      var sid = gone.sandboxId || '';
+      var heir = left.filter(function (u) { return (u.sandboxId || '') === sid; })[0];
+      if (heir) heir.isDefault = true;
+    }
+    saveUsers(left);
     return { ok: true };
+  }
+
+  /* 把某件马甲设成「我的大号」。大号在一座岛里唯一 ——
+     同一座岛其他件的 isDefault 一并清掉，**别座岛的大号不动**
+     （那是别岛的「我」，跨岛大号本来就各论各的）。
+     用户 2026-09-21 拍板：入口在「我的马甲」列表 + 马甲编辑页。 */
+  function setDefaultUser(id) {
+    var list = userMasks();
+    var hit = findUser(id);
+    if (!hit) return { ok: false, message: '找不到这件马甲' };
+    var sid = hit.sandboxId || '';
+    list.forEach(function (u) {
+      if ((u.sandboxId || '') !== sid) return;
+      u.isDefault = (u.id === id);
+    });
+    saveUsers(list);
+    return { ok: true, user: findUser(id) };
+  }
+
+  /* 这座岛的「我的大号」。名册里标了 isDefault 的那件；老存档一件都没标的
+     退回名册第一件（不能让升级后的岛没有「我」）。本岛没马甲时 null ——
+     调用方按「这座岛还没有我」处理（别拿全局兜底的「我」顶上）。 */
+  function defaultUserOfSandbox(id) {
+    var sb = typeof id === 'object' ? id : findSandbox(id);
+    if (!sb) return null;
+    var masks = masksOfSandbox(sb);
+    if (!masks.length) return null;
+    for (var i = 0; i < masks.length; i++) {
+      if (masks[i].isDefault) return masks[i];
+    }
+    return masks[0];
   }
 
   /* 此刻正在使用的 User 马甲。切号时整个 OS 的「我」都跟着换 */
@@ -694,6 +744,20 @@
     if (!sb || !c) return null;
     if ((c.kind || 'main') !== 'main') return null;
     return arr(sb.charIds).indexOf(c.id) >= 0 ? c : null;
+  }
+
+  /* User 侧的同款卫兵（与 activeCharOnIsland 对称）。
+     马甲也按岛（2026-09-21 拍板：char 与马甲全部按岛），所以尺子是同一把：
+     **当前马甲必须在本岛 maskIds 里**，否则一律按「这座岛还没定我是谁」处理。
+     为什么非要有它：群岛落岛有意不替人换身份，activeUser() 就还停在
+     上一个岛的马甲上（findUser 是全局找，一定找得到）；挂掉它之前，
+     聊天列表（viewChats 按 activeUser 过滤）、朋友圈的「我」、
+     新建会话/线下会话的 userId 全都会串到上一座岛去。 */
+  function activeUserOnIsland() {
+    var sb = activeSandbox();
+    var u = activeUser();
+    if (!sb || !u) return null;
+    return arr(sb.maskIds).indexOf(u.id) >= 0 ? u : null;
   }
 
   /* 系统级切号（时空切换器）。改的是全局的「现在是谁」——
@@ -1170,6 +1234,9 @@
     masksOfSandbox: masksOfSandbox,
     needsCharPick: needsCharPick,
     activeCharOnIsland: activeCharOnIsland,
+    activeUserOnIsland: activeUserOnIsland,
+    defaultUserOfSandbox: defaultUserOfSandbox,
+    setDefaultUser: setDefaultUser,
 
     /* 作用域过滤：业务数据的读写统一走这两个 */
     scoped: scoped,

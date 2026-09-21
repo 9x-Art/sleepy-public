@@ -904,7 +904,9 @@
       }
 
       function paintTree() {
-        var me = core.masksOfSandbox(sb)[0] || core.activeUser();
+        /* 树中间的「我」= 这间房的**大号**（用户 2026-09-21：降落时用的就是
+           大号）。配置台渲染的是被点开的那间房，所以按 sb 取，不看活动岛。 */
+        var me = core.defaultUserOfSandbox(sb) || core.activeUser();
         var mains = core.charsOfSandbox(sb.id);
         var canAdd = canAddChar(sb);
 
@@ -1183,7 +1185,9 @@
       /* 写关系：点连线中间那一小段文字。
          存在 links 上，所以它天然是「我 × 这个角色」这一段关系的注解。 */
       async function writeRelation(ctx, sb, charId) {
-        var me = core.masksOfSandbox(sb)[0] || core.activeUser();
+        /* 「我 × TA」的注解写到**这间房的大号**身上（与树中间那个「我」同一件，
+           否则点出来的关系跟看到的人对不上）。 */
+        var me = core.defaultUserOfSandbox(sb) || core.activeUser();
         var ch = core.findChar(charId);
         var cur = core.relationOf(charId, me.id, sb.id);
         var next = await ui.prompt({
@@ -1236,12 +1240,20 @@
 
     /* 身份跟着岛走（用户的设计，2026-09-18 补）：降进哪段，
        「对方 / 我」就是那段里的人 —— 孤岛直接是那 1v1；
-       群岛多人要先选角（决策 4），这里的 降落 入口不替人选，
-       身份留给切号器 / 桌面下拉。 */
+       群岛多人要先选角（决策 4），这里的 降落 入口不替人选「对方」，
+       留给切号器 / 桌面下拉。
+
+       但「我」必须当场归位（用户 2026-09-21）：用哪件马甲不是「扮演谁」的
+       问题，孤岛和桌面下拉本来就自动定 —— 不归位的话 activeUserId 还停在
+       上一座岛的人身上，聊天列表（按 activeUser 过滤）、朋友圈的「我」、
+       新建会话都会串到上一座岛去。取的是本岛的**大号**（isDefault），
+       没有大号（名册为空）就不动，读侧有 activeUserOnIsland 兜着。 */
     var chars = core.charsOfSandbox(sb);
+    var bigMe = core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null;
     if (chars.length && !core.needsCharPick(sb)) {
-      var masks = core.masksOfSandbox(sb);
-      core.switchTo(chars[0].id, masks.length ? masks[0].id : undefined);
+      core.switchTo(chars[0].id, bigMe ? bigMe.id : undefined);
+    } else if (bigMe) {
+      core.switchTo(undefined, bigMe.id);
     }
 
     var list = core.listSandboxes();
@@ -1872,7 +1884,10 @@
         body.innerHTML = '';
 
         var mains = core.charsOfSandbox(sb);
-        var me = core.activeUser ? core.activeUser() : null;
+        /* 候选人里的「我」= 这间房的**大号** —— 用全局指针的话，
+           群岛落岛残留下，别座岛的人会混进「谁认识他」的名单里。 */
+        var me = (core.defaultUserOfSandbox && core.defaultUserOfSandbox(sb))
+          || (core.activeUser ? core.activeUser() : null);
 
         /* 「谁认识他」候选人：我 + 主要角色，默认全选（demo 初始态） */
         var known = [];
