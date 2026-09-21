@@ -5443,60 +5443,6 @@ span.msg-avatar-initial{
 .cfg-poem{margin:0;font-family:var(--ff-serif);font-size:15px;letter-spacing:2px;color:var(--g-accent-deep);}
 .cfg-poem-from{margin:6px 0 0;font-size:10.5px;color:var(--text-faint);}
 
-/* 树可能比屏幕宽（角色多的时候），所以给它自己的横向滚动 */
-.tree-scroll{
-  overflow-x:auto;overflow-y:hidden;
-  padding:4px 0 0;margin:0 -6px;
-}
-.tree-scroll::-webkit-scrollbar{height:4px;}
-.tree-scroll::-webkit-scrollbar-thumb{background:rgba(139,108,76,.24);border-radius:2px;}
-.tree-wrap{display:inline-block;min-width:100%;padding:0 6px;}
-.tree-svg{display:block;}
-.tree-svg text{font-family:var(--ff);}
-
-.tree-line{stroke:rgba(139,108,76,.34);stroke-width:1.1;fill:none;}
-.tree-line-v{stroke:rgba(139,108,76,.26);}
-.tree-dash{stroke-dasharray:3 5;stroke:rgba(139,108,76,.28);}
-
-/* ---- 红线：**只画在「我 ↔ 角色」之间** ----
-   月老那种意象 —— 这一层是「我和你」，不是「谁属于谁」。
-   画法是两条平行的弧（一条丝带的两边），关系文字压在正中把带子截断。
-   底下那条 .tree-tie-b 故意更淡，看着像丝带的背面。
-
-   与之相对：我 → NPC、角色 → 皮套/NPC 走上面那套淡绿细线（归属），
-   于是树上「情」和「属」一眼分得开。 */
-.tree-tie{stroke:#D9736B;stroke-width:1.35;fill:none;opacity:.62;}
-.tree-tie-b{opacity:.3;}
-.tree-tie-dash{stroke-dasharray:4 5;opacity:.42;}
-
-.tree-disc{fill:#FBF8F3;stroke:rgba(139,108,76,.34);stroke-width:1;}
-.tree-me{fill:#F1E7D8;stroke:var(--g-accent);stroke-width:1.4;}
-.tree-char{fill:#F8F3EA;stroke:rgba(139,108,76,.46);}
-.tree-kid{fill:#FCFAF6;}
-.tree-sub{stroke-dasharray:3 3;}
-.tree-npc{stroke:rgba(139,108,76,.28);}
-.tree-plus{fill:rgba(255,255,255,.55);stroke:rgba(139,108,76,.42);stroke-dasharray:3 4;}
-
-.tree-initial{font-size:13px;font-weight:500;fill:#8A6844;}
-.tree-glyph{font-size:17px;fill:var(--g-accent-deep);}
-.tree-name{font-size:10px;fill:#8A7A67;}
-/* 写在红线上的那句话 —— 用暖色（跟线同族），跟绿色的归属线区分开 */
-.tree-rel{
-  font-size:11px;fill:#B45C55;
-  font-family:var(--ff-serif);letter-spacing:1px;
-}
-.tree-rel-empty{font-size:10px;fill:rgba(217,115,107,.62);}
-/* 垫在关系文字底下，把红线截断。fill 必须跟 .page 的底色一致 ——
-   不然换主题时会露出一个色块。描边是那截「签条」的边。 */
-.tree-rel-bg{fill:var(--bg);stroke:rgba(217,115,107,.3);stroke-width:.8;}
-.tree-click{cursor:pointer;}
-.tree-click:hover .tree-disc{stroke:var(--g-accent);stroke-width:1.6;}
-.tree-click:hover .tree-rel-empty{fill:#B45C55;}
-.tree-hint{
-  margin:6px 0 20px;text-align:center;
-  font-size:11.5px;line-height:1.7;color:var(--text-faint);
-}
-
 .cfg-add-row{display:flex;gap:10px;}
 .cfg-add-main{
   flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;
