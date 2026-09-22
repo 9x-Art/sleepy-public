@@ -5532,9 +5532,17 @@ t('能力落到「模型」：不同档位的表达能力不一样', () => {
   if (elV3.maxCharacters !== 5000 || elV2.maxCharacters !== 10000 || elFlash.maxCharacters !== 40000) {
     throw new Error('字符上限跟官方文档对不上');
   }
-  /* 三家都必须有适配器 —— 没实现的才标「计划支持」（契约 §8.6） */
+  /* 开放的每一家都必须有适配器 —— 没实现的才标 planned（契约 §8.6） */
   T.PROVIDER_ORDER.forEach((pid) => {
     if (T.providerOf(pid).planned) throw new Error(pid + ' 还没有适配器，不该开放入口');
+  });
+  /* 探测过、接不了的那些：必须**写清原因**，否则用户看到的就是一个神秘灰行 */
+  if (T.PROVIDER_PLANNED.length < 4) throw new Error('接不了的清单太短了');
+  T.PROVIDER_PLANNED.forEach((pid) => {
+    const p = T.providerOf(pid);
+    if (!p || !p.planned) throw new Error(pid + ' 该在「接不了」清单里且标 planned');
+    if (!p.desc || p.desc.length < 12) throw new Error(pid + ' 没说清为什么接不了');
+    if (T.PROVIDER_ORDER.indexOf(pid) >= 0) throw new Error(pid + ' 不能同时在能用的清单里');
   });
   return { '2.8': mm28.performanceTags, '2.6': mm26.performanceTags, 's1': fishS1.performanceTags,
     ElevenLabs: 'v3 标签 / Flash 调速',
@@ -5606,6 +5614,54 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   });
   if (!/\/tts\/abc\?token=abc&output_format=/.test(proxyReq.url)) throw new Error('中转地址拼错了：' + proxyReq.url);
 
+  /* 硅基流动：OpenAI 兼容的 /v1/audio/speech；音色要连模型名一起写 */
+  const sfReq = T.buildRequest({
+    provider: 'siliconflow', conn: { apiKey: 'sk-sf' }, model: 'FunAudioLLM/CosyVoice2-0.5B',
+    voiceId: 'FunAudioLLM/CosyVoice2-0.5B:alex', plan: plan, originalText: original, output: T.settings().output
+  });
+  if (sfReq.url.indexOf('api.siliconflow.cn/v1/audio/speech') < 0) throw new Error('硅基流动地址不对：' + sfReq.url);
+  if (sfReq.headers.Authorization !== 'Bearer sk-sf') throw new Error('硅基流动鉴权头不对');
+  if (sfReq.body.input !== original) throw new Error('OpenAI 兼容那家没有标签字段，正文必须原样');
+  if (/\[/.test(sfReq.body.input)) throw new Error('没标签能力的家不许拼标签');
+  if (sfReq.body.speed !== 1.05) throw new Error('硅基流动该带语速');
+  if (sfReq.body.sample_rate !== 44100) throw new Error('硅基流动 mp3 采样率只能是 32000/44100');
+
+  /* Azure：只吃 SSML，音色写在正文里、凭据头是 Ocp-Apim-Subscription-Key */
+  const azReq = T.buildRequest({
+    provider: 'azure', conn: { apiKey: 'az-key' }, model: 'azure-neural',
+    voiceId: 'zh-CN-XiaoxiaoNeural', plan: plan, originalText: '你好 <&> 世界', output: T.settings().output
+  });
+  if (azReq.headers['Ocp-Apim-Subscription-Key'] !== 'az-key') throw new Error('Azure 凭据头不对');
+  if (azReq.headers.Authorization) throw new Error('Azure 不吃 Authorization');
+  if (azReq.headers['Content-Type'] !== 'application/ssml+xml') throw new Error('Azure 的 Content-Type 必须是 SSML');
+  if (azReq.body !== undefined || !azReq.rawBody) throw new Error('Azure 的正文是 XML 字符串（rawBody），不是 JSON');
+  if (azReq.rawBody.indexOf("voice name='zh-CN-XiaoxiaoNeural'") < 0) throw new Error('音色没进 SSML：' + azReq.rawBody);
+  if (azReq.rawBody.indexOf('<&>') >= 0) throw new Error('SSML 里的 XML 特殊字符没转义');
+  if (azReq.rawBody.indexOf('&lt;&amp;&gt;') < 0) throw new Error('转义形式不对：' + azReq.rawBody);
+  /* Azure 的输出格式只认固定几组，绝不能是 44khz */
+  const fmt = T.azureFormatOf(T.settings().output);
+  if (!/^audio-(16|24|48)khz-(32|48|64|96|128|160|192)kbitrate-mono-mp3$/.test(fmt)) {
+    throw new Error('Azure 输出格式拼错了：' + fmt);
+  }
+
+  /* 自定义 · OpenAI 兼容：地址必须自己填（没有官方地址可回落） */
+  const cuReq = T.buildRequest({
+    provider: 'custom_openai', conn: { apiKey: 'k', endpoint: 'http://127.0.0.1:8080/v1/audio/speech' },
+    model: 'sft', voiceId: 'v1', plan: plan, originalText: original, output: T.settings().output
+  });
+  if (cuReq.body.model !== 'sft' || cuReq.body.input !== original) throw new Error('自定义那家的 body 不对');
+  const cuNoUrl = T.buildRequest({
+    provider: 'custom_openai', conn: { apiKey: 'k', endpoint: '' },
+    model: 'tts-1', voiceId: 'v1', plan: plan, originalText: original, output: T.settings().output
+  });
+  if (!cuNoUrl.unsupported || cuNoUrl.error.code !== 'CONNECTION_MISSING') throw new Error('没填地址却还想发请求');
+  const cuTest = await T.testConnection({ id: 'x', provider: 'custom_openai', endpoint: '', apiKey: 'k' }, 'v1');
+  if (cuTest.ok || cuTest.error.code !== 'CONNECTION_MISSING') throw new Error('没填地址的测试连接该直接拒绝（别变成超时）');
+
+  /* 错误体：Azure / OpenAI 系的 {"error":{"message":...}} 也要读得出来 */
+  const azErr = T.normalizeHttpError('azure', 401, JSON.stringify({ error: { code: '401', message: 'Access denied due to invalid subscription key.' } }));
+  if (azErr.message.indexOf('invalid subscription key') < 0) throw new Error('Azure 的 error.message 没读出来：' + azErr.message);
+
   /* ElevenLabs 的错误体是 detail.message（对象）或 detail[0].msg（数组）——
      和 Fish 的 message 不是一个形状，别只认一种 */
   const el401 = T.normalizeHttpError('elevenlabs', 401, JSON.stringify({ detail: { status: 'invalid_api_key', message: 'Invalid API key' } }));
@@ -5646,6 +5702,7 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   if (elBad.ok || elBad.error.code !== 'CREDENTIAL_INVALID') throw new Error('ElevenLabs 401 没归一化：' + JSON.stringify(elBad.error));
 
   return { fish: req.body.text, minimax: mmReq.body.text, elevenlabs: elV3.body.text,
+    硅基流动: sfReq.body.input, Azure格式: fmt,
     401: r1.error.code, 超时: r2.error.code, 假音频字节: ok1.blob.size };
 });
 

@@ -192,19 +192,9 @@
         body.appendChild(gOn.wrap);
 
         /* ---- 服务列表 ---- */
-        var gSvc = group('语音服务', '只需要连接实际要用的服务，不要求同时注册三家。');
+        var gSvc = group('语音服务', '只需要连接实际要用的服务，不要求同时注册所有家。');
         tts.PROVIDER_ORDER.forEach(function (pid) {
           var prov = tts.providerOf(pid);
-          if (prov.planned) {
-            /* 契约 §8.6：没有 Adapter 之前一律「计划支持」，不许制造已可用的错觉 */
-            gSvc.card.appendChild(row({
-              label: prov.name,
-              hint: prov.desc,
-              badge: '计划支持',
-              badgeKind: 'dim'
-            }));
-            return;
-          }
           var conn = tts.firstConnectionOf(pid);
           gSvc.card.appendChild(row({
             label: prov.name,
@@ -217,8 +207,42 @@
         });
         body.appendChild(gSvc.wrap);
         body.appendChild(h('p', 'set-group-note',
-          '三家都直连（没有服务端代发）。Fish Audio 的接口在部分网络下连不上，' +
-          '要代理或自建中转；MiniMax 国内可达；ElevenLabs 只有 v3 档位能带 Audio Tags。'));
+          '全都是浏览器直连（这个 App 没有服务端）。Fish Audio 的接口在部分网络下连不上，' +
+          '要代理或自建中转；MiniMax、硅基流动、Azure 国内可达；ElevenLabs 只有 v3 能带 Audio Tags。'));
+
+        /* ---- 接不了的那些（连同实测原因一起摆出来）----
+           契约 §8.6：没有 Adapter 一律不许显示成可用。但「灰着不说为什么」和
+           「写清为什么」是两件事 —— 用户要的是后者（这样才知道该走中转还是死心）。 */
+        var gNo = group('还不能直连的服务', '这些是探测过、现在接不了的；原因写在每一行下面。');
+        tts.PROVIDER_PLANNED.forEach(function (pid) {
+          var prov = tts.providerOf(pid);
+          if (!prov) return;
+          gNo.card.appendChild(row({
+            label: prov.name,
+            hint: prov.desc,
+            badge: '未实现',
+            badgeKind: 'dim'
+          }));
+        });
+        gNo.card.appendChild(row({
+          label: '用「自定义 · OpenAI 兼容」接它们',
+          hint: '自己搭一个中转（或本地跑 GPT-SoVITS / fish-speech / one-api），把地址填进去就行',
+          onClick: function () {
+            var p = tts.providerOf('custom_openai');
+            ui.confirm({
+              title: '自定义 · OpenAI 兼容',
+              note: '这条连接用于：自建的语音服务，或者你自己搭的中转。\n\n' +
+                '它要求对方认 OpenAI 的 /v1/audio/speech（GPT-SoVITS、fish-speech、' +
+                'openedai-speech、LocalAI、one-api 这些都能这么用）。\n\n' +
+                '上面那些「还不能直连」的家，也都可以先转成这个形状再填进来。',
+              ok: '去配一条'
+            }).then(function (yes) {
+              if (!yes) return;
+              ctx.open('settings-tts-provider', { provider: 'custom_openai' });
+            });
+          }
+        }));
+        body.appendChild(gNo.wrap);
 
         /* ---- 默认生成设置（模型列表跟着默认服务的供应商走） ---- */
         var curConn = tts.connection(s.defaultConnectionId) || tts.firstConnectionOf(null);
@@ -402,6 +426,18 @@
         keyWrap.appendChild(keyBox);
         gConn.card.appendChild(keyWrap);
 
+        if (prov.freeModel) {
+          /* 自建/中转的服务，模型名五花八门（sft / gpt-4o-mini-tts / 随便什么），
+             只能让用户自由填 —— 它优先于全局默认模型（见 tts.resolveVoice）。 */
+          fields.model = textField({
+            label: '模型 ID',
+            hint: '这个服务要的模型名（不知道就先留空，会用默认那条）· 例：tts-1 / sft / cosyvoice',
+            value: c.model || '',
+            placeholder: 'tts-1'
+          });
+          gConn.card.appendChild(fields.model.el);
+        }
+
         fields.endpoint = textField({
           label: '接口地址',
           hint: providerId === 'elevenlabs'
@@ -498,12 +534,17 @@
 
         function doTest() {
           var key = String(keyInput.value || '').trim();
+          if (providerId === 'custom_openai' && !String(fields.endpoint.get() || '').trim()) {
+            showOut(out, false, '先填接口地址 —— 自定义服务没有官方地址可以回落。');
+            return;
+          }
           var nameNow = String(fields.name.get() || '').trim() || prov.defaultName;
           var epNow = String(fields.endpoint.get() || '').trim() || prov.endpoint;
           var voiceNow = String(fields.voiceId.get() || '').trim();
           var cfg = {
             id: c.id,
             provider: providerId,
+            model: fields.model ? String(fields.model.get() || '').trim() : c.model,
             endpoint: epNow,
             apiKey: key || c.apiKey,
             displayName: nameNow,
@@ -736,6 +777,11 @@
           tts.modelsOf(useConn ? useConn.provider : 'fish_audio').map(function (m) {
             return { id: m.id, label: m.label + (tts.capabilitiesOf(useConn ? useConn.provider : 'fish_audio', m.id).performanceTags ? '' : ' · 无表演标签') };
           }));
+        /* 连接上填过模型（自定义/中转那种）时，把它也列进来 ——
+           否则下拉里显示的和你实际会用的不是同一个，看着像 bug。 */
+        if (useConn && useConn.model && !modelOpts.some(function (o) { return o.id === useConn.model; })) {
+          modelOpts.splice(1, 0, { id: useConn.model, label: useConn.model + '（连接里填的）' });
+        }
         var selModel = selectField('模型', '', modelOpts,
           state.modelMode === 'override' ? (state.model || '') : '', function (v) {
             if (ro) { ctx.toast('先点「单独设置」', 'warn'); selModel.select.value = ''; return; }

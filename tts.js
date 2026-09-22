@@ -173,10 +173,113 @@
           caps: { performanceTags: false, speed: true, textNormalization: true, maxCharacters: 40000 }
         }
       ]
+    },
+
+    /* ---- 硅基流动（OpenAI 兼容的 /v1/audio/speech）----
+       实测：跨域预检回 `*`，国内直达。它上面跑的是 CosyVoice2（阿里开源的中文 TTS），
+       预置 8 个中文音色 —— 对「不想注册国外账号」的人是最省事的一家。 */
+    siliconflow: {
+      id: 'siliconflow',
+      name: '硅基流动',
+      desc: '国内可达 · CosyVoice2 中文音色',
+      consoleUrl: 'https://cloud.siliconflow.cn/account/ak',
+      defaultName: '我的硅基流动',
+      endpoint: 'https://api.siliconflow.cn/v1/audio/speech',
+      keyHint: '在硅基流动控制台 → API 密钥里生成',
+      voiceHint: '要**连模型名一起写**：FunAudioLLM/CosyVoice2-0.5B:alex。' +
+        '预置 8 个：alex / benjamin / charles / david（男），anna / bella / claire / diana（女）',
+      models: [
+        {
+          id: 'FunAudioLLM/CosyVoice2-0.5B', label: 'CosyVoice 2', note: '中文自然 · 可调速',
+          caps: { performanceTags: false, speed: true, maxCharacters: 1000 }
+        }
+      ]
+    },
+
+    /* ---- Azure 语音服务 ----
+       它的接口**只吃 SSML**（音色写在 SSML 里、没有 model 字段），所以这里只有一档「模型」，
+       真正决定声音的是音色名。实测 eastasia 节点跨域预检回 `*`。 */
+    azure: {
+      id: 'azure',
+      name: 'Azure 语音',
+      desc: '音色最多 · 只吃 SSML（音色写在正文里）',
+      consoleUrl: 'https://portal.azure.com/',
+      defaultName: '我的 Azure 语音',
+      endpoint: 'https://eastasia.tts.speech.microsoft.com/cognitiveservices/v1',
+      keyHint: '在 Azure 门户的「语音服务」资源里拿密钥（用的是 Ocp-Apim-Subscription-Key 头）',
+      voiceHint: '填音色名，形如 zh-CN-XiaoxiaoNeural（晓晓）/ zh-CN-YunxiNeural（云希）/' +
+        'zh-CN-XiaoyiNeural（晓伊）。中国的用户可以换成自己资源所在的节点',
+      models: [
+        {
+          id: 'azure-neural', label: '神经网络语音', note: 'Azure 没有模型字段，声音由音色决定',
+          caps: { performanceTags: false, speed: false, maxCharacters: 3000 }
+        }
+      ]
+    },
+
+    /* ---- 自定义 · OpenAI 兼容 ----
+       这是「其它所有家的后门」：自建的 GPT-SoVITS / fish-speech / openedai-speech /
+       LocalAI，或者自己搭的 one-api 之类中转，只要它说 OpenAI 的 /v1/audio/speech 就行。
+       连不上的那几家（火山、腾讯、OpenAI 官方…）也都能从这里走中转用上。 */
+    custom_openai: {
+      id: 'custom_openai',
+      name: '自定义 · OpenAI 兼容',
+      desc: '自建或中转 · 只要它认 /v1/audio/speech',
+      consoleUrl: 'https://platform.openai.com/docs/api-reference/audio/createSpeech',
+      defaultName: '我的自建语音',
+      endpoint: '',
+      freeModel: true,   /* 模型 ID 由用户填（每个自建服务叫法都不一样） */
+      keyHint: '填这个自建服务/中转需要的密钥；不需要就随便填一个占位（但别留空）',
+      voiceHint: '填服务要求的音色名或音色 ID（每个自建服务不一样，看它的 README）',
+      models: [
+        {
+          id: 'tts-1', label: 'tts-1', note: 'OpenAI 兼容的默认档 · 多数自建服务认这个名字',
+          caps: { performanceTags: false, speed: true, maxCharacters: 4000 }
+        }
+      ]
+    },
+
+    /* ============ 下面这些是**探测过、现在接不了**的 ============
+       planned 只表示「没有适配器」，desc 里写的是实测出来的真实原因 ——
+       用户看到的是「为什么不能直连」，而不是一个神秘的灰行。 */
+
+    dashscope: {
+      id: 'dashscope', planned: true,
+      name: '阿里云 CosyVoice',
+      desc: '跨域是通的，但音频是用**临时链接**返回的：那个链接能不能跨域取回还没验过' +
+        '（要真 Key 跑一次）→ 暂时请走「自定义 · OpenAI 兼容」'
+    },
+    volcengine: {
+      id: 'volcengine', planned: true,
+      name: '火山引擎（豆包语音）',
+      desc: '接口不支持浏览器跨域（预检直接 404）→ 需要自建中转，走「自定义 · OpenAI 兼容」'
+    },
+    tencent_tts: {
+      id: 'tencent_tts', planned: true,
+      name: '腾讯云语音合成',
+      desc: '要求 TC3-HMAC-SHA256 签名，而且响应里没有跨域头 → 需要自建中转'
+    },
+    xfyun: {
+      id: 'xfyun', planned: true,
+      name: '讯飞语音合成',
+      desc: '只提供 WebSocket 接口，静态前端这条「拿回二进制」的链路接不了'
+    },
+    edge_tts: {
+      id: 'edge_tts', planned: true,
+      name: 'Edge 朗读（免费）',
+      desc: '免费、音色多，但同样只有 WebSocket 口子 —— 浏览器里连不了'
+    },
+    openai: {
+      id: 'openai', planned: true,
+      name: 'OpenAI 官方 TTS',
+      desc: 'OpenAI 不给浏览器跨域，本机网络也到不了 → 只能用「自定义 · OpenAI 兼容」填中转地址'
     }
   };
+  var PROVIDER_ORDER = ['fish_audio', 'minimax', 'elevenlabs', 'siliconflow', 'azure', 'custom_openai'];
 
-  var PROVIDER_ORDER = ['fish_audio', 'minimax', 'elevenlabs'];
+  /* 探测过、但**现在接不了**的（连同原因一起摆出来 —— 用户看得到「为什么不能直连」，
+     而不是一个神秘的灰行）。这些一律不显示成可用（契约 §8.6）。 */
+  var PROVIDER_PLANNED = ['dashscope', 'volcengine', 'tencent_tts', 'xfyun', 'edge_tts', 'openai'];
 
   function providerOf(id) { return PROVIDERS[id] || null; }
   function modelsOf(providerId) {
@@ -262,8 +365,10 @@
         id: data.id || newId('ttsc'),
         provider: p.id,
         displayName: data.displayName || p.defaultName,
-        endpoint: data.endpoint || p.endpoint,
+        endpoint: data.endpoint === undefined ? (p.endpoint || '') : data.endpoint,
         apiKey: '',
+        /* 连接级模型：只有「自定义 · OpenAI 兼容」这种自填模型的服务会用（见 freeModel） */
+        model: data.model || '',
         status: 'unconfigured',
         createdAt: Date.now()
       };
@@ -351,7 +456,10 @@
     if (!conn) return { ok: false, cfg: cfg, code: 'CONNECTION_MISSING' };
     if (!conn.apiKey) return { ok: false, cfg: cfg, conn: conn, code: 'CREDENTIAL_MISSING' };
     if (!cfg.voiceId) return { ok: false, cfg: cfg, conn: conn, code: 'VOICE_ID_MISSING' };
-    var model = cfg.modelMode === 'override' && cfg.model ? cfg.model : (s.defaultModel || '');
+    /* 模型的三层回落：角色单独设的 → **连接上填的**（自建/中转的服务模型名五花八门，
+       只能在连接里自由填）→ 全局默认 → 这家第一条。 */
+    var model = (cfg.modelMode === 'override' && cfg.model) ? cfg.model
+      : (conn.model || s.defaultModel || '');
     if (!model) model = (providerOf(conn.provider) || PROVIDERS.fish_audio).models[0].id;
     return {
       ok: true, cfg: cfg, conn: conn, model: model,
@@ -684,11 +792,64 @@
     return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'output_format=' + fmt;
   }
 
+  /* ---- OpenAI 兼容（/v1/audio/speech）----
+     硅基流动与「自定义」共用这一条：body 是 { model, input, voice, response_format, speed }。
+     两家都**没有**标签/情绪字段（硅基流动文档里只列了 model/input/voice/speed/gain/
+     response_format/sample_rate），所以 caps.performanceTags 一律 false，
+     合成文本就是原文 —— 有标签能力才拼标签，这是 Adapter 的底线。 */
+  function openAICompatBody(model, text, voiceId, plan, caps, output) {
+    var o = output || OUTPUT_DEFAULT;
+    var body = {
+      model: model,
+      input: text,
+      voice: voiceId,
+      response_format: o.format || 'mp3'
+    };
+    /* 两家的 speed 都是 0.25–4.0（OpenAI 文档 / 硅基流动文档），比别家宽得多 */
+    if (caps && caps.speed && plan && plan.pace) body.speed = round2(clamp(Number(plan.pace), 0.25, 4));
+    return body;
+  }
+
+  /* ---- Azure：只吃 SSML，音色写在正文里，没有 model 字段 ---- */
+  function xmlEscape(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  }
+  /* Azure 输出格式是一串编号（`X-Microsoft-OutputFormat`），不是 mime。
+     ⚠️ 它能认的**只有这几组固定搭配**（16k:32/64/128、24k:48/96/160、48k:96/192），
+     拿我们的 44100/128 直接拼 `audio-44khz-128kbitrate-mono-mp3` 会被它 400 掉 ——
+     所以就近取一档能用的组合。 */
+  var AZURE_FORMATS = { 16000: [32, 64, 128], 24000: [48, 96, 160], 48000: [96, 192] };
+  function azureFormatOf(output) {
+    var o = output || OUTPUT_DEFAULT;
+    var rate = Number(o.sampleRate) || 44100;
+    var bit = Number(o.bitrate) || 128;
+    var r = Number(Object.keys(AZURE_FORMATS).reduce(function (best, x) {
+      return Math.abs(Number(x) - rate) < Math.abs(Number(best) - rate) ? x : best;
+    }, 24000));
+    var allowed = AZURE_FORMATS[r];
+    var b = allowed.reduce(function (best, x) {
+      return Math.abs(x - bit) < Math.abs(best - bit) ? x : best;
+    }, allowed[0]);
+    return 'audio-' + (r / 1000) + 'khz-' + b + 'kbitrate-mono-mp3';
+  }
+  /* xml:lang 按文本猜（中文/英文两种够用了）—— Azure 认这个字段来选发音规则 */
+  function azureLangOf(text) {
+    return /[\u4e00-\u9fa5]/.test(String(text || '')) ? 'zh-CN' : 'en-US';
+  }
+  function buildAzureSsml(text, voiceId) {
+    return "<speak version='1.0' xml:lang='" + azureLangOf(text) + "'>" +
+      "<voice name='" + xmlEscape(voiceId) + "'>" + xmlEscape(text) + "</voice></speak>";
+  }
+
   /* 服务商映射的对外入口（给 UI 的「高级诊断」看脱敏结果用） */
   function synthesisTextOf(providerId, originalText, plan, caps) {
     if (providerId === 'minimax') return buildMiniMaxText(originalText, plan, caps).text;
     if (providerId === 'elevenlabs') return buildElevenText(originalText, plan, caps);
-    return buildFishSynthesisText(originalText, plan);
+    if (providerId === 'fish_audio') return buildFishSynthesisText(originalText, plan);
+    /* 其余（硅基流动 / Azure / 自定义）没有标签与情绪字段 —— 原文怎么说就怎么念 */
+    return String(originalText || '');
   }
 
   /* ---- 请求组装（纯函数：给什么出什么，不发请求）---- */
@@ -796,6 +957,59 @@
       };
     }
 
+    /* OpenAI 兼容那两家（硅基流动 / 自定义）：同一份 body，只有地址与音色写法不同 */
+    if (provider === 'siliconflow' || provider === 'custom_openai') {
+      var capsO = capabilitiesOf(provider, input.model);
+      var textO = String(input.originalText || '');
+      if (!textO.trim()) throw new Error('原文是空的，不能送去合成');
+      var bodyO = openAICompatBody(input.model, textO, input.voiceId, plan, capsO, output);
+      /* 硅基流动的 mp3 采样率只支持 32000/44100 —— 别的值会被它拒掉 */
+      if (provider === 'siliconflow') bodyO.sample_rate = (Number(output.sampleRate) === 32000) ? 32000 : 44100;
+      if (!endpoint) {
+        /* 自定义那家**必须**先填地址（没有官方地址可回落） */
+        return {
+          provider: provider, unsupported: true,
+          error: normalizedError('CONNECTION_MISSING', { message: '这条连接还没填接口地址' })
+        };
+      }
+      return {
+        provider: provider,
+        url: endpoint,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + (conn.apiKey || '')
+        },
+        body: bodyO,
+        synthesisText: textO,
+        expect: 'audio'
+      };
+    }
+
+    /* Azure：**只吃 SSML**，音色写在正文里；输出格式走 X-Microsoft-OutputFormat 头。
+       它的凭据头是 Ocp-Apim-Subscription-Key（不是 Authorization）。 */
+    if (provider === 'azure') {
+      var textA = String(input.originalText || '');
+      if (!textA.trim()) throw new Error('原文是空的，不能送去合成');
+      if (!input.voiceId) {
+        return { provider: provider, unsupported: true, error: normalizedError('VOICE_ID_MISSING') };
+      }
+      return {
+        provider: provider,
+        url: endpoint || PROVIDERS.azure.endpoint,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': azureFormatOf(output),
+          'Ocp-Apim-Subscription-Key': conn.apiKey || ''
+        },
+        /* 这一家的 body **不是 JSON**，是 XML 字符串 —— transport 认 rawBody */
+        rawBody: buildAzureSsml(textA, input.voiceId),
+        synthesisText: textA,
+        expect: 'audio'
+      };
+    }
+
     /* 没有 Adapter 的服务商：**不许**走到这儿还假装能发 */
     return {
       provider: provider,
@@ -892,6 +1106,11 @@
       if (first.msg) return String(first.msg);
     }
     if (typeof j.message === 'string') return j.message;
+    /* Azure / OpenAI 系：{"error":{"code":"401","message":"..."}} */
+    var e = j.error;
+    if (typeof e === 'string') return e;
+    if (e && typeof e.message === 'string') return e.message;
+    if (j.data && typeof j.data.message === 'string') return j.data.message;
     return t;
   }
 
@@ -924,7 +1143,9 @@
 
   function defaultTransport(req) {
     var init = { method: req.method || 'POST', headers: req.headers || {} };
-    if (req.body !== undefined) init.body = JSON.stringify(req.body);
+    /* rawBody：整段字符串原样发（Azure 的 SSML 就是这样，不能被 JSON.stringify 包一层） */
+    if (req.rawBody !== undefined) init.body = req.rawBody;
+    else if (req.body !== undefined) init.body = JSON.stringify(req.body);
     return global.fetch(req.url, init).then(function (r) {
       var ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
       /* ⚠️ 只有**成功**才按二进制读。出错时一律当文本读 ——
@@ -978,7 +1199,7 @@
         if (!opt.voiceId) { resolve({ ok: false, error: normalizedError('VOICE_ID_MISSING') }); return; }
         r = {
           ok: true, cfg: mergeObj(DEFAULT_VOICE, { enabled: true, restraint: 80 }),
-          conn: opt.conn, model: opt.model || settings().defaultModel,
+          conn: opt.conn, model: opt.model || opt.conn.model || settings().defaultModel,
           provider: opt.conn.provider, voiceId: opt.voiceId,
           caps: capabilitiesOf(opt.conn.provider, opt.model || settings().defaultModel)
         };
@@ -1039,7 +1260,7 @@
     if (p.planned) return Promise.resolve({ ok: false, error: normalizedError('PROVIDER_ERROR', { message: p.name + ' 还没有适配器（计划支持）' }) });
     if (!conn.apiKey) return Promise.resolve({ ok: false, error: normalizedError('CREDENTIAL_MISSING') });
     if (!voiceId) return Promise.resolve({ ok: false, error: normalizedError('VOICE_ID_MISSING') });
-    var model = settings().defaultModel;
+    var model = conn.model || settings().defaultModel;
     if (!hasModel(conn.provider, model)) {
       model = (p.models[0] || {}).id;
     }
@@ -1051,6 +1272,9 @@
       provider: conn.provider, conn: conn, model: model, voiceId: voiceId,
       plan: plan, originalText: '你好，这是一次测试。', output: settings().output
     });
+    /* 组装都组不出来（比如自定义那家还没填地址）就不要发出去 ——
+       发出去只会变成「连不上」，把真正的原因盖掉。 */
+    if (req.unsupported) return Promise.resolve({ ok: false, error: req.error });
     var send = _transport || defaultTransport;
     return Promise.resolve(send(req)).then(function (resp) {
       if (!resp.ok) {
@@ -1119,6 +1343,7 @@
     FREQUENCIES: FREQUENCIES,
     PROVIDERS: PROVIDERS,
     PROVIDER_ORDER: PROVIDER_ORDER,
+    PROVIDER_PLANNED: PROVIDER_PLANNED,
     OUTPUT_DEFAULT: OUTPUT_DEFAULT,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     DEFAULT_VOICE: DEFAULT_VOICE,
@@ -1151,6 +1376,9 @@
     speechPlanOf: speechPlanOf,
     buildFishSynthesisText: buildFishSynthesisText,
     buildElevenSynthesisText: buildElevenText,
+    openAICompatBody: openAICompatBody,
+    buildAzureSsml: buildAzureSsml,
+    azureFormatOf: azureFormatOf,
     elevenVoiceSettingsOf: buildElevenVoiceSettings,
     elevenUrlOf: elUrl,
     synthesisTextOf: synthesisTextOf,

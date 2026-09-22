@@ -291,3 +291,79 @@ MiniMax 那份材料 §8 明说「不能整份原样变成生产契约」，所�
 
 真实 Key 下的**成功**链路（契约 §11：不得凭假连接通过验收）。三家现在都能从设置页进去，
 流程一样：连一家 → 填 Key 和音色 ID → 测试连接 → 角色语音填同一个音色 → 试听。
+
+
+---
+
+## 八、把「接口」补齐：一次探测、三家落地、六家写清原因（v111）
+
+用户：「往下把 tts 的接口都做完」。于是先把**候选服务商全量探测一遍**（可达性 + CORS 预检），
+再按结果决定「实现 / 写清为什么接不了」——不是凭感觉挑。
+
+### 8.1 探测结果（2026-09-22 晚，本机网络 + 生产源）
+
+| 服务商 | 可达 | CORS 预检 | 结论 |
+| --- | --- | --- | --- |
+| 硅基流动 `api.siliconflow.cn` | ✅ 404（正常） | ✅ `allow-origin: *` / `allow-headers: *` | **实现** |
+| Azure `eastasia.tts.speech.microsoft.com` | ✅ 404（正常） | ✅ `allow-origin: *` / `allow-headers: ocp-apim-subscription-key` | **实现** |
+| 阿里云 DashScope | ✅ 401 | ✅ 回显 Origin | 接口通，但**音频是临时链接**返回的，那个链接能不能跨域取回没验 → 先不开 |
+| 火山引擎（豆包）`openspeech.bytedance.com` | ✅ 404 | ❌ 预检 404 | 接不了 → 中转 |
+| 腾讯云 `tts.tencentcloudapi.com` | ✅ 200 | ❌ 响应无跨域头（还要 TC3 签名） | 接不了 → 中转 |
+| Deepgram | ✅ 401 | ✅ 回显 Origin | 可用但音色以英文为主，本轮不做 |
+| OpenAI 官方 | ❌ 连不上（`TypeError`） | — | 本机不可达 + 官方不给浏览器跨域 → 只能中转 |
+| Cartesia / Google Cloud TTS | ❌ 12s 超时 | — | 不可达 |
+| 讯飞 / Edge TTS | — | 只有 WebSocket | 静态前端这条「拿回二进制」的链路接不了 |
+
+### 8.2 新落地的三家
+
+1. **硅基流动**（`/v1/audio/speech`，OpenAI 兼容）：Bearer 鉴权，body 是
+   `{model, input, voice, response_format, speed, sample_rate}`；音色要**连模型名一起写**
+   （`FunAudioLLM/CosyVoice2-0.5B:alex`，官方 8 个预置音色）。
+   mp3 的采样率官方只认 **32000/44100**，所以发送前钳一下。
+   官方文档里**没有**情绪/标签字段 → `caps.performanceTags = false`，正文原样。
+2. **Azure 语音**：**只吃 SSML**，音色写在正文里（`<voice name='zh-CN-XiaoxiaoNeural'>`），
+   凭据头是 `Ocp-Apim-Subscription-Key`，输出格式走 `X-Microsoft-OutputFormat`。
+   两个坑都踩了并修掉：
+   - 它的输出格式**只有固定几组**（16k:32/64/128、24k:48/96/160、48k:96/192），
+     拿我们的 44100/128 直接拼 `audio-44khz-...` 会被 400 —— 现在就近取一档合法组合；
+   - SSML 里的 `& < >` 必须转义，否则正文里一个 `<` 就整条失败。
+   为此给 transport 加了 **`rawBody`**（整段字符串原样发，不 JSON 化）。
+3. **自定义 · OpenAI 兼容**：这是「其它所有家的后门」——
+   自建 GPT-SoVITS / fish-speech / openedai-speech / LocalAI、或者自己搭的 one-api 中转，
+   只要对方认 `/v1/audio/speech` 就能用。上面那些「接不了」的家也能先转成这个形状。
+   它的模型名千奇百怪，所以给**连接**加了自由填写的「模型 ID」（`conn.model`），
+   优先级：角色单独设的 → 连接上填的 → 全局默认 → 这家第一条。
+
+**同时给 transport 补的两件**：`rawBody`（上面那条）、以及错误体解析加了
+`{"error":{"message":...}}`（Azure / OpenAI 系）—— 之前只认 `message` 和 `detail.*`。
+
+### 8.3 接不了的六家：写清原因，而不是一个灰行
+
+设置页新增「**还不能直连的服务**」一组（`PROVIDER_PLANNED`），每一行下面写实测原因
+（无跨域头 / 要 TC3 签名 / 只有 WebSocket / 音频走临时链接 / 本机不可达），
+末尾一行「用『自定义 · OpenAI 兼容』接它们」直接跳过去配。
+契约 §8.6 要求「没实现不许显示可用」，但「灰着不说为什么」和「写清为什么」是两件事。
+
+### 8.4 验证（v111）
+
+- `pnpm check` + `pnpm smoke` 全绿（76 页）。冒烟新增：硅基流动的 body/采样率、
+  Azure 的 SSML 与转义与输出格式白名单、自定义那家没填地址时**直接拒绝**（不许变成「超时」）、
+  `error.message` 的解析、以及「接不了的清单必须都写清原因」。
+- 真机 `D:/tmp/verify-tts.js`：**加到 55 项，全过**（新增第 8 节三家组装 + 第 9 节真实网络）。
+- **真实网络（生产源 + 本机，无效 Key）**：
+  | 目标 | 结果 |
+  | --- | --- |
+  | `api.siliconflow.cn` | HTTP 401 · 0.7s，body `{"code":30014,"message":"Token is invalid."}` 读得出 |
+  | Azure `eastasia` | HTTP 401 · 1.0s（响应体为空，走状态码归一化） |
+  | `api.openai.com` | `TypeError`（连不上）—— 所以官方那家只能走「自定义」填中转 |
+  并让**适配器自己**用真网络跑了一遍：硅基流动 / Azure 的失败都归一化成
+  `CREDENTIAL_INVALID`（不是超时）。
+- 还没验的照旧：**真实 Key 下的成功链路**（契约 §11）。上面三家的 body 形状全部来自
+  官方文档（硅基流动「语音合成」页、Azure SSML 文档），但「真能出声」要用户填一次 Key。
+
+### 8.5 一句话给用户
+
+想用哪家就在设置里连哪家：**硅基流动**（国内最省事）、**Azure**（音色最多）、
+**Fish / MiniMax / ElevenLabs**（原三家）；
+连不上或没有账号的（火山、腾讯、讯飞、OpenAI 官方…）→ 自己搭一个中转，
+用**自定义 · OpenAI 兼容**填地址即可。
