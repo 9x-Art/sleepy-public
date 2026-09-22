@@ -291,7 +291,8 @@
 
   /* ---- 新建抽屉：选类型 + 起名 + 一句描述（0 API） ---- */
   function openCreateDrawer(ctx) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
     var wrap = h('div', 'iol-drawer');
@@ -357,7 +358,8 @@
     var mains = core.charsOfSandbox(sb.id).filter(function (c) { return (c.kind || 'main') === 'main'; });
     if (!mains.length) { ctx.toast('这座岛上还没有角色', 'warn'); return; }
 
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
     var wrap = h('div', 'iol-drawer');

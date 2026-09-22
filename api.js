@@ -338,6 +338,14 @@
        再轮到下一个。1~5，存档坏了/没填兜底 2。 */
     var retryN = Math.max(1, Math.min(5, Math.round(Number(store.get('subRetry'))) || 2));
     var base = candidates();
+    /* 个性化（用户 2026-09-22：「模型没接上个性选择」）：
+       这篇对话单独指定了走哪条连接就只用它。以前 ov 传进来**压根没读**，
+       所以设置页那一行点了跟没点一样。选中的连接被删掉时（filter 后为空）
+       自动回落全部候选，不至于把对话卡死。 */
+    if (ov && ov.pickLabel) {
+      var picked = base.filter(function (x) { return x.label === ov.pickLabel; });
+      if (picked.length) base = picked;
+    }
     var c = [];
     base.forEach(function (cand) {
       for (var i = 0; i < retryN; i++) c.push(cand);

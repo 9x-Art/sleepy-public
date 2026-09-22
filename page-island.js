@@ -417,7 +417,8 @@
      2026-09-21（用户）：从孤岛/群岛列表进来时房型**已经定了**，不再多问一遍；
      也不主动 focus 输入框（以前一进抽屉就弹键盘）。 */
   function createRoom(ctx, kind) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 
@@ -467,7 +468,8 @@
   }
 
   function removeRoom(ctx, sb) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 
@@ -1843,7 +1845,8 @@
      建完原地刷新档案页。绑定马甲这类进阶配置仍归 contact-edit
      （点那张身份卡进去改）。 */
   function openIdentityDrawer(ctx, sb, mainChar, onDone) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 

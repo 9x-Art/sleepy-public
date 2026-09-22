@@ -264,7 +264,8 @@
      onSaved 里拿不到行内 note（demoRow 自己画的），改完就靠 toast 告知，
      重进本页会显示新值。 */
   function openProactiveDrawer(ctx) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
     var st = Sleepy.proactiveEngine ? Sleepy.proactiveEngine.settings()
@@ -340,7 +341,8 @@
   /* 记忆模型选择抽屉（v5 12.1）：总结/整理走哪个模型。
      候选 = 跟随主 API + 主/副 API 里已启用的（复用线下的 apiChoices）。 */
   function openMemoryApiDrawer(ctx) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 
@@ -404,7 +406,8 @@
 
   /* 通用选项抽屉（查手机 · 自主生活档位等）：一列单选，选中即落档并关闭。 */
   function openPickDrawer(ctx, o) {
-    var host = ctx.el;
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
+    var host = document.getElementById('phone') || document.body;
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 
@@ -767,7 +770,39 @@
         onClick: function () { ctx.open('char-appearance', { chatId: chatId }); }
       }));
       secPer.appendChild(demoRow({ label: '语音', note: '未设置' }));
-      secPer.appendChild(demoRow({ label: '模型与生成', note: '跟随全局' }));
+      /* 「模型与生成」以前是个**死行**：写了 note「跟随全局」，但没绑 onClick，
+         点了没反应 —— 用户说的「模型没接上个性选择」就是这个。
+         现在能给**这篇对话**单独指定走哪条模型连接，存 chat.overrides.pickLabel，
+         api.runChat 读它；选的连接被删掉时自动回落全局。 */
+      var chatOv = (chat && chat.overrides) || {};
+      secPer.appendChild(demoRow({
+        label: '模型与生成',
+        note: chatOv.pickLabel ? (chatOv.pickLabel + ' · 这篇专用') : '跟随全局',
+        onClick: function () {
+          var list = (Sleepy.api && Sleepy.api.candidates) ? Sleepy.api.candidates() : [];
+          if (!list.length) {
+            ctx.toast('还没有可用的模型连接 · 去 设置 → 模型连接 配一个', 'warn');
+            return;
+          }
+          var opts = [{ v: '', label: '跟随全局', desc: '用设置里那套候选顺序' }];
+          list.forEach(function (c) {
+            opts.push({ v: c.label, label: c.label, desc: (c.cfg && c.cfg.model) || '' });
+          });
+          openPickDrawer(ctx, {
+            title: '这篇对话用哪个模型',
+            desc: '只对这条对话生效。选的连接被删掉时，自动回落全局候选。',
+            options: opts,
+            current: chatOv.pickLabel || '',
+            onPick: function (v) {
+              cs().mutate(chatId, function (c2) {
+                c2.overrides = c2.overrides || {};
+                if (v) c2.overrides.pickLabel = v;
+                else delete c2.overrides.pickLabel;
+              });
+            }
+          });
+        }
+      }));
 
       /* ---- 数据管理 ---- */
       var secData = sectionOf(body, '数据管理');

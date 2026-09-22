@@ -1104,6 +1104,11 @@ body{
   padding-bottom:0;
 }
 .page[data-page="chat-detail"] .app-body{min-height:0;}
+/* 底栏通到屏缘（用户 2026-09-22：「下面底栏左右两边直接用底栏颜色铺满」）——
+   .page-inner 左右各有 22px 内边距，底栏坐在里面就短了一截；
+   白底时代看不出来，铺了壁纸之后左右两条缝就会露出壁纸。
+   负 margin 抵掉它（跟 .ph-bottomnav 同一个手法），磨砂条才真正通到屏缘。 */
+.page[data-page="chat-detail"] .chat-foot{margin-left:-22px;margin-right:-22px;}
 
 /* 消息气泡 */
 .msg-wrap{
