@@ -13,6 +13,24 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v107（2026-09-22）：修「小号这里的名字点不了」—— 根因是**点标题不聚焦**：
+   `.set-label` 是独立一行、既不包裹输入框也没有 `for`，而单行字段只有 34px 高、
+   标题就贴在上方 11.5px 处，手指稍微偏上就落在标题上（看起来就是"字段点不动"）。
+   · ui.js 新增 bindLabel()：给每个字段的标题绑上输入框（`for` + 自动 id），
+     textField / numField / textArea / switchField 都接上了；page-island 的
+     .iol-field（NPC / 身份抽屉）和 page-chat-settings 的抽屉也补了。
+   · 单行字段的点击区 34px → **44px**（.simple-form 的 .set-input/.set-select/
+     .iol-field input）。
+   · 「会话列表里显示的名字（留空就用名字）」这个 placeholder 太长被裁掉半句
+     → 缩成「会话列表里显示的名字 · 可留空」。
+   · 顺手修：`.iol-field textarea` 的底色写死 rgba(249,247,243,.92) ——
+     夜灯下是**深底一块白 + 浅字**（跟 .face-box / .set-textarea 同一类坑，
+     那两处早改过、这里漏了）→ 改用 --g-fabric。
+   · `.simple-form` 加 `padding-bottom:var(--kb-inset)`：键盘弹起时聚焦的字段
+     才有地方滚上来（页面是自己的滚动容器）。
+   → 必须跳版本：ui.js / style.css / page-idcard.js / page-island.js /
+     page-chat-settings.js 全改了。
+
    v106（2026-09-22）：浮岛的文案块改成**按房型各写一份 top** —— 两张底图是
    分别生成的，岩尖高度不一样（实测屏幕 y：孤岛 506 / 群岛 476，差 30px），
    共用一个 top 的话群岛会空出 54px（用户：「其实群岛看会更明显」）。
@@ -118,7 +136,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v106';
+var CACHE = 'sleepy-v107';
 var CORE = [
   './',
   './index.html',

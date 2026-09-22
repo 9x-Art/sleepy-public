@@ -405,6 +405,8 @@
       inp.value = value;
       inp.placeholder = ph;
       f.appendChild(inp);
+      /* 点标题也能聚焦（裸 <label> + 独立输入框，浏览器不会自动代理点击） */
+      if (Sleepy.ui && Sleepy.ui.bindLabel) Sleepy.ui.bindLabel(f, inp);
       panel.appendChild(f);
       return inp;
     }

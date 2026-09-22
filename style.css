@@ -5613,11 +5613,15 @@ span.msg-avatar-initial{
 
 /* 表单里的字段：去框改下划线、不留解释行 */
 .simple-form .set-field{padding:0;margin:0 0 16px;}
-.simple-form .set-label{font-size:11.5px;color:var(--text-dim);margin-bottom:2px;}
+.simple-form .set-label{font-size:11.5px;color:var(--text-dim);margin-bottom:2px;cursor:pointer;}
 .simple-form .set-input{
   background:none;border:0;border-radius:0;
   border-bottom:1px solid var(--g-glass-line);
-  padding:7px 0;font-size:14.5px;
+  /* 7px → 12px：手机上 34px 的点击区太矮，标题就贴在它上方 11.5px 处，
+     手指稍微偏上一点就落到标题上（用户 2026-09-22：「小号这里的名字是
+     点击不了填写的」）。12px 之后单行字段高 44px，够到移动端的推荐值。
+     标题那边也补了 `for`（见 ui.js 的 bindLabel），所以点标题也能聚焦。 */
+  padding:12px 0;font-size:14.5px;
 }
 .simple-form .set-input:focus{border-bottom-color:var(--g-accent);box-shadow:none;}
 /* 下拉也走同一形 —— 完整页有三个 select，别一个带框一个带线。
@@ -5626,7 +5630,7 @@ span.msg-avatar-initial{
 .simple-form .set-select{
   background:none;border:0;border-radius:0;
   border-bottom:1px solid var(--g-glass-line);
-  padding:7px 0;font-size:14.5px;color:var(--g-ink);
+  padding:12px 0;font-size:14.5px;color:var(--g-ink);
 }
 .simple-form .set-select:focus{outline:0;border-bottom-color:var(--g-accent);}
 /* 人设是整段文字，光一条底线不知道哪儿能打字 —— 给一层浅面（无边框、无圆角框感） */
@@ -5638,6 +5642,10 @@ span.msg-avatar-initial{
   padding:11px 12px;font-size:14px;line-height:1.75;
 }
 .simple-form .set-textarea:focus{box-shadow:0 0 0 1px rgba(176,138,94,.35);}
+/* 键盘弹起时给表单底部垫出键盘的高度。
+   不垫的话：字段被键盘盖住，而页面是自己的滚动容器，浏览器没地方滚它上来。
+   用的是 app.js 那个 visualViewport 监听写的 --kb-inset（和 .chat-foot 同一个）。 */
+.simple-form{padding-bottom:var(--kb-inset,0px);}
 
 /* NPC 添加页用的是 .iol-field 那套老字段（page-island 没引 ui.textField）——
    组件不换，只在这里给它们接上同一套「下划线 + 浅面」的形，
@@ -5651,13 +5659,18 @@ span.msg-avatar-initial{
   width:100%;box-sizing:border-box;
   background:none;border:0;border-radius:0;
   border-bottom:1px solid var(--g-glass-line);
-  padding:7px 0;font-family:inherit;font-size:14.5px;color:var(--g-ink);
+  /* 7px → 12px：跟 .set-input 对齐，单行 44px（手机上 40px 的点击区偏矮，
+     而标题就贴在它上方 2px 处，容易点空） */
+  padding:12px 0;font-family:inherit;font-size:14.5px;color:var(--g-ink);
 }
 .simple-form .iol-field input:focus,
 .simple-form .iol-field textarea:focus{outline:0;border-bottom-color:var(--g-accent);}
 .simple-form .iol-field textarea,
 .simple-form .iol-field textarea.is-short{
-  background:rgba(249,247,243,.92);
+  /* 走「设置页米白」--g-fabric —— 原来写死 rgba(249,247,243,.92)，
+     夜灯下就是**深底上一块白**、里面的浅字直接看不见（跟 .face-box /
+     .set-textarea 是同一类坑，那两处改过了，这里漏了）。 */
+  background:var(--g-fabric);
   border:0;border-radius:6px;
   padding:11px 12px;font-size:14px;line-height:1.75;
   resize:vertical;

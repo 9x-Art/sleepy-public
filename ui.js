@@ -114,6 +114,24 @@
     return wrap;
   }
 
+  /* 让**点标题也能聚焦输入框**。
+     ⚠️ 项目里 .set-label 是独立一行、既不包裹输入框也没有 for —— 所以点标题
+     一直是没反应的。手机上这条尤其要命：输入框只有 34px 高（.set-input 的
+     padding 7px），标题就在它正上方 11.5px，手指稍微偏上一点就落在标题上，
+     用户看到的就是「这个字段点不了 / 填不进去」。
+     （2026-09-22 用户报「小号这里的名字是点击不了填写的」，根因就在这。） */
+  var _fid = 0;
+  function bindLabel(wrap, el) {
+    if (!wrap || !el) return;
+    /* 优先 .set-label；没有就退到第一个 label 子节点 ——
+       page-island / page-chat-settings 里的 .iol-field 用的是裸 <label>。 */
+    var lab = wrap.querySelector('.set-label') || wrap.querySelector('label');
+    if (!lab) return;
+    if (lab.contains(el)) return;   /* 已经是「label 包着输入框」，浏览器本来就会代理点击 */
+    if (!el.id) el.id = 'set-f' + (++_fid);
+    lab.setAttribute('for', el.id);
+  }
+
   function textField(o) {
     var wrap = fieldShell(o.label, o.hint);
     var line = h('div', 'set-line');
@@ -126,6 +144,7 @@
     input.setAttribute('autocorrect', 'off');
     input.setAttribute('spellcheck', 'false');
     line.appendChild(input);
+    bindLabel(wrap, input);
 
     if (o.password) {
       var eye = h('button', 'set-eye', '显示');
@@ -150,6 +169,7 @@
     if (o.max !== undefined) input.max = String(o.max);
     if (o.step !== undefined) input.step = String(o.step);
     wrap.appendChild(input);
+    bindLabel(wrap, input);
     return {
       el: wrap,
       input: input,
@@ -178,6 +198,7 @@
     ta.setAttribute('autocorrect', 'off');
     ta.setAttribute('spellcheck', 'false');
     wrap.appendChild(ta);
+    bindLabel(wrap, ta);
 
     if (o.counter) {
       var count = h('p', 'set-count', '');
@@ -203,6 +224,9 @@
     lab.appendChild(input);
     lab.appendChild(h('span', 'set-switch-track'));
     wrap.appendChild(lab);
+    /* 左边那行字也绑上 —— 点「有小号吗」这类说明文字就能切换，
+       不用非得点右边那个小开关（手机上开关才 40x22）。 */
+    bindLabel(wrap, input);
     return { el: wrap, input: input, get: function () { return input.checked; } };
   }
 
@@ -734,6 +758,7 @@
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.ui = {
+    bindLabel: bindLabel,
     h: h,
     group: group,
     row: row,

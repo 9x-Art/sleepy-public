@@ -557,7 +557,7 @@
     f.wechatName = textField({
       label: '微信名',
       value: existing ? (existing.wechatName || '') : '',
-      placeholder: '会话列表里显示的名字（留空就用名字）'
+      placeholder: '会话列表里显示的名字 · 可留空'
     });
     cols.appendChild(f.wechatName.el);
     top.appendChild(cols);
@@ -789,6 +789,7 @@
         });
         var pw = ui.fieldShell('属于哪个大号', '小号挂在一个大号名下；NPC 属于整座岛，不用选。');
         pw.appendChild(parentSel);
+        ui.bindLabel(pw, parentSel);
         gKind.card.appendChild(pw);
       }
 
@@ -815,7 +816,7 @@
       f.wechatName = textField({
         label: '微信名',
         value: existing ? (existing.wechatName || '') : '',
-        placeholder: '会话列表里显示的名字（留空就用名字）'
+        placeholder: '会话列表里显示的名字 · 可留空'
       });
       fCols.appendChild(f.wechatName.el);
       fRow.appendChild(fCols);
@@ -863,6 +864,7 @@
         regionSel.appendChild(op);
       });
       regionRow.appendChild(regionSel);
+      ui.bindLabel(regionRow, regionSel);
       gPlace.card.appendChild(regionRow);
 
       var tzRow = h('div', 'set-field');
@@ -876,6 +878,7 @@
         tzSel.appendChild(op);
       });
       tzRow.appendChild(tzSel);
+      ui.bindLabel(tzRow, tzSel);
       gPlace.card.appendChild(tzRow);
 
       /* 国籍（用户 2026-09-22：「Char 设定说要加国别和时间，没加」）。
@@ -923,6 +926,7 @@
       });
       var uw = ui.fieldShell('对应的 User 马甲', '切号时，这一对会一起被选中。');
       uw.appendChild(uSel);
+      ui.bindLabel(uw, uSel);
       gBind.card.appendChild(uw);
 
       var maskLink = h('div', 'btn-row');
@@ -1011,6 +1015,7 @@
         genderSel.appendChild(op);
       });
       f.gender.appendChild(genderSel);
+      ui.bindLabel(f.gender, genderSel);
       g3.card.appendChild(f.gender);
 
       f.faceLockImage = textField({
@@ -1512,7 +1517,7 @@
       f.wechatName = textField({
         label: '微信名',
         value: existing ? (existing.wechatName || '') : '',
-        placeholder: '会话列表里显示的名字（留空就用名字）'
+        placeholder: '会话列表里显示的名字 · 可留空'
       });
       cols.appendChild(f.wechatName.el);
       top.appendChild(cols);
@@ -1633,7 +1638,7 @@
       f.wechatName = textField({
         label: '微信名',
         value: u.wechatName || '',
-        placeholder: '会话列表里显示的名字（留空就用名字）'
+        placeholder: '会话列表里显示的名字 · 可留空'
       });
       cols.appendChild(f.wechatName.el);
       top.appendChild(cols);

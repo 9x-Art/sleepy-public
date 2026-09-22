@@ -439,6 +439,7 @@
     var nameInput = h('input');
     nameInput.placeholder = '不起也行，以后用岛上的人叫它';
     fName.appendChild(nameInput);
+    ui.bindLabel(fName, nameInput);
     panel.appendChild(fName);
 
     var actions = h('div', 'iol-drawer-actions');
@@ -1723,14 +1724,16 @@
           if (fAvatar) fAvatar.setName(nameInput.value);
         });
         fName.appendChild(nameInput);
+        ui.bindLabel(fName, nameInput);
         cols.appendChild(fName);
 
         /* 微信名：会话列表里显示的名字（用户 2026-09-21）。 */
         var fWx = h('div', 'iol-field');
         fWx.appendChild(h('label', '', '微信名'));
         var wxInput = h('input');
-        wxInput.placeholder = '会话列表里显示的名字（留空就用名字）';
+        wxInput.placeholder = '会话列表里显示的名字 · 可留空';
         fWx.appendChild(wxInput);
+        ui.bindLabel(fWx, wxInput);
         cols.appendChild(fWx);
         top.appendChild(cols);
         form.appendChild(top);
@@ -1740,6 +1743,7 @@
         var bio = h('textarea');
         bio.placeholder = 'TA 是谁，平时做什么……';
         fBio.appendChild(bio);
+        ui.bindLabel(fBio, bio);
         form.appendChild(fBio);
 
         var fSay = h('div', 'iol-field');
@@ -1748,6 +1752,7 @@
         say.className = 'is-short';
         say.placeholder = 'TA 说话是什么感觉，会怎么做……';
         fSay.appendChild(say);
+        ui.bindLabel(fSay, say);
         form.appendChild(fSay);
 
         body.appendChild(form);
@@ -1864,6 +1869,7 @@
     var nameInput = h('input');
     nameInput.placeholder = '这张脸被叫什么';
     fName.appendChild(nameInput);
+    ui.bindLabel(fName, nameInput);
     panel.appendChild(fName);
 
     var fBio = h('div', 'iol-field');
@@ -1872,6 +1878,7 @@
     bio.className = 'is-short';
     bio.placeholder = '对外是什么样的人……';
     fBio.appendChild(bio);
+    ui.bindLabel(fBio, bio);
     panel.appendChild(fBio);
 
     var actions = h('div', 'iol-drawer-actions');
