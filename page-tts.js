@@ -217,7 +217,8 @@
         });
         body.appendChild(gSvc.wrap);
         body.appendChild(h('p', 'set-group-note',
-          'Fish Audio 的接口在部分网络下连不上（要代理或自建中转）；连不上可以先换 MiniMax，国内可达。'));
+          '三家都直连（没有服务端代发）。Fish Audio 的接口在部分网络下连不上，' +
+          '要代理或自建中转；MiniMax 国内可达；ElevenLabs 只有 v3 档位能带 Audio Tags。'));
 
         /* ---- 默认生成设置（模型列表跟着默认服务的供应商走） ---- */
         var curConn = tts.connection(s.defaultConnectionId) || tts.firstConnectionOf(null);
@@ -289,6 +290,13 @@
         var idx = parseInt(String(v || ''), 10);
         if (!idx || idx < 1 || idx > list.length) return;
         tts.saveSettings({ defaultConnectionId: list[idx - 1].id });
+        /* 换供应商时默认模型会「牛唇不对马嘴」（存着 Fish 的档位、列表却是别人家的）——
+           顺手把它换成这家第一条。用户之后还能自己改。 */
+        var newConn = list[idx - 1];
+        if (!tts.modelsOf(newConn.provider).some(function (m) { return m.id === tts.settings().defaultModel; })) {
+          var first = tts.modelsOf(newConn.provider)[0];
+          if (first) tts.saveSettings({ defaultModel: first.id });
+        }
         ctx.toast('默认服务已更新', 'ok');
         if (done) done();
       });
@@ -396,7 +404,9 @@
 
         fields.endpoint = textField({
           label: '接口地址',
-          hint: '普通用户保留默认即可；用代理或自建中转时改这里',
+          hint: providerId === 'elevenlabs'
+            ? '普通用户保留默认即可。音色 ID 会拼在地址末尾；自建中转可以把 {voice_id} 写在地址里的任意位置'
+            : '普通用户保留默认即可；用代理或自建中转时改这里',
           value: c.endpoint || prov.endpoint,
           placeholder: prov.endpoint,
           inputmode: 'url'

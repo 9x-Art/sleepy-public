@@ -166,6 +166,8 @@ Sleepy 是**零依赖静态站**（`file://` + Cloudflare Pages，`serve.js` 只
 ### 用户拍板的三件（这一节的依据）
 1. **首版服务商**：由我定 —— 决定 **Fish Audio + MiniMax 两个 Adapter 都实现**，
    ElevenLabs 保持「计划支持」（能力表已登记，没有 Adapter 不给入口）。
+   **⚠️ 这条当晚就变了**：用户说「我目前只注册了 fish audio，所以没关系，你先往下做另外的 tts」，
+   于是补上了 ElevenLabs Adapter（见第七节）—— 三家现在都有适配器，设置页里不再有灰行。
    理由：Fish 是契约定的首版（标签最全），但实测它的接口在部分网络下被 DNS 污染 + TLS 阻断；
    MiniMax 国内可达、CORS 实测允许浏览器直连，是**没有代理的设备上唯一能真跑通**的一条路。
    两家一起做，用户在哪台机器上都有能用的。
@@ -210,3 +212,82 @@ Sleepy 是**零依赖静态站**（`file://` + Cloudflare Pages，`serve.js` 只
 4. **音频 mime 跟着响应走**：写死 `audio/mpeg` 的话，中转/自建接口回 wav/ogg 时标签就是错的。
 5. 真机脚本的坑：假音频只有 0.4 秒，**隔一会儿再读播放态会读到「播完了自动复位」**——
    每一步都要在同一个 `evaluate` 里紧接着读（顺手把「播完复位」也验了）。
+
+
+---
+
+## 七、ElevenLabs Adapter（2026-09-22 晚，v110）
+
+用户拍板：「我目前只注册了 fish audio，所以没关系」+「你先往下做另外的 tts」——
+即按 MiniMax 那份 §7 的顺序继续往下推第 6 步（实现 ElevenLabs Adapter），
+首版不纠结「本机连不上 Fish」这件事。
+
+### 依据不是文档转述，是官方规格本身
+
+拉的是 **官方 OpenAPI**（`https://api.elevenlabs.io/openapi.json`，2.2MB）与
+v3 提示词指南（`/docs/overview/capabilities/text-to-speech/best-practices.md`）。
+MiniMax 那份材料 §8 明说「不能整份原样变成生产契约」，所以这次只吸收**确认过**的：
+
+| 事实 | 来源 | 落到代码哪 |
+| --- | --- | --- |
+| `POST /v1/text-to-speech/{voice_id}`，音色在**路径**里 | OpenAPI path | `elUrl()` |
+| 凭据头是 `xi-api-key`（**不是** Authorization） | OpenAPI parameter | `buildRequest` 的 headers |
+| `voice_settings` = stability / similarity_boost / style / use_speaker_boost / speed | OpenAPI `VoiceSettingsResponseModel` | `buildElevenVoiceSettings()` |
+| `speed` 取值 **0.7–1.2** | OpenAPI（maximum/minimum） | 钳位后再发 |
+| `speed` 只对 2.5 系列生效 | 官方 voice_settings 说明 | `caps.speed`（只有 Flash 为 true） |
+| `apply_text_normalization` 是 `auto/on/off` 枚举；v2/v3 的规范化一直开着 | OpenAPI 枚举 + 文档 | 只对 Flash 发 `'on'` |
+| 输出格式走查询参数 `output_format=mp3_44100_128` | OpenAPI parameter | `elUrl()` |
+| 200 直接回 `audio/mpeg` 二进制 | OpenAPI responses | `expect:'audio'` → 复用现成二进制路 |
+| 401 错误体是 `{detail:{message,...}}`；422 是 `{detail:[{msg,...}]}` | 实测 + OpenAPI | `errorMessageOf()` |
+| v3 的 Audio Tags 是**自然语言方向**，官方给的是分类示例表 | v3 提示词指南 | `EL_EMOTION` / `EL_TAG` |
+
+### 三条克制下来的决定（都是「宁可少做，不许猜」）
+
+1. **只映射官方文档里出现过的标签**。v3 的标签表只列了
+   `[laughs] [whispers] [sighs] [exhales] [sarcastic] [curious] [excited] [crying] [mischievously]…`，
+   所以我们把 `laugh→[laughs] / sigh→[sighs] / whisper→[whispers] / crying→[crying] / breathy→[exhales]`，
+   情绪里映射 `happy/tender(→reassuring)/concerned(→sympathetic)/surprised/annoyed`。
+   **`sad`、`angry`、`tired`、`disappointed`、`cold`、`soft`、`low` 一律不加标签** ——
+   官方表里没有对应词，与其拼一个可能被念出来的词，不如按音色本身的底子读。
+   等真实试听过、确认安全再补（这是契约「无法映射回退无标签」的应用）。
+2. **按模型发字段**。`speed` 只随 Flash 发、`apply_text_normalization` 只随 Flash 发、
+   Audio Tags 只随 v3 发 —— UI 允许了什么，就必须真被当前模型支持（MiniMax 那份 §4）。
+3. **能力表也跟着扩**：`capabilitiesOf` 新增 `speed` / `textNormalization` 两个布尔，
+   继续挂在模型上，不挂在服务商上。
+
+### 顺带修掉/补上的
+
+- `errorMessageOf()` 统一解析各家错误体（Fish 的 `message`、ElevenLabs 的 `detail.message`
+  / `detail[0].msg`、解析不出来就用原文）。以前 `responseToBlob` 里只认 `message`，
+  ElevenLabs 的 401 会被显示成一段原始 JSON。
+- `normalizeHttpError` 补了「音色不存在 / 模型不可用 / 文本超长」的文本判据
+  （ElevenLabs 报音色不存在用的是 400/422，不是 404）。
+- `elUrl()` 处理**地址上本来就带查询串**的中转（`?token=xxx`）：音色要插在 `?` 之前，
+  直接字符串相加会拼出 `.../tts?token=abc/<voice_id>` 这种 404 地址。
+- 自建中转可以在接口地址里写 `{voice_id}` 占位，位置自己定。
+- 「默认服务与模型」里换供应商时顺手把默认模型换成这家第一条（以前会存着 Fish 的档位、
+  列表却是别人家的）。
+
+### 验证（v110）
+
+- `pnpm check` + `pnpm smoke` 全绿；冒烟新增 ElevenLabs 断言：URL/凭据头/body.model_id、
+  v3 才有 Audio Tag、Flash 带 speed 且必须带 `apply_text_normalization`、
+  `detail.message` 与 `detail[0].msg` 两种错误体、中转带查询串的 URL 拼装、
+  以及「三家都不许再标 planned」。
+- 真机 `D:/tmp/verify-tts.js`：**加到 40 项断言，全过**。新增第 6 节（ElevenLabs 适配器，
+  注入假服务商：URL 形状 / xi-api-key / v3 标签 / Flash 不发标签但带语速与规范化 /
+  **拿回的音频真的能解码播放** / 真实 401 错误体归一化）与第 7 节（真实网络）。
+- **第 7 节是这一轮唯一「真打了网络」的一段**（无效 Key，只看连得上吗）：
+  | 目标 | 结果 | 含义 |
+  | --- | --- | --- |
+  | `api.elevenlabs.io` | **HTTP 401 · 1.5s**，body 能完整读出 | 跨域放行 + 错误体可读 → 直连成立 |
+  | `api.minimax.cn` | **HTTP 200**（`base_resp.status_code=1004`）· 0.3s | 国内可达；顺便验了「200 也可能是失败」那条 |
+  | `api.fish.audio` | 9s 超时（`TimeoutError`） | 再次确认被墙，**必须**能走自建中转 |
+  另外用**真网络**走了一遍 `generate()` 的 MiniMax 失败路径：
+  200 + base_resp 1004 → 归一化成 `CREDENTIAL_INVALID`（providerCode 1004），
+  证明「hex 那条路 + base_resp 解析 + 错误归一化」在真请求下也对。
+
+### 还没验的（照旧，要用户来）
+
+真实 Key 下的**成功**链路（契约 §11：不得凭假连接通过验收）。三家现在都能从设置页进去，
+流程一样：连一家 → 填 Key 和音色 ID → 测试连接 → 角色语音填同一个音色 → 试听。

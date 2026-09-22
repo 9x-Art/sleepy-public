@@ -148,15 +148,30 @@
     elevenlabs: {
       id: 'elevenlabs',
       name: 'ElevenLabs',
-      desc: '后续版本计划支持',
+      desc: '表现力强 · 多语言（只有 v3 吃 Audio Tags）',
       consoleUrl: 'https://elevenlabs.io/',
       defaultName: '我的 ElevenLabs',
+      /* 音色 ID 在**路径**里（/text-to-speech/{voice_id}）—— 这是三家唯一不把音色放 body 的。
+         自建中转可以把 {voice_id} 写在地址里任意位置，见 elUrl()。 */
       endpoint: 'https://api.elevenlabs.io/v1/text-to-speech/',
-      planned: true,   /* 没有 Adapter 之前一律「计划支持」，不许显示可用 */
+      keyHint: '在 ElevenLabs 控制台 → API Keys 里生成（请求头 xi-api-key，不是 Authorization）',
+      voiceHint: '填 voice_id（音色页网址里 /voice-lab/<这一段>，或 API /v1/voices 里的 voice_id）',
+      /* 能力全在这张表上（MiniMax 那份 §4 的硬要求：**落到模型**，不是落到服务商）。
+         speed：官方 voice_settings.speed 只对 2.5 系列生效，v3/多语言 v2 靠 Audio Tags 控速；
+         textNormalization：多语言 v2 / v3 的文本规范化是一直开着的，只有 Flash 要显式打开。 */
       models: [
-        { id: 'eleven_v3', label: 'v3', note: '表现力最强 · 70+ 语言', caps: { performanceTags: true, maxCharacters: 5000 } },
-        { id: 'eleven_multilingual_v2', label: 'Multilingual v2', note: '长文本更稳', caps: { performanceTags: false, maxCharacters: 10000 } },
-        { id: 'eleven_flash_v2_5', label: 'Flash v2.5', note: '低延迟', caps: { performanceTags: false, maxCharacters: 40000 } }
+        {
+          id: 'eleven_v3', label: 'v3', note: '表现力最强 · 70+ 语言 · 5,000 字符',
+          caps: { performanceTags: true, speed: false, textNormalization: false, maxCharacters: 5000 }
+        },
+        {
+          id: 'eleven_multilingual_v2', label: 'Multilingual v2', note: '长文本更稳 · 10,000 字符',
+          caps: { performanceTags: false, speed: false, textNormalization: false, maxCharacters: 10000 }
+        },
+        {
+          id: 'eleven_flash_v2_5', label: 'Flash v2.5', note: '低延迟 · 40,000 字符 · 支持调速',
+          caps: { performanceTags: false, speed: true, textNormalization: true, maxCharacters: 40000 }
+        }
       ]
     }
   };
@@ -183,6 +198,11 @@
       performanceTags: !!caps.performanceTags,
       voiceCloning: !!caps.voiceCloning,
       voiceDesign: !!caps.voiceDesign,
+      /* speed / textNormalization 是 ElevenLabs 那两家细分的口子：
+         能调速的模型才把语速发过去，能显式开规范化的模型才发那个开关。
+         别的服务商默认 false —— 不看模型就乱发字段，换一家就是 400。 */
+      speed: !!caps.speed,
+      textNormalization: !!caps.textNormalization,
       maxCharacters: caps.maxCharacters || 3000,
       supportedOutputFormats: caps.supportedOutputFormats || ['mp3']
     };
@@ -571,9 +591,103 @@
     return { text: body, emotion: emo };
   }
 
+  /* ---- ElevenLabs ----
+     只有 v3 有 Audio Tags，而且这里的映射**只放官方文档里出现过的标签**
+     （v3 提示词指南的「Voice-related」表 + 帮助中心的例子）。
+     官方标签表里没有对应词的（sad / angry / tired / disappointed / cold，
+     以及声学类的 soft / low）**一律不加** —— 契约「无法映射回退无标签」，
+     与其拼一个可能被念出来的词，不如安静地按音色本身的底子读。
+     Multilingual v2 / Flash 根本没有标签控制，capabilities.performanceTags=false
+     会把这条路彻底关掉（UI 里那些开关也跟着不出现）。 */
+  var EL_EMOTION = {
+    neutral: '',
+    happy: 'happy',
+    tender: 'reassuring',
+    concerned: 'sympathetic',
+    sad: '',
+    disappointed: '',
+    surprised: 'surprised',
+    angry: '',
+    annoyed: 'annoyed',
+    cold: '',
+    tired: ''
+  };
+  var EL_TAG = {
+    laugh: 'laughs',
+    sigh: 'sighs',
+    whisper: 'whispers',
+    crying: 'crying',
+    breathy: 'exhales'
+    /* soft / low：v3 没有对应标签，靠音色本身 */
+  };
+
+  function buildElevenText(originalText, plan, caps) {
+    var text = String(originalText || '');
+    if (!text.trim()) throw new Error('原文是空的，不能送去合成');
+    if (!plan || !plan.shouldGenerate) return text;
+    /* 没有标签能力的档位（v2 / Flash）连主情绪都不加 */
+    if (!caps || !caps.performanceTags) return text;
+    var tags = [];
+    var emo = EL_EMOTION[plan.emotion];
+    if (emo) tags.push(emo);
+    var per = plan.performanceTags || [];
+    for (var i = 0; i < per.length && tags.length < 3; i++) {
+      if (EL_TAG[per[i]]) tags.push(EL_TAG[per[i]]);
+    }
+    /* 短句不堆（和 Fish 那条同一条规矩） */
+    if (text.trim().length <= 12) tags = tags.slice(0, 1);
+    /* 高克制先减标签 */
+    if (plan.restraint >= 0.8) tags = tags.slice(0, 2);
+    if (!tags.length) return text;
+    return tags.map(function (t) { return '[' + t + ']'; }).join('') + ' ' + text;
+  }
+
+  /* VoiceSettings：官方字段 stability / similarity_boost / style / use_speaker_boost / speed。
+     普通用户不该看到完整声学面板（MiniMax 那份 §5.2），所以这里只做**两件事**：
+     克制度 → stability（越高越稳），情绪幅度 → style（越大越夸张）。
+     相似度用官方默认 0.75，不暴露；speed 只在模型支持时才发（官方范围 0.7–1.2）。
+     ⚠️ 读的是 **SpeechPlan**（intensity / restraint / pace 都是归一化过的），
+     不是角色配置里的 0–100 —— Adapter 只认计划，别在这里再回头翻配置。 */
+  function buildElevenVoiceSettings(plan, caps) {
+    var restraint = plan ? clamp01(plan.restraint) : 0.7;
+    var intensity = plan ? clamp01(plan.intensity) : 0;
+    var out = {
+      stability: round2(0.25 + restraint * 0.45),
+      similarity_boost: 0.75,
+      style: round2(intensity * 0.6),
+      use_speaker_boost: true
+    };
+    if (caps && caps.speed && plan && plan.pace) {
+      out.speed = round2(clamp(Number(plan.pace), 0.7, 1.2));
+    }
+    return out;
+  }
+
+  /* 音色在 URL 路径里。自建中转可以在「接口地址」里写 {voice_id} 占位，
+     我们按占位替换；没写占位就默认拼在末尾（官方形状）。
+     ⚠️ 地址上**本来就带查询串**时（中转常见 ?token=xxx），音色必须插在 ? 之前 ——
+     直接字符串相加会拼出 .../tts?token=abc/<voice_id> 这种地址（真机上就是 404）。 */
+  function elUrl(endpoint, voiceId, output) {
+    var base = String(endpoint || '').trim() || PROVIDERS.elevenlabs.endpoint;
+    var id = encodeURIComponent(voiceId || '');
+    var u;
+    if (base.indexOf('{voice_id}') >= 0) {
+      u = base.replace('{voice_id}', id);
+    } else {
+      var qi = base.indexOf('?');
+      var path = qi >= 0 ? base.slice(0, qi) : base;
+      var qs = qi >= 0 ? base.slice(qi) : '';
+      u = path.replace(/\/+$/, '') + '/' + id + qs;
+    }
+    var o = output || OUTPUT_DEFAULT;
+    var fmt = 'mp3_' + (Number(o.sampleRate) || 44100) + '_' + (Number(o.bitrate) || 128);
+    return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'output_format=' + fmt;
+  }
+
   /* 服务商映射的对外入口（给 UI 的「高级诊断」看脱敏结果用） */
   function synthesisTextOf(providerId, originalText, plan, caps) {
     if (providerId === 'minimax') return buildMiniMaxText(originalText, plan, caps).text;
+    if (providerId === 'elevenlabs') return buildElevenText(originalText, plan, caps);
     return buildFishSynthesisText(originalText, plan);
   }
 
@@ -655,6 +769,33 @@
       };
     }
 
+    if (provider === 'elevenlabs') {
+      var capsEl = capabilitiesOf(provider, input.model);
+      var textEl = buildElevenText(input.originalText, plan, capsEl);
+      var bodyEl = {
+        text: textEl,
+        model_id: input.model,
+        voice_settings: buildElevenVoiceSettings(plan, capsEl)
+      };
+      /* 官方枚举 auto / on / off；多语言 v2 与 v3 的规范化一直开着，不用发。
+         Flash 默认「可能不按预期规范化」（MiniMax 那份 §5.2 点名的坑）→ 显式打开。 */
+      if (capsEl.textNormalization) bodyEl.apply_text_normalization = 'on';
+      return {
+        provider: provider,
+        url: elUrl(endpoint, input.voiceId, output),
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          /* 这家的凭据头是 xi-api-key，不是 Authorization（照抄别人的适配器就死在这） */
+          'xi-api-key': conn.apiKey || '',
+          'Accept': 'audio/mpeg'
+        },
+        body: bodyEl,
+        synthesisText: textEl,
+        expect: 'audio'
+      };
+    }
+
     /* 没有 Adapter 的服务商：**不许**走到这儿还假装能发 */
     return {
       provider: provider,
@@ -732,9 +873,31 @@
     };
   }
 
+  /* 把各家五花八门的错误体压成一句话。形状都不一样，谁也别猜：
+       Fish        { "message": "..." }（有的还套层 data）
+       ElevenLabs  401/403 → { "detail": { "message": "...", "code": "..." } }
+                   422     → { "detail": [ { "loc": [...], "msg": "..." } ] }   ← detail 是数组
+       MiniMax     成功也可能是业务错误，走 base_resp（见 parseMiniMaxJson）
+     解析不出来就用原文，绝不编一个更好的说法。 */
+  function errorMessageOf(rawText) {
+    var t = String(rawText || '');
+    var j = null;
+    try { j = JSON.parse(t); } catch (e) { return t; }
+    if (!j || typeof j !== 'object') return t;
+    var d = j.detail;
+    if (typeof d === 'string') return d;
+    if (d && typeof d.message === 'string') return d.message;
+    if (d && Array.isArray(d) && d.length) {
+      var first = d[0] || {};
+      if (first.msg) return String(first.msg);
+    }
+    if (typeof j.message === 'string') return j.message;
+    return t;
+  }
+
   /* HTTP 状态 + 原文 → 错误码。日志/提示都用它，别各写一份 if。 */
   function normalizeHttpError(provider, status, rawText) {
-    var t = String(rawText || '');
+    var t = errorMessageOf(rawText);
     var code = 'PROVIDER_ERROR';
     if (status === 401 || status === 403) code = 'CREDENTIAL_INVALID';
     else if (status === 402) code = 'INSUFFICIENT_BALANCE';
@@ -742,9 +905,13 @@
     else if (status === 404) code = /voice|reference/i.test(t) ? 'VOICE_NOT_FOUND' : 'MODEL_UNAVAILABLE';
     else if (status === 413) code = 'TEXT_TOO_LONG';
     else if (status === 0) code = 'PROVIDER_TIMEOUT';
-    else if (/balance|insufficient|余额|quota/i.test(t)) code = 'INSUFFICIENT_BALANCE';
+    else if (/balance|insufficient|余额|quota|credit/i.test(t)) code = 'INSUFFICIENT_BALANCE';
     else if (/invalid.{0,12}(api|key|token)|unauthor/i.test(t)) code = 'CREDENTIAL_INVALID';
     else if (/rate.?limit|too many/i.test(t)) code = 'RATE_LIMITED';
+    /* 404 之外也会报音色：ElevenLabs 的「voice not found」是 400/422 */
+    else if (/voice.{0,24}(not found|不存在|invalid)|voice_id/i.test(t)) code = 'VOICE_NOT_FOUND';
+    else if (/model.{0,24}(not found|invalid|unavailable)|unsupported model/i.test(t)) code = 'MODEL_UNAVAILABLE';
+    else if (/too long|max.{0,10}characters|字符|exceeds/i.test(t)) code = 'TEXT_TOO_LONG';
     return normalizedError(code, { status: status, provider: provider, message: t.slice(0, 200) });
   }
 
@@ -784,10 +951,8 @@
       return parseMiniMaxJson(resp.json);
     }
     if (!resp.buffer || !resp.buffer.byteLength) {
-      /* Fish 出错时也会返回 JSON —— 拿里面的 message 做人话 */
-      var txt = resp.text || '';
-      try { txt = (JSON.parse(txt).message || txt); } catch (e) { /* 保持原样 */ }
-      return { ok: false, error: normalizeHttpError(provider, resp.status || 0, txt) };
+      /* 出错时多数家也会回 JSON —— 用统一那句 errorMessageOf 拿出来（别在这只认 message） */
+      return { ok: false, error: normalizeHttpError(provider, resp.status || 0, resp.text) };
     }
     /* 类型跟着响应走（服务商回什么就存什么）——
        写死 audio/mpeg 的话，中转/自建接口回 wav 或 ogg 时标签就是错的。 */
@@ -985,6 +1150,9 @@
     estimateSeconds: estimateSeconds,
     speechPlanOf: speechPlanOf,
     buildFishSynthesisText: buildFishSynthesisText,
+    buildElevenSynthesisText: buildElevenText,
+    elevenVoiceSettingsOf: buildElevenVoiceSettings,
+    elevenUrlOf: elUrl,
     synthesisTextOf: synthesisTextOf,
 
     /* 发送 */
@@ -993,6 +1161,7 @@
     testConnection: testConnection,
     normalizeHttpError: normalizeHttpError,
     normalizedError: normalizedError,
+    errorMessageOf: errorMessageOf,
     hexToBlob: hexToBlob,
     /* 注入点：按调用传 transport 优先，这里只是真机脚本/并发测试的兜底口 */
     _transport: function (fn) { _transport = fn; }

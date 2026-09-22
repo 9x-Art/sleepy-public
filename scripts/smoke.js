@@ -5516,13 +5516,29 @@ t('能力落到「模型」：不同档位的表达能力不一样', () => {
   const mm28 = T.capabilitiesOf('minimax', 'speech-2.8-hd');
   const mm26 = T.capabilitiesOf('minimax', 'speech-2.6-hd');
   const fishS1 = T.capabilitiesOf('fish_audio', 's1');
-  const el = T.providerOf('elevenlabs');
   if (!mm28.performanceTags) throw new Error('MiniMax 2.8 该有语气词标签');
   if (mm26.performanceTags) throw new Error('MiniMax 2.6 不该有标签');
   if (fishS1.performanceTags) throw new Error('Fish s1 不该有标签');
-  if (!el.planned) throw new Error('ElevenLabs 没有 Adapter，必须标计划支持');
+
+  /* ElevenLabs 三个档位差别最大：只有 v3 吃 Audio Tags，只有 Flash 能调速、
+     才需要显式打开文本规范化（官方文档确认过的三条）。 */
+  const elV3 = T.capabilitiesOf('elevenlabs', 'eleven_v3');
+  const elV2 = T.capabilitiesOf('elevenlabs', 'eleven_multilingual_v2');
+  const elFlash = T.capabilitiesOf('elevenlabs', 'eleven_flash_v2_5');
+  if (!elV3.performanceTags) throw new Error('v3 该有 Audio Tags');
+  if (elV2.performanceTags || elFlash.performanceTags) throw new Error('v2 / Flash 不该有 Audio Tags');
+  if (!elFlash.speed || elV3.speed || elV2.speed) throw new Error('只有 Flash 能调速');
+  if (!elFlash.textNormalization || elV3.textNormalization) throw new Error('只有 Flash 要显式开文本规范化');
+  if (elV3.maxCharacters !== 5000 || elV2.maxCharacters !== 10000 || elFlash.maxCharacters !== 40000) {
+    throw new Error('字符上限跟官方文档对不上');
+  }
+  /* 三家都必须有适配器 —— 没实现的才标「计划支持」（契约 §8.6） */
+  T.PROVIDER_ORDER.forEach((pid) => {
+    if (T.providerOf(pid).planned) throw new Error(pid + ' 还没有适配器，不该开放入口');
+  });
   return { '2.8': mm28.performanceTags, '2.6': mm26.performanceTags, 's1': fishS1.performanceTags,
-    ElevenLabs: '计划支持', 字符上限: el.models.map((m) => m.id + '=' + T.capabilitiesOf('elevenlabs', m.id).maxCharacters).join(' ') };
+    ElevenLabs: 'v3 标签 / Flash 调速',
+    字符上限: T.PROVIDER_ORDER.map((p) => T.modelsOf(p).length + '档').join(' ') };
 });
 
 t('连接状态四档：没 Key 不许显示已连接，删服务不许无条件回退', () => {
@@ -5558,6 +5574,47 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   if (mmReq.body.output_format !== 'hex') throw new Error('MiniMax 该用 hex 拿音频');
   if (mmReq.body.text.indexOf('(chuckle)') >= 0) throw new Error('没让笑却给了轻笑');
 
+  /* ElevenLabs：音色在 **URL 路径**里、凭据头是 xi-api-key、只有 v3 吃 Audio Tags */
+  const elConn = { provider: 'elevenlabs', endpoint: 'https://api.elevenlabs.io/v1/text-to-speech/', apiKey: 'el-key-1234' };
+  const elV3 = T.buildRequest({
+    provider: 'elevenlabs', conn: elConn, model: 'eleven_v3', voiceId: '21m00Tcm4TlvDq8ikWAM',
+    plan: plan, originalText: original, output: T.settings().output
+  });
+  if (elV3.url.indexOf('/text-to-speech/21m00Tcm4TlvDq8ikWAM') < 0) throw new Error('音色没进 URL：' + elV3.url);
+  if (elV3.url.indexOf('output_format=mp3_44100_128') < 0) throw new Error('输出格式没进查询串：' + elV3.url);
+  if (elV3.headers['xi-api-key'] !== 'el-key-1234') throw new Error('凭据头不对');
+  if (elV3.headers.Authorization) throw new Error('ElevenLabs 不吃 Authorization，别乱发');
+  if (elV3.body.model_id !== 'eleven_v3') throw new Error('模型没进 body');
+  if (elV3.body.text.indexOf('[reassuring]') !== 0) throw new Error('温柔没映射成 v3 的 Audio Tag：' + elV3.body.text);
+  if (elV3.body.text.indexOf(original) < 0) throw new Error('原文被改写了');
+  if (elV3.body.voice_settings.speed !== undefined) throw new Error('v3 不该发 speed（官方只对 2.5 系列生效）');
+  if (elV3.body.apply_text_normalization) throw new Error('v3 的规范化一直开着，不该多发字段');
+
+  /* Flash：没有 Audio Tags（一个标签都不许有），但能调速、要显式打开文本规范化 */
+  const elFlash = T.buildRequest({
+    provider: 'elevenlabs', conn: elConn, model: 'eleven_flash_v2_5', voiceId: 'abc',
+    plan: plan, originalText: original, output: T.settings().output
+  });
+  if (/\[/.test(elFlash.body.text)) throw new Error('Flash 没有 Audio Tags，不许拼标签：' + elFlash.body.text);
+  if (elFlash.body.voice_settings.speed !== 1.05) throw new Error('Flash 该带上语速');
+  if (elFlash.body.apply_text_normalization !== 'on') throw new Error('Flash 该显式打开文本规范化');
+
+  /* 中转地址本来就带查询串时，音色必须插在 ? 之前（拼在末尾就是 404） */
+  const proxyReq = T.buildRequest({
+    provider: 'elevenlabs', conn: { provider: 'elevenlabs', endpoint: 'https://my-proxy.dev/tts?token=abc', apiKey: 'k' },
+    model: 'eleven_v3', voiceId: 'abc', plan: plan, originalText: original, output: T.settings().output
+  });
+  if (!/\/tts\/abc\?token=abc&output_format=/.test(proxyReq.url)) throw new Error('中转地址拼错了：' + proxyReq.url);
+
+  /* ElevenLabs 的错误体是 detail.message（对象）或 detail[0].msg（数组）——
+     和 Fish 的 message 不是一个形状，别只认一种 */
+  const el401 = T.normalizeHttpError('elevenlabs', 401, JSON.stringify({ detail: { status: 'invalid_api_key', message: 'Invalid API key' } }));
+  if (el401.code !== 'CREDENTIAL_INVALID' || el401.message !== 'Invalid API key') throw new Error('401 没归一化：' + JSON.stringify(el401));
+  const el422 = T.normalizeHttpError('elevenlabs', 422, JSON.stringify({ detail: [{ loc: ['body', 'text'], msg: 'Text too long', type: 'value_error' }] }));
+  if (el422.code !== 'TEXT_TOO_LONG') throw new Error('422 没归一化：' + JSON.stringify(el422));
+  const elVoice = T.normalizeHttpError('elevenlabs', 400, JSON.stringify({ detail: { message: 'Voice ID not found' } }));
+  if (elVoice.code !== 'VOICE_NOT_FOUND') throw new Error('音色不存在没归一化：' + elVoice.code);
+
   /* 401 → CREDENTIAL_INVALID；超时 → PROVIDER_TIMEOUT */
   const r1 = await T.generate({ conn: conn, model: 's2.1-pro-free', voiceId: 'v1', text: '你好。', manual: true,
     transport: async () => ({ ok: false, status: 401, text: '{"message":"invalid api key"}' }) });
@@ -5574,7 +5631,22 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   if (ok1.synthesisText.indexOf('empathetic') < 0) throw new Error('温柔没映射成 empathetic：' + ok1.synthesisText);
   if (JSON.stringify(S.store.get('charVoice') || null) !== before) throw new Error('生成过程动了业务数据');
 
-  return { fish: req.body.text, minimax: mmReq.body.text, 401: r1.error.code, 超时: r2.error.code, 假音频字节: ok1.blob.size };
+  /* ElevenLabs 走**同一条** generate 路径（注入 transport，不打真网络） */
+  const elOk = await T.generate({
+    conn: elConn, model: 'eleven_v3', voiceId: 'abc', text: '早点休息，别熬太晚。', manual: true,
+    transport: async () => ({ ok: true, status: 200, contentType: 'audio/mpeg', buffer: new ArrayBuffer(32) })
+  });
+  if (!elOk.ok) throw new Error('ElevenLabs 成功路径挂了：' + JSON.stringify(elOk.error));
+  if (elOk.blob.type !== 'audio/mpeg') throw new Error('音频 mime 不对：' + elOk.blob.type);
+  if (elOk.synthesisText.indexOf('[reassuring]') !== 0) throw new Error('诊断用的临时文本不对：' + elOk.synthesisText);
+  const elBad = await T.generate({
+    conn: elConn, model: 'eleven_v3', voiceId: 'abc', text: '你好。', manual: true,
+    transport: async () => ({ ok: false, status: 401, text: '{"detail":{"message":"Invalid API key"}}' })
+  });
+  if (elBad.ok || elBad.error.code !== 'CREDENTIAL_INVALID') throw new Error('ElevenLabs 401 没归一化：' + JSON.stringify(elBad.error));
+
+  return { fish: req.body.text, minimax: mmReq.body.text, elevenlabs: elV3.body.text,
+    401: r1.error.code, 超时: r2.error.code, 假音频字节: ok1.blob.size };
 });
 
 t('角色语音：单一状态源（charVoice 角色层覆盖出厂值）', () => {
