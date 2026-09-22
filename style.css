@@ -5436,10 +5436,14 @@ span.msg-avatar-initial{
 .isl-isle-count{margin:16px 0 0;font-size:10.5px;letter-spacing:.06em;color:rgba(122,107,88,.86);}
 
 /* ---- 「进 岛」按钮 ----
-   用户 09-21 拍板：留一个明确的按钮，整页不再当点击区。 */
+   用户 09-21 拍板：留一个明确的按钮，整页不再当点击区。
+   09-22 二次调整：原来钉在 `bottom:42px`（几乎贴着屏幕底），用户看线上反馈
+   「按钮太下面了」—— 文案和按钮之间隔着一大片云，读起来是两块不相干的东西。
+   上移到 **120px**：跟文案凑成一组，下面留 120px 云海当呼吸
+   （那一段是真云，不是补色的底，见 .isl-art 的注释）。 */
 .isl-foot{
   position:absolute;left:30px;right:30px;z-index:2;
-  bottom:calc(env(safe-area-inset-bottom) + 42px);
+  bottom:calc(env(safe-area-inset-bottom) + 120px);
 }
 .isl-enter{
   display:block;width:100%;padding:15px 0;
