@@ -81,6 +81,8 @@
     /* 全局的自动播放默认（角色设置里选「跟随全局」时读它）：
        出厂是「只在我点时播」—— 手机上突然出声是很讨厌的事。 */
     autoPlay: 'manual',
+    /* 导演引擎：rules = 规则版（出厂，省一次调用、离线可用）/ model = 模型版（判得更准，失败自动回退规则版） */
+    director: 'rules',
     output: OUTPUT_DEFAULT
   };
 
@@ -309,6 +311,30 @@
       maxCharacters: caps.maxCharacters || 3000,
       supportedOutputFormats: caps.supportedOutputFormats || ['mp3']
     };
+  }
+
+  /* 「这条连接到底能做什么」——**给界面看**的人话表。
+     和 caps 不重复：caps 是发送前的判据（决定发不发某个字段），
+     这张表决定界面上哪些控件有意义、哪些要标「这家不支持」。
+     用户的原话：「每个接口不一样要分别设置」—— 所以这张表必须**逐条连接**算，不按服务商一刀切。 */
+  function featuresOf(providerId, modelId) {
+    var caps = capabilitiesOf(providerId, modelId);
+    var f = { emotion: 'none', emoLabel: '', tags: !!caps.performanceTags, speed: false, pause: false, style: false };
+    if (providerId === 'fish_audio') {
+      f.emotion = 'label'; f.emoLabel = '声学标签（[happy] 这类）'; f.speed = true;
+    } else if (providerId === 'minimax') {
+      f.emotion = 'enum'; f.emoLabel = 'voice_setting.emotion 枚举'; f.speed = true;
+    } else if (providerId === 'elevenlabs') {
+      f.speed = !!caps.speed;
+      f.emotion = caps.performanceTags ? 'label' : 'none';
+      f.emoLabel = caps.performanceTags ? 'v3 的 Audio Tag' : '这一档没有情绪通道（换 v3 才有）';
+    } else if (providerId === 'azure') {
+      f.emotion = 'style'; f.emoLabel = '音色自带的 express-as 风格'; f.speed = true; f.style = true;
+    } else {
+      f.emotion = 'none'; f.emoLabel = '这家接口没有情绪字段'; f.speed = true;
+    }
+    f.pause = !!PAUSE_STYLE[providerId];
+    return f;
   }
 
   /* ==================== 3. 连接与配置（读写） ==================== */
@@ -648,6 +674,42 @@
     return base;
   }
 
+  /* 模型版导演给的东西**必须**过这一道（契约 §5.3 白名单 / §5.7 克制降级 / §6.3 上限）。
+     规则版与模型版共用它 —— 所以「模型乱给」和「手写的坏计划」在下游长得一模一样。 */
+  function applyModelPlan(raw, base, cfg, text) {
+    var out = mergeObj(base, {});
+    var amp = clamp01((cfg.emotionIntensity || 0) / 100);
+    var body = String(text || '');
+
+    /* 情绪：不在闭集里、或用户没允许 → 保持规则版判出来的那个 */
+    var e = String((raw && raw.emotion) || '');
+    if (EMOTIONS.indexOf(e) >= 0 && allowedEmotion(cfg, e)) out.emotion = e;
+
+    /* 强度：模型给的是「这句话有多强」，乘上用户的情绪幅度 */
+    var it = Number(raw && raw.intensity);
+    if (isFinite(it)) out.intensity = clamp01(clamp01(it) * (0.4 + amp * 1.2));
+
+    /* 表演标签：白名单 ∩ 用户允许，最多两个；高克制与短句再各砍一刀 */
+    var tags = [];
+    var rawTags = (raw && raw.tags) || [];
+    for (var i = 0; i < rawTags.length && tags.length < 2; i++) {
+      var tg = String(rawTags[i]);
+      if (TAGS.indexOf(tg) < 0) continue;
+      if (!allowedTag(cfg, tg)) continue;
+      if (tags.indexOf(tg) < 0) tags.push(tg);
+    }
+    if (out.restraint >= 0.8) tags = tags.slice(0, 1);
+    if (body.length <= 12) tags = tags.slice(0, 1);
+    out.performanceTags = tags;
+
+    /* 语速：只能在用户基准附近微调（±0.12），越界就用回基准 */
+    var p = Number(raw && raw.pace);
+    if (isFinite(p) && p >= 0.7 && p <= 1.3 && Math.abs(p - base.pace) <= 0.12) out.pace = round2(p);
+
+    out.naturalPause = base.naturalPause;
+    return out;
+  }
+
   function allowedEmotion(cfg, e) {
     var list = cfg.allowedEmotions;
     if (!Array.isArray(list) || !list.length) return EMOTIONS.indexOf(e) >= 0;
@@ -677,9 +739,28 @@
     tired: ''            /* 需实测；失败时回退「不加标签」 */
   };
   var FISH_TAG = {
-    soft: 'soft tone', low: '', laugh: 'chuckling', sigh: 'sighing',
+    soft: 'soft tone',
+    /* 契约 §6.2：low 的原文方案是「自然语言低声提示」，但要**实测**才敢发；
+       实测之前一律走它给的回落（soft）。同理 breathy 的「自然语言气声提示」
+       与 tired 的「自然语言轻量提示」也在实测前**不发**（宁可不加）。 */
+    low: 'soft tone',
+    laugh: 'chuckling', sigh: 'sighing',
     whisper: 'whispering', breathy: '', crying: 'sobbing'
   };
+
+  /* 契约 §6.1 有两处「按上下文分流」，别只取表里的第一个：
+       tender   → 安慰语境用 [empathetic]，别的一般温柔场合用 [soft tone]；
+       concerned→ 真在提醒/担心（小心、注意安全、别逞强）用 [worried]，单纯共情用 [empathetic]。 */
+  function fishEmotionFor(emotion, text) {
+    var t = String(text || '');
+    if (emotion === 'tender') {
+      return /(别难过|没事的|我懂|辛苦了|抱抱|别怕|会好的|陪着你)/.test(t) ? 'empathetic' : 'soft tone';
+    }
+    if (emotion === 'concerned') {
+      return /(小心|注意安全|别逞强|要不要紧|别硬撑|早点回|路上)/.test(t) ? 'worried' : 'empathetic';
+    }
+    return FISH_EMOTION[emotion] || '';
+  }
 
   /* 强度三档（契约 §6.3）。两个额外约束是从「高克制不吼叫」那条推出来的：
      · 短句永远不用 `very`；
@@ -698,7 +779,7 @@
     if (!text.trim()) throw new Error('原文是空的，不能送去合成');
     if (!plan || !plan.shouldGenerate) return text;
     var tags = [];
-    var emo = FISH_EMOTION[plan.emotion];
+    var emo = fishEmotionFor(plan.emotion, text);
     /* 平静 + 零强度 = 压根没有情绪信号 → 一个标签都不加（最保守，也最省事） */
     var flatNeutral = plan.emotion === 'neutral' && !(plan.intensity > 0.02);
     if (emo && !flatNeutral) {
@@ -1526,6 +1607,9 @@
     modelOf: modelOf,
     providerOf: providerOf,
     capabilitiesOf: capabilitiesOf,
+    featuresOf: featuresOf,
+    fishEmotionFor: fishEmotionFor,
+    applyModelPlan: applyModelPlan,
     estimateSeconds: estimateSeconds,
     speechPlanOf: speechPlanOf,
     buildFishSynthesisText: buildFishSynthesisText,

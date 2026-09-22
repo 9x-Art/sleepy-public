@@ -123,12 +123,25 @@
     var model = o.model || r.model;
     out.innerHTML = '';
     out.appendChild(h('p', 'tts-play-note', '正在生成…（' + (tts.providerOf(conn.provider).name) + ' · ' + model + '）'));
-    tts.generate({
-      charId: o.charId,
-      text: o.text,
-      manual: true,
-      transport: o.transport,
-      plan: o.plan
+    /* 计划从哪来：调用方给了就用它；否则**先问导演**（模型版开着才真问，否则规则版自己算）。
+       导演永远 resolve 一个能用的计划，拿不到就退回规则版 —— 所以这里不用做失败分支。 */
+    var cfg = tts.voiceConfigOf(o.charId);
+    var planOf = (o.plan || !Sleepy.ttsDirector)
+      ? Promise.resolve(o.plan || tts.speechPlanOf(o.text, cfg, { manual: true }))
+      : Sleepy.ttsDirector.planFor(o.text, cfg, {
+        manual: true,
+        context: o.context,
+        features: tts.featuresOf(conn.provider, model),
+        transport: o.directorTransport
+      });
+    planOf.then(function (plan) {
+      return tts.generate({
+        charId: o.charId,
+        text: o.text,
+        manual: true,
+        transport: o.transport,
+        plan: plan
+      });
     }).then(function (res) {
       out.innerHTML = '';
       if (!res.ok) {
@@ -153,6 +166,8 @@
           (res.plan.performanceTags.length ? ' / ' + res.plan.performanceTags.join(' ') : '') +
           ' / 停顿 ' + (res.plan.naturalPause === false ? '关' : '开') +
           (styleNote ? ' / ' + styleNote : '')));
+        d.appendChild(h('p', '', '导演：' + (res.plan.source === 'model' ? '模型版' : '规则版') +
+          (res.plan.directorNote ? '（' + res.plan.directorNote + '，已回退）' : '')));
         d.appendChild(h('p', '', '原因：' + res.plan.reason + ' · 原文字数 ' + o.text.length +
           ' 字 · 约 ' + (res.plan.seconds || 0) + ' 秒'));
         out.appendChild(d);
@@ -259,6 +274,17 @@
             tts.saveSettings({ defaultModel: v });
             ctx.toast('已更新默认语音模型', 'ok');
           }).el);
+        /* 导演引擎（契约 §5）：规则版不出网；模型版多一次便宜调用，判得更准。
+           出厂是规则版 —— 不给用户默认就多花 token。 */
+        gDef.card.appendChild(selectField('导演引擎',
+          '规则版：靠词典 + 标点 + 你的设置判断，不出网。' +
+          '模型版：让模型读上下文判「这句该怎么念」，失败会自动退回规则版',
+          [{ id: 'rules', label: '规则版（不出网）' }, { id: 'model', label: '模型版（用主模型判断）' }],
+          s.director || 'rules', function (v) {
+            tts.saveSettings({ director: v });
+            ctx.toast(v === 'model' ? '情绪改由模型判断了' : '改回规则版', 'ok');
+          }).el);
+
         /* 自动播放的全局默认：角色页可以选「跟随全局」，读的就是这一项。
            出厂「只在我点时播」—— 手机上突然出声很讨厌。 */
         gDef.card.appendChild(selectField('自动播放（默认）',
@@ -846,15 +872,29 @@
         body.appendChild(gWhen.wrap);
 
         /* ---- 怎么读 ---- */
+        /* 每家的接口不一样（用户：「每个接口不一样要分别设置」）——
+           所以先算清**这条连接**能接哪些控制，界面照实标出来，别让用户以为设了就一定生效。 */
+        var useModel = (state.modelMode === 'override' && state.model)
+          ? state.model
+          : ((useConn && useConn.model) || tts.settings().defaultModel || '');
+        var feat = useConn ? tts.featuresOf(useConn.provider, useModel) : null;
+        var featLine = feat
+          ? ('\n当前连接（' + (tts.providerOf(useConn.provider) || {}).name + '）能接的：' +
+            '情绪 → ' + feat.emoLabel + '；语速 → ' + (feat.speed ? '能调' : '这家不支持') +
+            '；停顿 → ' + (feat.pause ? '能插标记' : '这家没有停顿字段'))
+          : '';
+        featLine += (tts.settings().director === 'model')
+          ? '\n导演引擎：模型版（在「设置 → 语音 TTS」里改）—— 多一次调用判情绪，失败自动退回规则版。'
+          : '\n导演引擎：规则版（设置里可切成模型版，判断更准）。';
         var gHow = group('怎么读',
           '这三项都会进「语音计划」：语速按服务商的韵律字段发出去（Azure 是 SSML 的 prosody），' +
-          '情绪幅度决定标签/风格的强度，克制度则优先**减标签**而不是加一句「克制」。');
+          '情绪幅度决定标签/风格的强度，克制度则优先**减标签**而不是加一句「克制」。' + featLine);
         var fPace = numField({
-          label: '语速（70–130，100 是正常）',
+          label: '语速（70–130，100 是正常）' + (feat && !feat.speed ? ' · 这家不支持' : ''),
           value: state.pace, min: 70, max: 130, step: 5
         });
         var fInt = numField({
-          label: '情绪幅度（0–100）',
+          label: '情绪幅度（0–100）' + (feat && feat.emotion === 'none' ? ' · 这家没有情绪通道' : ''),
           value: state.emotionIntensity, min: 0, max: 100, step: 5
         });
         var fRes = numField({
@@ -869,7 +909,7 @@
           value: !!state.emotionAuto
         });
         var swPause = switchField({
-          label: '自然停顿优化',
+          label: '自然停顿优化' + (feat && !feat.pause ? ' · 这家不支持' : ''),
           hint: '在句末插停顿标记：MiniMax 用 <#x#>、Azure 用 <break/>；' +
             'Fish / ElevenLabs / 自建那几家没有可控的停顿字段，一个标记都不会插。' +
             '只作用于**临时合成文本**，聊天原文一个字都不动',
@@ -898,7 +938,11 @@
         /* ---- 允许的表达 ---- */
         var gAllow = group('允许表达',
           '这两张表是**白名单**：不在表里的情绪与表演，导演永远不会用。' +
-          '默认没开哭腔与气声 —— 那是强表演，容易翻车。');
+          '默认没开哭腔与气声 —— 那是强表演，容易翻车。' +
+          (feat && !feat.tags
+            ? '\n⚠️ 当前这条连接**没有表演标签能力**（只有 Fish / MiniMax 2.8 / ElevenLabs v3 有），' +
+              '这两张表对它不生效 —— 情绪仍会按 ' + feat.emoLabel + ' 表达。'
+            : ''));
         var emoAll = tts.EMOTIONS.map(function (e) { return { id: e, label: EMO_LABEL[e] || e }; });
         var tagAll = tts.TAGS.map(function (t) { return { id: t, label: TAG_LABEL[t] || t }; });
         var chipE = chipField('允许的情绪', '', emoAll, state.allowedEmotions, function (list) {

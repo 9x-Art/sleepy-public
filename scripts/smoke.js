@@ -5532,6 +5532,21 @@ t('能力落到「模型」：不同档位的表达能力不一样', () => {
   if (elV3.maxCharacters !== 5000 || elV2.maxCharacters !== 10000 || elFlash.maxCharacters !== 40000) {
     throw new Error('字符上限跟官方文档对不上');
   }
+  /* 给界面看的人话能力表：逐条连接算，别按服务商一刀切（用户：「每个接口不一样」） */
+  const fFish = T.featuresOf('fish_audio', 's2.1-pro-free');
+  const fElV3 = T.featuresOf('elevenlabs', 'eleven_v3');
+  const fElV2 = T.featuresOf('elevenlabs', 'eleven_multilingual_v2');
+  const fSF = T.featuresOf('siliconflow', 'FunAudioLLM/CosyVoice2-0.5B');
+  const fAz = T.featuresOf('azure', 'azure-neural');
+  if (!fFish.tags || fFish.emotion !== 'label' || !fFish.speed || fFish.pause) {
+    throw new Error('Fish 的能力表不对：' + JSON.stringify(fFish));
+  }
+  if (!fAz.pause || fAz.emotion !== 'style' || !fAz.style) throw new Error('Azure 的能力表不对：' + JSON.stringify(fAz));
+  if (fSF.emotion !== 'none' || fSF.tags) throw new Error('硅基流动没有情绪/标签能力：' + JSON.stringify(fSF));
+  if (fElV3.emotion !== 'label' || !fElV3.tags || fElV3.pause) throw new Error('v3 的能力表不对');
+  if (fElV2.emotion !== 'none' || fElV2.tags) throw new Error('多语言 v2 没有情绪通道：' + JSON.stringify(fElV2));
+  if (T.featuresOf('minimax', 'speech-2.8-hd').pause !== true) throw new Error('MiniMax 该能插停顿');
+
   /* 开放的每一家都必须有适配器 —— 没实现的才标 planned（契约 §8.6） */
   T.PROVIDER_ORDER.forEach((pid) => {
     if (T.providerOf(pid).planned) throw new Error(pid + ' 还没有适配器，不该开放入口');
@@ -5574,7 +5589,24 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   if (req.url.indexOf('api.fish.audio') < 0) throw new Error('地址不对：' + req.url);
   if (req.body.reference_id !== 'v1') throw new Error('音色没带上');
   if (req.body.text.indexOf(original) < 0) throw new Error('合成文本里没有原文');
-  if (req.body.text === original) throw new Error('标签压根没拼（温柔应该映射出 empathetic）');
+  if (req.body.text === original) throw new Error('标签压根没拼（温柔该出 [soft tone] 或 [empathetic]）');
+  /* 契约 §6.1 的两处「按上下文分流」：安慰语境才出 [empathetic]，一般温柔场合出 [soft tone] */
+  const tenderPlain = T.buildFishSynthesisText('早点休息，别熬太晚。',
+    { shouldGenerate: true, emotion: 'tender', intensity: 0.5, restraint: 0.5, performanceTags: [] });
+  const tenderCare = T.buildFishSynthesisText('别难过了，我陪着你。',
+    { shouldGenerate: true, emotion: 'tender', intensity: 0.5, restraint: 0.5, performanceTags: [] });
+  if (tenderPlain.indexOf('[soft tone]') !== 0) throw new Error('一般温柔场合该出 [soft tone]：' + tenderPlain);
+  if (tenderCare.indexOf('[empathetic]') !== 0) throw new Error('安慰语境该出 [empathetic]：' + tenderCare);
+  const worried = T.buildFishSynthesisText('路上小心，到家和我说。',
+    { shouldGenerate: true, emotion: 'concerned', intensity: 0.5, restraint: 0.5, performanceTags: [] });
+  const empat = T.buildFishSynthesisText('你今天好像很累。',
+    { shouldGenerate: true, emotion: 'concerned', intensity: 0.5, restraint: 0.5, performanceTags: [] });
+  if (worried.indexOf('[worried]') !== 0) throw new Error('提醒语境该出 [worried]：' + worried);
+  if (empat.indexOf('[empathetic]') !== 0) throw new Error('共情语境该出 [empathetic]：' + empat);
+  /* §6.2：low 的「自然语言低声提示」未实测前走它给的回落（soft） */
+  const lowTag = T.buildFishSynthesisText('好，我知道了。',
+    { shouldGenerate: true, emotion: 'neutral', intensity: 0, restraint: 0.5, performanceTags: ['low'] });
+  if (lowTag.indexOf('[soft tone]') !== 0) throw new Error('low 该回落到 soft tone：' + lowTag);
   if (req.headers.Authorization !== 'Bearer sk-abcdefghijkl') throw new Error('鉴权头不对');
 
   /* MiniMax 的组装：情绪进 voice_setting，表演走括号语气词，且**必须**查 base_resp */
@@ -5684,7 +5716,9 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   const ok1 = await T.generate({ conn: conn, model: 's2.1-pro-free', voiceId: 'v1', text: '早点休息，别熬太晚。', manual: true,
     transport: async () => ({ ok: true, status: 200, buffer: new ArrayBuffer(16) }) });
   if (!ok1.ok) throw new Error('成功路径挂了：' + JSON.stringify(ok1.error));
-  if (ok1.synthesisText.indexOf('empathetic') < 0) throw new Error('温柔没映射成 empathetic：' + ok1.synthesisText);
+  if (!/\[soft tone\]|\[empathetic\]/.test(ok1.synthesisText)) {
+    throw new Error('温柔没映射出 Fish 的标签：' + ok1.synthesisText);
+  }
   if (JSON.stringify(S.store.get('charVoice') || null) !== before) throw new Error('生成过程动了业务数据');
 
   /* ElevenLabs 走**同一条** generate 路径（注入 transport，不打真网络） */
@@ -5701,7 +5735,8 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
   });
   if (elBad.ok || elBad.error.code !== 'CREDENTIAL_INVALID') throw new Error('ElevenLabs 401 没归一化：' + JSON.stringify(elBad.error));
 
-  return { fish: req.body.text, minimax: mmReq.body.text, elevenlabs: elV3.body.text,
+  return { fish: req.body.text, 温柔分流: tenderCare.replace('别难过了，我陪着你。', '') + '/' + tenderPlain.replace('早点休息，别熬太晚。', ''),
+    minimax: mmReq.body.text, elevenlabs: elV3.body.text,
     硅基流动: sfReq.body.input, Azure格式: fmt,
     401: r1.error.code, 超时: r2.error.code, 假音频字节: ok1.blob.size };
 });
@@ -5786,6 +5821,97 @@ t('情绪与节奏：表达方向 / 自然停顿 / Azure 风格与语速', () =>
   return { 方向: dir2.emotion + ' / ' + dir1.performanceTags.join(','), 语速: dir1.pace,
     MiniMax停顿: mmPauses, Azure风格: (az.rawBody.match(/style="([a-z-]+)"/) || [])[1] + '@' + deg,
     Azure语速: (az.rawBody.match(/rate="([0-9.]+)"/) || [])[1] };
+});
+
+t('模型版导演：结构化计划 / 白名单收口 / 失败回退规则版', async () => {
+  const T = S.tts, D = S.ttsDirector;
+  if (!D) throw new Error('tts-director 没加载');
+  T.saveSettings({ enabled: true });
+  const chId = 'ch-director';
+  T.saveVoice(chId, { enabled: true, voiceId: 'v-1', frequency: 'always', pace: 100, characterDirection: '慢性子' });
+  const text = '你真的要走了吗？';
+
+  /* ① 规则版：一次都不许问模型 */
+  T.saveSettings({ director: 'rules' });
+  let calls = 0;
+  let plan = await D.planFor(text, T.voiceConfigOf(chId), {
+    manual: true, transport: () => { calls++; return { ok: true, content: '{}' }; }
+  });
+  if (calls !== 0) throw new Error('规则版不该去问模型');
+  if (plan.source !== 'rules') throw new Error('规则版没标来源：' + plan.source);
+
+  /* ② 模型版：提示词要带全（清单 + 前文），模型给的计划要采用 */
+  T.saveSettings({ director: 'model' });
+  let seen = null;
+  plan = await D.planFor(text, T.voiceConfigOf(chId), {
+    manual: true,
+    context: [{ role: 'user', content: '我明天要走了。' }],
+    transport: (req) => {
+      seen = req;
+      return { ok: true, content: '```json\n{"emotion":"sad","intensity":0.8,"tags":["sigh"],"pace":1.05}\n```' };
+    }
+  });
+  const sys = (seen.messages[0] || {}).content || '';
+  const usr = (seen.messages[1] || {}).content || '';
+  if (!/情绪只能从这里选/.test(sys)) throw new Error('提示词里没给情绪清单');
+  if (sys.indexOf('neutral') < 0) throw new Error('清单里没有 neutral');
+  if (usr.indexOf('我明天要走了') < 0) throw new Error('前文没带进提示词：' + usr);
+  if (usr.indexOf('你真的要走了吗') < 0) throw new Error('正文没带进提示词');
+  if (plan.source !== 'model') throw new Error('来源没标模型版：' + plan.source);
+  if (plan.emotion !== 'sad') throw new Error('模型判的情绪没采用：' + plan.emotion);
+  if (plan.performanceTags.join(',') !== 'sigh') throw new Error('标签没采用：' + plan.performanceTags);
+  if (!(plan.pace > 1 && plan.pace <= 1.12)) throw new Error('语速该在基准附近微调：' + plan.pace);
+  if (plan.shouldGenerate !== true || !plan.seconds) throw new Error('退回/采用之后都要是个能用的计划');
+
+  /* ③ 白名单外的、用户没允许的、超范围的 —— 一律丢弃 */
+  const strict = T.voiceConfigOf(chId);
+  strict.allowedEmotions = ['happy'];
+  strict.allowedPerformanceTags = ['soft'];
+  strict.restraint = 95;
+  plan = await D.planFor('走开。', strict, {
+    manual: true,
+    transport: () => ({ ok: true, content: '{"emotion":"angry","intensity":9,"tags":["sobbing","laugh","soft"],"pace":2}' })
+  });
+  if (plan.emotion === 'angry') throw new Error('用户没允许的情绪被采用了');
+  if (plan.performanceTags.indexOf('sobbing') >= 0 || plan.performanceTags.indexOf('laugh') >= 0) {
+    throw new Error('没允许的标签被采用了：' + plan.performanceTags);
+  }
+  if (plan.performanceTags.length > 1) throw new Error('高克制该砍到一个标签：' + plan.performanceTags);
+  if (!(plan.intensity <= 1)) throw new Error('强度没被钳位：' + plan.intensity);
+  if (plan.pace === 2) throw new Error('越界的语速被采用了：' + plan.pace);
+
+  /* ④ 请求失败 / 不是 JSON → 静默退回规则版（绝不抛错、绝不空手） */
+  for (const bad of [{ ok: false, code: 'DIRECTOR_REQUEST_FAILED' }, { ok: true, content: '我觉得应该温柔一点' }]) {
+    plan = await D.planFor(text, T.voiceConfigOf(chId), { manual: true, transport: () => bad, timeout: 50 });
+    if (plan.source !== 'rules') throw new Error('坏输出没退回规则版：' + plan.source);
+    if (!plan.shouldGenerate) throw new Error('退回之后也得能用');
+  }
+
+  /* ⑤ 超时 → 退回规则版，并留下原因 */
+  plan = await D.planFor(text, T.voiceConfigOf(chId), {
+    manual: true, timeout: 60, transport: () => new Promise(() => {})
+  });
+  if (plan.source !== 'rules' || plan.directorNote !== 'DIRECTOR_TIMEOUT') {
+    throw new Error('超时没退回规则版：' + plan.source + '/' + plan.directorNote);
+  }
+
+  /* ⑥ 门禁不通过（频率 / 冷却 / 长度）→ 一次都不许问模型（省调用） */
+  const off = T.voiceConfigOf(chId);
+  off.frequency = 'requested';
+  let asked = 0;
+  plan = await D.planFor(text, off, { transport: () => { asked++; return { ok: true, content: '{"emotion":"sad"}' }; } });
+  if (asked !== 0 || plan.shouldGenerate) throw new Error('门禁不过却问了模型');
+  const cool = T.voiceConfigOf(chId);
+  cool.frequency = 'always'; cool.cooldownTurns = 3;
+  asked = 0;
+  plan = await D.planFor(text, cool, {
+    turnsSinceVoice: 1, transport: () => { asked++; return { ok: true, content: '{"emotion":"sad"}' }; }
+  });
+  if (asked !== 0 || plan.shouldGenerate) throw new Error('冷却期内却问了模型');
+
+  T.saveSettings({ director: 'rules' });
+  return { 规则版: '不出网', 模型版: plan.emotion || 'sad',
+    白名单收口: '越界丢弃', 失败回退: 'DIRECTOR_TIMEOUT/坏 JSON' };
 });
 
 t('角色语音：单一状态源（charVoice 角色层覆盖出厂值）', () => {

@@ -1566,10 +1566,28 @@
         var cfg = Sleepy.tts.voiceConfigOf(curCharId());
         if (!cfg.voiceId) { ctx.toast('这件角色还没填音色 ID', 'warn'); return; }
         ctx.toast('正在生成语音…');
-        Sleepy.tts.generate({
-          charId: curCharId(),
-          text: text,
-          manual: true
+        /* 计划先过导演（模型版开着才真问模型；失败静默退回规则版）——
+           上下文给最近两句，够模型判「这句该怎么念」了。 */
+        var cid = curCharId();
+        var r = Sleepy.tts.resolveVoice(cid);
+        var cc = getChat(chatId);
+        var recent = (((cc && cc.messages) || []).slice(-3, -1)).map(function (m) {
+          return { role: m.role === 'user' ? 'user' : 'assistant', content: m.content || '' };
+        });
+        var planOf = Sleepy.ttsDirector
+          ? Sleepy.ttsDirector.planFor(text, cfg, {
+            manual: true,
+            context: recent,
+            features: r.ok ? Sleepy.tts.featuresOf(r.provider, r.model) : null
+          })
+          : Promise.resolve(Sleepy.tts.speechPlanOf(text, cfg, { manual: true }));
+        planOf.then(function (plan) {
+          return Sleepy.tts.generate({
+            charId: cid,
+            text: text,
+            manual: true,
+            plan: plan
+          });
         }).then(function (res) {
           if (!res.ok) {
             ctx.toast((res.error && res.error.userText) || '语音生成失败', 'err');
@@ -1597,8 +1615,22 @@
         var first = String(segs[0] || text || '').trim();
         if (!first) return;
         var plan = Sleepy.tts.speechPlanOf(first, cfg, { turnsSinceVoice: turnsSinceVoice() });
-        if (!plan.shouldGenerate) return;
-        Sleepy.tts.generate({ charId: charId, text: first, plan: plan }).then(function (res) {
+        if (!plan.shouldGenerate) return;      /* 门禁不通过就别去问模型（省一次调用） */
+        var rv = Sleepy.tts.resolveVoice(charId);
+        var cc = getChat(chatId);
+        var recent = (((cc && cc.messages) || []).slice(-3, -1)).map(function (m) {
+          return { role: m.role === 'user' ? 'user' : 'assistant', content: m.content || '' };
+        });
+        var planOf = Sleepy.ttsDirector
+          ? Sleepy.ttsDirector.planFor(first, cfg, {
+            turnsSinceVoice: turnsSinceVoice(),
+            context: recent,
+            features: rv.ok ? Sleepy.tts.featuresOf(rv.provider, rv.model) : null
+          })
+          : Promise.resolve(plan);
+        planOf.then(function (ready) {
+          return Sleepy.tts.generate({ charId: charId, text: first, plan: ready });
+        }).then(function (res) {
           if (!res.ok) return;   /* 静默：自动语音失败不打扰 */
           attachVoice(msgId, charId, first, res).then(function () {
             if (shouldAutoPlay(cfg)) {
