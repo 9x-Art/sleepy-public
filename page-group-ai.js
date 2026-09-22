@@ -222,6 +222,15 @@
     sys.push('[ENTITY_KNOWLEDGE]\n' + entLines.join('\n\n'));
     sys.push('注意：[ENTITY id=…] 是调度用的内部编号，**绝不**出现在消息正文里；群里的人只用账号名相称。');
 
+    /* L4 召回（2026-09-22）：这个群以前聊过的相关内容。
+       群里是**共享 system**，所以一份就够 —— 而且群消息对成员本来就是公开的，
+       不需要按角色分（和私聊那条线不一样，那边要过身份隔离）。
+       缓存由调用方（onUserMessage / onOpening）在开一轮之前先预取好。 */
+    var pastGroup = opts.recallText != null
+      ? opts.recallText
+      : (Sleepy.memoryVec && Sleepy.memoryVec.groupText ? Sleepy.memoryVec.groupText(groupId) : '');
+    if (pastGroup) sys.push(pastGroup);
+
     /* ---- user：可见历史 + 触发 + 预算 ---- */
     var user = [];
 
@@ -477,6 +486,8 @@
 
         /* 波次落定 = 一次整理时机（引擎自己有阈值 + 节流） */
         if (Sleepy.groupMemory) Sleepy.groupMemory.check(groupId);
+        /* L4：这一波也索引进向量库（后台，不挡下一波） */
+        kickGroupSweep(groupId);
 
         if (canContinue && rhythm !== 'off') {
           var waitMs = 2600 + Math.floor(Math.random() * 1800);
@@ -496,6 +507,39 @@
     }
   }
 
+  /* L4 召回查询：最近的群消息。群聊没有「当前输入」这种单点，
+     user 刚发的那条已经在 messagesOf 的最后了。 */
+  function groupRecallQuery(groupId) {
+    var msgs = gs().messagesOf(groupId) || [];
+    var lines = [];
+    msgs.slice(-3).forEach(function (m) {
+      if (m.type === 'system' || m.recalledAt) return;
+      var t = String(m.content || '').trim();
+      if (t) lines.push(t.slice(0, 200));
+    });
+    var mv = Sleepy.memoryVec;
+    return mv && mv._pure ? mv._pure.buildQuery(lines, '') : lines.join(' ');
+  }
+
+  /* 先召回、再开一轮。prefetch 自带超时 —— 宁可这轮不召回，也不拖住群聊。 */
+  function roundWithRecall(groupId, opts) {
+    var mv = Sleepy.memoryVec;
+    var go = function () { runRound(groupId, opts); };
+    if (!mv || !mv.prefetchGroup) { go(); return; }
+    mv.prefetchGroup(groupId, groupRecallQuery(groupId)).then(go, go);
+  }
+
+  /* L4 写入：这一波消息索引进向量库（后台跑、不 await）。
+     线上群聊和群线下**共用同一张 groupMessages 表**，所以也是同一份 sweepGroup。 */
+  function kickGroupSweep(groupId) {
+    var mv = Sleepy.memoryVec;
+    var g0 = Sleepy.groupStore;
+    if (!mv || !mv.sweepGroup || !g0 || !groupId) return;
+    setTimeout(function () {
+      mv.sweepGroup(groupId, g0.messagesOf(groupId))['catch'](function () { /* 静默 */ });
+    }, 0);
+  }
+
   /* user 发消息 → 抢占 + 开新一轮。
      抢占在先（bumpSeq 让在途的旧请求作废），再发本轮。 */
   function onUserMessage(groupId) {
@@ -504,7 +548,7 @@
     if (!g || !candFor()) return;
     /* 每场对话（一轮 user 触发 + 续聊链）从 user 消息重新计数 */
     entityWaves[groupId] = {};
-    runRound(groupId, { reason: 'user', stimulus: '（user 刚刚在群里发了消息，见 [RECENT_GROUP] 最后）' });
+    roundWithRecall(groupId, { reason: 'user', stimulus: '（user 刚刚在群里发了消息，见 [RECENT_GROUP] 最后）' });
   }
 
   /* 建群自然开场（总纲 4.3）：0~2 名有空且有动机的角色可能先说话 */
@@ -513,7 +557,7 @@
     if (!g) return;
     if (!g.settings || g.settings.opening !== 'natural') return;
     if (!candFor()) return;
-    runRound(groupId, {
+    roundWithRecall(groupId, {
       reason: 'opening',
       stimulus: '（群聊刚创建。有空且有动机的成员可以自然开个场 —— 不强制所有人报到，允许没人说话）'
     });

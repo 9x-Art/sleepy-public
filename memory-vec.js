@@ -32,9 +32,12 @@
   var DB_NAME = 'sleepy-vec';
   /* V1 → V2（2026-09-22）：块多了 rootId / userId —— 召回必须照 core 的规矩
      按「同一个大脑 + 同一个身份」隔离（见 blocksOf）。
-     老块没这两个字段，留着就会串记忆；而**索引本来就可以重建**，
+     V2 → V3（同日）：主键从 rootId 泛化成 **ownerKey** ——
+     私聊是 `rootId`，群聊是 `group:<groupId>`（群消息对成员是公开的，
+     所以群聊召回**不套身份隔离**，见 blocksOfGroup）。
+     两次都是「老块留着会串」，而**索引本来就可以重建**，
      所以升级时直接丢掉重来，游标键也跟着换前缀（见 cursorKey）。 */
-  var DB_VER = 2;
+  var DB_VER = 3;
   var STORE = 'vec';
 
   /* 切块（方案 §3 / v5 §8.2 照抄）：线上 4～6 轮。一轮 = 你我各一条，
@@ -85,7 +88,7 @@
         /* 升级即重建（理由见 DB_VER 那段）：索引可重建，串记忆不可接受 */
         if (db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE);
         var os = db.createObjectStore(STORE, { keyPath: 'id' });
-        os.createIndex('rootId', 'rootId');
+        os.createIndex('ownerKey', 'ownerKey');
         os.createIndex('at', 'at');
       };
       req.onsuccess = function () { resolve(req.result); };
@@ -125,15 +128,17 @@
       ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
   }
 
+  function groupKey(groupId) { return 'group:' + groupId; }
+
   function scopeNow() {
     return (Sleepy.core && Sleepy.core.scopeId) ? Sleepy.core.scopeId() : null;
   }
 
-  /* 扫「同一个大脑」的全部块。filter 决定要不要再按别的条件剔。 */
-  function scanRoot(charId, filter) {
+  /* 扫「同一个 owner」的全部块。filter 决定要不要再按别的条件剔。 */
+  function scanOwner(ownerKey, filter) {
     var out = [];
     return withStore('readonly', function (os) {
-      var req = os.index('rootId').openCursor(IDBKeyRange.only(rootOf(charId)));
+      var req = os.index('ownerKey').openCursor(IDBKeyRange.only(ownerKey));
       req.onsuccess = function () {
         var cur = req.result;
         if (!cur) return;
@@ -164,14 +169,22 @@
     if (Sleepy.core && Sleepy.core.cognitionOf) {
       barrier = !!Sleepy.core.cognitionOf(charId, userId).barrier;
     }
-    return scanRoot(charId, function (b) {
+    return scanOwner(rootOf(charId), function (b) {
       return visibleTo(b, charId, userId, barrier);
     });
   }
 
+  /* 群聊的块。**刻意不套身份隔离** —— 群消息在群里是公开的，
+     所有成员看到的是同一份；套隔离反而会让「他在群里说过的话」
+     对他自己不可见。可见性由调用方保证（只召回他所在的群）。 */
+  function blocksOfGroup(groupId) {
+    return scanOwner(groupKey(groupId), null);
+  }
+
   /* 维护用的块（条数 / 上限裁剪 / 清空）—— 这些**不该**受身份隔离影响，
      否则「大号聊的块」永远不会被裁，能无限涨。 */
-  function allOfRoot(charId) { return scanRoot(charId, null); }
+  function allOfRoot(charId) { return scanOwner(rootOf(charId), null); }
+  function allOfGroup(groupId) { return scanOwner(groupKey(groupId), null); }
 
   function putBlock(rec) {
     return withStore('readwrite', function (os) { os.put(rec); }).then(function () {
@@ -223,14 +236,14 @@
   /* 从 messages[from] 起切一块。返回 { msgs, text, at, end } 或 null
      （null = 剩下的还不够一块，等更多消息再来）。
      两个上限同时管：条数（8～12）和字数（忙起来会写很长）。 */
-  function nextBlock(messages, from, nameOf) {
+  function nextBlock(messages, from, lineOf) {
     var lines = [];
     var msgs = [];
     var chars = 0;
     var i = from;
     while (i < messages.length) {
       var m = messages[i];
-      var line = msgLine(m, nameOf);
+      var line = (typeof lineOf === 'function') ? lineOf(m) : msgLine(m, lineOf);
       i++;
       if (!line) continue;
       lines.push(line);
@@ -302,17 +315,22 @@
 
   /* 把这个对话里「还没进向量库的」消息块补上。异步、失败不影响聊天。
      幂等靠 `vecCursor:<chatId>` 记「已经切到第几条」—— 不靠内容比对。 */
-  function sweep(charId, userId, chat) {
-    if (!enabled() || !chat || !charId) return Promise.resolve({ ok: false, why: 'off' });
+  /* ---- 通用写法：一个「源」→ 若干块 ----
+     线上私聊 / 线下私聊 / 群聊（线上线下）都走这里。三个源只差：
+       ownerKey  召回主键（私聊 = rootId，群聊 = group:<id>）
+       lineOf    一条消息怎么变成一行
+       cursorId  游标挂在谁身上 */
+  function sweepSource(src) {
+    if (!enabled() || !src || !src.ownerKey) return Promise.resolve({ ok: false, why: 'off' });
     return available().then(function (ok) {
       if (!ok) return { ok: false, why: 'noidb' };
-      var msgs = (chat.messages || []);
-      var cur = parseInt(store.get(cursorKey(chat.id)), 10);
+      var msgs = src.messages || [];
+      var ck = cursorKey(src.cursorId);
+      var cur = parseInt(store.get(ck), 10);
       var from = (cur >= 0 && cur <= msgs.length) ? cur : 0;
-      var nameOf = nameOfChar(charId);
       var made = [];
       for (var n = 0; n < SWEEP_MAX; n++) {
-        var blk = nextBlock(msgs, from, nameOf);
+        var blk = nextBlock(msgs, from, src.lineOf);
         if (!blk) break;
         made.push(blk);
         from = blk.end;
@@ -320,36 +338,35 @@
       if (!made.length) {
         /* 一条都没切出来也可能是「游标落后了」—— 把游标推到已经覆盖的位置，
            不然每次都要从老地方重算。 */
-        if (from !== cur) store.set(cursorKey(chat.id), from);
+        if (from !== cur) store.set(ck, from);
         return { ok: true, added: 0 };
       }
       return embedTexts(made.map(function (b) { return b.text; })).then(function (res) {
         if (!res.ok) return { ok: false, why: 'embed', error: res.error };
-        var sid = Sleepy.core && Sleepy.core.scopeId ? Sleepy.core.scopeId() : null;
-        var recs = [];
-        made.forEach(function (b, i) {
-          recs.push({
+        var sid = scopeNow();
+        var recs = made.map(function (b, i) {
+          return {
             id: newId(),
-            /* rootId / userId 是**召回隔离的判据**（见 blocksOf）：
-               rootId = 哪个大脑，charId = 哪张皮在说，userId = 当时面对谁。
+            /* ownerKey 是召回主键；charId / userId 只有私聊有（群聊为 null）。
                照 core 记忆那套「四元组可溯源」的规矩，别省。 */
-            rootId: rootOf(charId),
-            userId: userId || null,
-            charId: charId,
+            ownerKey: src.ownerKey,
+            kind: src.kind || 'chat',
+            charId: src.charId || null,
+            userId: src.userId || null,
+            groupId: src.groupId || null,
+            sourceId: src.sourceId || null,
             sandboxId: sid,
-            chatId: chat.id,
-            kind: 'chat',
             at: b.at,
             fromId: b.fromId,
             toId: b.toId,
             msgCount: b.msgCount,
             text: b.text,
             vec: res.vectors[i]
-          });
+          };
         });
         return Promise.all(recs.map(putBlock)).then(function () {
-          store.set(cursorKey(chat.id), from);
-          return trim(charId).then(function () {
+          store.set(ck, from);
+          return trim(src.ownerKey).then(function () {
             return { ok: true, added: recs.length };
           });
         });
@@ -359,10 +376,64 @@
     });
   }
 
+  /* 线上私聊（签名不变 —— 调用方已经在用） */
+  function sweep(charId, userId, chat) {
+    if (!chat || !charId) return Promise.resolve({ ok: false, why: 'off' });
+    var name = nameOfChar(charId);
+    return sweepSource({
+      ownerKey: rootOf(charId), kind: 'chat', cursorId: chat.id,
+      messages: chat.messages, charId: charId, userId: userId, sourceId: chat.id,
+      lineOf: function (m) { return msgLine(m, name); }
+    });
+  }
+
+  /* 线下私聊。消息结构和线上不一样（user 走 text、char/scene 走 paras、还有 photo）
+     —— 复用页面自己那份 messageText，别在这儿再写一遍。 */
+  function sweepOffline(charId, userId, session) {
+    if (!session || !charId) return Promise.resolve({ ok: false, why: 'off' });
+    var name = nameOfChar(charId);
+    var O = Sleepy.offlineStore;
+    return sweepSource({
+      ownerKey: rootOf(charId), kind: 'offline', cursorId: 'off:' + session.id,
+      messages: session.messages, charId: charId, userId: userId, sourceId: session.id,
+      lineOf: function (m) {
+        return (O && O.messageText) ? O.messageText(m, name) : String(m.text || '');
+      }
+    });
+  }
+
+  /* 群聊。**线上群聊和群线下共用同一个 ownerKey**（都是「这个群的事」），
+     但两者的消息表不一样（线上在 groupMessages、群线下在 session.messages），
+     所以 cursorId 和 lineOf 由调用方给：
+       · 线上群聊：不传 opts，用下面的默认（读 groupMessages 的字段）
+       · 群线下：传 { cursorId: 'goff:<sessionId>', lineOf: 它自己那份渲染 } */
+  function sweepGroup(groupId, messages, opts) {
+    opts = opts || {};
+    if (!groupId) return Promise.resolve({ ok: false, why: 'off' });
+    var G = Sleepy.groupStore;
+    return sweepSource({
+      ownerKey: groupKey(groupId), kind: 'group',
+      cursorId: opts.cursorId || ('grp:' + groupId),
+      messages: messages, groupId: groupId, sourceId: opts.sourceId || groupId,
+      lineOf: opts.lineOf || function (m) {
+        if (m.type === 'system') return '（系统：' + String(m.content || '') + '）';
+        /* 撤回的消息不进文本块 —— 写进索引就等于「撤回也没用，它还记得」。
+           原文仍在 groupMessages 里（调度/认知结算要用），丢的只是索引。 */
+        if (m.recalledAt) return '';
+        var who = '?';
+        if (G && G.findMember && G.accountMeta) {
+          var mem = G.findMember(groupId, m.senderAccountId);
+          if (mem) who = G.accountMeta(mem).name;
+        }
+        return who + '：' + String(m.content || '');
+      }
+    });
+  }
+
   /* 上限：超了就丢最老的块。原文还在存档里，丢的只是索引。 */
-  function trim(charId) {
+  function trim(ownerKey) {
     var max = maxBlocks();
-    return allOfRoot(charId).then(function (list) {
+    return scanOwner(ownerKey, null).then(function (list) {
       if (list.length <= max) return 0;
       var sorted = list.slice().sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
       var drop = sorted.slice(0, list.length - max).map(function (b) { return b.id; });
@@ -389,7 +460,9 @@
 
   /* ---------------------------- 召回 ---------------------------- */
 
-  var lastRecall = {};   /* charId → { items: [...], at: 时间戳 } */
+  /* 缓存键 = **ownerKey**（私聊是 rootId，群聊是 group:<id>）。
+     私聊和群聊共用一张缓存表 —— 它们本来就是两条独立的召回线。 */
+  var lastRecall = {};
 
   /* v5 §9.1：查询 = 最近 1～2 轮原文 + 当前输入（本地规则抽，不调模型）。
      场景/人名 v1 不抽（那是锦上添花，先看最朴素的能不能用）。 */
@@ -404,14 +477,22 @@
     return parts.join('\n').slice(-1200);
   }
 
-  function prefetch(charId, userId, query, opts) {
+  /* 召回内核：给定「怎么取块」，跑一遍 向量 → 重排 → 去重 → 落缓存。
+     私聊和群聊只差 loadBlocks 取哪一批。 */
+  function prefetchInto(key, loadBlocks, query, opts) {
     opts = opts || {};
-    if (!enabled() || !charId) { lastRecall[charId] = { items: [], at: Date.now() }; return Promise.resolve([]); }
+    if (!enabled() || !key) {
+      lastRecall[key] = { items: [], at: Date.now() };
+      return Promise.resolve([]);
+    }
     var q = String(query || '').trim();
-    if (!q) { lastRecall[charId] = { items: [], at: Date.now() }; return Promise.resolve([]); }
+    if (!q) {
+      lastRecall[key] = { items: [], at: Date.now() };
+      return Promise.resolve([]);
+    }
 
-    var work = blocksOf(charId, userId || null).then(function (blocks) {
-      if (!blocks.length) return [];
+    var work = loadBlocks().then(function (blocks) {
+      if (!blocks || !blocks.length) return [];
       return embedTexts([q]).then(function (res) {
         if (!res.ok) return [];
         var scored = rank(blocks, res.vectors[0]);
@@ -428,14 +509,37 @@
     });
 
     return Promise.race([work, timeout]).then(function (items) {
-      lastRecall[charId] = { items: items || [], at: Date.now() };
+      lastRecall[key] = { items: items || [], at: Date.now() };
       return items || [];
     });
   }
 
+  /* 私聊（线上 / 线下共用同一条召回线 —— ownerKey 都是 rootId） */
+  function prefetch(charId, userId, query, opts) {
+    if (!charId) return Promise.resolve([]);
+    return prefetchInto(rootOf(charId), function () {
+      return blocksOf(charId, userId || null);
+    }, query, opts);
+  }
+
+  /* 群聊：主键换成 group:<id>，**不过身份隔离**（群消息对成员是公开的）。 */
+  function prefetchGroup(groupId, query, opts) {
+    if (!groupId) return Promise.resolve([]);
+    return prefetchInto(groupKey(groupId), function () {
+      return blocksOfGroup(groupId);
+    }, query, opts);
+  }
+
   function lastOf(charId) {
-    var r = lastRecall[charId];
+    var r = lastRecall[rootOf(charId)];
     return (r && r.items) ? r.items : [];
+  }
+
+  function renderRecall(items, headLines) {
+    return '[相关的过去]\n' + headLines.join('\n') + '\n' +
+      items.map(function (it) {
+        return '· ' + String(it.text || '').replace(/\n+/g, ' / ').slice(0, 220);
+      }).join('\n');
   }
 
   /* 注入文本。**不写「你记得」这种口径** —— 召回命中的是原文块，
@@ -443,26 +547,46 @@
   function text(charId) {
     var items = lastOf(charId);
     if (!items.length) return '';
-    var lines = items.map(function (it) {
-      return '· ' + String(it.text || '').replace(/\n+/g, ' / ').slice(0, 220);
-    });
-    return '[相关的过去]\n' +
-      '下面是你们以前真的聊过的片段（按和现在这个话题的相关度挑的，时间顺序不一定连贯）。' +
-      '需要的时候可以自然接上；对不上现在的语境就别硬提。\n' +
-      lines.join('\n');
+    return renderRecall(items, [
+      '下面是你们以前真的聊过的片段（按和现在这个话题的相关度挑的，时间顺序不一定连贯）。',
+      '需要的时候可以自然接上；对不上现在的语境就别硬提。'
+    ]);
   }
 
+  /* 群聊那份。装配时群里是**共享 system**，所以一份就够 ——
+     但口径要写成「群里的人都经历过」，不能写成「你和某个人聊过」：
+     群里说话的是账号，不是一对一的那个身份。 */
+  function groupText(groupId) {
+    var r = lastRecall[groupKey(groupId)];
+    var items = (r && r.items) ? r.items : [];
+    if (!items.length) return '';
+    return renderRecall(items, [
+      '下面这些是这个群里以前真的出现过的对话（按和现在这件事的相关度挑的）。',
+      '群里的人都经历过，可以自然接上；对不上现在的语境就别硬提。'
+    ]);
+  }
   function clearCache() { lastRecall = {}; }
 
   Sleepy.memoryVec = {
     enabled: enabled,
     available: available,
-    sweep: sweep,
+    /* 写入：三个源各一个入口，内核是同一份 sweepSource（见那边的注释） */
+    sweep: sweep,                 /* 线上私聊 */
+    sweepOffline: sweepOffline,   /* 线下私聊 */
+    sweepGroup: sweepGroup,       /* 群聊（线上 + 群线下共用，消息都在 groupMessages） */
+    /* 召回：私聊一条线、群聊一条线 */
     prefetch: prefetch,
+    prefetchGroup: prefetchGroup,
     lastOf: lastOf,
     text: text,
+    groupText: groupText,
     stats: function (charId) {
       return allOfRoot(charId).then(function (l) {
+        return { blocks: l.length, max: maxBlocks() };
+      });
+    },
+    statsGroup: function (groupId) {
+      return allOfGroup(groupId).then(function (l) {
         return { blocks: l.length, max: maxBlocks() };
       });
     },
@@ -478,7 +602,9 @@
       dropOverlapping: dropOverlapping,
       buildQuery: buildQuery,
       visibleTo: visibleTo,
-      msgLine: msgLine
+      msgLine: msgLine,
+      groupKey: groupKey,
+      rootOf: rootOf
     },
     MIN_MSGS: MIN_MSGS, MAX_MSGS: MAX_MSGS,
     MIN_CHARS: MIN_CHARS, MAX_CHARS: MAX_CHARS,

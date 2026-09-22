@@ -1190,7 +1190,23 @@
             session = findSession(id);
             fillMessages(body.querySelector('.off-chat-scroll'));
             refreshEnvStrip();
+            /* 这一轮落地了 → 后台索引进向量库（L4，不挡场景） */
+            kickOfflineSweep();
           });
+      }
+
+      /* L4 写入。**后台跑、不 await** —— 它要调 embedding，绝不能挡着场景；
+         失败就留到下次（游标没推进，下一轮自然重试同一批）。
+         和线上那份是同一个内核（sweepSource），只是消息结构不一样
+         （user 走 text、char/scene 走 paras、还有 photo）。 */
+      function kickOfflineSweep() {
+        var mv = Sleepy.memoryVec;
+        if (!mv || !mv.sweepOffline) return;
+        setTimeout(function () {
+          var s = findSession(id);
+          if (!s || !s.charId) return;
+          mv.sweepOffline(s.charId, s.userId, s)['catch'](function () { /* 静默 */ });
+        }, 0);
       }
 
       function refreshEnvStrip() {

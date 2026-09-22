@@ -5681,6 +5681,26 @@ t('L4 召回隔离：认知屏障为真时只认「同皮套 + 同马甲」（�
   return { 有屏障: '只给同一身份', 无屏障: '整个大脑互通', 判据来自core: true };
 });
 
+t('L4 接线：线下私聊 / 群聊线上线下 入口齐（三条新链路）', () => {
+  const V = S.memoryVec;
+  ['sweep', 'sweepOffline', 'sweepGroup', 'prefetch', 'prefetchGroup'].forEach((k) => {
+    if (typeof V[k] !== 'function') throw new Error('缺接口：' + k);
+  });
+  ['text', 'groupText', 'stats', 'statsGroup'].forEach((k) => {
+    if (typeof V[k] !== 'function') throw new Error('缺接口：' + k);
+  });
+  /* 群聊的 ownerKey 要有前缀区分，别和私聊的 rootId 撞上 */
+  const P = V._pure;
+  if (P.groupKey('g1') !== 'group:g1') throw new Error('群聊主键前缀不对');
+  if (String(P.rootOf('chX')).indexOf('group:') === 0) throw new Error('私聊主键和群聊主键撞了');
+  /* 没配向量接口时，四个入口都该老实返回（不能抛） */
+  S.store.set('vectorApi', null);
+  if (V.sweepOffline('c', 'u', null) && typeof V.sweepOffline('c', 'u', null).then !== 'function') {
+    throw new Error('sweepOffline 没返回 Promise');
+  }
+  return { 写入: '线上私聊 / 线下私聊 / 群聊（线上线下）', 召回: '私聊一条线 + 群聊一条线' };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

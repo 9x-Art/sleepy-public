@@ -224,6 +224,14 @@
     });
     parts.push(ppl.join('\n'));
 
+    /* L4 召回（2026-09-22）：这个群以前聊过的相关内容。
+       和线上群聊**同一个 ownerKey**（都是「这个群的事」）——
+       在群里说过的话，线下见面时也该记得。缓存由 requestTurn 预取。 */
+    if (Sleepy.memoryVec && Sleepy.memoryVec.groupText) {
+      var pastG = Sleepy.memoryVec.groupText(s.groupId);
+      if (pastG) parts.push(pastG);
+    }
+
     /* 语言（[LANGUAGES]）：只有「在场且常驻在国外」的角色才进这块 ——
        跟线上 I03 同一个出处（promptEngine.langOfChar / transAsked），
        语言从常驻地点推，不开第四个设置项。
@@ -937,6 +945,50 @@
       if (th) th.classList.toggle('show', !!b);
     }
 
+    /* 群线下一轮的召回查询：用户刚说的 + 最近几条他自己说的。
+       （别人的台词不进 query —— 找的是「和**这件事**相关的过去」。） */
+    function groupTurnQuery(s, input) {
+      var lines = [];
+      if (input != null) lines.push(String(input).slice(0, 300));
+      (s.messages || []).slice(-4).forEach(function (m) {
+        if (m.role === 'user' && m.text) lines.push(String(m.text).slice(0, 200));
+      });
+      var mv = Sleepy.memoryVec;
+      return mv && mv._pure ? mv._pure.buildQuery(lines, '') : lines.join(' ');
+    }
+
+    /* L4 写入：群线下的这一场索引进向量库（后台跑、不 await）。
+       **和线上群聊共用同一个 ownerKey**（都是「这个群的事」），
+       但游标和渲染用自己的 —— 线上的消息在 groupMessages、
+       线下在 session.messages，是两张表（见 memory-vec.sweepGroup）。 */
+    function kickGroupOfflineSweep(s) {
+      var mv = Sleepy.memoryVec;
+      if (!mv || !mv.sweepGroup || !s || !s.groupId) return;
+      var sid = s.id;
+      setTimeout(function () {
+        var cur = find(sid);
+        if (!cur) return;
+        mv.sweepGroup(cur.groupId, cur.messages, {
+          cursorId: 'goff:' + sid,
+          sourceId: sid,
+          lineOf: function (m) { return groupOfflineLine(cur, m); }
+        })['catch'](function () { /* 静默 */ });
+      }, 0);
+    }
+
+    /* 一条群线下消息 → 索引里的一行。口径和 gmOfflineTranscript 一致
+       （台词带说话人、动作与沉默进段落），只是那条整场拼一段、
+       这里是**逐条** —— 切块按条数算。 */
+    function groupOfflineLine(s, m) {
+      var um = userMetaOf(s);
+      if (m.role === 'user') return um.name + '：' + (m.text || '');
+      if (m.role === 'scene') return '【场景】' + parasText(m.paras);
+      if (m.role === 'turn') return parasToLines(m.paras);
+      if (m.role === 'event') return '（' + (m.title || '') + '）';
+      if (m.role === 'photo') return '（一张现场照片）';
+      return '';
+    }
+
     function requestTurn(userInput, opts) {
       opts = opts || {};
       if (session.status === 'ended') return;
@@ -955,36 +1007,50 @@
       ensureThinking();
       setBusy(true);
 
-      var built = buildSystem(session);
-      var messages = [{ role: 'system', content: built }].concat(
-        historyMessages(session, userInput == null ? null : userInput));
-      if (userInput == null) {
-        messages.push({ role: 'user', content: opts.rewriteNote
-          ? '（重写刚才那一轮。' + opts.rewriteNote +
-            '。直接输出重写后的这一轮，不要解释自己在重写。）'
-          : '（开场。请先铺开场景，再让在场的人自然开始。）' });
-      }
-
+      /* L4 召回（2026-09-22）：先把「这个群以前聊过的」捞出来，再装配。
+         pending 必须在 prefetch **之前**置上 —— 召回最长 1.5s，
+         这期间用户再点一次就会重复开一轮。 */
       pending = true;
-      var cand = Sleepy.offlineStore.candForSession(session);
-      Sleepy.offlineStore.callModel(cand, messages).then(function (r) {
-        pending = false;
-        setBusy(false);
-        if (!r.ok) { ctx.toast('✗ ' + r.error, 'err'); return; }
-        var parsed = parseGroupReply(r.text);
-        var hasDialog = parsed.paras.some(function (p) { return p.speaker; });
-        appendMessage(id, {
-          role: (userInput == null && !hasDialog) ? 'scene' : 'turn',
-          paras: parsed.paras,
-          suggests: parsed.suggests
-        });
-        if (parsed.envUpdate && (session.systemSettings || {}).timeAdvance !== false) {
-          mutate(id, function (s) { s.env.clockTime = parsed.envUpdate.clockTime; });
+      var mv0 = Sleepy.memoryVec;
+      var q0 = groupTurnQuery(session, userInput);
+      var doSend = function () {
+        var built = buildSystem(session);
+        var messages = [{ role: 'system', content: built }].concat(
+          historyMessages(session, userInput == null ? null : userInput));
+        if (userInput == null) {
+          messages.push({ role: 'user', content: opts.rewriteNote
+            ? '（重写刚才那一轮。' + opts.rewriteNote +
+              '。直接输出重写后的这一轮，不要解释自己在重写。）'
+            : '（开场。请先铺开场景，再让在场的人自然开始。）' });
         }
-        session = find(id);
-        refreshHeader();
-        fillMessages(body.querySelector('.off-chat-scroll'));
-      });
+
+        var cand = Sleepy.offlineStore.candForSession(session);
+        Sleepy.offlineStore.callModel(cand, messages).then(function (r) {
+          pending = false;
+          setBusy(false);
+          if (!r.ok) { ctx.toast('✗ ' + r.error, 'err'); return; }
+          var parsed = parseGroupReply(r.text);
+          var hasDialog = parsed.paras.some(function (p) { return p.speaker; });
+          appendMessage(id, {
+            role: (userInput == null && !hasDialog) ? 'scene' : 'turn',
+            paras: parsed.paras,
+            suggests: parsed.suggests
+          });
+          if (parsed.envUpdate && (session.systemSettings || {}).timeAdvance !== false) {
+            mutate(id, function (s) { s.env.clockTime = parsed.envUpdate.clockTime; });
+          }
+          session = find(id);
+          refreshHeader();
+          fillMessages(body.querySelector('.off-chat-scroll'));
+          /* L4：这一轮也索引进向量库（后台，不挡现场） */
+          kickGroupOfflineSweep(session);
+        });
+      };
+      if (mv0 && mv0.prefetchGroup && q0) {
+        mv0.prefetchGroup(session.groupId, q0).then(doSend, doSend);
+        return;
+      }
+      doSend();
     }
 
     function ensureThinking() {
