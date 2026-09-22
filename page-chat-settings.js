@@ -263,6 +263,99 @@
   /* 主动消息节奏抽屉（全局设置，iol-drawer 复用浮岛那套样式）。
      onSaved 里拿不到行内 note（demoRow 自己画的），改完就靠 toast 告知，
      重进本页会显示新值。 */
+  /* 朋友权限（用户 2026-09-22：「和微信一样哇」）——
+     看到某个人的朋友圈要三件事都成立：① 你加了她（在这座岛上）
+     ② 她开放给你看 ③ 你也开了看她的。
+
+     这个抽屉管的是**你能决定的两个**（③ 和「让不让她看我的」）；
+     ② 属于 TA 那边 —— 存在同一条 link 上（core 的 charHidesMe / charHidesFromMe），
+     由剧情或引擎写，这里只**显示状态**，不给玩家直接改。 */
+  function friendPermNote(chat) {
+    var core = Sleepy.core;
+    if (!chat || !chat.characterId) return '先给这个对话选一个角色';
+    var meId = chat.userId || ((core && core.activeUserOnIsland && core.activeUserOnIsland()) || {}).id || '';
+    if (!meId) return '这个对话还没绑定身份';
+    var pr = core.feedPermOf(chat.characterId, meId);
+    if (pr.iHideChar && pr.iHideFromChar) return '两个都关了 · 互相都看不见';
+    if (pr.iHideChar) return '你关了「看 TA 的」· 你看不到 TA 的动态';
+    if (pr.iHideFromChar) return '你关了「让 TA 看」· TA 看不到你的动态';
+    if (pr.charHidesMe) return 'TA 现在没让你看 TA 的朋友圈';
+    if (pr.charHidesFromMe) return 'TA 现在不看你的朋友圈';
+    return '互相都开着 · 都能看见';
+  }
+
+  function openFriendPermDrawer(ctx, chat) {
+    var core = Sleepy.core;
+    if (!chat || !chat.characterId) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
+    var meId = chat.userId || ((core && core.activeUserOnIsland && core.activeUserOnIsland()) || {}).id || '';
+    if (!meId) { ctx.toast('这个对话还没绑定身份', 'warn'); return; }
+
+    /* 挂到 #phone 而不是 ctx.el（.page 上有 transform，fixed 会失效） */
+    var host = document.getElementById('phone') || document.body;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var chName = charLabel(chat);
+    var pr = core.feedPermOf(chat.characterId, meId);
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', '朋友权限'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '看到 TA 的朋友圈要三件事都成立：你加了她、她开放给你看、你也开了看她的。' +
+      '这两个开关是你能决定的。'));
+
+    var fHide = switchField({
+      label: '不看 ' + chName + ' 的朋友圈',
+      hint: '开了之后，TA 发的动态在你这儿就不显示了',
+      value: pr.iHideChar
+    });
+    panel.appendChild(fHide.el);
+
+    var fMine = switchField({
+      label: '不让 ' + chName + ' 看我的朋友圈',
+      hint: '开了之后，你发的动态 TA 看不见',
+      value: pr.iHideFromChar
+    });
+    panel.appendChild(fMine.el);
+
+    /* TA 那边的状态：只读 —— 那是剧情里会自己变的东西 */
+    if (pr.charHidesMe || pr.charHidesFromMe) {
+      panel.appendChild(h('p', 'iol-drawer-desc',
+        pr.charHidesMe
+          ? '另外：' + chName + ' 现在没让你看 TA 的朋友圈（这条在 TA 那边，剧情里会变）。'
+          : '另外：' + chName + ' 现在不看你的朋友圈（同上）。'));
+    }
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不改');
+    var save = h('button', 'iol-drawer-save', '保存');
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
+    save.addEventListener('click', function () {
+      core.setFeedPerm(chat.characterId, meId, 'iHideChar', fHide.get());
+      core.setFeedPerm(chat.characterId, meId, 'iHideFromChar', fMine.get());
+      close();
+      ctx.toast('记下来了', 'ok');
+      if (ctx.rebuild) ctx.rebuild();
+    });
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    /* 下一帧再加 show，否则 transition 不触发（跟同文件其他抽屉一致） */
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
+  }
+
   function openProactiveDrawer(ctx) {
     /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效（见文件头注释） */
     var host = document.getElementById('phone') || document.body;
@@ -568,6 +661,14 @@
       }));
 
       /* ---- 记忆 ---- */
+      /* ---- 朋友权限（用户 2026-09-22：「和微信一样」）---- */
+      var secFriend = sectionOf(body, '朋友权限');
+      secFriend.appendChild(demoRow({
+        label: '朋友圈权限',
+        note: friendPermNote(chat),
+        onClick: chat.characterId ? function () { openFriendPermDrawer(ctx, chat); } : null
+      }));
+
       var secMem = sectionOf(body, '记忆');
       secMem.appendChild(demoRow({
         label: '角色记忆', note: '自动整理聊天中值得留下的内容',

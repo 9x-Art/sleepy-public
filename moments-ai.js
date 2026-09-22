@@ -289,7 +289,7 @@
   function onLike(momentId, charId, liker) {
     var M = Sleepy.momentsTab;
     var m = M.byId(momentId);
-    if (!m || !M.canSee(m, charId)) return;    /* 看不见的赞不认（认知锁） */
+    if (!m || !M.canSee(m, charId, 'char')) return;    /* 看不见的赞不认（认知锁） */
     var ch = core.findChar(charId);
     if (!ch) return;
     schedule('likeReact', {
@@ -323,7 +323,7 @@
     /* must = user 显式点名的（回复了他的评论 / @ 了他）—— 必接，不走决策 */
     function add(who, must) {
       if (!who || who.kind !== 'char' || !who.refId) return;
-      if (!M.canSee(m, who.refId)) return;
+      if (!M.canSee(m, who.refId, 'char')) return;
       var hit = out.filter(function (x) { return x.refId === who.refId; })[0];
       if (hit) { if (must) hit.must = true; return; }
       out.push({ kind: 'char', refId: who.refId, name: who.name, must: !!must });
@@ -629,7 +629,7 @@
     var m = M.byId(item.momentId);
     if (!m) { done(); return; }
     /* 认知锁：看不见这条动态的人不参与（发的人选了可见范围） */
-    if (!M.canSee(m, item.charId)) { done(); return; }
+    if (!M.canSee(m, item.charId, 'char')) { done(); return; }
     var ch = core.findChar(item.charId);
     if (!ch) { done(); return; }
 

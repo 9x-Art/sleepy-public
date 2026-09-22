@@ -875,6 +875,52 @@
     return { ok: true, relation: slot.hit.relation };
   }
 
+  /* ---- 朋友圈的朋友权限（用户 2026-09-22：「和微信一样哇」）----
+
+     看到某个人的朋友圈要同时满足三件事：
+       ① 你加了她微信（在这个 app 里 = 她在这座岛上，由 scoped 保证）
+       ② 她开放给你看（她那边没把你挡掉）
+       ③ 你也开了看她的（你这边没屏蔽她）
+
+     所以四个开关、两两属于一方（都存在 (charId × userId) 那条 link 上）：
+       iHideChar        我设的「不看 TA 的朋友圈」
+       iHideFromChar    我设的「不让 TA 看我的朋友圈」
+       charHidesMe      TA 设的「不让我看 TA 的朋友圈」（剧情/引擎写，设置页不给玩家改）
+       charHidesFromMe  TA 设的「不看我的朋友圈」
+
+     判定：
+       我能看 TA 的 = !(iHideChar || charHidesMe)
+       TA 能看我的  = !(iHideFromChar || charHidesFromMe)
+
+     和 setRelation / setBarrier 一样：必须改 allLinks() **快照里的那个对象**
+     （findLink 返回的是深拷贝，改它等于什么都没改），也不能拿全量列表里
+     第一条匹配 —— 同一对 (Char × User) 在两间房里各有一条。 */
+  var FEED_PERM_KEYS = ['iHideChar', 'iHideFromChar', 'charHidesMe', 'charHidesFromMe'];
+
+  function feedPermOf(charId, userId, sandboxId) {
+    var out = {};
+    FEED_PERM_KEYS.forEach(function (k) { out[k] = false; });
+    if (!charId || !userId) return out;
+    var l = findLink(charId, userId, sandboxId);
+    FEED_PERM_KEYS.forEach(function (k) { out[k] = !!(l && l[k]); });
+    return out;
+  }
+
+  function setFeedPerm(charId, userId, key, on, sandboxId) {
+    if (FEED_PERM_KEYS.indexOf(key) < 0) return { ok: false, message: '未知的权限项' };
+    if (!charId || !userId) return { ok: false, message: '缺少角色或身份' };
+    var slot = linkSlot(charId, userId, sandboxId);
+    if (!slot.hit) {
+      var made = addLink(charId, userId, 'unaware', false, sandboxId);
+      if (!made) return { ok: false, message: '建关系失败' };
+      slot = linkSlot(charId, userId, sandboxId);
+    }
+    if (!slot.hit) return { ok: false, message: '建关系失败' };
+    slot.hit[key] = !!on;
+    saveLinks(slot.list);
+    return { ok: true };
+  }
+
   function relationOf(charId, userId, sandboxId) {
     var l = findLink(charId, userId, sandboxId);
     return l ? (l.relation || '') : '';
@@ -1272,6 +1318,8 @@
     linksOfUser: linksOfUser,
     findLink: findLink,
     addLink: addLink,
+    feedPermOf: feedPermOf,
+    setFeedPerm: setFeedPerm,
     removeLink: removeLink,
     cognitionOf: cognitionOf,
     setBarrier: setBarrier,

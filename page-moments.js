@@ -70,16 +70,39 @@
 
   /* 这条动态对「谁」可见 —— 认知锁的那道闸。
 
-     四档（照微信的「谁可以看」页做）：
-       all      公开     这间房所有人都看得见（默认）
-       self     私密     只有作者自己看得见
-       include  部分可见 visibleTo 里的 id 看得见
-       exclude  不给谁看 visibleTo 里的 id 看不见
+     refId 是**看的人**，可能是 user（马甲）也可能是 char（AI 判断自己看不看得见），
+     所以第三个参数 kind 要带上（'user' / 'char'），不传就按库查一下。
 
-     老数据没有 privacy 字段 = all。传进来的 refId 认不出来（库里没这个人）
+     ⚠️ 这个区分很要紧：**char 视角必须能看见我发的动态**（否则他不会来评论），
+     所以「账号隔离」那一条只对 user 视角生效。
+
+     三道闸，从外到里：
+       ⓪ 账号隔离   某个马甲发的动态是**那个号的朋友圈**，别的号看不见
+       ① 朋友权限   我能看 TA 的 = 我没设「不看 TA」且 TA 没设「不让我看」
+                    （用户 2026-09-22：「和微信一样」；「加了好友」这条
+                    由 scoped + 同岛保证 —— 不在这座岛上的人根本不在视野里）
+       ② 可见范围   动态自己的四档（照微信「谁可以看」页做）：
+                    all 公开 / self 私密 / include 部分可见 / exclude 不给谁看
+
+     老数据没有 privacy 字段 = all；传进来的 refId 认不出来（库里没这个人）
      也不拦 —— 宁可漏拦，也不要让人「动态莫名其妙消失」还找不到原因。 */
-  function canSee(m, refId) {
+  function canSee(m, refId, kind) {
     if (!m) return false;
+    if (!kind) {
+      kind = (core.findUser && refId && core.findUser(refId)) ? 'user'
+        : (core.findChar && refId && core.findChar(refId)) ? 'char' : '';
+    }
+
+    /* ⓪ 账号隔离：这个号发的，别的号看不见 */
+    if (m.maskId && kind === 'user' && m.maskId !== refId) return false;
+
+    /* ① 朋友权限（只对 char 发的动态、只从 user 视角看） */
+    if (m.characterId && kind === 'user' && refId && core.feedPermOf) {
+      var perm = core.feedPermOf(m.characterId, refId);
+      if (perm.iHideChar || perm.charHidesMe) return false;
+    }
+
+    /* ② 动态自己的可见范围 */
     var mode = m.privacy || 'all';
     if (mode === 'all') return true;
     if (!refId) return true;
@@ -588,7 +611,7 @@
          不然用户会以为动态丢了。 */
       var hidden = 0;
       var list = raw.filter(function (m) {
-        if (canSee(m, meId)) return true;
+        if (canSee(m, meId, 'user')) return true;
         hidden++;
         return false;
       });
