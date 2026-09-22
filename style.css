@@ -8556,7 +8556,8 @@ div.pp-row:active{background:none;}
 .iol-core{
   display:flex;align-items:center;justify-content:center;gap:22px;
   padding:20px 12px 18px;
-  background:rgba(255,255,255,.55);
+  /* 走玻璃变量（原来写死白 55%，夜灯下是一块白） */
+  background:var(--g-glass-2);
   border-radius:17px 6px 17px 6px;
   border-top:1px solid rgba(255,255,255,.7);
   border-bottom:1px solid var(--line);
@@ -8564,7 +8565,16 @@ div.pp-row:active{background:none;}
 }
 .iol-core.is-archi{justify-content:flex-start;overflow-x:auto;scrollbar-width:none;padding:16px 12px;}
 .iol-core.is-archi::-webkit-scrollbar{display:none;}
-.iol-person{text-align:center;flex:none;}
+/* ⚠️ 这一条是 button（第16轮为了「点人物头像直接进编辑」从 div 改过来的），
+   但当时**忘了补默认样式重置** —— 项目里没有全局 button 重置，
+   于是浏览器默认的灰底 + 边框就露出来了，就是用户报的
+   「岛屿总览-核心成员那里莫名其妙多了黑色框」（2026-09-22 定位）。
+   **以后任何 div 改 button，都必须一起补 border/background/padding/font。** */
+.iol-person{
+  text-align:center;flex:none;
+  border:0;background:none;padding:0;
+  font-family:inherit;font-size:inherit;color:inherit;cursor:pointer;
+}
 .iol-ava{
   width:46px;height:46px;margin:0 auto 7px;
   display:grid;place-items:center;border-radius:50%;
@@ -8601,8 +8611,8 @@ div.pp-row:active{background:none;}
 .iol-empty{margin:6px 2px;font-size:11px;color:var(--text-faint);}
 .iol-member{
   min-width:98px;flex:none;padding:12px 11px;text-align:left;
-  background:rgba(255,255,255,.57);
-  border:1px solid rgba(255,255,255,.66);
+  background:var(--g-glass-2);
+  border:1px solid var(--g-glass-edge);
   border-radius:14px 5px 14px 5px;
   font-family:inherit;color:var(--text);
 }
