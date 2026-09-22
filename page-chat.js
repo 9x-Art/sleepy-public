@@ -318,6 +318,11 @@
       }).then(function (yes) {
         if (!yes) return;
         saveChats(allChats().filter(function (c) { return c.id !== chat.id; }));
+        /* 整个对话没了 → 这一场的索引也清掉（别的对话/线下的索引留着） */
+        if (chat.characterId && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+          Sleepy.memoryVec.forget({ charId: chat.characterId, sourceId: chat.id })
+            ['catch'](function () { /* 同上 */ });
+        }
         rebuild();
         ctx.toast('已删除', 'ok');
       });
@@ -428,12 +433,20 @@
   }
 
   function dropMessages(chatId, ids) {
+    var c0 = getChat(chatId);
     mutate(chatId, function (c) {
       c.messages = c.messages.filter(function (m) { return ids.indexOf(m.id) < 0; });
     });
+    /* 索引里的原文是**给模型看的证据** —— 消息删了它就得跟着失效，
+       否则 TA 以后还会引用一句根本不在聊天记录里的话（见 memoryVec.forget）。 */
+    if (c0 && c0.characterId && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+      Sleepy.memoryVec.forget({ charId: c0.characterId, ids: ids })
+        ['catch'](function () { /* 索引清理失败不该让删除本身失败 */ });
+    }
   }
 
   function patchMessage(chatId, id, patch) {
+    var c0 = getChat(chatId);
     mutate(chatId, function (c) {
       for (var i = 0; i < c.messages.length; i++) {
         if (c.messages[i].id !== id) continue;
@@ -443,6 +456,13 @@
         return;
       }
     });
+    /* 改的如果**不是正文**（比如补个译文、翻个标记）就不用动索引 ——
+       只有正文变了，索引里存的那份原文才和存档对不上。 */
+    var touchedText = patch && Object.prototype.hasOwnProperty.call(patch, 'content');
+    if (touchedText && c0 && c0.characterId && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+      Sleepy.memoryVec.forget({ charId: c0.characterId, ids: [id] })
+        ['catch'](function () { /* 同上 */ });
+    }
   }
 
   /* ============================ 小工具 ============================ */
@@ -3432,6 +3452,11 @@
     createChat: createChat,
     mutate: mutate,
     addMessage: addMessage,
+    /* 删/改消息的规范入口（2026-09-22 导出）—— 它们不只改存档，
+       还会让**向量索引里对应的块失效**（见 memoryVec.forget 的注释）。
+       别在别处直接 filter 消息数组：那样索引就悄悄和存档对不上了。 */
+    dropMessages: dropMessages,
+    patchMessage: patchMessage,
     overridesOf: overridesOf,
     getCharacters: getCharacters,
     findCharacter: findCharacter,

@@ -765,6 +765,12 @@
             });
             if (!yes) return;
             gs().recallMessage(groupId, msg.id);
+            /* 索引里如果已经有这一条，也得撤掉 —— 撤回的意义就是「当没说过」，
+               留着索引等于「撤回也没用，TA 还记得」（见 memoryVec.forget）。 */
+            if (Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+              Sleepy.memoryVec.forget({ groupId: groupId, ids: [msg.id] })
+                ['catch'](function () { /* 同上 */ });
+            }
             renderMessages();
           }, 520);
         });

@@ -35,9 +35,11 @@
      V2 → V3（同日）：主键从 rootId 泛化成 **ownerKey** ——
      私聊是 `rootId`，群聊是 `group:<groupId>`（群消息对成员是公开的，
      所以群聊召回**不套身份隔离**，见 blocksOfGroup）。
-     两次都是「老块留着会串」，而**索引本来就可以重建**，
+     V3 → V4（同日）：块多了 **msgIds**（这块覆盖了哪几条消息）——
+     删除/编辑/撤回要**精确定位**受影响的块，只靠 fromId/toId 只能判首尾。
+     三次都是「老块留着会不对」，而**索引本来就可以重建**，
      所以升级时直接丢掉重来，游标键也跟着换前缀（见 cursorKey）。 */
-  var DB_VER = 3;
+  var DB_VER = 4;
   var STORE = 'vec';
 
   /* 切块（方案 §3 / v5 §8.2 照抄）：线上 4～6 轮。一轮 = 你我各一条，
@@ -223,6 +225,103 @@
     });
   }
 
+  /* ------------------- 原文变了 → 索引跟着失效（2026-09-22 晚） -------------------
+     为什么是「删块」而不是「重切」：
+       · 重切要重新 embed（花钱），而且会切出一批和现有块**重叠**的新块 ——
+         同一段内容有两个块，召回时会被当成两件事；
+       · 用户的删除意图本来就是「忘掉它」；
+       · 编辑一般发生在刚说过的话上，那段本来就在近期原文窗口里，
+         再远一点由总结层（L2）兜。
+     代价（如实记着）：这段内容就**永久离开索引**了。
+     理由：索引里的原文是**给模型看的证据** —— 它跟存档对不上就是幻觉源。
+     宁可这段召回不到，也不能让 TA 引用一句根本不存在的话。
+
+     filter: { charId } 或 { groupId }（必给一个）
+             可选 ids       只失效「覆盖到这些消息」的块（删除/编辑/撤回）
+             可选 sourceId  只清某一场会话（删掉一个对话时用） */
+  function forget(filter) {
+    filter = filter || {};
+    var key = filter.groupId ? groupKey(filter.groupId)
+            : (filter.charId ? rootOf(filter.charId) : '');
+    if (!key) return Promise.resolve(0);
+    var ids = (filter.ids && filter.ids.length) ? filter.ids : null;
+    return scanOwner(key, null).then(function (list) {
+      var hit = list.filter(function (b) {
+        if (filter.sourceId && b.sourceId !== filter.sourceId) return false;
+        if (!ids) return true;
+        return blockHitBy(b, ids);   /* 没 msgIds 的块返回 false —— DB 升级即重建，不会有 */
+      });
+      return removeBlocks(hit.map(function (b) { return b.id; }));
+    })['catch'](function () { return 0; });
+  }
+
+  /* 全库概览（设置页用）：按 ownerKey 聚合成一行一行。
+     名字不在这里解析 —— 向量层不认识 core 的角色和群。 */
+  function overview() {
+    var map = {};
+    return withStore('readonly', function (os) {
+      var req = os.openCursor();
+      req.onsuccess = function () {
+        var cur = req.result;
+        if (!cur) return;
+        var b = cur.value || {};
+        var k = b.ownerKey;
+        if (!k) { cur.continue(); return; }
+        var e = map[k];
+        if (!e) {
+          e = map[k] = { ownerKey: k, kind: b.kind || 'chat',
+            charId: b.charId || null, groupId: b.groupId || null,
+            sourceIds: {}, blocks: 0, newestAt: 0, oldestAt: 0 };
+        }
+        e.blocks++;
+        if (b.sourceId) e.sourceIds[b.sourceId] = 1;
+        var at = b.at || 0;
+        if (at > e.newestAt) e.newestAt = at;
+        if (!e.oldestAt || (at && at < e.oldestAt)) e.oldestAt = at;
+        cur.continue();
+      };
+    }).then(function () {
+      var out = [];
+      for (var k in map) if (Object.prototype.hasOwnProperty.call(map, k)) {
+        var e = map[k];
+        e.sources = Object.keys(e.sourceIds).length;
+        delete e.sourceIds;
+        out.push(e);
+      }
+      out.sort(function (a, b) { return (b.newestAt || 0) - (a.newestAt || 0); });
+      return out;
+    }, function () { return []; });
+  }
+
+  /* 手工试一次召回（设置页「试试召回」用）。**不落缓存、不改任何状态** ——
+     它只回答「这句话会捞回哪些块、像不像」，让用户自己判断准不准
+     （「真实召回质量」这件事没法在代码里断言，只能给人眼看）。 */
+  function probe(filter, query) {
+    filter = filter || {};
+    if (!enabled()) return Promise.resolve({ ok: false, why: 'off' });
+    var q = String(query || '').trim();
+    if (!q) return Promise.resolve({ ok: false, why: 'empty' });
+    var load = filter.groupId
+      ? function () { return blocksOfGroup(filter.groupId); }
+      : function () { return blocksOf(filter.charId, filter.userId || null); };
+    return available().then(function (ok) {
+      if (!ok) return { ok: false, why: 'noidb' };
+      return load().then(function (blocks) {
+        if (!blocks.length) return { ok: true, blocks: 0, items: [] };
+        return embedTexts([q]).then(function (res) {
+          if (!res.ok) return { ok: false, why: 'embed', error: res.error };
+          var scored = rank(blocks, res.vectors[0]).slice(0, 8);
+          return { ok: true, blocks: blocks.length, items: scored.map(function (s) {
+            return { text: s.block.text, sim: s.sim, score: s.score,
+              at: s.block.at, kind: s.block.kind };
+          }) };
+        });
+      });
+    })['catch'](function (e) {
+      return { ok: false, why: 'error', error: (e && e.message) || String(e) };
+    });
+  }
+
   /* ---------------------------- 纯函数（冒烟直接打表） ---------------------------- */
 
   /* 一条消息 → 块里的一行。type 消息（转账/表情包…）也带上，别丢。 */
@@ -262,6 +361,8 @@
       fromId: (msgs[0] || {}).id || null,
       toId: (msgs[msgs.length - 1] || {}).id || null,
       msgCount: lines.length,
+      /* 这块覆盖的消息 id（删除/编辑/撤回靠它定位，见 forget） */
+      msgIds: msgs.map(function (x) { return x.id; }).filter(Boolean),
       end: i
     };
   }
@@ -296,6 +397,18 @@
     return scored;
   }
 
+  /* 这条块要不要因为「这些消息被删/被改/被撤回」而失效（纯函数，冒烟打表）。
+     判据是 msgIds 有交集 —— 只靠 fromId/toId 只能判首尾，
+     中间那条被删就漏了。 */
+  function blockHitBy(b, ids) {
+    var mine = (b && b.msgIds) || [];
+    if (!mine.length || !ids || !ids.length) return false;
+    for (var i = 0; i < ids.length; i++) {
+      if (mine.indexOf(ids[i]) >= 0) return true;
+    }
+    return false;
+  }
+
   /* 硬过滤：权限/岛/状态靠 blocksOf 那只取本岛本人的块完成；
      这里再排掉「本来就在近期原文窗口里的那些」——
      重复注入会让模型以为是两件事。 */
@@ -313,6 +426,52 @@
      老游标必须跟着作废，否则它以为自己写过了、新块永远不写。 */
   function cursorKey(chatId) { return 'vecCursor2:' + chatId; }
 
+  /* ---- 连续失败就退避（2026-09-22 晚）----
+     原来失败只是「游标不推进 ＝ 下轮重试」—— 接口挂了（key 写错、余额空、
+     断网）时，用户每收一条消息就往那个坏接口再打一次，永远打。
+     退避是**指数**的、10 分钟封顶；成功一次立刻清零。
+     一次失败不算数（网络抖动很常见），要连着来才算「这个接口有问题」。 */
+  function backoffKey(cursorId) { return 'vecFail:' + cursorId; }
+  function backoffOf(cursorId) {
+    var r = store.get(backoffKey(cursorId));
+    if (!r || !r.until || Date.now() >= r.until) return 0;
+    return r.until - Date.now();
+  }
+  function bumpFail(cursorId) {
+    var r = store.get(backoffKey(cursorId)) || {};
+    var n = (r.n || 0) + 1;
+    var wait = Math.min(30 * 1000 * Math.pow(2, n - 1), 10 * 60 * 1000);
+    store.set(backoffKey(cursorId), { n: n, until: Date.now() + wait });
+    return wait;
+  }
+  function clearFail(cursorId) { store.remove(backoffKey(cursorId)); }
+
+  /* ---- 游标：记「最后切到的那条消息的 id」，不只记下标 ----
+     只记下标的话，**删掉一条消息会让后面全部前移**，游标就指到了别处 ——
+     紧接着的那条会被永远跳过（2026-09-23 真机抓到：删掉中间的 m2 之后，
+     m23 再也没进过索引）。下标仍然存着，当 lastId 找不到时的兜底。 */
+  function indexOfId(msgs, id) {
+    for (var i = 0; i < msgs.length; i++) if (msgs[i] && msgs[i].id === id) return i;
+    return -1;
+  }
+  function readCursor(ck, msgs) {
+    var cur = store.get(ck);
+    if (cur && typeof cur === 'object') {
+      var i = cur.lastId ? indexOfId(msgs, cur.lastId) : -1;
+      if (i >= 0) return i + 1;
+      if (typeof cur.index === 'number' && cur.index >= 0 && cur.index <= msgs.length) {
+        return cur.index;
+      }
+      return 0;
+    }
+    if (typeof cur === 'number' && cur >= 0 && cur <= msgs.length) return cur;
+    return 0;
+  }
+  function writeCursor(ck, msgs, end) {
+    var last = msgs[end - 1];
+    store.set(ck, { index: end, lastId: (last && last.id) || null });
+  }
+
   /* 把这个对话里「还没进向量库的」消息块补上。异步、失败不影响聊天。
      幂等靠 `vecCursor:<chatId>` 记「已经切到第几条」—— 不靠内容比对。 */
   /* ---- 通用写法：一个「源」→ 若干块 ----
@@ -322,12 +481,13 @@
        cursorId  游标挂在谁身上 */
   function sweepSource(src) {
     if (!enabled() || !src || !src.ownerKey) return Promise.resolve({ ok: false, why: 'off' });
+    var waiting = backoffOf(src.cursorId);
+    if (waiting) return Promise.resolve({ ok: false, why: 'backoff', wait: waiting });
     return available().then(function (ok) {
       if (!ok) return { ok: false, why: 'noidb' };
       var msgs = src.messages || [];
       var ck = cursorKey(src.cursorId);
-      var cur = parseInt(store.get(ck), 10);
-      var from = (cur >= 0 && cur <= msgs.length) ? cur : 0;
+      var from = readCursor(ck, msgs);
       var made = [];
       for (var n = 0; n < SWEEP_MAX; n++) {
         var blk = nextBlock(msgs, from, src.lineOf);
@@ -338,11 +498,15 @@
       if (!made.length) {
         /* 一条都没切出来也可能是「游标落后了」—— 把游标推到已经覆盖的位置，
            不然每次都要从老地方重算。 */
-        if (from !== cur) store.set(ck, from);
+        writeCursor(ck, msgs, from);
+        clearFail(src.cursorId);       /* 接口是通的，只是没新内容 */
         return { ok: true, added: 0 };
       }
       return embedTexts(made.map(function (b) { return b.text; })).then(function (res) {
-        if (!res.ok) return { ok: false, why: 'embed', error: res.error };
+        if (!res.ok) {
+          bumpFail(src.cursorId);
+          return { ok: false, why: 'embed', error: res.error };
+        }
         var sid = scopeNow();
         var recs = made.map(function (b, i) {
           return {
@@ -360,18 +524,21 @@
             fromId: b.fromId,
             toId: b.toId,
             msgCount: b.msgCount,
+            msgIds: b.msgIds || [],
             text: b.text,
             vec: res.vectors[i]
           };
         });
         return Promise.all(recs.map(putBlock)).then(function () {
-          store.set(ck, from);
+          clearFail(src.cursorId);
+          writeCursor(ck, msgs, from);
           return trim(src.ownerKey).then(function () {
             return { ok: true, added: recs.length };
           });
         });
       });
     })['catch'](function (e) {
+      bumpFail(src.cursorId);
       return { ok: false, why: 'error', error: (e && e.message) || String(e) };
     });
   }
@@ -592,6 +759,11 @@
     },
     clear: clearAll,
     total: total,
+    /* 原文变了 → 索引失效（删除 / 编辑 / 撤回 / 删对话，见 forget 的注释） */
+    forget: forget,
+    /* 设置页：看清索引里有什么、能清、能自己试一次召回 */
+    overview: overview,
+    probe: probe,
     clearCache: clearCache,
     cursorKey: cursorKey,
     /* 纯函数出口 —— 冒烟直接打表，不用起 IDB */
@@ -600,11 +772,15 @@
       cosine: cosine,
       rank: rank,
       dropOverlapping: dropOverlapping,
+      blockHitBy: blockHitBy,
       buildQuery: buildQuery,
       visibleTo: visibleTo,
       msgLine: msgLine,
       groupKey: groupKey,
-      rootOf: rootOf
+      rootOf: rootOf,
+      blockHitBy: blockHitBy,
+      readCursor: readCursor,
+      writeCursor: writeCursor
     },
     MIN_MSGS: MIN_MSGS, MAX_MSGS: MAX_MSGS,
     MIN_CHARS: MIN_CHARS, MAX_CHARS: MAX_CHARS,

@@ -38,7 +38,7 @@
       key: 'summaryApi',
       title: '总结 API',
       eyebrow: 'MEMORY EXTRACTION',
-      hint: '记忆抽取用的模型。这活是**批量、长文本、要稳不要个性**的，' +
+      hint: '记忆抽取用的模型。这活是批量、长文本、要稳不要个性的，' +
         '拿主 API（通常是贵的对话模型）跑很浪费 —— 给它一个便宜的就够了。',
       modelHint: '填一个便宜的对话模型（比如 Haiku / 小模型 / 本地模型）',
       placeholder: 'gpt-4o-mini',
@@ -50,7 +50,7 @@
       title: '向量记忆 API',
       eyebrow: 'EMBEDDINGS',
       hint: '把「原话与事件」变成可检索的向量。它只算向量、不说话，' +
-        '所以要填 **embedding 模型**，不是对话模型。',
+        '所以要填 embedding 模型，不是对话模型。',
       modelHint: '必须填 embedding 模型（bge-m3 / text-embedding-3-small 这类）',
       placeholder: 'text-embedding-3-small',
       fallback: '还没配 —— 向量记忆需要它才能开。',
@@ -231,7 +231,168 @@
       } else {
         statLine.textContent = '';
       }
+      /* ---- 索引里到底有什么（2026-09-22）----
+         三件事都在这两块：**看得见**（每个角色/每个群各有多少段）、
+         **能清**（删掉某一份，不碰聊天记录）、**能自己试**
+         （「这句话会捞回哪些旧片段」）。
+         最后那个是故意留的 —— 「召回得准不准」没法写成断言，
+         只能让人眼看一眼。 */
+      var gIdx = group('索引',
+        '每一条都是你和某个角色（或某个群）真实聊过的一小段。清理不影响聊天记录。');
+      var listWrap = h('div', 'vec-list');
+      listWrap.appendChild(h('p', 'set-group-note', '正在读索引…'));
+      gIdx.card.appendChild(listWrap);
+
+      var gTry = group('试试召回',
+        '写一句你现在可能说的话，看它会捞回哪些旧片段 —— 像不像、对得上对不上，一眼就看出来。');
+      var pick = h('select', 'vec-pick');
+      var qEl = ui.textArea({
+        label: '如果现在说…', value: '', rows: 3,
+        placeholder: '比如：上次说的那家店'
+      });
+      var tryBtn = button('找找看', 'dl-btn is-primary', function () { runProbe(); });
+      var tryActs = h('div', 'dl-actions');
+      tryActs.appendChild(tryBtn);
+      var outWrap = h('div', 'vec-out');
+      gTry.card.appendChild(pick);
+      gTry.card.appendChild(qEl.el);
+      gTry.card.appendChild(tryActs);
+      gTry.card.appendChild(outWrap);
+
+      var targets = [];       /* 概览的每一行，给「试试召回」当选项 */
+
+      /* 名字不给向量层解析（它不认识 core 和群）—— 在这里补上。
+         找不到多半是「这个角色不在这座岛上」，如实说，别显示成空白。 */
+      function ownerName(r) {
+        if (r.groupId) {
+          var g = Sleepy.groupStore && Sleepy.groupStore.findGroup(r.groupId);
+          return (g && g.name) || '一个不在当前岛的群';
+        }
+        var c = Sleepy.core && Sleepy.core.findChar(r.charId);
+        return (c && c.name) || '一位不在当前岛的角色';
+      }
+
+      function dayText(ts) {
+        if (!ts) return '—';
+        var d = new Date(ts);
+        return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+      }
+
+      function forgetOf(r) {
+        return r.groupId ? { groupId: r.groupId } : { charId: r.charId };
+      }
+
+      function fillPick() {
+        pick.innerHTML = '';
+        if (!targets.length) {
+          var o0 = h('option', '', '（还没有索引）');
+          o0.value = '';
+          pick.appendChild(o0);
+          return;
+        }
+        targets.forEach(function (t, i) {
+          var o = h('option', '', t.name + ' · ' + t.row.blocks + ' 段');
+          o.value = String(i);
+          pick.appendChild(o);
+        });
+      }
+
+      function renderList() {
+        listWrap.innerHTML = '';
+        if (!Sleepy.memoryVec || !Sleepy.memoryVec.overview) {
+          listWrap.appendChild(h('p', 'set-group-note', '向量模块没加载。'));
+          return;
+        }
+        Sleepy.memoryVec.overview().then(function (list) {
+          listWrap.innerHTML = '';
+          targets = [];
+          if (!list.length) {
+            listWrap.appendChild(h('p', 'set-group-note',
+              '还没有索引 —— 聊几轮之后会自动开始（在后台跑，不挡聊天）。'));
+            fillPick();
+            return;
+          }
+          list.forEach(function (r) {
+            var name = ownerName(r);
+            targets.push({ row: r, name: name });
+            var line = h('div', 'vec-row');
+            var main = h('div', 'vec-row-main');
+            main.appendChild(h('div', 'vec-row-name', name));
+            main.appendChild(h('div', 'vec-row-meta',
+              r.blocks + ' 段' + (r.sources > 1 ? ' · 来自 ' + r.sources + ' 场' : '') +
+              ' · 最近 ' + dayText(r.newestAt)));
+            line.appendChild(main);
+            line.appendChild(button('清掉', 'dl-btn is-danger', function () {
+              ui.confirm({
+                title: '清掉「' + name + '」的索引？',
+                note: '聊天记录一个字都不会动 —— 只是以后按话题想不起这些片段了。',
+                ok: '清掉', danger: true
+              }).then(function (yes) {
+                if (!yes) return;
+                Sleepy.memoryVec.forget(forgetOf(r)).then(function (n) {
+                  ctx.toast('清掉了 ' + n + ' 段', 'ok');
+                  renderList();
+                });
+              });
+            }));
+            listWrap.appendChild(line);
+          });
+          fillPick();
+        })['catch'](function () {
+          listWrap.innerHTML = '';
+          listWrap.appendChild(h('p', 'set-group-note', '索引读不出来。'));
+        });
+      }
+
+      function whyNoProbe(r) {
+        if (r.why === 'off') return '先在上面把接口配上、开关打开。';
+        if (r.why === 'empty') return '先写一句话。';
+        if (r.why === 'noidb') return '这台设备用不了 IndexedDB。';
+        if (r.why === 'embed') return '接口没通：' + (r.error || '看看地址和 Key');
+        return '读不出来：' + (r.error || r.why || '');
+      }
+
+      function runProbe() {
+        outWrap.innerHTML = '';
+        var t = targets[parseInt(pick.value, 10)];
+        if (!t) { outWrap.appendChild(h('p', 'set-group-note', '先有索引才能试。')); return; }
+        var q = String(qEl.get() || '').trim();
+        if (!q) { ctx.toast('先写一句话', 'warn'); return; }
+        outWrap.appendChild(h('p', 'set-group-note', '正在算…'));
+        /* 私聊的索引是按身份隔离的（见 memoryVec.visibleTo）——
+           试的时候要用**当前这个身份**，否则有认知屏障时什么都捞不到。 */
+        var uid = (Sleepy.core && Sleepy.core.activeUserOnIsland
+          && (Sleepy.core.activeUserOnIsland() || {}).id) || null;
+        var f = t.row.groupId ? { groupId: t.row.groupId }
+          : { charId: t.row.charId, userId: uid };
+        Sleepy.memoryVec.probe(f, q).then(function (r) {
+          outWrap.innerHTML = '';
+          if (!r.ok) { outWrap.appendChild(h('p', 'set-group-note', whyNoProbe(r))); return; }
+          if (!r.items.length) {
+            outWrap.appendChild(h('p', 'set-group-note',
+              '没找到相关的（索引里有 ' + r.blocks + ' 段）。'));
+            return;
+          }
+          outWrap.appendChild(h('p', 'set-group-note',
+            '共 ' + r.blocks + ' 段，最像的 ' + r.items.length + ' 段：'));
+          r.items.forEach(function (it) {
+            var card = h('div', 'vec-hit');
+            card.appendChild(h('div', 'vec-hit-head',
+              '像 ' + Math.round((it.sim || 0) * 100) + '%  ·  ' + dayText(it.at)));
+            card.appendChild(h('p', 'vec-hit-text', String(it.text || '')));
+            outWrap.appendChild(card);
+          });
+        })['catch'](function (e) {
+          outWrap.innerHTML = '';
+          outWrap.appendChild(h('p', 'set-group-note', '出错：' + ((e && e.message) || e)));
+        });
+      }
+
+      renderList();
+
       body.appendChild(gV.wrap);
+      body.appendChild(gIdx.wrap);
+      body.appendChild(gTry.wrap);
     }
 
     /* ---- 清空 ---- */

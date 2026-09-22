@@ -5701,6 +5701,53 @@ t('L4 接线：线下私聊 / 群聊线上线下 入口齐（三条新链路）'
   return { 写入: '线上私聊 / 线下私聊 / 群聊（线上线下）', 召回: '私聊一条线 + 群聊一条线' };
 });
 
+t('L4 索引与原文联动：块带 msgIds，删除/编辑靠它精确定位（不靠首尾）', () => {
+  const P = S.memoryVec._pure;
+  const msgs = [];
+  for (let i = 0; i < 9; i++) {
+    msgs.push({ id: 'm' + i, role: i % 2 ? 'assistant' : 'user', content: '第' + i + '句话' });
+  }
+  const b = P.nextBlock(msgs, 0, '林渡');
+  if (!b) throw new Error('九条消息该切得出一块');
+  if (!b.msgIds || b.msgIds.length !== b.msgCount) {
+    throw new Error('块的 msgIds 和行数对不上：' + JSON.stringify(b.msgIds));
+  }
+  if (b.msgIds[0] !== 'm0') throw new Error('msgIds 没按顺序');
+
+  if (!P.blockHitBy(b, ['m3'])) {
+    throw new Error('块里中间那条被删却没命中 —— 只判首尾就会漏掉这种');
+  }
+  if (P.blockHitBy(b, ['zzz'])) throw new Error('不相干的消息不该让块失效');
+  if (P.blockHitBy(b, [])) throw new Error('空列表不该让块失效');
+  if (P.blockHitBy({}, ['m0'])) throw new Error('没有 msgIds 的块不该被误删');
+  return { 块行数: b.msgCount, 覆盖: b.msgIds[0] + '…' + b.msgIds[b.msgIds.length - 1] };
+});
+
+t('L4 游标：记消息 id 不记下标 —— 删掉中间一条不会让后面那条被跳过', () => {
+  const P = S.memoryVec._pure;
+  const key = 'vecCursorTest';
+  const msgs = [];
+  for (let i = 0; i < 10; i++) msgs.push({ id: 'c' + i, role: 'user', content: 'x' });
+  S.store.remove(key);
+  if (P.readCursor(key, msgs) !== 0) throw new Error('没有游标时该从 0 开始');
+
+  P.writeCursor(key, msgs, 5);                  /* 切到 c4 为止 */
+  if (P.readCursor(key, msgs) !== 5) throw new Error('写完该读回 5');
+
+  /* 删掉前面的一条：数组整体前移，游标必须跟着 c4 走 ——
+     只记下标的话这里会读到 5（现在是 c5），c5 就被永久跳过了。 */
+  const cut = msgs.filter((m) => m.id !== 'c1');
+  const from = P.readCursor(key, cut);
+  if (cut[from].id !== 'c5') {
+    throw new Error('删一条之后该从 c5 接着切，实得 ' + cut[from].id);
+  }
+
+  /* 最后切到的那条自己没了 → 退回存下来的下标（兜底，不至于全乱） */
+  const cut2 = msgs.filter((m) => m.id !== 'c4');
+  if (P.readCursor(key, cut2) !== 5) throw new Error('lastId 没了该用下标兜底');
+  return { 正常: 5, 删前面一条: from, 兜底: 5 };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。
