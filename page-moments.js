@@ -433,7 +433,7 @@
        但不硬塞一个别座岛的马甲来当「我」）。 */
     var me = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
     var out = [];
-    if (me) out.push({ kind: 'mask', refId: me.id, name: me.name });
+    if (me) out.push({ kind: 'mask', refId: me.id, name: core.labelOfUser(me) });
     var mains = sb ? core.charsOfSandbox(sb.id) : [];
     mains.forEach(function (m) {
       out.push({ kind: 'char', refId: m.id, name: m.name });

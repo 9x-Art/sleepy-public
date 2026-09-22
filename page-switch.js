@@ -144,11 +144,11 @@
       masks.forEach(function (u) {
         var chip = h('button', 'sw-chip' + (u.id === activeUser.id ? ' is-on' : ''));
         chip.type = 'button';
-        chip.appendChild(h('span', 'sw-chip-av', core.initialOf(u.name)));
-        chip.appendChild(h('span', 'sw-chip-name', u.name));
+        chip.appendChild(h('span', 'sw-chip-av', core.initialOfUser(u)));
+        chip.appendChild(h('span', 'sw-chip-name', core.labelOfUser(u)));
         chip.addEventListener('click', function () {
           core.switchTo(undefined, u.id);
-          applySwitch('已换成「' + u.name + '」');
+          applySwitch('已换成「' + core.labelOfUser(u) + '」');
         });
         uList.appendChild(chip);
       });
@@ -173,7 +173,7 @@
         tb.appendChild(h('span', 'sw-main-name', m.name || '未命名'));
         var boundUser = m.boundUserId ? core.findUser(m.boundUserId) : null;
         tb.appendChild(h('span', 'sw-main-sub',
-          '大号' + (boundUser ? ' · 绑定 ' + boundUser.name : ' · 未绑定马甲')));
+          '大号' + (boundUser ? ' · 绑定 ' + core.labelOfUser(boundUser) : ' · 未绑定马甲')));
         top.appendChild(tb);
         if (m.id === activeChar) top.appendChild(h('span', 'sw-cur', '进行中'));
         top.addEventListener('click', function () { pick(m.id, m.boundUserId, m.name); });
@@ -188,7 +188,7 @@
           sbBody.appendChild(h('span', 'sw-main-name', s.name || '未命名'));
           var bu = s.boundUserId ? core.findUser(s.boundUserId) : null;
           sbBody.appendChild(h('span', 'sw-main-sub',
-            '小号' + (bu ? ' · 绑定 ' + bu.name : ' · 未绑定马甲')));
+            '小号' + (bu ? ' · 绑定 ' + core.labelOfUser(bu) : ' · 未绑定马甲')));
           sub.appendChild(sbBody);
           if (s.id === activeChar) sub.appendChild(h('span', 'sw-cur', '进行中'));
           sub.addEventListener('click', function () {
@@ -473,7 +473,7 @@
 
     var lines = [];
     lines.push('【你的身份】你此刻以「' + (c ? c.name : '?') + '」这张脸，面对「' +
-      (u ? u.name : '对方') + '」。');
+      core.labelOfUser(u, '对方') + '」。');
 
     if (cog.barrier) {
       lines.push('这一对大小号之间的记忆完全隔离，你没有任何渠道知道另一边的存在。');
@@ -530,10 +530,10 @@
     core.masksOfSandbox(sb).forEach(function (u) {
       var judge = Sleepy.island.getJudge(sb.id, selfRoot.id, u.id);
       if (judge === 'other') {
-        lines.push('- 在你眼里，「' + u.name + '」是另一个人，' +
+        lines.push('- 在你眼里，「' + core.labelOfUser(u) + '」是另一个人，' +
           '跟其他身份没有任何关系。');
       } else if (judge === 'same') {
-        lines.push('- 你知道「' + u.name + '」是同一个人的另一张脸。');
+        lines.push('- 你知道「' + core.labelOfUser(u) + '」是同一个人的另一张脸。');
       }
       /* unset = 用户还没判断，不注入，别替用户表态 */
     });
@@ -620,12 +620,14 @@
     var hero = h('div', 'mtb-hero');
     hero.appendChild(h('div', 'mtb-label', 'CURRENT ACCOUNT'));
     var line = h('div', 'mtb-current is-tap');
-    var av = h('span', 'me-av', core.initialOf(u.name));
+    var av = h('span', 'me-av', core.initialOfUser(u));
     core.setAvatarBg(av, u);
     line.appendChild(av);
     var hb = h('div', 'mtb-copy');
-    hb.appendChild(h('b', '', u.name));
-    hb.appendChild(h('small', '', u.wechatName ? ('微信号 ' + u.wechatName) : '还没填微信号'));
+    hb.appendChild(h('b', '', core.labelOfUser(u)));
+    hb.appendChild(h('small', '', u.wechatName
+      ? (u.name ? '微信号 ' + u.wechatName : '还没填名字 · 对方只知道「' + u.wechatName + '」')
+      : '还没填微信号'));
     line.appendChild(hb);
     line.appendChild(h('span', 'mtb-arrow', '›'));
     line.addEventListener('click', function () { ctx.open('me-profile'); });
@@ -647,7 +649,7 @@
     tools.appendChild(toolRow('个人资料', '头像 · 名字 · 微信号 · 人设',
       function () { ctx.open('me-profile'); }));
     tools.appendChild(toolRow('切换账号',
-      '当前：' + u.name + '（' + (dft && dft.id === u.id ? '大号' : '小号') + '）· 只列这座岛的',
+      '当前：' + core.labelOfUser(u) + '（' + (dft && dft.id === u.id ? '大号' : '小号') + '）· 只列这座岛的',
       function () { openAccountSwitcher(ctx, build); }));
     tools.appendChild(toolRow('钱包', '零钱与转账记录', function () { ctx.open('wallet'); }));
     tools.appendChild(toolRow('表情包', '可同步到所有岛 · 所有账号', function () { ctx.open('stickers'); }));
@@ -743,11 +745,11 @@
       var isDft = !!(dft && m.id === dft.id);
       var rowEl = h('button', 'mtb-ident' + (isCur ? ' is-current' : ''));
       rowEl.type = 'button';
-      var mini = h('span', 'mtb-mini', core.initialOf(m.name));
+      var mini = h('span', 'mtb-mini', core.initialOfUser(m));
       core.setAvatarBg(mini, m);
       rowEl.appendChild(mini);
       var copy = h('span', 'mtb-ident-copy');
-      copy.appendChild(h('b', '', m.name));
+      copy.appendChild(h('b', '', core.labelOfUser(m)));
       copy.appendChild(h('small', '', (isDft ? '大号' : '小号') +
         (m.wechatName ? ' · ' + m.wechatName : '')));
       rowEl.appendChild(copy);

@@ -151,7 +151,7 @@
         var names = [];
         knownBy.forEach(function (uid) {
           var u = core.findUser(uid);
-          if (u) names.push(u.name);
+          if (u) names.push(core.labelOfUser(u));
           else {
             var c = core.findChar(uid);
             if (c) names.push(c.name);

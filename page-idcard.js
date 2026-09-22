@@ -140,7 +140,10 @@
     var toast = opts.toast || function () {};
     var mediaId = (existing && existing.avatarMedia) || '';
     var url = existing ? (existing.avatar || '') : '';
-    var initial = (existing && existing.name) ? existing.name.charAt(0) : (opts.empty || '＋');
+    /* 首字：opts.initial 优先（user 侧要按「名字留空退微信名」取，见 core.initialOfUser），
+       否则按名字首字，再否则 empty（新建时那个 ＋）。 */
+    var initial = opts.initial
+      || ((existing && existing.name) ? existing.name.charAt(0) : (opts.empty || '＋'));
 
     var wrap = h('div', 'face-field');
     var box = h('button', 'face-box');
@@ -229,7 +232,8 @@
       getMedia: function () { return mediaId; },
       setName: function (n) {
         if (existing && existing.avatarMedia) return;   /* 有图就别动首字 */
-        initial = (n && String(n).trim()) ? String(n).trim().charAt(0) : (opts.empty || '＋');
+        initial = (n && String(n).trim()) ? String(n).trim().charAt(0)
+          : (opts.initial || opts.empty || '＋');
         paintBox();
       }
     };
@@ -919,7 +923,7 @@
       users.forEach(function (u) {
         /* 人设现在是多行的 —— 选项里只取第一行，不然换行会把选择框撑乱 */
         var pLine = u.persona ? String(u.persona).split(/\r?\n/)[0].trim().slice(0, 18) : '';
-        var o = h('option', '', u.name + (pLine ? ' · ' + pLine : ''));
+        var o = h('option', '', core.labelOfUser(u) + (pLine ? ' · ' + pLine : ''));
         o.value = u.id;
         if (u.id === boundId) o.selected = true;
         uSel.appendChild(o);
@@ -1328,7 +1332,7 @@
         var line = h('button', 'pick-line');
         line.type = 'button';
         line.appendChild(h('span', 'pick-box'));
-        line.appendChild(h('span', 'pick-av', core.initialOf(m.name)));
+        line.appendChild(h('span', 'pick-av', core.initialOfUser(m)));
         line.appendChild(h('span', 'pick-name', m.name));
         line.addEventListener('click', function () {
           if (picked[m.id]) delete picked[m.id];
@@ -1391,14 +1395,26 @@
 
   /* ==================== 页面：我的马甲 ==================== */
 
+  /* 这张页现在有三个入口，语义各不同但**数据口径唯一**：
+     · 浮岛「岛屿总览 → 进入身份」带 sandboxId 进来（看的是**那座岛**）
+     · 角色编辑页的「管理我的马甲」不带参数（看**活动岛**）
+     · 聊天「我」页的切换账号是另一支（page-switch 的切号器）
+     没带 sandboxId 时回落 core.scopeId()，跟以前一致。 */
   Sleepy.register('mask-list', {
     title: '我的马甲',
     render: function (ctx) {
       var body = ctx.body;
+      /* 看的是哪座岛：显式给的最优先（总览带进来的），否则活动岛 */
+      var sid = ctx.params.sandboxId || (core.scopeId ? core.scopeId() : null);
+      var viewing = sid ? core.findSandbox(sid) : null;
+      var isActiveIsland = !!sid && store.get('activeSandboxId') === sid;
 
       var g = group('User 马甲',
-        '马甲跟岛走：在哪座岛的界面里建就归哪座岛，别岛的不在这里出现。' +
-        '在这座岛里切号，选中的马甲决定「我」是谁。');
+        (viewing ? '「' + (viewing.name || '这座岛') + '」里' : '') +
+        '的马甲跟岛走：在哪座岛的界面里建就归哪座岛，别岛的不在这里出现。' +
+        (isActiveIsland
+          ? '点一行 = 在这座岛里切号。'
+          : '人不在岛上时点一行 = 把 TA 定成这座岛的进入身份。'));
 
       var card = g.card;
 
@@ -1406,19 +1422,19 @@
         card.innerHTML = '';
         /* 只列本岛的马甲（马甲按岛，2026-09-21 拍板）。
            没有活动房时不过滤 —— 那是「还没分房」的状态，全列出来。 */
-        var sid = core.scopeId ? core.scopeId() : null;
         var list = core.userMasks().filter(function (u) {
           return u && (!sid || u.sandboxId === sid);
         });
         var activeId = store.get('activeUserId');
         /* 「我的大号」= 本岛那一件 isDefault（老存档没标过就退回名册第一件）。
            落岛时「我」归位到它（core.defaultUserOfSandbox）。 */
-        var sbNow = core.activeSandbox ? core.activeSandbox() : null;
+        var sbNow = viewing || (core.activeSandbox ? core.activeSandbox() : null);
         var big = sbNow && core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sbNow) : null;
         var bigId = big ? big.id : null;
         /* 指针指向一件**不存在**的马甲时补一次 —— 补的是**本岛的大号**，
-           不是 core.activeUser() 的全局兜底（那可能是别座岛的人）。 */
-        if (!activeId || !core.findUser(activeId)) {
+           不是 core.activeUser() 的全局兜底（那可能是别座岛的人）。
+           人在别座岛时不要动全局指针（见下面点击分支的注释）。 */
+        if (isActiveIsland && (!activeId || !core.findUser(activeId))) {
           var fix = big || core.activeUser();
           if (fix) {
             store.set('activeUserId', fix.id);
@@ -1427,13 +1443,14 @@
         }
 
         list.forEach(function (u) {
+          var label = core.labelOfUser(u);
           var line = h('button', 'pick-line' + (u.id === activeId ? ' is-on' : ''));
           line.type = 'button';
-          var pav = h('span', 'pick-av', core.initialOf(u.name));
+          var pav = h('span', 'pick-av', core.initialOfUser(u));
           line.appendChild(pav);
           core.setAvatarBg(pav, u);   /* 图库头像（第 14 批的口子），别再只有首字母 */
-          var b = h('span', 'pick-name', u.name);
-          if (u.id === activeId) b.appendChild(h('span', 'pick-cur', '进行中'));
+          var b = h('span', 'pick-name', label);
+          if (u.id === activeId && isActiveIsland) b.appendChild(h('span', 'pick-cur', '进行中'));
           line.appendChild(b);
 
           /* 大号标（用户 2026-09-21）：一座岛里只认一件。
@@ -1443,19 +1460,30 @@
           var chip = h('span', 'pick-big' + (isBig ? ' is-on' : ''),
             isBig ? '大号' : '设为大号');
           chip.title = isBig ? '这座岛里「我」的主账号 —— 降落时直接用它'
-            : '把「' + u.name + '」设成这座岛的大号';
+            : '把「' + label + '」设成这座岛的大号';
           if (!isBig) {
             chip.addEventListener('click', function (ev) {
               ev.stopPropagation();
               var r = core.setDefaultUser(u.id);
-              ctx.toast(r.ok ? ('「' + u.name + '」是这座岛的大号了') : r.message, r.ok ? 'ok' : 'err');
+              ctx.toast(r.ok ? ('「' + label + '」是这座岛的大号了') : r.message, r.ok ? 'ok' : 'err');
               if (ctx.rebuild) ctx.rebuild();
             });
           }
           line.appendChild(chip);
           line.addEventListener('click', function () {
+            /* 人不在岛上时**不许切号**：切了 activeUserId 会指向别岛的人，
+               activeUserOnIsland() 当场返回 null —— 聊天列表整个空掉、
+               桌面认不出「我」。这种状态下这一下改成定「进入身份」。 */
+            if (!isActiveIsland) {
+              var r2 = core.setDefaultUser(u.id);
+              ctx.toast(r2.ok
+                ? ('进入「' + (viewing && viewing.name ? viewing.name : '这座岛') + '」时用「' + label + '」')
+                : r2.message, r2.ok ? 'ok' : 'err');
+              if (ctx.rebuild) ctx.rebuild();
+              return;
+            }
             core.switchTo(undefined, u.id);
-            ctx.toast('已切换到「' + u.name + '」', 'ok');
+            ctx.toast('已切换到「' + label + '」', 'ok');
             if (ctx.rebuild) ctx.rebuild();
           });
           card.appendChild(line);
@@ -1465,7 +1493,10 @@
         add.type = 'button';
         add.appendChild(h('span', 'pick-box pick-box-plus', '+'));
         add.appendChild(h('span', 'pick-name', '新建一件马甲'));
-        add.addEventListener('click', function () { ctx.open('mask-edit', { id: '' }); });
+        /* 带 sandboxId：新建的马甲打**这座岛**的章，不是活动岛的 */
+        add.addEventListener('click', function () {
+          ctx.open('mask-edit', { id: '', sandboxId: sid || '' });
+        });
         card.appendChild(add);
       }
 
@@ -1478,8 +1509,12 @@
 
       body.appendChild(h('p', 'set-foot',
         '马甲决定这座岛里「我是谁」。带「大号」标的那件是主账号，' +
-        '降落时「我」就用它。'));
+        '降落时「我」就用它。名字可以留空 —— 留空的话对方只知道你的微信名。'));
     },
+    /* 岛换了要重画：app.js 的 applyParams 发现 params 变了会整体 re-render，
+       所以这里只管「同一座岛回来时刷新」（改了名字/头像/大号）。
+
+       ⚠️ 别在这儿拿 params 去比对岛 —— 那是 render 的活。 */
     onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
 
@@ -1499,14 +1534,19 @@
       var top = h('div', 'face-row');
       f.avatar = faceField(existing, {
         empty: '＋',
+        /* 名字留空是合法状态 → 首字按「名字 → 微信名」取（core.initialOfUser） */
+        initial: existing ? core.initialOfUser(existing) : '',
         toast: function (t, k) { ctx.toast(t, k); }
       });
       top.appendChild(f.avatar.el);
       var cols = h('div', 'face-cols');
       f.name = textField({
         label: '名字',
+        /* 用户 2026-09-22：「这个名字下面的注释是小号 A，不对，直接写账号 a 就行，
+           名字可以不填，不填的话 char 就只知道微信名（大号小号都是）」。
+           → 占位改成中性的一件账号，并且**真的允许留空**（见 doSave）。 */
         value: existing ? existing.name : '',
-        placeholder: '小号 A'
+        placeholder: '账号 a · 可留空'
       });
       if (f.name.input) {
         f.name.input.addEventListener('input', function () {
@@ -1580,7 +1620,13 @@
       });
 
       function doSave() {
-        var name = String(f.name.get() || '').trim() || '未命名马甲';
+        /* 名字**可以留空**（用户 2026-09-22）：空着的话对外只剩微信名，
+           模型也就只知道微信名 —— 所以这里不再兜「未命名马甲」。
+           ⚠️ 两件都空也允许（显示侧统一回落「我」，见 core.labelOfUser）。 */
+        var name = String(f.name.get() || '').trim();
+        /* 这件马甲属于哪座岛：调用方显式给了就以它为准（总览 / 进入身份
+           都是带着岛进来的），否则沿用记录上的章，再否则交给 core 盖当前岛章。 */
+        var sbId = String(ctx.params.sandboxId || (existing && existing.sandboxId) || '');
         var item = core.upsertUser({
           id: existing ? existing.id : core.newId('um'),
           name: name,
@@ -1589,8 +1635,23 @@
           city: String(f.city.get() || '').trim(),
           avatar: String(f.avatar.get() || '').trim(),
           avatarMedia: f.avatar.getMedia(),
-          isDefault: f.big.get()
+          isDefault: f.big.get(),
+          sandboxId: sbId || undefined
         });
+        /* 新建的马甲要**进本岛名册**（sb.maskIds）——
+           不然它只是「打了这座岛的章」，masksOfSandbox 看不到它，
+           总览的「进入身份」和认知地图里都不会出现（得回配置台勾一次）。
+           配置台已经下线（2026-09-22），这里补上这一步。 */
+        if (sbId) {
+          var sbNow2 = core.findSandbox(sbId);
+          if (sbNow2 && !existing) {
+            var ids = (sbNow2.maskIds || []).slice();
+            if (ids.indexOf(item.id) < 0) {
+              ids.push(item.id);
+              core.setSandboxMasks(sbId, ids);
+            }
+          }
+        }
         /* 打开开关就互斥地把**同一座岛**其他件降级 —— 每岛只认一件大号，
            别座岛的大号不动（那是别岛的「我」）。 */
         if (f.big.get()) core.setDefaultUser(item.id);
@@ -1620,6 +1681,7 @@
       var top = h('div', 'face-row');
       f.avatar = faceField(u, {
         empty: '＋',
+        initial: core.initialOfUser(u),
         toast: function (t, k) { ctx.toast(t, k); }
       });
       top.appendChild(f.avatar.el);
@@ -1678,8 +1740,9 @@
       ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
 
       function doSave() {
+        /* 名字可以留空（跟 mask-edit 同一口径）——留空就只剩微信名，
+           显示侧统一回落「我」（core.labelOfUser）。 */
         var name = String(f.name.get() || '').trim();
-        if (!name) { ctx.toast('名字不能空着', 'warn'); return; }
         core.upsertUser({
           id: u.id,
           name: name,

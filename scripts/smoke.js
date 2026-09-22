@@ -635,13 +635,17 @@ t('已注册页面（Sleepy.registered()）', () => {
 console.log('\n--- page:浮岛（名片夹的进化版）---');
 t('浮岛三层都注册上了', () => {
   const reg = S.registered();
-  ['island', 'island-saves', 'island-config'].forEach((id) => {
+  ['island', 'island-saves', 'island-overview'].forEach((id) => {
     if (!reg[id]) throw new Error('缺页面：' + id);
   });
+  /* 配置台（island-config）**2026-09-22 已删除** —— 用户：
+     「点击更改进入的身份和彼此认知，又要进入岛屿设置，没必要啊，
+     岛屿设置不能删掉么」。这里反过来断言它**不许再注册回来**。 */
+  if (reg['island-config']) throw new Error('配置台不该再注册（已下线）');
   return {
     第一层: reg.island.title,
     第二层: reg['island-saves'].title,
-    第三层: reg['island-config'].title
+    第三层: reg['island-overview'].title
   };
 });
 

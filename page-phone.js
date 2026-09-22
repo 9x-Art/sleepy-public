@@ -1856,7 +1856,8 @@
       }
       function userNameOf(chat) {
         var u = core.findUser(chat.userId);
-        return (u && u.name) || '我';
+        /* user 侧名字留空 → 回落微信名（唯一出口 core.labelOfUser） */
+        return core.labelOfUser(u);
       }
       function lastRealMsg() {
         var chats = (Sleepy.chatStore ? Sleepy.chatStore.getChats() : [])

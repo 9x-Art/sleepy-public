@@ -3,7 +3,7 @@
    依赖：store.js、core.js、ui.js、app.js
    页面：island（云海 + 两座岛，左右滑动）
          → island-saves（某座岛的存档列表 + 新建）
-         → island-config（配置台 · 横向关系树）
+         → island-overview（岛屿总览 = 唯一的房子管理中枢）
 
    ---- 三层，别压成两层 ----
      第一层  island        一屏一座岛，**左右滑动**在孤岛 / 群岛之间游荡。
@@ -11,7 +11,17 @@
                            两座岛之间由一条飘带连着，跨过屏幕分界 ——
                            所以滑到中间那一下，能看见带子在两座岛之间绷着。
      第二层  island-saves  这座岛的存档列表 + 新建。
-     第三层  island-config 关系树 + 加人设 + 马甲 + 认知锁 + 降落。
+     第三层  island-overview  岛屿总览。**这里就是唯一的配置入口**：
+                           核心成员（我 / 角色 / 加人设 / 导入人设）、岛内成员(NPC)、
+                           角色档案、群岛关系、进入身份、彼此认知、降落、拆岛。
+
+   ⚠️ 原来的「第三层 island-config（配置台 · 横向关系树）」**2026-09-22 已删除**
+   （用户：「点击更改进入的身份和彼此认知，又要进入岛屿设置，没必要啊，
+   岛屿设置不能删掉么」）。它的内容各归各位，别再复活：
+     人物条 / 加人设 / 导入人设 → 总览「核心成员」（openAddChar）
+     马甲管理（切号 · 设大号 · 新建）  → mask-list，带 sandboxId
+     初始认知锁                  → island-cognition 的「记忆屏障」段
+     拆岛                        → 总览底部 + 浮岛存档列表的「拆掉」
 
    ---- 关系树为什么是横的 ----
    星轨（同心圆）画出来是个竖着堆的形状，一两个角色还行，人一多就堆成塔。
@@ -114,6 +124,17 @@
     if (!sb) return true;
     if (sb.kind !== core.KIND_ISLE) return true;
     return core.charsOfSandbox(sb.id).length < 1;
+  }
+
+  /* 加人设的唯一出口（走简化页：名字 / 头像 / 人设 + 「有小号吗」）。
+     总览的人物条、「角色档案」空态都走它 —— 以前只有配置台有这条路。
+     新建时先拦一道：孤岛已满就别让人填完一整张表单才被拒。 */
+  function openAddChar(ctx, sb) {
+    if (!canAddChar(sb)) {
+      ctx.toast('孤岛只住得下一个人 · 想再放人请开一片群岛', 'warn');
+      return;
+    }
+    ctx.open('contact-edit', { id: '', kind: 'main', sandboxId: sb.id, simple: true });
   }
 
   function relative(at) {
@@ -462,7 +483,8 @@
       close();
       ctx.toast('建好了 · 先把人放进来', 'ok');
       if (ctx.rebuild) ctx.rebuild();
-      ctx.open('island-config', { id: sb.id });
+      /* 新建完直接进总览（以前进配置台）—— 总览就是加人设的入口 */
+      ctx.open('island-overview', { id: sb.id });
     });
 
     wrap.appendChild(panel);
@@ -530,12 +552,11 @@
       if (!r.ok) { ctx.toast(r.message, 'err'); return; }
       ctx.toast('已拆掉', 'ok');
 
-      if (ctx.id === 'island-config') {
-        Sleepy.nav.closeAll();
-        Sleepy.nav.open('island');
-      } else if (ctx.rebuild) {
-        ctx.rebuild();
-      }
+      /* 拆掉之后停在哪：能原地重画的就重画（浮岛存档列表 / 岛屿总览，
+         两个页面都挂着 ctx.rebuild）——
+         配置台已经删了（2026-09-22），只剩这个分支。 */
+      if (ctx.rebuild) ctx.rebuild();
+      else { Sleepy.nav.closeAll(); Sleepy.nav.open('island'); }
     });
 
     wrap.appendChild(panel);
@@ -563,442 +584,6 @@
     if (cog.barrier) return 'deny';
     return cog.cognition === 'aware' ? 'flirt' : 'puzzle';
   }
-
-  Sleepy.register('island-config', {
-    title: '配置台',
-    render: function (ctx) {
-      var body = ctx.body;
-      var roomId = ctx.params.id || '';
-      var sb = core.findSandbox(roomId);
-
-      if (!sb) {
-        ctx.toast('找不到这段存档', 'err');
-        ctx.back();
-        return;
-      }
-
-      var meta = metaOf(sb.kind);
-
-      var head = h('div', 'cfg-head');
-      head.appendChild(h('p', 'cfg-poem', meta.poem));
-      head.appendChild(h('p', 'cfg-poem-from', meta.from));
-      body.appendChild(head);
-
-      /* ---- 人物（2026-09-21 重做，原来是「关系树」）----
-         放射树结构上只装得下两个角色（左一右一），第三个没地方放 ——
-         改成和下面「岛内成员」同款的横排条。见 paintPeople。 */
-      var peopleSec = h('p', 'iol-drawer-sec', '');
-      var peopleStrip = h('div', 'iol-strip cfg-people');
-      body.appendChild(peopleSec);
-      body.appendChild(peopleStrip);
-
-      /* ---- 岛内成员（NPC）----
-         NPC 属于整座岛，不挂在树上的任何人名下（2026-09-21 用户拍板）。
-         照群岛总览的样子给一条横排栏：点卡片进档案，＋ 进 island-npc 页。 */
-      var npcSec = h('p', 'iol-drawer-sec', '');
-      var npcStrip = h('div', 'iol-strip');
-      body.appendChild(npcSec);
-      body.appendChild(npcStrip);
-
-      function paintNpcs() {
-        sb = core.findSandbox(roomId) || sb;
-        var npcs = core.npcsOfRoom(sb);
-        npcSec.textContent = '岛内成员 · ' + npcs.length + ' 位 NPC';
-        npcStrip.innerHTML = '';
-        if (!npcs.length) {
-          npcStrip.appendChild(h('p', 'iol-empty', '还没有 NPC'));
-        }
-        npcs.forEach(function (n) {
-          var card = h('button', 'iol-member');
-          card.type = 'button';
-          var nAva = h('span', 'iol-member-ava', (n.name || '?').charAt(0));
-          card.appendChild(nAva);
-          core.setAvatarBg(nAva, n);
-          card.appendChild(h('strong', '', n.name));
-          card.appendChild(h('small', '', clip(n.content || 'NPC', 18)));
-          card.addEventListener('click', function () {
-            ctx.open('island-char', { sbId: sb.id, charId: n.id });
-          });
-          npcStrip.appendChild(card);
-        });
-        var addNpc = h('button', 'iol-member is-add');
-        addNpc.type = 'button';
-        addNpc.appendChild(h('span', 'iol-add-mark', '＋'));
-        addNpc.appendChild(h('small', '', '添加 NPC'));
-        addNpc.addEventListener('click', function () {
-          ctx.open('island-npc', { id: sb.id });
-        });
-        npcStrip.appendChild(addNpc);
-      }
-
-      /* 「加人设 / 导入人设」原来在这里占一整行大按钮（孤岛住满时整行换成
-         一句说明）—— 那两件事已经并进上面**人物条末尾**的 ＋ / ↓，
-         不用占两处版面。 */
-
-      /* ---- 我的马甲 ---- */
-      var gMask = group('我的马甲',
-        '这座岛自己的马甲 · 同一个人设可以从别的岛复制，或直接新建。');
-      var maskBox = h('div', 'cfg-masks');
-      gMask.card.appendChild(maskBox);
-
-      var copyRow = h('button', 'cfg-mask cfg-mask-copy');
-      copyRow.type = 'button';
-      copyRow.appendChild(h('span', 'cfg-check', ''));
-      copyRow.appendChild(h('span', 'cfg-char-body'));
-      var copyOpen = false;
-      var copyList = null;
-      copyRow.addEventListener('click', function () {
-        copyOpen = !copyOpen;
-        paintCopyList();
-      });
-
-      function paintCopyList() {
-        if (copyList && copyList.parentNode) copyList.parentNode.removeChild(copyList);
-        copyList = null;
-        copyRow.classList.toggle('is-on', copyOpen);
-        copyRow.querySelector('.cfg-char-body').innerHTML = '';
-        copyRow.querySelector('.cfg-char-body').appendChild(
-          h('span', 'cfg-char-name', copyOpen ? '收起' : '从别的岛复制一件马甲'));
-        if (!copyOpen) return;
-        copyList = h('div', 'cfg-masks');
-        var found = 0;
-        (core.listSandboxes() || []).forEach(function (other) {
-          if (other.id === sb.id) return;
-          var otherName = other.name || other.title || '未命名岛';
-          /* 按**岛章**列，不按名册 —— 新建的马甲打了章还没勾进名册，
-             也应该能被复制；反过来名册里挂着但章是别岛的记录不该出现 */
-          core.userMasks().forEach(function (u) {
-            if (!u || u.sandboxId !== other.id) return;
-            found++;
-            var line = h('button', 'cfg-mask');
-            line.type = 'button';
-            line.appendChild(h('span', 'cfg-check', ''));
-            var mb = h('div', 'cfg-char-body');
-            mb.appendChild(h('span', 'cfg-char-name', u.name));
-            mb.appendChild(h('span', 'cfg-char-line', '来自 ' + otherName));
-            line.appendChild(mb);
-            line.addEventListener('click', function () {
-              /* 深拷贝成**本岛的新马甲**（新 id + 本岛章）——
-                 不是把别岛那件拉进来，两件从此各长各的 */
-              var nu = core.upsertUser({
-                name: u.name,
-                persona: u.persona || '',
-                note: u.note || '',
-                city: u.city || '',
-                region: u.region || '',
-                timezone: u.timezone || '',
-                avatar: u.avatar || '',
-                /* 头像若存的是图库（IndexedDB），复制时两件马甲共用同一张图 ——
-                   mediaId 指向的是图，不是「哪件马甲的专属文件」 */
-                avatarMedia: u.avatarMedia || '',
-                /* 显式盖本岛章：人在 A 岛配置台复制 B 岛的马甲时，
-                   不能靠「当前房」兜底（那会盖成 A 以外的岛）。 */
-                sandboxId: sb.id
-              });
-              var next = (sb.maskIds || []).slice();
-              if (next.indexOf(nu.id) < 0) next.push(nu.id);
-              var r = core.setSandboxMasks(sb.id, next);
-              if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-              sb = r.sandbox;
-              copyOpen = false;
-              ctx.toast('已复制「' + nu.name + '」到这座岛', 'ok');
-              paintMasks(); paintCopyList(); paintLocks(); paintPeople();
-            });
-            copyList.appendChild(line);
-          });
-        });
-        if (!found) {
-          copyList.appendChild(h('p', 'cfg-empty', '别的岛上还没有马甲'));
-        }
-        maskBox.parentNode.insertBefore(copyList, copyRow.nextSibling);
-      }
-
-      function paintMasks() {
-        maskBox.innerHTML = '';
-        /* 只列**本岛**的马甲（马甲按岛，2026-09-21 拍板）——
-           别岛的那件对这座岛不存在，列出来就是诱导跨岛共用一个身份 */
-        var sid = sb.id;
-        var users = core.userMasks().filter(function (u) {
-          return u && u.sandboxId === sid;
-        });
-        if (!users.length) {
-          maskBox.appendChild(h('p', 'cfg-empty',
-            '这座岛还没有马甲 · 下面可以新建一件，或从别的岛复制'));
-        }
-        var picked = sb.maskIds || [];
-        users.forEach(function (u) {
-          var on = picked.indexOf(u.id) >= 0;
-          var item = h('button', 'cfg-mask' + (on ? ' is-on' : ''));
-          item.type = 'button';
-          var uAva = h('span', 'cfg-ava', core.initialOf(u.name));
-          item.appendChild(uAva);
-          core.setAvatarBg(uAva, u);
-          var mb = h('div', 'cfg-char-body');
-          mb.appendChild(h('span', 'cfg-char-name', u.name));
-          mb.appendChild(h('span', 'cfg-char-line', u.persona || '还没写一句话人设'));
-          item.appendChild(mb);
-          item.addEventListener('click', function () {
-            var next = (sb.maskIds || []).slice();
-            var i = next.indexOf(u.id);
-            if (i >= 0) next.splice(i, 1); else next.push(u.id);
-            var r = core.setSandboxMasks(sb.id, next);
-            if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-            sb = r.sandbox;
-            paintMasks(); paintLocks(); paintPeople();
-          });
-          maskBox.appendChild(item);
-        });
-
-        /* 就在本岛建马甲（用户 2026-09-21：配置台那句「去『我 → 设置 → 小号』里建」
-           不 ok —— 全局路径和按岛矛盾，而且得多跳一页）。
-           显式带上 sandboxId，免得盖错章。 */
-        var addMask = h('button', 'cfg-mask cfg-mask-add');
-        addMask.type = 'button';
-        addMask.appendChild(h('span', 'cfg-check', ''));
-        addMask.appendChild(h('span', 'cfg-char-name', '＋ 新建一件马甲'));
-        addMask.addEventListener('click', function () {
-          ctx.open('mask-edit', { id: '', sandboxId: sb.id });
-        });
-        maskBox.appendChild(addMask);
-      }
-
-      /* ---- 初始认知锁 ---- */
-      var gLock = group('初始认知锁',
-        '定这一段关系的基调。');
-      var lockBox = h('div', 'cfg-locks');
-      gLock.card.appendChild(lockBox);
-
-      function paintLocks() {
-        lockBox.innerHTML = '';
-        var mains = core.charsOfSandbox(sb.id);
-        var masks = core.masksOfSandbox(sb);
-        if (!mains.length || !masks.length) {
-          lockBox.appendChild(h('p', 'cfg-empty', '先把人设和马甲都放进来，这里才有可定的组合'));
-          return;
-        }
-        mains.forEach(function (main) {
-          masks.forEach(function (u) {
-            var cur = lockKeyOf(core.cognitionOf(main.id, u.id, sb.id));
-            var line = h('div', 'cfg-lock');
-            line.appendChild(h('span', 'cfg-lock-who', main.name + ' × ' + u.name));
-            var seg = h('div', 'seg');
-            LOCKS.forEach(function (lk) {
-              var b = h('button', 'seg-btn' + (cur === lk.key ? ' is-on' : ''), lk.label);
-              b.type = 'button';
-              b.title = lk.hint;
-              b.addEventListener('click', function () {
-                core.setCognition(main.id, u.id, lk.cog, sb.id);
-                core.setBarrier(main.id, u.id, lk.barrier, sb.id);
-                paintLocks();
-                ctx.toast(lk.label + '：' + lk.hint, 'ok');
-              });
-              seg.appendChild(b);
-            });
-            line.appendChild(seg);
-            lockBox.appendChild(line);
-          });
-        });
-      }
-
-      gMask.card.appendChild(copyRow);
-      body.appendChild(gMask.wrap);
-      body.appendChild(gLock.wrap);
-
-      paintMasks(); paintCopyList();
-
-      /* ---- 降落 ---- */
-      var footer = h('div', 'cfg-footer');
-      var land = h('button', 'cfg-land');
-      land.type = 'button';
-      land.appendChild(h('span', 'cfg-land-title', '降落'));
-      land.appendChild(h('span', 'cfg-land-sub', '落到这一段关系的桌面'));
-      land.addEventListener('click', function () { landInto(ctx, sb); });
-      footer.appendChild(land);
-      var danger = h('div', 'btn-row');
-      danger.appendChild(button('拆掉这一段', 'danger', function () { removeRoom(ctx, sb); }));
-      footer.appendChild(danger);
-      body.appendChild(footer);
-
-      /* ==================== 关系树绘制 ====================
-
-         **「我」永远在页面正中**，角色往左右两侧长（右 1、左 1、右 2、左 2…）：
-           我 → 角色 的红线，和「皮套挂在角色下面」的绿细线，画法见下面各自的注释。
-           NPC **不上树**（属于整座岛）—— 在树下面的「岛内成员」栏里横排。
-
-         为什么是「我」居中而不是像树干一样排在最左：
-            用户原话「我需要 user 和 char 的这个在页面中间呀」
-            「就算是有多个 char，也应该是 user 在页面中间，可以往左右加 char」。
-            这个人看到的第一眼应该是「我」，不是一条从左往右的清单。
-
-         节点点击：
-           我        → 管马甲
-           角色      → 加人设那一页（改人设）
-           皮套      → 同上的简化样式（名字 + 人设，没有身份/城市/状态那些）
-           虚线位    → 角色下面加皮套
-         红线点击 → 写关系 */
-
-      /* ==================== 人物（2026-09-21 重做）====================
-
-         **原来是「我」居中、角色左右交替长出去的放射树** —— 结构上只装得下
-         两个角色（左一右一），第三个就没地方了（用户原话：「user 但凡想要
-         三个 char，都没地方放了」）。
-         现在是和下面「岛内成员」同款的横排条：一件一张卡，横排、宽了就横滑，
-         **想加几个加几个**。NPC 不进这条（属于整座岛，在下面那一栏）。
-
-         卡上各处的点击：
-           我        → 管马甲（mask-list）
-           角色      → 档案（island-char）
-           角色小字  → 写关系（link.relation，「青梅竹马」那句）
-           皮套      → 档案，小字标它挂在谁名下
-           末尾 ＋   → 加人设；末尾 ↓ 导入人设
-         红线不再画：「谁认识谁」那套在总览的「群岛关系」里已经完整，
-         这里只留「我 × 角色」那一句注解 —— 它原本只有树上那条红线能点，
-         换条之后挪到卡上的小字，功能不丢。 */
-      function paintPeople() {
-        peopleStrip.innerHTML = '';
-        var me = core.defaultUserOfSandbox(sb) || core.activeUser();
-        var masks = core.masksOfSandbox(sb);
-        var mains = core.charsOfSandbox(sb.id);
-        var subs = [];
-        mains.forEach(function (m) {
-          core.subChars(m.id).forEach(function (s) {
-            if (s.sandboxId && s.sandboxId !== sb.id) return;
-            subs.push({ c: s, parent: m });
-          });
-        });
-
-        /* 一张卡。o.sub 是小字那行；给了 onSub 就整行可点（用来写关系）。 */
-        function cardFor(o) {
-          var card = h('button', 'iol-member cfg-p' + (o.me ? ' is-me' : ''));
-          card.type = 'button';
-          var ava = h('span', 'iol-member-ava', (o.name || '?').charAt(0));
-          card.appendChild(ava);
-          if (o.avatarOf) core.setAvatarBg(ava, o.avatarOf);
-          card.appendChild(h('strong', '', o.name || '未命名'));
-          var sub = h('small', '', o.sub);
-          if (o.subIsHint) sub.classList.add('is-hint');
-          if (o.onSub) {
-            sub.classList.add('cfg-p-rel');
-            sub.addEventListener('click', function (ev) {
-              ev.stopPropagation();
-              o.onSub();
-            });
-          }
-          card.appendChild(sub);
-          card.addEventListener('click', o.onTap);
-          return card;
-        }
-
-        peopleSec.textContent = '人物 · 我 + ' + mains.length + ' 位角色' +
-          (subs.length ? '（含 ' + subs.length + ' 个小号）' : '');
-
-        /* 「我」 */
-        peopleStrip.appendChild(cardFor({
-          me: true,
-          name: me ? me.name : '我',
-          avatarOf: me,
-          sub: masks.length ? (masks.length + ' 件马甲 ›') : '还没有马甲 ›',
-          subIsHint: !masks.length,
-          onTap: function () { ctx.open('mask-list'); }
-        }));
-
-        /* 大号：小字那行是「我 × TA」的关系，点一下写 / 改 */
-        mains.forEach(function (c) {
-          var rel = me ? core.relationOf(c.id, me.id, sb.id) : '';
-          peopleStrip.appendChild(cardFor({
-            name: c.name,
-            avatarOf: c,
-            sub: rel || (me ? '写关系' : '大号'),
-            subIsHint: !rel,
-            onSub: me ? function () { writeRelation(ctx, sb, c.id); } : null,
-            onTap: function () { ctx.open('island-char', { sbId: sb.id, charId: c.id }); }
-          }));
-        });
-
-        /* 皮套：挂在某个大号名下，小字标出来 */
-        subs.forEach(function (it) {
-          peopleStrip.appendChild(cardFor({
-            name: it.c.name,
-            avatarOf: it.c,
-            sub: '小号 · ' + (it.parent.name || ''),
-            onTap: function () {
-              ctx.open('island-char', { sbId: sb.id, charId: it.c.id });
-            }
-          }));
-        });
-
-        /* 末尾：加人设 / 导入人设 —— 原来那整行大按钮并进这里（同样两件事，
-           不占两处版面）。孤岛住满时不给这个位，跟 canAddChar 判定一致，
-           免得点了只弹一句「住不下」。 */
-        if (canAddChar(sb)) {
-          var addBtn = h('button', 'iol-member is-add');
-          addBtn.type = 'button';
-          addBtn.appendChild(h('span', 'iol-add-mark', '＋'));
-          addBtn.appendChild(h('small', '', '加人设'));
-          addBtn.addEventListener('click', function () { openChar(ctx, sb, ''); });
-          peopleStrip.appendChild(addBtn);
-
-          if (Sleepy.charIO) {
-            var impBtn = h('button', 'iol-member is-add');
-            impBtn.type = 'button';
-            impBtn.appendChild(h('span', 'iol-add-mark', '↓'));
-            impBtn.appendChild(h('small', '', '导入人设'));
-            impBtn.addEventListener('click', function () {
-              Sleepy.charIO.importInto(ctx, sb.id);
-            });
-            peopleStrip.appendChild(impBtn);
-          }
-        }
-      }
-
-      /* 写关系：原本点树上的红线，现在点角色卡的小字。
-         存在 links 上，所以它天然是「我 × 这个角色」这一段关系的注解。 */
-      async function writeRelation(ctx, sb, charId) {
-        /* 「我 × TA」的注解写到**这间房的大号**身上（跟卡上那个「我」同一件，
-           否则写出来的关系跟看到的人对不上）。 */
-        var me = core.defaultUserOfSandbox(sb) || core.activeUser();
-        var ch = core.findChar(charId);
-        var cur = core.relationOf(charId, me.id, sb.id);
-        var next = await ui.prompt({
-          title: '你和「' + (ch ? ch.name : '对方') + '」是什么关系？',
-          note: '写一句话。留空就清掉。比如：青梅竹马、上下级、前男友',
-          value: cur,
-          ok: '写上'
-        });
-        if (next === null) return;
-        var r = core.setRelation(charId, me.id, next, sb.id);
-        if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-        paintPeople();
-        ctx.toast(r.relation ? ('写上了：' + r.relation) : '关系清掉了', 'ok');
-      }
-      /* 点「加人设」或者点某个角色 —— 都走**加人设那一页**（名字 / 头像 / 人设，
-         外加一个「有小号吗」的开关），不走那个带三选一身份切换器的大表单。
-         大表单是「角色骨架总面板」，从那一页底部的入口才进得去。
-
-         新建时先拦一道：孤岛已满就别让人填完一整张表单才被拒。 */
-      function openChar(ctx, sb, id) {
-        if (!id && !canAddChar(sb)) {
-          ctx.toast('孤岛只住得下一个人 · 想再放人请开一片群岛', 'warn');
-          return;
-        }
-        ctx.open('contact-edit', {
-          id: id || '', kind: 'main', sandboxId: sb.id, simple: true
-        });
-      }
-
-      function redraw() {
-        sb = core.findSandbox(roomId) || sb;
-        paintPeople();
-        paintNpcs();
-        paintMasks();
-        paintLocks();
-      }
-
-      redraw();
-      ctx.redraw = redraw;
-    },
-    onShow: function (ctx) { if (ctx.redraw) ctx.redraw(); }
-  });
 
   /* 「降落」：把「人在哪一段」落到这一段，然后清掉整叠页面回桌面。 */
   function landInto(ctx, sb) {
@@ -1080,10 +665,13 @@
   function npcsOfRoom(sb) {
     return core.npcsOfRoom(sb);
   }
-  /* 孤岛里「我」当前用的马甲名（没选就是「我」） */
+  /* 这座岛里「我」叫什么 —— 本岛大号优先（每岛只认一件），
+     名字留空整个退到微信名（core.labelOfUser）。 */
   function currentMaskName(sb) {
+    var big = core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null;
+    if (big) return core.labelOfUser(big);
     var masks = core.masksOfSandbox(sb);
-    return masks.length ? masks[0].name : '我';
+    return masks.length ? core.labelOfUser(masks[0]) : '我';
   }
   function cogLabel(cog) {
     if (cog.barrier) return '记忆壁垒';
@@ -1118,23 +706,52 @@
         var mains = core.charsOfSandbox(sb);
         var masks = core.masksOfSandbox(sb);
         var npcs = npcsOfRoom(sb);
+        /* 「我」= 本岛大号（每岛只认一件，core.defaultUserOfSandbox）。
+           这里必须拿**真身记录**：以前传的是合成对象 {name:'我'}，
+           于是头像永远是那个「我」字、跟着马甲改的图根本不会出现
+           （用户 2026-09-22：「user 头像不变」）。 */
+        var bigMe = (core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null)
+          || core.activeUserOnIsland && core.activeUserOnIsland();
 
         /* ---- 核心成员 ---- */
         body.appendChild(secLabel('核心成员', masks.length + ' user · ' + mains.length + ' char'));
+        /* 「我」那张卡的小字：只有一件马甲时说清它是什么，多件就报个数 */
+        var meSub = masks.length > 1 ? masks.length + ' 件马甲'
+          : (masks.length ? '本岛大号' : '还没有马甲');
         var coreBox = h('div', 'iol-core' + (isArchi ? ' is-archi' : ''));
         if (!isArchi) {
-          coreBox.appendChild(personNode({ name: '我', sub: '当前身份：' + currentMaskName(sb) }, 'me'));
+          coreBox.appendChild(personNode(bigMe, 'me', meSub));
           coreBox.appendChild(h('i', 'iol-line'));
-          coreBox.appendChild(personNode(mains[0] || { name: '空' }, 'char'));
+          /* 孤岛只住一个人：名册空了就整格变成「加人设」（只此一格，
+             别在下面再补一个 ＋ —— 那会出现两个一模一样的空位）。
+             ⚠️ 这一格以前传的是 {name:'空'}（没有 id）——点下去落进了
+             「我」那个分支，进去看到的居然是 user 的编辑马甲（用户 09-22 报的错位）。 */
+          if (mains[0]) coreBox.appendChild(personNode(mains[0], 'char'));
+          else if (canAddChar(sb)) coreBox.appendChild(addPersonNode('char', '这座' + meta.title + '还没有角色'));
         } else {
           /* 群岛：我 + 全部主要角色，横排可滑。
              中间**不放连线**（用户 09-19 拍的）：群岛里「我↔char」不是一条
              一对一的关系，画了线反而会被读成「这条线代表某种关系」；
              谁跟谁什么关系，看下面「群岛关系」那一段。 */
-          coreBox.appendChild(personNode({ name: '我', sub: masks.length ? masks.length + ' 件马甲' : '我' }, 'me'));
+          coreBox.appendChild(personNode(bigMe, 'me', meSub));
           mains.forEach(function (m) {
             coreBox.appendChild(personNode(m, 'char'));
           });
+          /* 加人设 / 导入人设挪到这条人物条的末尾 —— 原来只在配置台有，
+             配置台已下线（用户 2026-09-22：「岛屿设置不能删掉么」）。 */
+          if (canAddChar(sb)) {
+            coreBox.appendChild(addPersonNode('char'));
+            if (Sleepy.charIO) {
+              var imp = h('button', 'iol-person is-add');
+              imp.type = 'button';
+              imp.appendChild(h('span', 'iol-ava', '↓'));
+              imp.appendChild(h('b', '', '导入人设'));
+              imp.addEventListener('click', function () {
+                Sleepy.charIO.importInto(ctx, sb.id);
+              });
+              coreBox.appendChild(imp);
+            }
+          }
         }
         body.appendChild(coreBox);
 
@@ -1169,7 +786,19 @@
         /* ---- 主要角色的档案入口（两张 demo 的「角色档案」挂这里） ---- */
         body.appendChild(secLabel('角色档案', '人设 · 身份 · 认知'));
         var profList = h('div', 'iol-prof-list');
-        if (!mains.length) profList.appendChild(h('p', 'iol-empty', '还没有主要角色 · 去「岛屿设置」加一个'));
+        if (!mains.length) {
+          /* 空态给一条**能点的**入口（以前是一句「去『岛屿设置』加一个」，
+             而岛屿设置已经没了 —— 用户 09-22 报的「绕一圈」就是这个） */
+          var emptyRow = h('button', 'iol-prof-row');
+          emptyRow.type = 'button';
+          var el = h('span', 'iol-prof-left');
+          el.appendChild(h('b', '', '还没有角色'));
+          el.appendChild(h('small', '', '点这里加一个人设'));
+          emptyRow.appendChild(el);
+          emptyRow.appendChild(h('span', 'iol-prof-side', '加人设 ›'));
+          emptyRow.addEventListener('click', function () { openAddChar(ctx, sb); });
+          profList.appendChild(emptyRow);
+        }
         mains.forEach(function (m) {
           var row = h('button', 'iol-prof-row');
           row.type = 'button';
@@ -1205,18 +834,23 @@
           body.appendChild(mapBtn);
         }
 
-        /* ---- 入口 / 底部动作（两种房型都有） ---- */
+        /* ---- 入口 / 底部动作（两种房型都有） ----
+           ⚠️ 这两个「更改」以前都跳「岛屿设置」（配置台）——
+           用户 2026-09-22：「点击更改进入的身份和彼此认知，又要进入岛屿设置，
+           没必要啊」。现在各自直达真正的编辑器：
+             进入身份 → mask-list（带 sandboxId，切号 / 设大号 / 新建马甲）
+             彼此认知 → island-cognition（认知地图 + 认知锁） */
         body.appendChild(secLabel('这座岛的入口', ''));
         var info = h('div', 'iol-info');
         info.appendChild(infoRow('进入身份', currentMaskName(sb) + (masks.length > 1 ? ' 等 ' + masks.length + ' 件' : ''), function () {
-          ctx.open('island-config', { id: sb.id });
+          ctx.open('mask-list', { sandboxId: sb.id });
         }));
         var cogBits = mains.map(function (m) {
           var mk = masks[0];
           return mk ? (m.name + '：' + cogLabel(core.cognitionOf(m.id, mk.id, sb.id))) : '';
         }).filter(Boolean);
         info.appendChild(infoRow('彼此认知', clip(cogBits.join('；') || '还没定', 20), function () {
-          ctx.open('island-config', { id: sb.id });
+          ctx.open('island-cognition', { id: sb.id });
         }));
         body.appendChild(info);
 
@@ -1225,12 +859,12 @@
         land.type = 'button';
         land.addEventListener('click', function () { landInto(ctx, sb); });
         foot.appendChild(land);
-        var setBtn = h('button', 'iol-ghost', '岛屿设置（关系树 · 马甲 · 认知锁）');
-        setBtn.type = 'button';
-        setBtn.addEventListener('click', function () {
-          ctx.open('island-config', { id: sb.id });
-        });
-        foot.appendChild(setBtn);
+        /* 拆岛：从配置台搬到这儿（配置台已下线）。放在最后、做成弱按钮 ——
+           它是破坏性动作，不该抢「进入这座岛」的位置。 */
+        var delBtn = h('button', 'iol-ghost', '拆掉这座' + meta.title);
+        delBtn.type = 'button';
+        delBtn.addEventListener('click', function () { removeRoom(ctx, sb); });
+        foot.appendChild(delBtn);
         body.appendChild(foot);
         body.appendChild(h('div', 'lh-scroll-pad'));
       }
@@ -1241,32 +875,55 @@
         if (sub) s.appendChild(h('span', '', sub));
         return s;
       }
-      function personNode(c, kind) {
-        /* 总览即配置台（用户 2026-09-21 拍板）：点人物头像直接进编辑 ——
-           char 进档案、我 进配置台（马甲/认知锁在那边）。以前是纯 div，
-           点了没反应，用户以为编辑入口坏了。 */
+      /* 一张人物卡。`c` 必须是**真身记录**（char 记录或 user 马甲记录）——
+         合成对象（{name:'我'}）会让头像和名字都失真，别再造了。
+         kind 决定点它去哪：
+           me   → 这一件马甲（mask-edit，带本岛 sandboxId）
+           char → 改人设（contact-edit 的简化页）
+         没有记录（岛上一个角色都没有）时整格换成「＋ 加人设」——
+         **char 那一格任何情况下都不许落进「编辑马甲」**。 */
+      function personNode(c, kind, sub) {
+        if (!c || !c.id) return addPersonNode(kind);
         var p = h('button', 'iol-person is-' + kind);
         p.type = 'button';
-        var ava = h('span', 'iol-ava', avatarLetter(c));
+        var isMe = kind === 'me';
+        var ava = h('span', 'iol-ava', isMe ? core.initialOfUser(c) : avatarLetter(c));
         p.appendChild(ava);
-        p.appendChild(h('b', '', c.name || '未命名'));
-        if (c.sub) p.appendChild(h('small', '', c.sub));
+        p.appendChild(h('b', '', isMe ? core.labelOfUser(c) : (c.name || '未命名')));
+        if (sub) p.appendChild(h('small', '', sub));
         core.setAvatarBg(ava, c);   /* 图库头像（avatarMedia）+ 网址头像都走这里 */
         p.addEventListener('click', function () {
           /* 总览即入口（用户 2026-09-22：「我需要点击岛屿总览就可以直接点上面的
              char 和 user 头像进行编辑，这是最顺畅最正常的思路」）——
              char **直接进编辑页**（以前落到档案页，还得再点一次「编辑全文」）；
              我 **直接进马甲编辑**（以前落到配置台，还得自己往下找「我的马甲」）。
-             想看全貌走配置台的人物条：那边点卡片进档案，两边各司其职。 */
-          if (kind === 'char' && c.id) {
+             想看全貌走「角色档案」那一段：那边点进去就是档案。 */
+          if (!isMe) {
             ctx.open('contact-edit', { id: c.id, sandboxId: sb.id, simple: true });
             return;
           }
-          var meU = core.defaultUserOfSandbox(sb) || core.activeUser();
-          if (meU) ctx.open('mask-edit', { id: meU.id });
-          else ctx.open('island-config', { id: sb.id });
+          ctx.open('mask-edit', { id: c.id, sandboxId: sb.id });
         });
         return p;
+      }
+      /* 人物条末尾那一格：没有角色时它就是「加人设」，有角色时它是第三个入口。
+         note 只在**这座岛真的还没有角色**时才给（有角色还说「还没有角色」很荒唐）。 */
+      function addPersonNode(kind, note) {
+        var b = h('button', 'iol-person is-add');
+        b.type = 'button';
+        b.appendChild(h('span', 'iol-ava', '＋'));
+        if (kind === 'me') {
+          b.appendChild(h('b', '', '加马甲'));
+          b.appendChild(h('small', '', '这座岛还没有「我」'));
+          b.addEventListener('click', function () {
+            ctx.open('mask-edit', { id: '', sandboxId: sb.id });
+          });
+          return b;
+        }
+        b.appendChild(h('b', '', '加人设'));
+        if (note) b.appendChild(h('small', '', note));
+        b.addEventListener('click', function () { openAddChar(ctx, sb); });
+        return b;
       }
       function infoRow(label, value, onEdit) {
         var row = h('div', 'iol-info-row');
@@ -1306,8 +963,15 @@
   });
 
   /* ---- 认知地图（群岛）：以某角色为观察者，看 TA 知道哪些身份 ---- */
+  /* ---- 认知地图（彼此认知）：以某角色为观察者，看 TA 知道哪些身份 ----
+
+     2026-09-22 起这里还接了**初始认知锁**（原配置台的「认知 × 屏障」六档）——
+     配置台已删，那一段搬到这里，因为它俩本来就是同一个轴：
+       认知锁  = 定基调（写 cognition × barrier）
+       认知地图 = 看结果（谁在谁眼里是什么）
+     一个写一个读，放在同一页才不用来回跳。 */
   Sleepy.register('island-cognition', {
-    title: '认知地图',
+    title: '彼此认知',
     render: function (ctx) {
       var body = ctx.body;
       var sb = core.findSandbox(ctx.params.id || '');
@@ -1317,9 +981,14 @@
 
       function build() {
         body.innerHTML = '';
+        sb = core.findSandbox(sb.id) || sb;
         var mains = core.charsOfSandbox(sb);
         var masks = core.masksOfSandbox(sb);
-        if (!mains.length) { body.appendChild(h('p', 'iol-empty', '先放主要角色')); return; }
+        if (!mains.length) {
+          body.appendChild(h('p', 'iol-empty', '这座岛上还没有角色 —— 回总览加一个人设'));
+          body.appendChild(h('div', 'lh-scroll-pad'));
+          return;
+        }
         var observer = mains[Math.min(observerIdx, mains.length - 1)];
 
         /* 观察者切换 */
@@ -1349,17 +1018,21 @@
         });
         masks.forEach(function (u) {
           var cog = core.cognitionOf(observer.id, u.id, sb.id);
-          matrix.appendChild(matrixRow(u.name, cogLabel(cog)));
+          matrix.appendChild(matrixRow(core.labelOfUser(u), cogLabel(cog)));
         });
+        if (!masks.length) {
+          matrix.appendChild(matrixRow('（还没有「我」的马甲）', '同一个人有几张脸，这里才有可定的事'));
+        }
         body.appendChild(matrix);
 
         /* 身份归属判断（对每件马甲） */
         if (masks.length) {
           body.appendChild(secTitle('身份归属判断'));
           masks.forEach(function (u) {
+            var uName = core.labelOfUser(u);
             var cur = getJudge(sb.id, observer.id, u.id);
             var box = h('div', 'iol-judge');
-            box.appendChild(h('p', 'iol-judge-q', observer.name + '眼中，「' + u.name + '」是谁？'));
+            box.appendChild(h('p', 'iol-judge-q', observer.name + '眼中，「' + uName + '」是谁？'));
             var seg = h('div', 'iol-seg is-col');
             [
               { v: 'other', label: '另一个人', hint: '可以认识这张脸，但不会和本体合并' },
@@ -1380,6 +1053,40 @@
             box.appendChild(seg);
             body.appendChild(box);
           });
+        }
+
+        /* ---- 初始认知锁（原配置台的这一段，2026-09-22 搬过来）----
+           定的是「角色 × 我的每一张脸」这段关系的基调：认知 × 屏障。
+           它决定模型此刻知道多少 —— 也是上面那张矩阵读的那份数据。 */
+        if (mains.length && masks.length) {
+          body.appendChild(secTitle('初始认知锁'));
+          body.appendChild(h('p', 'iol-cog-sub',
+            '定这一段关系的基调。改的是同一份数据 —— 上面那张矩阵读的就是它。'));
+          var lockBox = h('div', 'cfg-locks');
+          mains.forEach(function (main) {
+            masks.forEach(function (u) {
+              var cur2 = lockKeyOf(core.cognitionOf(main.id, u.id, sb.id));
+              var line = h('div', 'cfg-lock');
+              line.appendChild(h('span', 'cfg-lock-who',
+                main.name + ' × ' + core.labelOfUser(u)));
+              var seg2 = h('div', 'seg');
+              LOCKS.forEach(function (lk) {
+                var b = h('button', 'seg-btn' + (cur2 === lk.key ? ' is-on' : ''), lk.label);
+                b.type = 'button';
+                b.title = lk.hint;
+                b.addEventListener('click', function () {
+                  core.setCognition(main.id, u.id, lk.cog, sb.id);
+                  core.setBarrier(main.id, u.id, lk.barrier, sb.id);
+                  ctx.toast(lk.label + '：' + lk.hint, 'ok');
+                  build();
+                });
+                seg2.appendChild(b);
+              });
+              line.appendChild(seg2);
+              lockBox.appendChild(line);
+            });
+          });
+          body.appendChild(lockBox);
         }
 
         body.appendChild(h('p', 'iol-note',
@@ -1506,8 +1213,10 @@
           masks.forEach(function (u) {
             var cog = core.cognitionOf(charId, u.id, sbId);
             relWrap.appendChild(relRow('关系与认知',
-              u.name + '：' + cogLabel(cog), function () {
-                ctx.open('island-config', { id: sbId });
+              core.labelOfUser(u) + '：' + cogLabel(cog), function () {
+                /* 直接进认知地图（认知锁也搬过去了）——
+                   以前跳配置台（已删，2026-09-22） */
+                ctx.open('island-cognition', { id: sbId });
               }));
           });
         }
@@ -1515,21 +1224,21 @@
         others.forEach(function (o) {
           relWrap.appendChild(relRow(o.name,
             REL_LABELS[getPairRel(sbId, charId, o.id)], function () {
-              if (isArchi && o.kind === 'main') ctx.open('island-cognition', { id: sbId });
-              else ctx.toast('关系详情在配置台的关系树里改', 'warn');
+              if (isArchi) ctx.open('island-cognition', { id: sbId });
+              else ctx.toast('孤岛里只有你们两个人', 'warn');
             }));
         });
         if (!relWrap.childNodes.length) relWrap.appendChild(h('p', 'ipro-note', '这座' + (isArchi ? '群岛' : '孤岛') + '里暂时只有 TA 自己。'));
         body.appendChild(relWrap);
 
-        /* ---- 危险操作（第三梯队 6）：把主要角色移出这座岛 ----
-           角色本体和留痕档案保留，只解除「在这座岛里」的关系；
-           TA 在这座岛里的对话一起清掉，不然聊天列表会出现孤儿。
-           2026-09-21 拍板：大号按岛打章 —— 移出时把 TA（连同皮套/NPC）
-           的章摘掉，变成无主档案；不然之后拆这座岛会把已移出的 TA
-           连带删掉。以后再加进别的岛时会打新章。 */
+        /* ---- 危险操作（第三梯队 6） ----
+           三种身份各有各的出口，**以前只有大号有**：
+             main 大号 → 「移出这座岛」（角色本体和留痕档案保留，只解除归属）
+             npc  NPC  → 「删掉 TA」（NPC 是这座岛的配角，没有别处可去）
+             sub  小号 → 「删掉这张脸」（挂在某个大号名下，删了不影响本体）
+           用户 2026-09-22：「没有可以删掉 npc 的地方」——补的就是这两种。 */
+        var dz = h('div', 'ipro-danger-zone');
         if (c.kind === 'main') {
-          var dz = h('div', 'ipro-danger-zone');
           var outBtn = h('button', 'ipro-danger-btn',
             '将「' + (c.name || 'TA') + '」移出这座岛');
           outBtn.type = 'button';
@@ -1559,8 +1268,31 @@
             });
           });
           dz.appendChild(outBtn);
-          body.appendChild(dz);
+        } else {
+          var isSubC = c.kind === 'sub';
+          var delOne = h('button', 'ipro-danger-btn',
+            isSubC ? ('删掉「' + (c.name || '这张脸') + '」') : ('删掉「' + (c.name || '这个 NPC') + '」'));
+          delOne.type = 'button';
+          delOne.addEventListener('click', function () {
+            ui.confirm({
+              title: isSubC
+                ? ('删掉「' + (c.name || '这张脸') + '」？')
+                : ('删掉「' + (c.name || '这个 NPC') + '」？'),
+              note: (isSubC
+                ? '这是挂在大号名下的一张脸。删掉之后大号还在，这张脸和它绑定的对话找不到归属。'
+                : 'NPC 属于这座' + metaOf(sb.kind).title + '，删掉就没了（它在别处也没有副本）。') + '不可撤销。',
+              ok: '删除',
+              danger: true
+            }).then(function (yes) {
+              if (!yes) return;
+              core.removeChar(c.id);
+              ctx.toast('已删除', 'ok');
+              ctx.back();
+            });
+          });
+          dz.appendChild(delOne);
         }
+        body.appendChild(dz);
 
         body.appendChild(h('div', 'lh-scroll-pad'));
       }

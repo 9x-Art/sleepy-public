@@ -1685,10 +1685,6 @@ span.msg-avatar-initial{
   background: #d0d0d0;
 }
 
-
-
-
-
 /* 发送键的置灰交给 .is-busy 的呼吸动画表达，这里只管光标 */
 .send-btn:disabled{cursor:not-allowed;}
 
@@ -5518,12 +5514,6 @@ span.msg-avatar-initial{
 }
 .sav-new svg{display:block;}
 
-/* ==================== 第三层：配置台（横向关系树） ==================== */
-
-.cfg-head{padding:4px 0 6px;text-align:center;}
-.cfg-poem{margin:0;font-family:var(--ff-serif);font-size:15px;letter-spacing:2px;color:var(--g-accent-deep);}
-.cfg-poem-from{margin:6px 0 0;font-size:10.5px;color:var(--text-faint);}
-
 .cfg-add-row{display:flex;gap:10px;}
 .cfg-add-main{
   flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;
@@ -5533,48 +5523,10 @@ span.msg-avatar-initial{
   cursor:pointer;box-shadow:0 8px 20px rgba(139,108,76,.24);
 }
 .cfg-add-main svg{display:block;}
-.cfg-add-sub{
-  flex:none;padding:14px 16px;border-radius:16px;
-  border:1px solid var(--g-glass-line);background:rgba(255,255,255,.7);
-  font-family:inherit;font-size:13px;color:var(--text-dim);cursor:pointer;
-}
-
-.cfg-masks{display:flex;flex-direction:column;gap:8px;}
-.cfg-mask{
-  display:flex;align-items:center;gap:10px;width:100%;
-  padding:9px 10px;border-radius:12px;border:1px solid var(--g-glass-line);
-  background:rgba(255,255,255,.5);font-family:inherit;text-align:left;cursor:pointer;
-}
-.cfg-mask.is-on{border-color:rgba(176,138,94,.5);background:rgba(176,138,94,.12);}
-/* 配置台的「从别的岛复制一件马甲」行：虚线边 + 淡字，跟上面的勾选行区分开 */
-.cfg-mask-copy{border-style:dashed;background:transparent;}
-.cfg-mask-copy .cfg-char-name{color:var(--text-dim);}
-.cfg-mask-copy.is-on{border-color:var(--g-glass-line);background:rgba(255,255,255,.5);}
-.cfg-check{
-  flex:none;width:20px;height:20px;border-radius:6px;
-  border:1px solid var(--g-glass-line);display:flex;align-items:center;
-  justify-content:center;font-size:12px;color:var(--g-accent-deep);
-}
-.cfg-mask.is-on .cfg-check{background:var(--g-accent);border-color:var(--g-accent);color:#fff;}
 .cfg-locks{display:flex;flex-direction:column;gap:12px;}
 .cfg-lock{display:flex;flex-direction:column;gap:7px;}
 .cfg-lock-who{font-size:12.5px;color:var(--text-dim);}
 .cfg-empty{margin:0;padding:14px 4px;font-size:12px;line-height:1.8;color:var(--text-faint);}
-.cfg-char-body{flex:1;min-width:0;}
-.cfg-char-name{display:block;font-size:14px;color:var(--text);}
-.cfg-char-line{
-  display:block;margin-top:3px;font-size:11.5px;color:var(--text-faint);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.cfg-footer{margin-top:24px;padding-bottom:10px;}
-.cfg-land{
-  display:block;width:100%;padding:16px;border:0;border-radius:20px;
-  font-family:inherit;cursor:pointer;
-  background:linear-gradient(140deg,var(--g-accent),var(--g-accent-deep));
-  color:#FFFDF9;box-shadow:0 10px 26px rgba(139,108,76,.28);
-}
-.cfg-land-title{display:block;font-size:17px;font-weight:500;letter-spacing:3px;}
-.cfg-land-sub{display:block;margin-top:5px;font-size:11.5px;opacity:.86;}
 
 /* ==================== 简化人设页 · 同学录排版（2026-09-21）====================
 
@@ -5981,7 +5933,6 @@ span.msg-avatar-initial{
 /* 表情包原来的「一行一张」样式（stk-row / stk-av / stk-ops…）整套删了 ——
    现在是**格子墙**（一个组一片网格，组里第一格是「+」），见下面那段。 */
 
-
 /* 多字段弹层（转账的金额 + 备注）。每个字段自带标签，
    跟单输入框那个 .dl-input 是同一种框，视觉上是一家人。 */
 .dl-fields{display:flex;flex-direction:column;gap:10px;margin-bottom:14px;}
@@ -6182,7 +6133,6 @@ span.msg-avatar-initial{
 .mo-composer-acts{display:flex;gap:10px;margin-top:14px;}
 .mo-composer-acts .mo-btn{flex:1;}
 .mo-composer-acts .mo-csend{flex:1;padding:10px;}
-
 
 /* 桌面页不显示滚动条。
    子页面打开时桌面会被推到屏幕左边，它的滚动条 thumb（绿色那根）
@@ -6465,7 +6415,6 @@ span.msg-avatar-initial{
 }
 
 /* ---- 「回复 某某：」 ---- */
-
 
 /* ---- 评论行上的按钮（回复 / 删）---- */
 
@@ -8678,6 +8627,14 @@ div.pp-row:active{background:none;}
 .iol-person.is-me .iol-ava{border-color:#D8C6AA;background:#F2EBDD;}
 .iol-person b{font-size:12.5px;font-weight:400;color:var(--text);}
 .iol-person small{display:block;margin-top:3px;font-size:9.5px;color:var(--text-faint);}
+/* 人物条末尾的「＋ 加人设 / ↓ 导入人设」，以及「我」那一格拿不到记录时的占位：
+   圈走虚线、不加边框，跟真人物卡区分开
+   （2026-09-22 加人设入口从配置台搬到这里）。 */
+.iol-person.is-add .iol-ava{
+  border-style:dashed;border-color:rgba(157,136,105,.45);
+  background:transparent;color:#9d8869;font-size:19px;font-weight:200;
+}
+.iol-person.is-add b{color:#9d8869;}
 .iol-line{
   width:34px;height:1px;flex:none;
   background:repeating-linear-gradient(90deg,#dbb8ae 0 5px,transparent 5px 9px);
@@ -8685,23 +8642,6 @@ div.pp-row:active{background:none;}
 
 .iol-strip{display:flex;gap:9px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:none;}
 .iol-strip::-webkit-scrollbar{display:none;}
-
-/* ---- 配置台「人物」条（2026-09-21：替换原来的放射关系树）----
-   放射树结构上只装得下两个角色（左一右一），换成这条横排：一件一张卡、
-   宽了就横滑，想加几个加几个。卡沿用 .iol-member 的形，只按用途给小字
-   两种颜色：有内容（关系 / 马甲数）= 焦糖（说明能点），空 = 弱灰占位。 */
-.cfg-people{padding-bottom:14px;}
-.cfg-p{min-width:104px;max-width:132px;}
-.cfg-p.is-me{
-  border-color:rgba(176,138,94,.55);
-  background:rgba(247,242,234,.92);
-}
-.cfg-p-rel{
-  color:var(--g-accent-deep);
-  border-bottom:1px dashed rgba(176,138,94,.5);
-  padding-bottom:1px;
-}
-.cfg-p small.is-hint{color:var(--text-faint);}
 .iol-empty{margin:6px 2px;font-size:11px;color:var(--text-faint);}
 .iol-member{
   min-width:98px;flex:none;padding:12px 11px;text-align:left;

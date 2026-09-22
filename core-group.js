@@ -409,10 +409,10 @@
     if (kind === 'user') {
       var u = core.findUser(member.accountId);
       return {
-        name: (u && u.name) || '我',
+        name: u ? core.labelOfUser(u) : '我',
         avatar: (u && u.avatar) || '',
         avatarMedia: (u && u.avatarMedia) || '',
-        initial: core.initialOf((u && u.name) || '我')
+        initial: u ? core.initialOfUser(u) : '我'
       };
     }
     if (kind === 'npc') {

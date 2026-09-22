@@ -779,10 +779,13 @@
     var subs = root ? core.subChars(root.id) : [];
 
     var lines = [];
-    lines.push('【你的身份】你此刻以「' + (c ? c.name : '?') + '」这张脸，面对「' + (u ? u.name : '对方') + '」。');
+    /* user 侧的名字走 core.labelOfUser —— 名字留空时只剩微信名
+       （用户 2026-09-22：「不填的话 char 就只知道微信名（大号小号都是）」）。
+       别直接读 u.name：留空读出来是空串，模型面前的人会变成「?」。 */
+    lines.push('【你的身份】你此刻以「' + (c ? c.name : '?') + '」这张脸，面对「' + core.labelOfUser(u, '对方') + '」。');
     lines.push('[I01]');
     lines.push('user_account: ' + accountOfUser(u));
-    lines.push('user_alias: ' + (u ? u.name : '?'));
+    lines.push('user_alias: ' + core.labelOfUser(u, '对方'));
     lines.push('char_account: ' + accountOfChar(c));
     lines.push('char_alias: ' + (c ? c.name : '?'));
     lines.push('awareness_mode: ' + aw.mode);
@@ -844,7 +847,8 @@
     var u = core.findUser(userId);
     var text = String((u && u.persona) || '').trim();
     if (!text) return '';
-    return '[USER_CORE]对方此刻的身份是「' + (u.name || '?') + '」。\n' + text + '\n[/USER_CORE]';
+    /* 同上：名字留空时这里是空串，模型会以为对方没名字 → 走唯一出口 */
+    return '[USER_CORE]对方此刻的身份是「' + core.labelOfUser(u, '对方') + '」。\n' + text + '\n[/USER_CORE]';
   }
 
   /* K03 / 掉马：直接复用 page-switch 的编译器（单一实现，不复制） */

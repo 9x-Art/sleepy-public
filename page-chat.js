@@ -353,7 +353,8 @@
     var core = Sleepy.core;
     if (core) {
       var u = core.findUser(chat && chat.userId) || core.activeUser();
-      if (u) return u.name;
+      /* 名字留空 → 只剩微信名（core.labelOfUser） */
+      if (u) return core.labelOfUser(u);
     }
     return '我';
   }
@@ -3103,8 +3104,8 @@
           Sleepy.core.setAvatarImg(av, u);
         } else {
           av = h('span', 'msg-avatar msg-avatar-initial');
-          var n = String((u && u.name) || '我').trim();
-          av.textContent = n ? n.charAt(0).toUpperCase() : '我';
+          var n = Sleepy.core.labelOfUser(u);
+          av.textContent = n.charAt(0).toUpperCase();
         }
         av.alt = '我';
         return av;

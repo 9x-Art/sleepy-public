@@ -265,7 +265,7 @@
         wrap.appendChild(h('p', 'gg-sect', '我的账号'));
         cand.masks.forEach(function (m) {
           wrap.appendChild(pickRow({
-            meta: { name: m.name, avatar: m.avatar, initial: core.initialOf(m.name) },
+            meta: { name: core.labelOfUser(m), avatar: m.avatar, initial: core.initialOfUser(m) },
             sub: m.isDefault ? '主账号' : '马甲',
             radio: true,
             selected: state.creator === m.id,
@@ -405,10 +405,11 @@
         for (var i = 0; i < Math.min(4, specs.length); i++) {
           var sp = specs[i];
           var rec = sp.kind === 'user' ? core.findUser(sp.accountId) : core.findChar(sp.accountId);
+          var recIsUser = sp.kind === 'user';
           cg.appendChild(tileEl({
-            name: rec ? rec.name : '?',
+            name: rec ? (recIsUser ? core.labelOfUser(rec) : rec.name) : '?',
             avatar: rec ? (rec.avatar || '') : '',
-            initial: core.initialOf(rec ? rec.name : '?')
+            initial: rec ? (recIsUser ? core.initialOfUser(rec) : core.initialOf(rec.name)) : '?'
           }, 'md'));
         }
         cover.appendChild(cg);

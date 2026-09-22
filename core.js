@@ -625,9 +625,12 @@
     } else {
       hit = {
         id: data.id || newId('um'),
-        name: data.name || '我',
+        /* 名字**允许留空**（用户 2026-09-22：「名字可以不填，不填的话 char
+           就只知道微信名（大号小号都是）」）—— 调用方显式给了空串就存空串，
+           只有连这个键都没给时才兜「我」。用 `||` 会把「显式留空」吃掉。 */
+        name: has(data, 'name') ? data.name : '我',
         /* 微信名：会话列表/聊天页对外显示的名字（用户 2026-09-21）。
-           留空就回落 name。 */
+           名字留空时**反过来**由它顶上（core.labelOfUser 的口径）。 */
         wechatName: has(data, 'wechatName') ? data.wechatName : '',
         avatar: has(data, 'avatar') ? data.avatar : '',
         avatarMedia: has(data, 'avatarMedia') ? data.avatarMedia : '',
@@ -1034,7 +1037,9 @@
       return u.id !== userId && (!sid || u.sandboxId === sid);
     });
     if (!others.length) return '';
-    var names = others.map(function (u) { return u.name; }).join('、');
+    /* 名字留空是合法状态（用户 2026-09-22）→ 走唯一出口，
+       否则这里会拼出一串空名字，认知边界就白写了 */
+    var names = others.map(function (u) { return labelOfUser(u, '另一个身份'); }).join('、');
     return [
       '【认知边界】你现在只认识当前对话里的这个人。',
       '记忆库里可能还有带「' + names + '」标签的片段（以 [U→C] 形式标出）。',
@@ -1139,7 +1144,7 @@
     var root = rootOf(charId);
     var u = findUser(userId);
     var parts = [];
-    parts.push('你（' + (root ? root.name : '角色') + '）在「' + (u ? u.name : '对方') + '」面前的这张脸是「' + c.name + '」');
+    parts.push('你（' + (root ? root.name : '角色') + '）在「' + labelOfUser(u, '对方') + '」面前的这张脸是「' + c.name + '」');
     var subs = subChars(root ? root.id : '').filter(function (s) { return s.id !== c.id; });
     if (subs.length) {
       parts.push('但你还有另一张脸：' + subs.map(function (s) {
@@ -1197,7 +1202,7 @@
     var c = findChar(m.fromCharId);
     var u = findUser(m.toUserId);
     var cs = c ? c.name : '?';
-    var us = u ? u.name : '对方';
+    var us = labelOfUser(u, '对方');
     return '[' + us + ' → ' + cs + ']';
   }
 
@@ -1207,6 +1212,32 @@
     var s = String(name || '').trim();
     if (!s) return '?';
     return s.charAt(0).toUpperCase();
+  }
+
+  /* ------------------- 「这个账号叫什么」的唯一出口 -------------------
+
+     用户 2026-09-22：「名字可以不填，不填的话 char 就只知道微信名（大号小号都是）」。
+     于是 user 侧多了一条**留空语义**，跟 char 那边（名字必填）不一样：
+
+       name       = 人设里的真名 / 别名（可以空）
+       wechatName = 对外那张名片上的名字（会话列表显示的就是它）
+
+     名字空着就整个退到微信名，两件都空才回落 fallback。
+     ⚠️ 只影响**显示与注入**，绝不回写 name —— 存档里该空还是空，
+     模型也就只知道微信名（这正是用户要的效果）。 */
+  function labelOfUser(u, fallback) {
+    if (!u) return fallback || '我';
+    var n = String(u.name || '').trim();
+    if (n) return n;
+    var w = String(u.wechatName || '').trim();
+    if (w) return w;
+    return fallback || '我';
+  }
+
+  /* 头像框里的首字：跟 labelOfUser 同一口径（别再用 initialOf(u.name)，
+     那样名字留空会显示成「?」）。 */
+  function initialOfUser(u) {
+    return initialOf(labelOfUser(u, '我'));
   }
 
   function summaryOf(it) {
@@ -1346,6 +1377,9 @@
     makeGroupName: makeGroupName,
 
     initialOf: initialOf,
+    /* user 侧留空语义的两个出口（见 labelOfUser 的注释）——显示与注入只认这两个 */
+    labelOfUser: labelOfUser,
+    initialOfUser: initialOfUser,
     summaryOf: summaryOf,
 
     avatarSrc: avatarSrc,
