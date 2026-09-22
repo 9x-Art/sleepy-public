@@ -92,6 +92,9 @@
   };
 
   function findChatFor(charId) {
+    /* 主动消息也得认准「当前账号 × 这个角色」那一条 —— 否则小号刚认识，
+       角色却按大号的老交情开口（这种串法比串气泡更难查）。 */
+    if (Sleepy.chatStore && Sleepy.chatStore.chatOf) return Sleepy.chatStore.chatOf(charId);
     var chats = store.get('chats') || [];
     var list = core.scoped ? core.scoped(chats) : chats;
     for (var i = 0; i < list.length; i++) {

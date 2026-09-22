@@ -164,13 +164,11 @@
   function openChatWith(ctx, charId) {
     var cs = Sleepy.chatStore;
     if (!cs) { ctx.toast('聊天模块没加载出来', 'err'); return; }
-    var list = cs.getChats();
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].characterId === charId) {
-        ctx.open('chat-detail', { chatId: list[i].id });
-        return;
-      }
-    }
+    /* 找会话按 (角色, 当前账号) 双匹配 —— 同一个角色被大号和小号分别加过时
+       是两条各自独立的会话，只按角色找会把小号直接带进大号的对话框，
+       看到前一个身份聊过的气泡（用户 2026-09-22 报的）。 */
+    var mine = cs.chatOf(charId);
+    if (mine) { ctx.open('chat-detail', { chatId: mine.id }); return; }
     var ch = core.findChar(charId);
     var chat = cs.createChat(ch ? (ch.name || '新对话') : '新对话', charId);
     if (!chat) { ctx.toast('建对话失败', 'err'); return; }

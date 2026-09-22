@@ -522,9 +522,10 @@
   /* 最近和 user 的聊天 —— 「是不是刚聊过」「是不是在闹矛盾」看这个 */
   function chatExcerpt(charId) {
     if (!Sleepy.chatStore) return [];
-    var list = Sleepy.chatStore.getChats().filter(function (c) {
-      return c.characterId === charId;
-    });
+    /* 双匹配（同 page-app 的 openChatWith）：只按角色找会读到另一个身份
+       刚聊过的内容，「是不是刚聊过 / 在闹矛盾」就判错了。 */
+    var one = Sleepy.chatStore.chatOf ? Sleepy.chatStore.chatOf(charId) : null;
+    var list = one ? [one] : [];
     if (!list.length) return [];
     list.sort(function (a, b) {
       function lastOf(c) {
@@ -713,13 +714,10 @@
   function postPrivate(ch, m, text, done) {
     if (!Sleepy.chatStore) { done(); return; }
     var cs = Sleepy.chatStore;
-    var list = cs.getChats().filter(function (c) { return c.characterId === ch.id; });
-    var chat = list.sort(function (a, b) {
-      function lastOf(c) {
-        return c.messages && c.messages.length ? c.messages[c.messages.length - 1].timestamp : 0;
-      }
-      return lastOf(b) - lastOf(a);
-    })[0];
+    /* 只认「当前账号 × 这个角色」那一条 —— 同一个角色被大号和小号分别加过时
+       是两条独立会话，只看 characterId 会读到别的身份刚聊过的内容，
+       「是不是刚聊过 / 是不是在闹矛盾」就判错了。 */
+    var chat = cs.chatOf(ch.id);
     if (!chat) chat = cs.createChat(ch.name, ch.id);
     cs.addMessage(chat.id, {
       id: cs.newId(),

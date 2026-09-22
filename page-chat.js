@@ -173,6 +173,37 @@
     return list.filter(function (c) { return !c.userId || c.userId === u.id; });
   }
 
+  /* 找「这个账号 × 这个角色」的那一条私聊。
+
+     **必须是 (characterId, userId) 双匹配。** 同一个角色被大号和小号分别
+     加过时，那是**两条各自独立的会话** —— 用户 2026-09-22 报的：
+     「如果在不同账号加了 char 的同一账号，聊天的历史记录不能同步
+     （不是说记忆，是说聊过的在对话框里的确切气泡）」。
+
+     列表（viewChats）本来就按当前账号过滤，所以**看得见**的部分一直是对的；
+     错的是「点进去时找哪一条」—— 以前只比对 characterId，于是小号点进
+     通讯录会直接掉进大号那条对话，看到前一个身份聊过的内容。
+     通讯录、朋友圈、日记、回忆、主动消息五处都踩过这个坑。
+
+     userId 不传 = 用「当前岛上的当前账号」（过岛卫兵，口径同 viewChats）。
+     老对话没有 userId 的，在精确匹配落空时退回它（升级老存档的兜底）。 */
+  function chatOf(charId, userId) {
+    if (!charId) return null;
+    var core = Sleepy.core;
+    var u = userId;
+    if (u === undefined) u = (core && core.activeUserOnIsland) ? core.activeUserOnIsland() : null;
+    var uid = (u && u.id) || (typeof u === 'string' ? u : '');
+    var list = getChats();
+    var loose = null;
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (c.characterId !== charId || c.groupId) continue;
+      if (uid && c.userId === uid) return c;
+      if (!c.userId && !loose) loose = c;
+    }
+    return loose;
+  }
+
   function saveChats(list) { store.set('chats', list); }
 
   /* 姓名读取一律走这里。characterId 现在指的是「哪张皮套」，
@@ -3235,6 +3266,9 @@
     viewChats: viewChats,
     saveChats: saveChats,
     getChat: getChat,
+    /* 找「当前账号 × 这个角色」的私聊 —— 各处找会话一律走它，
+       别自己写 `characterId ===` 的循环（那会跨账号串气泡）。 */
+    chatOf: chatOf,
     createChat: createChat,
     mutate: mutate,
     addMessage: addMessage,

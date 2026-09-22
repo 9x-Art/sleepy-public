@@ -968,12 +968,11 @@
               ctx.open('chat-detail', { chatId: chat.id, focusMsgId: m.sourceMessageId || '' });
               return;
             }
-            var chats = Sleepy.chatStore.getChats();
-            for (var i = 0; i < chats.length; i++) {
-              if (chats[i].characterId === charId) {
-                ctx.open('chat-detail', { chatId: chats[i].id, focusMsgId: m.sourceMessageId || '' });
-                return;
-              }
+            /* 双匹配：别把当前账号带进另一个身份的对话里 */
+            var one = Sleepy.chatStore.chatOf(charId);
+            if (one) {
+              ctx.open('chat-detail', { chatId: one.id, focusMsgId: m.sourceMessageId || '' });
+              return;
             }
             ctx.toast('找不到来源对话', 'warn');
           });

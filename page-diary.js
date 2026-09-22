@@ -204,8 +204,11 @@
      指针停在上一个岛的人身上时会采错人的聊天（清查 §5.1）。 */
   function transcriptToday(charName, charId) {
     var chats = (core.scoped ? core.scoped(store.get('chats') || []) : (store.get('chats') || []));
-    var chat = null;
-    if (charId) chats.forEach(function (c) { if (!chat && c.characterId === charId) chat = c; });
+    /* 采的是「当前账号 × 这个角色」那一条 —— 只按角色找会把小号今天说的话
+       当成大号说的写进日记（两个身份的话混在一篇里）。 */
+    var chat = (charId && Sleepy.chatStore && Sleepy.chatStore.chatOf)
+      ? Sleepy.chatStore.chatOf(charId) : null;
+    if (!chat && charId) chats.forEach(function (c) { if (!chat && c.characterId === charId) chat = c; });
     var msgs = (chat && chat.messages) || [];
     var today = ymd(new Date());
     var lines = [];

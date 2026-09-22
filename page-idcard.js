@@ -1597,6 +1597,102 @@
     }
   });
 
+  /* 个人资料：**只服务当前账号**。
+
+     用户 2026-09-22：「个人资料就做那种可以在里面直接改当前账号设定和头像
+     以及微信名的那种」。跟 mask-edit 的区别：不问 id、不列「这岛有哪几张脸」、
+     也不叫「马甲」—— 改的就是此刻戴着的那一张，换个小号进来是它自己的那份。
+     排版沿用同学录那一套（左头像框 + 右下划线字段），别处改人设也长这样。 */
+  Sleepy.register('me-profile', {
+    title: '个人资料',
+    render: function (ctx) {
+      var u = core.activeUser();
+      if (!u) { ctx.toast('还没有账号', 'warn'); ctx.back(); return; }
+      var body = ctx.body;
+      var f = {};
+
+      var form = h('div', 'simple-form');
+      var top = h('div', 'face-row');
+      f.avatar = faceField(u, {
+        empty: '＋',
+        toast: function (t, k) { ctx.toast(t, k); }
+      });
+      top.appendChild(f.avatar.el);
+      var cols = h('div', 'face-cols');
+      f.name = textField({
+        label: '名字',
+        value: u.name || '',
+        placeholder: '我'
+      });
+      if (f.name.input) {
+        f.name.input.addEventListener('input', function () {
+          f.avatar.setName(f.name.get());
+        });
+      }
+      cols.appendChild(f.name.el);
+      f.wechatName = textField({
+        label: '微信名',
+        value: u.wechatName || '',
+        placeholder: '会话列表里显示的名字（留空就用名字）'
+      });
+      cols.appendChild(f.wechatName.el);
+      top.appendChild(cols);
+      form.appendChild(top);
+
+      f.persona = textArea({
+        label: '人设',
+        value: u.persona || '',
+        rows: 6,
+        counter: true,
+        placeholder: '我是什么样的人：说话习惯、在意什么、和对方是什么关系……一句话也行，想写长就写长'
+      });
+      form.appendChild(f.persona.el);
+
+      f.city = textField({
+        label: '城市',
+        value: u.city || '',
+        placeholder: '北京'
+      });
+      form.appendChild(f.city.el);
+
+      /* 大号开关也在这儿 —— 它同样是「当前账号的设定」，
+         而且换了账号之后最容易忘的就是谁是大号。 */
+      var sbNow = core.activeSandbox ? core.activeSandbox() : null;
+      var bigNow = (sbNow && core.defaultUserOfSandbox) ? core.defaultUserOfSandbox(sbNow) : null;
+      f.big = ui.switchField({
+        label: '这是我的大号',
+        hint: '「我」在这座岛的主账号 · 降落时直接用它（每座岛只认一件）',
+        value: !!u.isDefault
+      });
+      form.appendChild(f.big.el);
+      body.appendChild(form);
+
+      var btnRow = h('div', 'btn-row');
+      btnRow.appendChild(button('保存', 'primary', function () { doSave(); }));
+      body.appendChild(btnRow);
+      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
+
+      function doSave() {
+        var name = String(f.name.get() || '').trim();
+        if (!name) { ctx.toast('名字不能空着', 'warn'); return; }
+        core.upsertUser({
+          id: u.id,
+          name: name,
+          wechatName: String(f.wechatName.get() || '').trim(),
+          persona: String(f.persona.get() || '').trim(),
+          city: String(f.city.get() || '').trim(),
+          avatar: String(f.avatar.get() || '').trim(),
+          avatarMedia: f.avatar.getMedia(),
+          isDefault: f.big.get()
+        });
+        /* 打开开关就互斥地把**同一座岛**其他账号降级 —— 每岛只认一件大号 */
+        if (f.big.get()) core.setDefaultUser(u.id);
+        ctx.toast('已保存', 'ok');
+        ctx.back();
+      }
+    }
+  });
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.characters = {

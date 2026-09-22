@@ -5523,10 +5523,10 @@ span.msg-avatar-initial{
 .face-field{flex:none;width:92px;}
 .face-box{
   width:92px;height:92px;border-radius:10px;
-  /* 背景走玻璃变量、**不写死白色**（2026-09-22：夜灯下写死白 = 深底上一团灰块，
-     用户说「莫名其妙多了黑色框」）。 */
+  /* 走「设置页米白」--g-fabric：不写死白色（夜灯下写死白 = 深底上一团灰块，
+     用户说「莫名其妙多了黑色框」），也不走玻璃白（纯白底上等于没有底）。 */
   border:1px solid var(--g-glass-line);
-  background:var(--g-glass-3);
+  background:var(--g-fabric);
   background-size:cover;background-position:center;
   display:grid;place-items:center;
   font-family:inherit;font-size:28px;font-weight:500;color:var(--g-accent-deep);
@@ -5562,8 +5562,9 @@ span.msg-avatar-initial{
 .simple-form .set-select:focus{outline:0;border-bottom-color:var(--g-accent);}
 /* 人设是整段文字，光一条底线不知道哪儿能打字 —— 给一层浅面（无边框、无圆角框感） */
 .simple-form .set-textarea{
-  /* 同上：不能写死浅色（夜灯下会白底白字，字直接看不见） */
-  background:var(--g-glass-3);
+  /* 走「设置页米白」--g-fabric 而不是玻璃白 —— 玻璃白在纯白底上等于白底白框，
+     人设那块压根看不出边界（浅色主题下踩过；夜灯下它会翻成深色，也不白底白字）。 */
+  background:var(--g-fabric);
   border:0;border-radius:6px;
   padding:11px 12px;font-size:14px;line-height:1.75;
 }
@@ -5768,6 +5769,14 @@ span.msg-avatar-initial{
    demo 的配色没搬（主题色归外观管），只搬结构与交互；
    我的小手机是折叠抽屉，mtb-phone.is-open 才露出工具列表。 */
 .mtb-hero{margin-bottom:20px;}
+/* 「我」页（09-22 仿微信平铺）：hero 整块可点（进个人资料）；
+   下面一行小字说明当前账号的处境（哪个大号/小号 · 在不在当前岛）。 */
+.mtb-current.is-tap{cursor:pointer;}
+.mtb-current.is-tap:active{background:rgba(176,138,94,.1);}
+.mtb-note{margin:9px 2px 0;font-size:10px;color:var(--g-ink-3);line-height:1.6;}
+.mtb-note.is-warn{color:var(--g-accent-deep);}
+/* 平铺列表单独成组时的间距（不裹在 .mtb-phone 抽屉里） */
+.mtb-tools + .mtb-tools{margin-top:16px;}
 .mtb-label{font-size:9.5px;letter-spacing:.14em;color:var(--g-accent-deep);}
 .mtb-current{
   display:flex;align-items:center;gap:13px;margin-top:10px;padding:14px 13px;

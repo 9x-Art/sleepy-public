@@ -582,135 +582,87 @@
      文档一：「『我』是马甲切换中枢 —— 切完之后 Chat 列表和朋友圈无缝刷新」。
      所以这一屏顶部第一件事必须是「我现在是谁」+ 一键切。
 
-     09-19 照「聊天-App-·「我」页面优化-Demo-v1」重排：
-       hero（CURRENT IDENTITY + 切换）→ 这间房里的我 → 我的身份库（全局）→
-       我的小手机（**折叠抽屉**，点开才露出钱包/表情包/拍一拍）→ 脚注。
-     demo 的背景色没搬（那是 demo 自己的配色，主题色归外观管）；
-     「我的身份」区块是用户点名要照做的，结构逐行对齐 demo。
-     折叠态存模块变量：同一次会话里重画不丢展开状态。
+     09-22 用户拍板改成**仿微信平铺**：
+       hero（当前账号：头像 + 名字 + 微信号，点整块进个人资料）→ 一行小字
+       （本岛大号/小号 · 在不在当前岛）→ 平铺入口
+       （个人资料 / 切换账号 / 钱包 / 表情包 / 拍一拍）+ 设置 → 脚注。
+     三件事说清楚：
+       · **「我的身份库」整块删掉** —— 那是全局身份 + 跨岛切，
+         用户原话「这个组件是直接取消」；切换账号只列**当前岛**的账号。
+       · 每一项都属于**当前账号**：大号和小号各有各的钱包 / 拍一拍 / 资料，
+         只有表情包能「同步到所有账号」。
+       · 收藏不在这一页 —— 以后那个 we app 做。
+     折叠抽屉（mePhoneOpen /「我的小手机」）一起撤了，不再需要。
 
      容器在 page-app.js。这一屏返回 { rebuild } 给它。 */
 
-  var mePhoneOpen = false;   /* 我的小手机 · 抽屉展开态（会话内记忆） */
-
   function mountMeTab(panel, ctx) {
     function build() {
-      panel.innerHTML = '';
+    panel.innerHTML = '';
 
-      var sb = core.activeSandbox();
-      /* 「当前是谁」必须问 core.activeUser()，**不能取列表第一项** ——
-         马甲列表里第一件只是「最早建的」，跟此刻戴着哪张脸无关。 */
-      var u = core.activeUser();
-      if (!u) {
-        panel.appendChild(h('p', 'set-group-note', '还没有任何身份 · 先去系统设置里建一件马甲'));
-        return;
-      }
-      var mates = core.masksOfSandbox(sb);
-      var inRoom = mates.some(function (x) { return x.id === u.id; });
-      var roomName = '';
-      try { if (sb && Sleepy.island) roomName = Sleepy.island.roomTitle(sb); } catch (e) { roomName = ''; }
-
-      /* ---- hero：CURRENT IDENTITY ---- */
-      var hero = h('div', 'mtb-hero');
-      hero.appendChild(h('div', 'mtb-label', 'CURRENT IDENTITY'));
-      var line = h('div', 'mtb-current');
-      line.appendChild(h('span', 'me-av', core.initialOf(u.name)));
-      var hb = h('div', 'mtb-copy');
-      hb.appendChild(h('b', '', u.name));
-      hb.appendChild(h('small', '',
-        roomName ? ('正在「' + roomName + '」里使用这张身份') : '还没进过任何一间房'));
-      line.appendChild(hb);
-      var sw = h('button', 'me-switch', '切换');
-      sw.type = 'button';
-      sw.addEventListener('click', function () { openSwitcher(ctx); });
-      line.appendChild(sw);
-      hero.appendChild(line);
-      panel.appendChild(hero);
-
-      /* ---- 这间房里的我 ---- */
-      var room = h('section', 'mtb-sec');
-      var roomHead = h('div', 'mtb-sec-head');
-      roomHead.appendChild(h('h2', '', '这间房里的我'));
-      roomHead.appendChild(h('small', '', roomName || '还没进房'));
-      room.appendChild(roomHead);
-      room.appendChild(h('div', 'mtb-room-status', [
-        h('strong', '', u.name),
-        h('span', '', inRoom
-          ? '这张身份已经进入当前房间。角色会按这张脸认识你。'
-          : '这张脸还没进这间房 —— 在浮岛的配置台里勾一下。')
-      ]));
-      var acts = h('div', 'mtb-room-actions');
-      var goIsland = h('button', 'mtb-btn is-accent', '前往浮岛配置');
-      goIsland.type = 'button';
-      goIsland.addEventListener('click', function () {
-        if (sb) ctx.open('island-config', { id: sb.id });
-        else ctx.toast('先进一间房，才有配置台', 'warn');
-      });
-      acts.appendChild(goIsland);
-      var changeBtn = h('button', 'mtb-btn', '更换身份');
-      changeBtn.type = 'button';
-      changeBtn.addEventListener('click', function () { openSwitcher(ctx); });
-      acts.appendChild(changeBtn);
-      room.appendChild(acts);
-      panel.appendChild(room);
-
-      /* ---- 我的身份库（全局保存，demo 逐行对齐） ----
-         注意区分两个清单：这里列的是**全局身份库**（userMasks），
-         「这间房里戴哪几张」是 sandbox.maskIds 的事，归浮岛配置台管。 */
-      var lib = h('section', 'mtb-sec');
-      var libHead = h('div', 'mtb-sec-head');
-      libHead.appendChild(h('h2', '', '我的身份库'));
-      libHead.appendChild(h('small', '', '全局保存'));
-      lib.appendChild(libHead);
-      var list = h('div', 'mtb-idents');
-      core.userMasks().forEach(function (m) {
-        var cur = m.id === u.id;
-        var rowEl = h('button', 'mtb-ident' + (cur ? ' is-current' : ''));
-        rowEl.type = 'button';
-        rowEl.appendChild(h('span', 'mtb-mini', core.initialOf(m.name)));
-        var body2 = h('span', 'mtb-ident-copy');
-        body2.appendChild(h('b', '', m.name));
-        body2.appendChild(h('small', '',
-          (cur ? '本体身份' : '另一张脸') +
-          ' · ' + (mates.some(function (x) { return x.id === m.id; })
-            ? '已进入当前房间'
-            : '尚未进入当前房间')));
-        rowEl.appendChild(body2);
-        if (cur) rowEl.appendChild(h('span', 'mtb-side', '当前'));
-        else rowEl.appendChild(h('span', 'mtb-arrow', '›'));
-        rowEl.addEventListener('click', function () { ctx.open('mask-edit', { id: m.id }); });
-        list.appendChild(rowEl);
-      });
-      lib.appendChild(list);
-      var addRow = h('button', 'mtb-add', '＋ 新建一张身份');
-      addRow.type = 'button';
-      addRow.addEventListener('click', function () { ctx.open('mask-edit', { id: '' }); });
-      lib.appendChild(addRow);
-      panel.appendChild(lib);
-
-      /* ---- 我的小手机（折叠抽屉，点开才露出） ----
-         钱包/表情包/拍一拍三行保持原行为，只是收进抽屉里。 */
-      var phone = h('section', 'mtb-sec mtb-phone' + (mePhoneOpen ? ' is-open' : ''));
-      var phHead = h('button', 'mtb-sec-head is-tap');
-      phHead.type = 'button';
-      phHead.appendChild(h('h2', '', '我的小手机'));
-      phHead.appendChild(h('small', '', '属于我自己的东西'));
-      phHead.appendChild(h('span', 'mtb-chev', '›'));
-      phHead.addEventListener('click', function () {
-        mePhoneOpen = !mePhoneOpen;
-        phone.classList.toggle('is-open', mePhoneOpen);
-      });
-      phone.appendChild(phHead);
-      var tools = h('div', 'mtb-tools');
-      tools.appendChild(toolRow('钱包', '零钱与转账记录', function () { ctx.open('wallet'); }));
-      tools.appendChild(toolRow('表情包', '收进来、排个序、要不要同步到全局', function () { ctx.open('stickers'); }));
-      tools.appendChild(patRow(u, ctx));
-      phone.appendChild(tools);
-      panel.appendChild(phone);
-
-      panel.appendChild(h('p', 'set-foot',
-        '身份档案在这里统一保存；哪张身份能进入哪座岛，由浮岛配置台决定。'));
+    var sb = core.activeSandbox();
+    /* 「当前是谁」必须问 core.activeUser()，**不能取列表第一项** ——
+       账号列表里第一件只是「最早建的」，跟此刻戴着哪张脸无关。 */
+    var u = core.activeUser();
+    if (!u) {
+      panel.appendChild(h('p', 'set-group-note', '还没有任何账号 · 先去浮岛配置台建一个'));
+      return;
     }
+    var mates = core.masksOfSandbox(sb);
+    var dft = sb ? core.defaultUserOfSandbox(sb) : null;
+    var inRoom = mates.some(function (x) { return x.id === u.id; });
+    var roomName = '';
+    try { if (sb && Sleepy.island) roomName = Sleepy.island.roomTitle(sb); } catch (e) { roomName = ''; }
+
+    /* ---- hero：当前账号（仿微信「我」页顶部）----
+       点整块进个人资料。用户 2026-09-22：「个人资料就做那种可以在里面
+       直接改当前账号设定和头像以及微信名的那种」。 */
+    var hero = h('div', 'mtb-hero');
+    hero.appendChild(h('div', 'mtb-label', 'CURRENT ACCOUNT'));
+    var line = h('div', 'mtb-current is-tap');
+    var av = h('span', 'me-av', core.initialOf(u.name));
+    core.setAvatarBg(av, u);
+    line.appendChild(av);
+    var hb = h('div', 'mtb-copy');
+    hb.appendChild(h('b', '', u.name));
+    hb.appendChild(h('small', '', u.wechatName ? ('微信号 ' + u.wechatName) : '还没填微信号'));
+    line.appendChild(hb);
+    line.appendChild(h('span', 'mtb-arrow', '›'));
+    line.addEventListener('click', function () { ctx.open('me-profile'); });
+    hero.appendChild(line);
+
+    /* 「这间房里的我」原来独占一节，现在压成一行 ——
+       微信「我」页没有说明块，但「在不在当前岛」得让人一眼看见。 */
+    hero.appendChild(h('p', 'mtb-note' + (inRoom ? '' : ' is-warn'),
+      (dft && dft.id === u.id ? '本岛大号' : '本岛小号') +
+      (roomName ? ' · 在「' + roomName + '」' : '') +
+      (inRoom ? ' · 已进入当前岛' : ' · 还没进入当前岛')));
+    panel.appendChild(hero);
+
+    /* ---- 平铺入口（一行一个，微信那种）----
+       每一项都属于**当前这个账号**：换个账号，看到的是它的那一份
+       （用户 2026-09-22：「就是当前账号的设置…我打开每个小号也会有
+       不同的设置，我里面只有表情包是直接可以同步所有的」）。 */
+    var tools = h('div', 'mtb-tools');
+    tools.appendChild(toolRow('个人资料', '头像 · 名字 · 微信号 · 人设',
+      function () { ctx.open('me-profile'); }));
+    tools.appendChild(toolRow('切换账号',
+      '当前：' + u.name + '（' + (dft && dft.id === u.id ? '大号' : '小号') + '）· 只列这座岛的',
+      function () { openAccountSwitcher(ctx, build); }));
+    tools.appendChild(toolRow('钱包', '零钱与转账记录', function () { ctx.open('wallet'); }));
+    tools.appendChild(toolRow('表情包', '可同步到所有岛 · 所有账号', function () { ctx.open('stickers'); }));
+    tools.appendChild(patRow(u, ctx));
+    panel.appendChild(tools);
+
+    /* 设置单独一组 —— 跟上面「我的东西」分开 */
+    var tools2 = h('div', 'mtb-tools');
+    tools2.appendChild(toolRow('设置', '模型 · 生图 · 备份', function () { ctx.open('settings'); }));
+    panel.appendChild(tools2);
+
+    panel.appendChild(h('p', 'set-foot',
+      '这一页的每一项都属于「' + u.name + '」这个账号。哪张账号能进入哪座岛，由浮岛配置台决定。'));
+  }
+
 
     function toolRow(label, hint, go) {
       var rowEl = h('button', 'mtb-tool');
@@ -724,7 +676,7 @@
       return rowEl;
     }
 
-    /* 拍一拍：行为原样保留（prompt 改后缀，当场刷新提示文案） */
+    /* 拍一拍：后缀存在**这个账号**上（换账号各有各的） */
     function patRow(u, ctx) {
       var rowEl = h('button', 'mtb-tool');
       rowEl.type = 'button';
@@ -742,9 +694,9 @@
           ok: '记下来'
         }).then(function (v) {
           if (v === null) return;
-          var s = String(v).trim().slice(0, 20);
-          core.upsertUser({ id: u.id, patSuffix: s });
-          hint.textContent = '被拍时显示的后缀 · 现在是「' + (s || '肩膀') + '」';
+          var s2 = String(v).trim().slice(0, 20);
+          core.upsertUser({ id: u.id, patSuffix: s2 });
+          hint.textContent = '被拍时显示的后缀 · 现在是「' + (s2 || '肩膀') + '」';
           ctx.toast('记下来了', 'ok');
         });
       });
@@ -753,6 +705,88 @@
 
     build();
     return { rebuild: build };
+  }
+
+  /* 切换账号：**只列当前这座岛上的账号**（大号 + 小号）。
+
+     用户 2026-09-22：「切换账号会显示所有这个岛屿里 user 的大号小号」。
+     原来那个「我的身份库」列的是全局所有身份、还能跨岛切 —— 那个组件
+     **直接取消**（岛与岛之间隔绝往来，不在这儿开口子）。
+     注意只换账号、**不换角色**：聊天里换的是「我戴哪张脸」，
+     角色归「切换角色」那个面板管，两件事别混。 */
+  function openAccountSwitcher(ctx, rebuild) {
+    var sb = core.activeSandbox();
+    if (!sb) { ctx.toast('先进一座岛', 'warn'); return; }
+    var mates = core.masksOfSandbox(sb);
+    if (!mates.length) { ctx.toast('这座岛上还没有账号', 'warn'); return; }
+    var cur = core.activeUser();
+    var dft = core.defaultUserOfSandbox(sb);
+
+    /* 挂 #phone —— 祖先带 transform 时 fixed 会退化成相对该祖先定位 */
+    var host = document.getElementById('phone') || document.body;
+    var mask = h('div', 'sw-mask');
+    var panel2 = h('div', 'sw-panel');
+
+    var head = h('div', 'sw-head');
+    head.appendChild(h('p', 'sw-title', '切换账号'));
+    var close = h('button', 'sw-close', '\u00d7');
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭');
+    head.appendChild(close);
+    panel2.appendChild(head);
+    panel2.appendChild(h('p', 'sw-sub', '只列这座岛上的账号 · 选中后聊天和朋友圈跟着换'));
+
+    var body = h('div', 'sw-body');
+    var wrap = h('div', 'mtb-idents');
+    mates.forEach(function (m) {
+      var isCur = !!(cur && m.id === cur.id);
+      var isDft = !!(dft && m.id === dft.id);
+      var rowEl = h('button', 'mtb-ident' + (isCur ? ' is-current' : ''));
+      rowEl.type = 'button';
+      var mini = h('span', 'mtb-mini', core.initialOf(m.name));
+      core.setAvatarBg(mini, m);
+      rowEl.appendChild(mini);
+      var copy = h('span', 'mtb-ident-copy');
+      copy.appendChild(h('b', '', m.name));
+      copy.appendChild(h('small', '', (isDft ? '大号' : '小号') +
+        (m.wechatName ? ' · ' + m.wechatName : '')));
+      rowEl.appendChild(copy);
+      rowEl.appendChild(h('span', 'mtb-side', isCur ? '正在用' : ''));
+      rowEl.addEventListener('click', function () {
+        if (isCur) { closeFn(); return; }
+        /* 角色保持不变：只换账号。
+           charId 只在能拿到「本岛当前角色」时才传 —— 指针停在别座岛的人
+           身上时宁可不传（switchTo(undefined, id) 只写 activeUserId），
+           也不要把别岛的角色 id 写成当前角色。 */
+        var cc = (core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar()) || null;
+        if (cc && cc.id) core.switchTo(cc.id, m.id);
+        else core.switchTo(undefined, m.id);
+        closeFn();
+        if (rebuild) rebuild();
+        ctx.toast('换成了「' + m.name + '」', 'ok');
+      });
+      wrap.appendChild(rowEl);
+    });
+    body.appendChild(wrap);
+    panel2.appendChild(body);
+    host.appendChild(mask);
+    host.appendChild(panel2);
+
+    function closeFn() {
+      mask.classList.remove('is-open');
+      panel2.classList.remove('is-open');
+      setTimeout(function () {
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+        if (panel2.parentNode) panel2.parentNode.removeChild(panel2);
+      }, 240);
+    }
+    close.addEventListener('click', closeFn);
+    mask.addEventListener('click', closeFn);
+    /* 下一帧再加 is-open，否则 transition 不触发 */
+    setTimeout(function () {
+      mask.classList.add('is-open');
+      panel2.classList.add('is-open');
+    }, 16);
   }
 
   /* ---------------------------- 对外 ---------------------------- */
