@@ -878,6 +878,20 @@
       tzRow.appendChild(tzSel);
       gPlace.card.appendChild(tzRow);
 
+      /* 国籍（用户 2026-09-22：「Char 设定说要加国别和时间，没加」）。
+         以前只有 city / region / timezone 三件套 —— 它们管**计算**
+         （日历用哪国节假日、按哪个时区算现在），但「他是哪国人」这个
+         **身份信息**压根没地方写。
+         **刻意和那三件分开**：国籍只用于显示 + 文化默认（称呼、口吻），
+         **永不参与时间/节假日的推导** —— 所以放这一组最后，hint 里把区别说清。 */
+      f.nation = textField({
+        label: '国籍',
+        hint: '只用于显示 · 日历和时区看上面三项',
+        value: existing ? (existing.nationality || '') : '',
+        placeholder: '日本 / 中国大陆 / 说不清…'
+      });
+      gPlace.card.appendChild(f.nation.el);
+
       /* 换地区就顺手把时区带到那个地区的默认值 ——
          但**只在他没自己挑过时区**时才动，不覆盖手选的。 */
       regionSel.addEventListener('change', function () {
@@ -1085,6 +1099,8 @@
           /* 常驻地点：日历/时区/以后的语言档都从这三个字段推 */
           region: regionSel.value || 'CN',
           timezone: tzSel.value || 'Asia/Shanghai',
+          /* 国籍：**只存不用**（显示 + 文化默认），别拿它去推计算 */
+          nationality: String(f.nation.get() || '').trim(),
           boundUserId: uSel.value || null,
           content: f.content.get(),
           neverDo: String(f.neverDo.get() || '').trim(),

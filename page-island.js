@@ -1427,6 +1427,15 @@
               (cfgP.timezone ? ' · ' + cfgP.timezone : '')));
           }
         }
+
+        /* 国籍（2026-09-22）**另起一行**，不并进上面那条 ——
+           上面那行的「法定地区」是他**住在哪个国家**（管节假日计算），
+           国籍是他**是哪国人**（只显示）。两者经常不一样：
+           常住东京的中国人 = 上面写日本、这里写中国。
+           没填就不显示这行，不占版面。 */
+        if (c.nationality) {
+          hero.appendChild(h('p', 'ipro-place ipro-nation', '国籍 · ' + c.nationality));
+        }
         body.appendChild(hero);
 
         /* 一句话 */
