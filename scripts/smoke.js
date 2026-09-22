@@ -656,9 +656,44 @@ t('Sleepy.island 出口齐全', () => {
   ['KIND_META', 'metaOf', 'roomTitle', 'canAddChar', 'childrenOf', 'exit'].forEach((k) => {
     if (I[k] === undefined) throw new Error('缺 ' + k);
   });
-  if (I.metaOf('isle').badge !== '1v1') throw new Error('孤岛徽章不对');
-  if (I.metaOf('archipelago').badge !== '1vN') throw new Error('群岛徽章不对');
+  /* 岛名下面那个「1v1 / 1vN」小徽章，用户 09-21 明确取消
+     （「1v1 那个小框可以没有」）—— 断言它**不再存在**，免得哪天又冒回来。 */
+  if ('badge' in I.metaOf('isle')) throw new Error('孤岛不该再有 badge');
+  if ('badge' in I.metaOf('archipelago')) throw new Error('群岛不该再有 badge');
+  if (I.metaOf('isle').title !== '孤岛') throw new Error('孤岛标题不对');
+  if (I.metaOf('archipelago').title !== '群岛') throw new Error('群岛标题不对');
   return { 孤岛: I.metaOf('isle').poem, 群岛: I.metaOf('archipelago').poem };
+});
+
+/* 选岛页 2026-09-22 改版：整幅生成插画铺满（art/isle.webp / art/archipelago.webp）+
+   「进 岛」按钮；岛名不再挂 1v1/1vN 徽章，整页也不再当点击区。
+   断言盯住「两张底图各就各位、旧的两套东西不再冒出来」。 */
+t('选岛页：两座岛各一张整幅底图，徽章与点整页进岛都已撤', () => {
+  if (S.nav.depth() > 0) S.nav.closeAll();
+  S.nav.open('island', {});
+  const ctx = S.nav.topCtx();
+  const root = ctx && (ctx.body || ctx.el);
+  if (!root) throw new Error('拿不到 island 页的 DOM');
+
+  const cls = [];
+  const kinds = [];
+  (function walk(n) {
+    const cn = (n && n.className) || '';
+    if (cn) cls.push(cn);
+    if (cn.indexOf('isl-art') >= 0) kinds.push(n.getAttribute('data-kind'));
+    ((n && n.children) || []).forEach(walk);
+  })(root);
+
+  if (kinds.length !== 2) throw new Error('底图该有 2 张，实际 ' + kinds.length);
+  ['isle', 'archipelago'].forEach((k) => {
+    if (kinds.indexOf(k) < 0) throw new Error('缺 ' + k + ' 的底图');
+  });
+  const joined = cls.join(' ');
+  if (joined.indexOf('isl-stage') >= 0) throw new Error('CSS 画的岛应该已经撤掉');
+  if (joined.indexOf('isl-isle-badge') >= 0) throw new Error('1v1/1vN 徽章应该已经撤掉');
+  if (joined.indexOf('isl-enter') < 0) throw new Error('缺「进 岛」按钮');
+  if (S.nav.depth() > 0) S.nav.closeAll();
+  return { 底图: kinds.join(' / '), 按钮: 'isl-enter' };
 });
 
 /* 岛上那句文案必须是古诗，不是「1v1 纯净沙盒」这种说明书 ——
@@ -5746,6 +5781,33 @@ t('L4 游标：记消息 id 不记下标 —— 删掉中间一条不会让后�
   const cut2 = msgs.filter((m) => m.id !== 'c4');
   if (P.readCursor(key, cut2) !== 5) throw new Error('lastId 没了该用下标兜底');
   return { 正常: 5, 删前面一条: from, 兜底: 5 };
+});
+
+t('L4 换 embedding 模型 / 换世界之后：旧块不参与召回，旧结果不复用', () => {
+  const P = S.memoryVec._pure;
+
+  /* 模型隔离：不同模型的向量空间不可比，比出来的相似度是噪音（且不报错） */
+  S.store.set('vectorApi', { baseUrl: 'https://v.test/v1', model: 'emb-A' });
+  if (!P.sameModel({ model: 'emb-A' })) throw new Error('同模型该放行');
+  if (P.sameModel({ model: 'emb-B' })) throw new Error('换了模型还放行 —— 那就是在比两个空间');
+  if (P.sameModel({})) throw new Error('没记模型的块也不该放行');
+
+  /* 缓存绑定：主动消息滞后一轮读缓存，中间可能切角色/换马甲/换岛 */
+  const rec = { bind: { charId: 'cA', userId: 'u1', sandboxId: 'sb1' } };
+  if (!P.bindOk(rec, { charId: 'cA', userId: 'u1', sandboxId: 'sb1' })) {
+    throw new Error('同一个世界同一个身份该放行');
+  }
+  if (P.bindOk(rec, { charId: 'cA', userId: 'u1', sandboxId: 'sb2' })) {
+    throw new Error('切了岛还复用上一个岛的召回结果');
+  }
+  if (P.bindOk(rec, { charId: 'cA', userId: 'u2', sandboxId: 'sb1' })) {
+    throw new Error('换了马甲还复用');
+  }
+  if (P.bindOk(rec, { charId: 'cB', userId: 'u1', sandboxId: 'sb1' })) {
+    throw new Error('换了角色还复用');
+  }
+  if (P.bindOk({}, { sandboxId: 'sb1' })) throw new Error('没有绑定信息的老缓存该当无效');
+  return { 模型: '按模型隔离', 缓存: '按世界+角色+身份' };
 });
 
 if (asyncPending > 0) {

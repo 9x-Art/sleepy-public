@@ -37,9 +37,13 @@
      所以群聊召回**不套身份隔离**，见 blocksOfGroup）。
      V3 → V4（同日）：块多了 **msgIds**（这块覆盖了哪几条消息）——
      删除/编辑/撤回要**精确定位**受影响的块，只靠 fromId/toId 只能判首尾。
-     三次都是「老块留着会不对」，而**索引本来就可以重建**，
+     V4 → V5（同日，外部评审指出）：块多了 **model / dim / at0** ——
+     ① 换 embedding 模型后，老块的向量在新模型的语义空间里**没有意义**，
+     算出来的相似度是「看着像数字的噪音」（同维度不同模型完全静默）；
+     ② 群聊要按「成员都在场之后」过滤，得知道块里**第一条**消息的时间。
+     四次都是「老块留着会不对」，而**索引本来就可以重建**，
      所以升级时直接丢掉重来，游标键也跟着换前缀（见 cursorKey）。 */
-  var DB_VER = 4;
+  var DB_VER = 5;
   var STORE = 'vec';
 
   /* 切块（方案 §3 / v5 §8.2 照抄）：线上 4～6 轮。一轮 = 你我各一条，
@@ -57,6 +61,21 @@
   function cfg() {
     var c = store.get('vecCfg');
     return (c && typeof c === 'object') ? c : {};
+  }
+
+  /* 现在配的是哪台 embedding 模型。块记下它、召回只认同一台 ——
+     换了模型之后，老块的向量在新模型的语义空间里没有意义，
+     算出来的相似度是「看着像数字的噪音」，而且**不报错**
+     （维度不同会被 cosine 挡成 0，同维度不同模型更是完全静默）。
+     宁可这轮召回不到，也不能喂一堆错的进去。 */
+  function modelNow() {
+    var v = Sleepy.singleApi ? Sleepy.singleApi.cfgOf('vector') : null;
+    return (v && v.model) || '';
+  }
+  function sameModel(b) {
+    var m = modelNow();
+    if (!m) return true;          /* 没配接口时根本不会召回，这条走不到 */
+    return ((b && b.model) || '') === m;
   }
 
   function enabled() {
@@ -172,15 +191,41 @@
       barrier = !!Sleepy.core.cognitionOf(charId, userId).barrier;
     }
     return scanOwner(rootOf(charId), function (b) {
-      return visibleTo(b, charId, userId, barrier);
+      return visibleTo(b, charId, userId, barrier) && sameModel(b);
     });
   }
 
-  /* 群聊的块。**刻意不套身份隔离** —— 群消息在群里是公开的，
-     所有成员看到的是同一份；套隔离反而会让「他在群里说过的话」
-     对他自己不可见。可见性由调用方保证（只召回他所在的群）。 */
+  var GROUP_JOIN_GRACE = 60 * 1000;
+
+  /* 群里「所有人都已经在场」的时刻 = 最晚入群的那个人的 joinedAt。
+     群消息在群里共享，但共享的前提是**大家都在场**：刚被拉进来的人
+     不该知道它不在场时聊了什么（现实里也看不到入群前的历史）。
+     用最晚的当界是**保守**的（老成员会少看到一点），
+     但反过来「让角色知道它不在场的事」是穿帮，宁可少给。 */
+  function groupSince(groupId) {
+    var G = Sleepy.groupStore;
+    if (!G || !G.membersOf) return 0;
+    var t = 0;
+    (G.membersOf(groupId) || []).forEach(function (m) {
+      if ((m.status || 'active') !== 'active') return;
+      var j = m.joinedAt || 0;
+      if (j > t) t = j;
+    });
+    return t;
+  }
+
+  /* 群聊的块。**刻意不套身份隔离**（群消息对成员是共享的），
+     但**不是不做过滤**：只取「当前模型生成的」+「所有人都在场之后」的。
+     调用方还要保证只召回他所在的群 —— 两道都要。 */
   function blocksOfGroup(groupId) {
-    return scanOwner(groupKey(groupId), null);
+    /* 留一分钟宽限：建群 / 加人和第一批消息常常是**同一串操作**，
+       差几十毫秒就被判成「它不在场」太冤（时间戳抖动，不是语义问题）。 */
+    var since = groupSince(groupId) - GROUP_JOIN_GRACE;
+    return scanOwner(groupKey(groupId), function (b) {
+      if (!sameModel(b)) return false;
+      if (since > 0 && (b.at0 || b.at || 0) < since) return false;
+      return true;
+    });
   }
 
   /* 维护用的块（条数 / 上限裁剪 / 清空）—— 这些**不该**受身份隔离影响，
@@ -217,6 +262,45 @@
         cur.continue();
       };
     }).then(function () { return n; }, function () { return 0; });
+  }
+
+  /* 有多少块是「别的模型」做的 —— 它们不参与召回，但占着地方。
+     设置页据此提示「有 N 段是旧模型做的，建议清掉」。 */
+  function staleCount() {
+    var m = modelNow();
+    if (!m) return Promise.resolve(0);
+    var n = 0;
+    return withStore('readonly', function (os) {
+      var req = os.openCursor();
+      req.onsuccess = function () {
+        var cur = req.result;
+        if (!cur) return;
+        var b = cur.value || {};
+        if (((b.model) || '') !== m) n++;
+        cur.continue();
+      };
+    }).then(function () { return n; }, function () { return 0; });
+  }
+
+  /* 清掉所有「别的模型」做的块（全库，不按 owner）。 */
+  function forgetStale() {
+    var m = modelNow();
+    var ids = [];
+    return withStore('readonly', function (os) {
+      var req = os.openCursor();
+      req.onsuccess = function () {
+        var cur = req.result;
+        if (!cur) return;
+        var b = cur.value || {};
+        if (m && ((b.model) || '') !== m) ids.push(b.id);
+        cur.continue();
+      };
+    }).then(function () {
+      /* 块清了但游标还停在末尾 → 那些内容永远不会被重新索引。
+         清掉就要退游标，否则「清掉」等于「永久忘掉」。 */
+      resetCursors();
+      return removeBlocks(ids);
+    }, function () { return 0; });
   }
 
   function clearAll(charId) {
@@ -358,6 +442,9 @@
     return {
       text: lines.join('\n'),
       at: (msgs[msgs.length - 1] || {}).timestamp || Date.now(),
+      /* 块里**第一条**消息的时间。群聊按「成员都在场之后」过滤要用它 ——
+         只看 at（末尾）会放过一块跨越入群时刻的内容。 */
+      at0: (msgs[0] || {}).timestamp || 0,
       fromId: (msgs[0] || {}).id || null,
       toId: (msgs[msgs.length - 1] || {}).id || null,
       msgCount: lines.length,
@@ -422,9 +509,10 @@
   /* 一次 sweep 最多写这么多个块（多了会一次发好几个 embedding 请求） */
   var SWEEP_MAX = 2;
 
-  /* 前缀带 2：V1 → V2 那次升级把老块全丢了（见 DB_VER），
-     老游标必须跟着作废，否则它以为自己写过了、新块永远不写。 */
-  function cursorKey(chatId) { return 'vecCursor2:' + chatId; }
+  /* 前缀的版本号**必须跟着 DB_VER 走**：DB 升级会清掉老块，
+     而游标存在 localStorage 里活得好好的 —— 不作废它就会以为自己写过了，
+     新块永远不写，索引一直空着（这是最容易漏的一处配套）。 */
+  function cursorKey(chatId) { return 'vecCursor3:' + chatId; }
 
   /* ---- 连续失败就退避（2026-09-22 晚）----
      原来失败只是「游标不推进 ＝ 下轮重试」—— 接口挂了（key 写错、余额空、
@@ -457,6 +545,11 @@
   function readCursor(ck, msgs) {
     var cur = store.get(ck);
     if (cur && typeof cur === 'object') {
+      /* 换了 embedding 模型 → 游标作废，从头重建：
+         老块的向量在新模型下没有意义（见 sameModel），得重新算一遍。
+         不这么做的话，那些内容会永远停在「旧模型」状态。 */
+      if ((cur.model || '') !== modelNow()) return 0;
+      if ((cur.epoch || 0) !== epochNow()) return 0;   /* 被「清掉索引」作废过 */
       var i = cur.lastId ? indexOfId(msgs, cur.lastId) : -1;
       if (i >= 0) return i + 1;
       if (typeof cur.index === 'number' && cur.index >= 0 && cur.index <= msgs.length) {
@@ -469,7 +562,25 @@
   }
   function writeCursor(ck, msgs, end) {
     var last = msgs[end - 1];
-    store.set(ck, { index: end, lastId: (last && last.id) || null });
+    store.set(ck, {
+      index: end,
+      lastId: (last && last.id) || null,
+      model: modelNow(),         /* 哪台模型切的（换模型就作废，见 readCursor） */
+      epoch: epochNow()          /* 哪个世代（用户清过索引就作废） */
+    });
+  }
+
+  /* 让**所有**游标作废 → 下次 sweep 从头重建（用户点了「清掉索引」时用）。
+     不清游标的话「清掉」等于「永远忘掉」：老块没了、游标又停在末尾。
+
+     做法是一个「世代号」而不是去翻 localStorage 删键 ——
+     store 有**内存缓存**，绕过它直接删键的话，读的时候还会命中缓存里的老游标
+     （真机上就是这么翻车的：删了、读回来还在）。 */
+  function epochNow() { return store.get('vecEpoch') || 0; }
+  function resetCursors() {
+    var n = epochNow() + 1;
+    store.set('vecEpoch', n);
+    return n;
   }
 
   /* 把这个对话里「还没进向量库的」消息块补上。异步、失败不影响聊天。
@@ -521,6 +632,11 @@
             sourceId: src.sourceId || null,
             sandboxId: sid,
             at: b.at,
+            at0: b.at0 || b.at || 0,
+            /* 哪台模型的产物。换模型后这些块**不再参与召回**（见 sameModel）——
+               不同模型的向量空间不可比，比出来的相似度是噪音。 */
+            model: modelNow(),
+            dim: (res.vectors[i] || []).length,
             fromId: b.fromId,
             toId: b.toId,
             msgCount: b.msgCount,
@@ -646,15 +762,49 @@
 
   /* 召回内核：给定「怎么取块」，跑一遍 向量 → 重排 → 去重 → 落缓存。
      私聊和群聊只差 loadBlocks 取哪一批。 */
+  /* 缓存要记住「这份结果属于谁、哪个世界」。
+     主动消息是**滞后一轮**读缓存的（它没有「当前输入」，见 page-proactive），
+     中间可能切了角色、换了马甲、或者切了岛 —— 拿错世界的记忆比不拿更糟
+     （TA 会提起另一个岛上另一个身份的事）。 */
+  var RECALL_TTL = 6 * 3600 * 1000;
+
+  function bindOf(opts) {
+    opts = opts || {};
+    return {
+      charId: opts.charId || null,
+      userId: opts.userId || null,
+      sandboxId: scopeNow()
+    };
+  }
+  function bindOk(rec, want) {
+    if (!rec || !rec.bind) return false;     /* 没有绑定信息（老缓存）→ 当无效 */
+    want = want || {};
+    if ((rec.bind.sandboxId || null) !== (want.sandboxId || null)) return false;
+    if (want.charId && rec.bind.charId !== want.charId) return false;
+    if (want.userId && rec.bind.userId !== want.userId) return false;
+    return true;
+  }
+  function freshEnough(rec) {
+    return !!rec && (Date.now() - (rec.at || 0)) < RECALL_TTL;
+  }
+  /* 浅拷一份再补绑定字段 —— 不改调用方传进来的对象 */
+  function withBind(opts, charId, userId) {
+    var o = {};
+    if (opts) for (var k in opts) if (opts.hasOwnProperty(k)) o[k] = opts[k];
+    o.charId = charId || null;
+    o.userId = userId || null;
+    return o;
+  }
+
   function prefetchInto(key, loadBlocks, query, opts) {
     opts = opts || {};
     if (!enabled() || !key) {
-      lastRecall[key] = { items: [], at: Date.now() };
+      lastRecall[key] = { items: [], at: Date.now(), bind: bindOf(opts) };
       return Promise.resolve([]);
     }
     var q = String(query || '').trim();
     if (!q) {
-      lastRecall[key] = { items: [], at: Date.now() };
+      lastRecall[key] = { items: [], at: Date.now(), bind: bindOf(opts) };
       return Promise.resolve([]);
     }
 
@@ -676,7 +826,7 @@
     });
 
     return Promise.race([work, timeout]).then(function (items) {
-      lastRecall[key] = { items: items || [], at: Date.now() };
+      lastRecall[key] = { items: items || [], at: Date.now(), bind: bindOf(opts) };
       return items || [];
     });
   }
@@ -686,20 +836,27 @@
     if (!charId) return Promise.resolve([]);
     return prefetchInto(rootOf(charId), function () {
       return blocksOf(charId, userId || null);
-    }, query, opts);
+    }, query, withBind(opts, charId, userId));
   }
 
   /* 群聊：主键换成 group:<id>，**不过身份隔离**（群消息对成员是公开的）。 */
   function prefetchGroup(groupId, query, opts) {
     if (!groupId) return Promise.resolve([]);
+    /* 群不校验 charId（群消息对成员共享），但要校验世界 ——
+       换岛之后不该拿上一个岛的群结果。 */
     return prefetchInto(groupKey(groupId), function () {
       return blocksOfGroup(groupId);
-    }, query, opts);
+    }, query, withBind(opts, null, null));
   }
 
-  function lastOf(charId) {
+  function lastOf(charId, userId) {
     var r = lastRecall[rootOf(charId)];
-    return (r && r.items) ? r.items : [];
+    if (!r || !r.items || !r.items.length) return [];
+    if (!freshEnough(r)) return [];
+    /* 校验绑定：世界 / 角色 / 身份有一个对不上就当没有 ——
+       「宁可这轮想不起来，也不能想起来的是别人的事」。 */
+    if (!bindOk(r, { charId: charId, userId: userId || null, sandboxId: scopeNow() })) return [];
+    return r.items;
   }
 
   function renderRecall(items, headLines) {
@@ -711,11 +868,15 @@
 
   /* 注入文本。**不写「你记得」这种口径** —— 召回命中的是原文块，
      它是「你们确实聊过这个」，不是「系统让 TA 想起」。 */
-  function text(charId) {
-    var items = lastOf(charId);
+  function text(charId, userId) {
+    var items = lastOf(charId, userId);
     if (!items.length) return '';
+    /* 措辞是**故意的**：这几条目击是「可能的旧证据」，不是「仍然有效的事实」。
+       过去说过「最近不想喝咖啡」，召回后不能被读成「用户永远不喝咖啡」——
+       那是把召回当规则用。和规划里那条红线一致：向量只找证据，不定规则。 */
     return renderRecall(items, [
-      '下面是你们以前真的聊过的片段（按和现在这个话题的相关度挑的，时间顺序不一定连贯）。',
+      '下面几条是你们以前真的聊过的片段（按和这件事的相关度挑的，时间顺序不一定连贯）。',
+      '它们只是过去的原话，不代表现在仍然如此 —— 和现在的情况对不上时，以现在为准。',
       '需要的时候可以自然接上；对不上现在的语境就别硬提。'
     ]);
   }
@@ -725,11 +886,13 @@
      群里说话的是账号，不是一对一的那个身份。 */
   function groupText(groupId) {
     var r = lastRecall[groupKey(groupId)];
-    var items = (r && r.items) ? r.items : [];
+    var items = (r && r.items && freshEnough(r) &&
+      bindOk(r, { sandboxId: scopeNow() })) ? r.items : [];
     if (!items.length) return '';
     return renderRecall(items, [
-      '下面这些是这个群里以前真的出现过的对话（按和现在这件事的相关度挑的）。',
-      '群里的人都经历过，可以自然接上；对不上现在的语境就别硬提。'
+      '下面几条是这个群里以前真的出现过的对话（按和这件事的相关度挑的）。',
+      '它们只是过去的原话，不代表现在仍然如此 —— 和现在的情况对不上时，以现在为准。',
+      '群里的人都经历过这些，可以自然接上；对不上现在的语境就别硬提。'
     ]);
   }
   function clearCache() { lastRecall = {}; }
@@ -764,6 +927,10 @@
     /* 设置页：看清索引里有什么、能清、能自己试一次召回 */
     overview: overview,
     probe: probe,
+    /* 换 embedding 模型之后：老块不参与召回了，可以一键清掉 */
+    stale: staleCount,
+    forgetStale: forgetStale,
+    resetCursors: resetCursors,
     clearCache: clearCache,
     cursorKey: cursorKey,
     /* 纯函数出口 —— 冒烟直接打表，不用起 IDB */
@@ -779,6 +946,8 @@
       groupKey: groupKey,
       rootOf: rootOf,
       blockHitBy: blockHitBy,
+      sameModel: sameModel,
+      bindOk: bindOk,
       readCursor: readCursor,
       writeCursor: writeCursor
     },

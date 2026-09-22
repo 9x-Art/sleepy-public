@@ -868,10 +868,12 @@
      和 K03/K03b 的关系：K03 是沉淀下来的记忆、K03b 是近期视野、
      这里是「更早、但和现在这件事有关」的那一段 —— 三者互补，别合并。
      ★ 它是**异步预取**的（发送前 prefetch），这里同步读缓存。 */
-  function compileRecall(charId) {
+  function compileRecall(charId, userId) {
     var mv = Sleepy.memoryVec;
     if (!mv || !mv.text) return '';
-    return mv.text(charId) || '';
+    /* userId 要传：缓存里那份召回结果是**按身份**存的，
+       换马甲/换世界之后不该复用（见 memoryVec.lastOf 的绑定校验）。 */
+    return mv.text(charId, userId || null) || '';
   }
 
   function compileDrop(charId) {
@@ -1049,7 +1051,7 @@
         case 'drop': pushSlot(def, compileDrop(charId)); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'life': pushSlot(def, compileLife(charId, userId)); break;
-        case 'recall': pushSlot(def, compileRecall(charId)); break;
+        case 'recall': pushSlot(def, compileRecall(charId, userId)); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
           pushSlot(def, compileWorldbook(charId, wbText));
@@ -1307,7 +1309,7 @@
         case 'f2': pushSlot(def, cardBody('f2')); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'life': pushSlot(def, compileLife(charId, userId)); break;
-        case 'recall': pushSlot(def, compileRecall(charId)); break;
+        case 'recall': pushSlot(def, compileRecall(charId, userId)); break;
         case 'worldbook': {
           var wbOff = (session.messages || []).map(function (m) {
             if (m.role === 'user') return String(m.text || '');

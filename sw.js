@@ -13,6 +13,17 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v103（2026-09-22）：**浮岛选岛页换成整幅生成插画**（`art/isle.webp` /
+   `art/archipelago.webp`，各约 110 KB）—— 原来那版是 CSS 画的扁平淡绿椭圆 +
+   棒棒糖树，加上一层薄荷绿渐变和一团冷蓝光，跟全站纯白 + 焦糖的身份完全打架
+   （用户：「配色不好看，那两个岛屿也不是很美观」）。
+   同时撤掉岛名下面的「1v1 / 1vN」小徽章，进岛从「点整页」改成明确的一个
+   「进 岛」按钮；第二层存档列表页那层薄荷绿→蓝的渐变也一起改成暖白。
+   顶栏在这页要彻底隐形：默认的 `.app-head` 是玻璃（`backdrop-filter:blur(14px)`
+   + `::after` 一条渐变细线），压在插画上会糊掉最上面一条天空、还横着一道分界线。
+   → 必须跳版本：style.css / page-island.js 都改了，**而且新增了 art/ 两张图**
+   （它们走运行时缓存，第一次进选岛页才会落盘）。
+
    v15（2026-09-21 第 14 批）：图片出 localStorage —— ①群头像改存图库
    （IndexedDB 的 mediaId，老 dataURL 首次显示时自动搬家）；②头像 /
    faceLockImage 之外的三处头像字段都能选本地图了（avatarFieldLocal），
@@ -84,7 +95,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v102';
+var CACHE = 'sleepy-v103';
 var CORE = [
   './',
   './index.html',

@@ -239,6 +239,10 @@
          只能让人眼看一眼。 */
       var gIdx = group('索引',
         '每一条都是你和某个角色（或某个群）真实聊过的一小段。清理不影响聊天记录。');
+      /* 旧模型提示单独一个容器 —— 它和列表是两次异步查询，
+         塞进 listWrap 的话「谁后返回谁把对方清掉」。 */
+      var staleWrap = h('div', 'vec-stale-wrap');
+      gIdx.card.appendChild(staleWrap);
       var listWrap = h('div', 'vec-list');
       listWrap.appendChild(h('p', 'set-group-note', '正在读索引…'));
       gIdx.card.appendChild(listWrap);
@@ -297,7 +301,38 @@
         });
       }
 
+      /* 换过 embedding 模型的话，库里会留下一批「别的模型」做的块 ——
+         它们不参与召回（见 memoryVec.sameModel），但占地方，提示一下能清掉。 */
+      function renderStale() {
+        staleWrap.innerHTML = '';
+        if (!Sleepy.memoryVec || !Sleepy.memoryVec.stale) return;
+        Sleepy.memoryVec.stale().then(function (n) {
+          if (!n) return;
+          var warn = h('div', 'vec-row vec-stale');
+          var wm = h('div', 'vec-row-main');
+          wm.appendChild(h('div', 'vec-row-name', '有 ' + n + ' 段是别的向量模型做的'));
+          wm.appendChild(h('div', 'vec-row-meta',
+            '换了模型之后它们对不上号，已经不参与召回了 —— 建议清掉（聊天记录不动）'));
+          warn.appendChild(wm);
+          warn.appendChild(button('清掉', 'dl-btn is-danger', function () {
+            ui.confirm({
+              title: '清掉这 ' + n + ' 段旧模型的索引？',
+              note: '聊天记录一个字都不会动。之后按原来的节奏重新索引。',
+              ok: '清掉', danger: true
+            }).then(function (yes) {
+              if (!yes) return;
+              Sleepy.memoryVec.forgetStale().then(function (m) {
+                ctx.toast('清掉了 ' + m + ' 段', 'ok');
+                renderList();
+              });
+            });
+          }));
+          staleWrap.appendChild(warn);
+        })['catch'](function () { /* 提示失败就算了，别挡列表 */ });
+      }
+
       function renderList() {
+        renderStale();
         listWrap.innerHTML = '';
         if (!Sleepy.memoryVec || !Sleepy.memoryVec.overview) {
           listWrap.appendChild(h('p', 'set-group-note', '向量模块没加载。'));

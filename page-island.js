@@ -75,7 +75,6 @@
   var KIND_META = {
     isle: {
       title: '孤岛',
-      badge: '1v1',
       poem: '一生一代一双人',
       from: '纳兰性德《画堂春》',
       seed: '在孤岛上写一段',
@@ -83,7 +82,6 @@
     },
     archipelago: {
       title: '群岛',
-      badge: '1vN',
       poem: '乱花渐欲迷人眼',
       from: '白居易《钱塘湖春行》',
       seed: '在群岛上写一段',
@@ -163,13 +161,12 @@
     });
   }
 
-  function sky() {
-    var box = h('div', 'isl-sky');
-    box.appendChild(h('i', 'isl-glow isl-glow-a'));
-    box.appendChild(h('i', 'isl-glow isl-glow-b'));
-    box.appendChild(h('i', 'isl-glow isl-glow-c'));
-    return box;
-  }
+  /* 选岛页的底图。
+     两张都是生成插画（1264x1856）：岛宽约 55%、云海一直铺到画面最底边。
+     纵横比（0.68）比手机（≈0.46）宽，所以 cover 只会裁左右、不会裁上下 ——
+     上方留给状态栏的那片天空和下方那片云海都完整保得住。
+     构图铁律与生图提示词见 D:/tmp/isl-redesign/浮岛-生图提示词.txt。
+     （图在 art/ 下，由 CSS 的 .isl-art[data-kind] 引用。） */
 
   /* ==================== 第一层：浮岛（左右滑动的两座岛） ==================== */
 
@@ -177,16 +174,14 @@
     title: '浮岛',
     render: function (ctx) {
       var body = ctx.body;
-      body.appendChild(sky());
 
       var track = h('div', 'isl-track');
       var dots = h('div', 'isl-dots');
 
-      /* 这里**不放任何标题和诗句**。
-         曾经在云海上方挂过一句「霓为衣兮风为马」—— 用户看到的第一反应是
+      /* 云海上方**不放任何标题和诗句**。
+         曾经挂过一句「霓为衣兮风为马」—— 用户看到的第一反应是
          「为啥上面是霓为衣兮风为马这个诗句呀」。理由很简单：**它在说别人的事**。
-         这座云海本身没有主题句，每座岛才有（岛下面各配一句，见 KIND_META）。
-         云海就该是空的 —— 留白才是这一层给人的第一印象。 */
+         每座岛各有自己的名字和诗（压在下方云雾带里，见下面的 .isl-word）。 */
 
       body.appendChild(track);
       body.appendChild(dots);
@@ -196,32 +191,35 @@
       [core.KIND_ISLE, core.KIND_ARCHI].forEach(function (kind, pi) {
         var page = h('section', 'isl-page');
 
-        var stage = h('div', 'isl-stage isl-stage-' + kind);
-        var ground = h('div', 'isl-ground');
-        if (kind === core.KIND_ISLE) {
-          ground.appendChild(h('i', 'isl-tree isl-tree-a'));
-          ground.appendChild(h('i', 'isl-tree isl-tree-b'));
-        } else {
-          ground.appendChild(h('i', 'isl-shard isl-shard-a'));
-          ground.appendChild(h('i', 'isl-shard isl-shard-b'));
-          ground.appendChild(h('i', 'isl-shard isl-shard-c'));
-          ground.appendChild(h('i', 'isl-shard isl-shard-d'));
-        }
-        stage.appendChild(ground);
-        page.appendChild(stage);
+        /* 底图：一整幅生成插画铺满，岛和云海都在图里 ——
+           不再用 CSS 画岛（那版是扁平淡绿的椭圆 + 棒棒糖树，
+           用户 09-21 反馈「配色不好看，那两个岛屿也不是很美观」）。 */
+        var art = h('div', 'isl-art');
+        art.setAttribute('data-kind', kind);
+        page.appendChild(art);
 
+        /* 文字压在下方云雾带里（用户 09-21：「文案整体可以靠近岛屿一点，
+           就是可以在云雾那里」）。岛的名字**单独居中**，不再挂 1v1 小徽章
+           （用户：「1v1 那个小框可以没有」）。 */
         var meta = metaOf(kind);
-        var head = h('div', 'isl-isle-head');
-        head.appendChild(h('span', 'isl-isle-name', meta.title));
-        head.appendChild(h('span', 'isl-isle-badge', meta.badge));
-        page.appendChild(head);
-        page.appendChild(h('p', 'isl-poem', meta.poem));
-        page.appendChild(h('p', 'isl-poem-from', meta.from));
-        page.appendChild(h('p', 'isl-isle-count', ''));
+        var word = h('div', 'isl-word');
+        word.appendChild(h('h1', 'isl-isle-name', meta.title));
+        word.appendChild(h('p', 'isl-poem', meta.poem));
+        word.appendChild(h('p', 'isl-poem-from', meta.from));
+        word.appendChild(h('p', 'isl-isle-count', ''));
+        page.appendChild(word);
 
-        page.addEventListener('click', function () {
+        /* 「进岛」按钮。
+           以前是**点整页**就进存档列表 —— 用户 09-21 拍板改成留一个明确的按钮，
+           整页不再当点击区（左右滑动换岛照旧）。 */
+        var foot = h('div', 'isl-foot');
+        var enter = h('button', 'isl-enter', '进 ' + meta.title);
+        enter.type = 'button';
+        enter.addEventListener('click', function () {
           ctx.open('island-saves', { kind: kind });
         });
+        foot.appendChild(enter);
+        page.appendChild(foot);
 
         track.appendChild(page);
         pages.push(page);

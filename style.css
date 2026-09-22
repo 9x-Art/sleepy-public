@@ -5283,36 +5283,65 @@ span.msg-avatar-initial{
 
 .page[data-page="island"]{
   padding:0;overflow:hidden;
-  /* 兜底实色：万一 .isl-sky 没铺满，也绝不能透出底下的桌面
-     （页面底座透明踩过一次，见 .page 的注释） */
-  background:var(--g-base);
+  /* 兜底实色：万一 .isl-art 那张图没加载出来，也绝不能透出底下的桌面。
+     刻意写死这层暖白、不跟 --g-base —— 底图永远是暖色插画，夜灯下露出
+     一块深色反而更跳。 */
+  background:#F3EEE6;
 }
-/* 浮岛的内容**不留状态栏那条内边距** —— 因为天空（.isl-sky）是挂在
+/* 浮岛的内容**不留状态栏那条内边距** —— 因为底图（.isl-art）是挂在
    .app-body 里的绝对定位元素，而 .app-body 从 page-inner 的内边距之后开始：
-   一旦在这里留 padding-top，天空就铺不到状态栏那一条，顶上露出一截
+   一旦在这里留 padding-top，底图就铺不到状态栏那一条，顶上露出一截
    页面兜底色（用户：「怎么浮岛上面还有那个颜色，不是透明的」）。
    标题和返回键不会因此被压住 —— .app-head 是绝对定位的，它自己让了位（见下）。 */
 .page[data-page="island"] .page-inner{
   padding:0;
 }
 /* 浮岛不要标题栏那一横条：整片天空才是标题。
+   **顶栏在这一页必须彻底隐形** —— 项目默认的 .app-head 是一块玻璃
+   （`backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），
+   压在插画上会把最上面一条天空糊掉、还横着一道分界线。
+   （diary 页同样处理。）
    top 要给状态栏让位 —— 状态栏是 absolute 浮着的，写 top:0 的话
    「浮岛」和返回键会跟电量时间叠在一起（截图里就是这样）。 */
 .page[data-page="island"] .app-head{
   position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.page[data-page="island"] .app-head::after{display:none;}
+
+/* 顶栏和状态栏的字色在这一页**写死暖深色** —— 底图永远是那张暖白插画，
+   夜灯下 --text / --g-ink-2 会翻成浅色，压在同一片浅天空上就是白字白底
+   （用户报过同类问题：「浅色壁纸配黑字开夜灯很怪」「白底白字字直接看不见」）。
+   状态栏不在 .page 里，所以走 :has() 认「栈顶那页是 island」——
+   和朋友圈封面用的是同一条路子（见上面 .tab-panel.is-moments 那组）。 */
+#phone:has(.page.is-active:not(.is-behind)[data-page="island"]) #statusbar{
+  color:#6E6047;text-shadow:0 1px 2px rgba(255,255,255,.55);
+}
+.page[data-page="island"] .app-title{color:#4A3F32;}
+.page[data-page="island"] .back-btn{
+  background:rgba(255,255,255,.44);
+  border-color:rgba(255,255,255,.62);
+  color:#8A6844;
 }
 .page[data-page="island"] .app-head-side{gap:6px;}
 .page[data-page="island"] .app-body{position:relative;min-height:0;}
 
-.isl-sky{
-  position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none;
-  background:linear-gradient(180deg,#EAF6FB 0%,#E7F6EC 38%,#DCF0E6 68%,#C9E6D8 100%);
+/* ---- 底图：一整幅生成插画铺满 ----
+   两张图（孤岛 art/isle.webp / 群岛 art/archipelago.webp）都是 1264x1856。
+   纵横比 0.68 比手机（≈0.46）宽，所以 cover **只裁左右、不裁上下** ——
+   上方留给状态栏的那片天空、下方那片云海，都完整保住。
+   构图铁律（岛像素宽 ≤ 手机纵横比 × 图高，且云海铺到最底边）与生图提示词见
+   D:/tmp/isl-redesign/浮岛-生图提示词.txt。 */
+.isl-art{
+  position:absolute;inset:0;z-index:0;pointer-events:none;
+  background-repeat:no-repeat;background-position:center center;
+  background-size:cover;
+  /* 图没加载出来时的一层暖白兜底 —— 页面底座是透明的，绝不能透出桌面的极光 */
+  background-color:#F3EEE6;
 }
-.isl-glow{position:absolute;border-radius:50%;filter:blur(64px);opacity:.55;}
-.isl-glow-a{width:300px;height:300px;background:#EBD9BC;top:-90px;left:-80px;}
-.isl-glow-b{width:340px;height:340px;background:#F0E2C8;bottom:-40px;right:-120px;}
-.isl-glow-c{width:220px;height:220px;background:#CBE7FF;top:36%;left:42%;opacity:.4;}
+.isl-art[data-kind="isle"]{background-image:url(art/isle.webp);}
+.isl-art[data-kind="archipelago"]{background-image:url(art/archipelago.webp);}
 
 /* 云海上方**不放任何标题和诗句**。曾经挂过一句「霓为衣兮风为马」，
    用户第一反应是「为啥上面是霓为衣兮风为马这个诗句呀」——
@@ -5337,13 +5366,12 @@ span.msg-avatar-initial{
    红线现在只画在配置台的关系树上，见 .tree-tie。 */
 
 .isl-page{
-  position:relative;z-index:1;
+  position:relative;z-index:1;overflow:hidden;
   flex:0 0 100%;width:100%;height:100%;
   scroll-snap-align:start;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:120px 22px 110px;
-  /* grab 而不是 pointer：先告诉人「这块能拖」。点击照样进岛 ——
-     拖拽超过 8px 的那次 click 会在捕获阶段被丢掉（见 page-island.js）。 */
+  /* grab 而不是 pointer：先告诉人「这块能拖」。
+     （以前点整页就进岛，所以拖过 8px 的那次 click 要在捕获阶段丢掉；
+       现在进岛只有「进 岛」按钮那一条路，这个手势只负责左右换岛。） */
   cursor:grab;
 }
 .isl-track.is-dragging .isl-page{cursor:grabbing;}
@@ -5362,66 +5390,58 @@ span.msg-avatar-initial{
   width:38px;height:38px;padding:0 0 3px;border:0;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
   font-family:var(--ff-serif);font-size:22px;line-height:1;
-  color:var(--g-accent-deep);background:rgba(255,255,255,.5);
+  /* 同样写死暖色（底下是那张暖白插画，理由见 .isl-word 上面那段） */
+  color:#8A6844;background:rgba(255,255,255,.44);
   box-shadow:0 4px 14px rgba(139,108,76,.12);
   cursor:pointer;transition:opacity .2s var(--ease),background .2s var(--ease);
 }
-.isl-arrow:hover{background:rgba(255,255,255,.76);}
+.isl-arrow:hover{background:rgba(255,255,255,.74);}
 .isl-arrow:disabled{opacity:0;pointer-events:none;}
 
-/* ---- 岛的视觉：横着的岛，不是竖着的卡片 ---- */
-.isl-stage{
-  position:relative;height:120px;width:100%;
-  display:flex;align-items:flex-end;justify-content:center;
-}
-.isl-ground{
-  position:relative;width:258px;height:46px;border-radius:50%;
-  background:linear-gradient(180deg,#F7FDF7 0%,#D9EDDF 58%,#B9DCC4 100%);
-  border:1px solid rgba(139,108,76,.14);
-  box-shadow:0 16px 34px rgba(139,108,76,.15),inset 0 2px 6px rgba(255,255,255,.8);
-}
-/* 孤岛：两束光（两棵小树）—— 只站得下两个人 */
-.isl-tree{
-  position:absolute;bottom:34px;width:2px;height:32px;border-radius:2px;
-  background:linear-gradient(180deg,#8FCF8A,#5FA05C);
-}
-.isl-tree::after{
-  content:"";position:absolute;left:50%;top:-10px;width:20px;height:20px;margin-left:-10px;
-  border-radius:50%;
-  background:radial-gradient(circle at 38% 32%,#EDFAE7,#9FD79A 72%,rgba(159,215,154,0) 100%);
-}
-.isl-tree-a{left:108px;}
-.isl-tree-b{left:148px;height:28px;}
-.isl-tree-b::after{width:16px;height:16px;margin-left:-8px;top:-8px;}
+/* ---- 文案：压在下方云雾带里 ----
+   用户 09-21：「文案整体可以靠近岛屿一点，就是可以在云雾那里」。
+   top 72.7% 是按真机 390x844 的效果定的 —— 岛的岩尖落在约 70%，
+   再往上会碰到岩尖，再往下就离底太近、跟按钮挤在一起。
 
-/* 群岛：一串横向排开的碎片岛。
-   注意**不要**底下那个大椭圆底座 —— 有底座就变成一朵云了（第一版就是这样）。
-   四块大小不一、高低错落，彼此轻微咬合，才读得出「群岛」。 */
-.isl-stage-archipelago .isl-ground{
-  width:320px;background:none;border:0;box-shadow:none;
+   ⚠️ **这一页的字色写死暖色、不跟主题** —— 底图永远是那张暖白的晨光插画：
+   · 夜灯下 --g-ink 会翻成浅字，压在同一片浅云上就是白字白底，看不见；
+   · --g-accent 在夜灯是薄荷绿、sea 是蓝，按钮会变成一块绿/蓝压在蜜桃色的画上
+     （用户明确「不要蓝也不要绿」）。
+   所以这页是**插画页**，颜色由画定，跟朋友圈封面同类。 */
+.isl-word{
+  position:absolute;left:30px;right:30px;top:72.7%;z-index:2;
+  text-align:center;
+  pointer-events:none;   /* 纯字，别挡住「按住拖动换岛」 */
 }
-.isl-shard{
-  position:absolute;border-radius:50%;
-  background:linear-gradient(180deg,#F7FDF7,#D3EADA 62%,#B0D9BF);
-  border:1px solid rgba(139,108,76,.13);
-  box-shadow:0 10px 22px rgba(139,108,76,.13),inset 0 2px 5px rgba(255,255,255,.78);
-}
-.isl-shard-a{width:78px;height:30px;bottom:0;left:8px;}
-.isl-shard-b{width:102px;height:42px;bottom:16px;left:74px;}
-.isl-shard-c{width:66px;height:26px;bottom:2px;left:170px;}
-.isl-shard-d{width:52px;height:22px;bottom:12px;left:244px;}
-
-.isl-isle-head{display:flex;align-items:baseline;gap:8px;margin-top:14px;}
-.isl-isle-name{font-family:var(--ff-serif);font-size:22px;letter-spacing:4px;color:var(--text);}
-.isl-isle-badge{
-  padding:1px 8px;border-radius:999px;font-size:10.5px;
-  color:var(--g-accent-deep);background:rgba(176,138,94,.16);
-  border:1px solid rgba(176,138,94,.28);
+.isl-isle-name{
+  margin:0;font-family:var(--ff-serif);font-size:22px;font-weight:400;
+  letter-spacing:8px;text-indent:8px;color:#4A3F32;
 }
 /* 岛上那句诗 —— 这一层的灵魂，别再写说明书 */
-.isl-poem{margin:12px 0 0;font-family:var(--ff-serif);font-size:16px;letter-spacing:3px;color:var(--g-accent-deep);}
-.isl-poem-from{margin:6px 0 0;font-size:10.5px;letter-spacing:.4px;color:var(--text-faint);}
-.isl-isle-count{margin:16px 0 0;font-size:11.5px;color:var(--text-dim);}
+.isl-poem{
+  margin:16px 0 0;font-family:var(--ff-serif);font-size:13px;
+  letter-spacing:.16em;text-indent:.16em;color:#7A6B58;
+}
+.isl-poem-from{margin:8px 0 0;font-size:9.5px;letter-spacing:.14em;color:rgba(122,107,88,.70);}
+.isl-isle-count{margin:20px 0 0;font-size:10.5px;letter-spacing:.06em;color:rgba(122,107,88,.86);}
+
+/* ---- 「进 岛」按钮 ----
+   用户 09-21 拍板：留一个明确的按钮，整页不再当点击区。 */
+.isl-foot{
+  position:absolute;left:30px;right:30px;z-index:2;
+  bottom:calc(env(safe-area-inset-bottom) + 42px);
+}
+.isl-enter{
+  display:block;width:100%;padding:15px 0;
+  border:0;border-radius:999px;   /* 项目没有全局 button reset，显式给全 */
+  font-family:inherit;font-size:14px;font-weight:400;
+  letter-spacing:.34em;text-indent:.34em;
+  color:#FFFFFF;background:#B08A5E;
+  box-shadow:0 12px 30px rgba(139,108,76,.30);
+  cursor:pointer;
+  transition:transform .16s var(--ease),background .2s var(--ease);
+}
+.isl-enter:active{transform:scale(.985);background:#9E7A50;}
 
 .isl-dots{
   position:absolute;left:0;right:0;z-index:3;
@@ -5432,12 +5452,14 @@ span.msg-avatar-initial{
   width:6px;height:6px;border-radius:50%;background:rgba(139,108,76,.24);
   transition:width .2s var(--ease),background .2s var(--ease);
 }
-.isl-dot.is-on{width:16px;border-radius:3px;background:var(--g-accent);}
+.isl-dot.is-on{width:16px;border-radius:3px;background:#B08A5E;}
 
 /* ==================== 第二层：某座岛的存档列表 ==================== */
 
 .page[data-page="island-saves"]{
-  background:linear-gradient(180deg,#EDF7FB 0%,#E8F6ED 50%,#DDF0E5 100%);
+  /* 原来是薄荷绿→蓝的渐变（#EDF7FB/#E8F6ED/#DDF0E5）——
+     正是用户说的「不要蓝也不要绿」。改成跟底图同源的暖白 */
+  background:linear-gradient(180deg,#FBF6EF 0%,#F6EFE4 52%,#F1E8DA 100%);
 }
 .sav-head{padding:4px 0 20px;text-align:center;}
 .sav-poem{margin:0;font-family:var(--ff-serif);font-size:16px;letter-spacing:2px;color:var(--g-accent-deep);}
@@ -12250,4 +12272,11 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .vec-hit-text{
   margin:0;font-size:12.5px;line-height:1.75;
   color:var(--g-ink);white-space:pre-wrap;
+}
+
+/* 旧 embedding 模型留下的索引：一条暖色竖线提醒，不铺底色
+   （铺底色要跟主题走，容易在夜灯下变成怪颜色）。 */
+.vec-stale{
+  border-bottom:0;border-left:3px solid rgba(214,164,90,.75);
+  padding-left:11px;margin-bottom:10px;
 }

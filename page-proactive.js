@@ -191,7 +191,7 @@
     if (life) sys.push(life);
     /* L4 召回（读的是 memoryVec 的缓存 —— 本函数是同步的，预取在上面的
        evaluate 里排掉了，用的是**上一次**的结果）。 */
-    var recall = PE.compileRecall ? PE.compileRecall(charId) : '';
+    var recall = PE.compileRecall ? PE.compileRecall(charId, userId || null) : '';
     if (recall) sys.push(recall);
     return sys;
   }
