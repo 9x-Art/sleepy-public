@@ -143,11 +143,16 @@
       playBlob(res.blob, out, ctx);
       if (o.diag) {
         var d = h('div', 'tts-diag');
+        /* Azure 的情绪不在标签里 —— 它在 SSML 的 express-as 风格里，单独说一句 */
+        var st = tts.azureStyleOf && tts.azureStyleOf(res.voiceId || '', res.plan);
+        var styleNote = st ? ('Azure 风格 ' + st.style + '(' + st.degree + ')') : '';
         d.appendChild(h('p', '', '服务商：' + tts.providerOf(res.provider).name + ' · ' + res.model));
         d.appendChild(h('p', '', '合成文本（**只给服务商看的临时文本**）：' + res.synthesisText));
         d.appendChild(h('p', '', '计划：' + res.plan.emotion + ' / 强度 ' + res.plan.intensity +
           ' / 克制 ' + res.plan.restraint + ' / 语速 ' + res.plan.pace +
-          (res.plan.performanceTags.length ? ' / ' + res.plan.performanceTags.join(' ') : '')));
+          (res.plan.performanceTags.length ? ' / ' + res.plan.performanceTags.join(' ') : '') +
+          ' / 停顿 ' + (res.plan.naturalPause === false ? '关' : '开') +
+          (styleNote ? ' / ' + styleNote : '')));
         d.appendChild(h('p', '', '原因：' + res.plan.reason + ' · 原文字数 ' + o.text.length +
           ' 字 · 约 ' + (res.plan.seconds || 0) + ' 秒'));
         out.appendChild(d);
@@ -841,7 +846,9 @@
         body.appendChild(gWhen.wrap);
 
         /* ---- 怎么读 ---- */
-        var gHow = group('怎么读', '');
+        var gHow = group('怎么读',
+          '这三项都会进「语音计划」：语速按服务商的韵律字段发出去（Azure 是 SSML 的 prosody），' +
+          '情绪幅度决定标签/风格的强度，克制度则优先**减标签**而不是加一句「克制」。');
         var fPace = numField({
           label: '语速（70–130，100 是正常）',
           value: state.pace, min: 70, max: 130, step: 5
@@ -863,7 +870,9 @@
         });
         var swPause = switchField({
           label: '自然停顿优化',
-          hint: '只作用于送去合成的临时文本，聊天原文一个字都不动',
+          hint: '在句末插停顿标记：MiniMax 用 <#x#>、Azure 用 <break/>；' +
+            'Fish / ElevenLabs / 自建那几家没有可控的停顿字段，一个标记都不会插。' +
+            '只作用于**临时合成文本**，聊天原文一个字都不动',
           value: !!state.naturalPause
         });
         gHow.card.appendChild(swAuto.el);
@@ -906,7 +915,9 @@
 
         /* ---- 角色表达方向 ---- */
         var gDir = group('TA 的表达习惯',
-          '写给导演看的一句话：TA 平时怎么说话、生气是什么样、有什么口头习惯。');
+          '写给导演看的一句话：TA 平时怎么说话、生气是什么样、有什么口头习惯。\n' +
+          '规则版导演把它当**低权重先验**用 —— 只在正文没给出情绪时参考它，' +
+          '并会读「慢 / 快」这类词微调语速；这句话本身**不会**进合成文本（导演不许吐服务商字符串）。');
         var fDir = textArea({
           label: '表达方向（可选）',
           value: state.characterDirection || '',

@@ -5706,6 +5706,88 @@ t('请求组装与错误归一化（注入 transport，不打真网络）', asyn
     401: r1.error.code, 超时: r2.error.code, 假音频字节: ok1.blob.size };
 });
 
+t('情绪与节奏：表达方向 / 自然停顿 / Azure 风格与语速', () => {
+  const T = S.tts;
+  const cfg = (o) => {
+    const c = JSON.parse(JSON.stringify(T.DEFAULT_VOICE));
+    c.enabled = true; c.frequency = 'always';
+    return Object.assign(c, o || {});
+  };
+
+  /* ---- 角色表达方向：低权重先验，正文优先 ---- */
+  const dir1 = T.speechPlanOf('明天九点开会。', cfg({ characterDirection: '慢性子，爱叹气，说话很低' }), { manual: true });
+  if (dir1.performanceTags.indexOf('sigh') < 0) throw new Error('表达方向里的「爱叹气」没被用上：' + dir1.performanceTags);
+  if (!(dir1.pace < 1)) throw new Error('「慢性子」没让语速慢下来：' + dir1.pace);
+  const dir2 = T.speechPlanOf('明天九点开会。', cfg({ characterDirection: '惜字如金，语气冷淡' }), { manual: true });
+  if (dir2.emotion !== 'cold') throw new Error('「惜字如金」没落到 cold：' + dir2.emotion);
+  /* 正文有情绪时，正文赢（方向只是先验，不是覆盖） */
+  const textFirst = T.speechPlanOf('今天真开心！谢谢你陪我。', cfg({ characterDirection: '惜字如金，语气冷淡' }), { manual: true });
+  if (textFirst.emotion !== 'happy') throw new Error('正文的情绪被表达方向盖掉了：' + textFirst.emotion);
+  /* 用户的开关仍然优先于方向 */
+  const dirOff = T.speechPlanOf('明天九点开会。', cfg({
+    characterDirection: '爱叹气', allowedPerformanceTags: ['soft']
+  }), { manual: true });
+  if (dirOff.performanceTags.indexOf('sigh') >= 0) throw new Error('白名单里没有 sigh，方向也不许用');
+
+  /* ---- 自然停顿：只在句末、够长才插、最多 3 处，关掉就一个都没有 ---- */
+  const long = '明天九点的会记得带材料。你昨天说的那个方案我看了。还有别的事吗？好。';
+  const plan = T.speechPlanOf(long, cfg({}), { manual: true });
+  if (plan.naturalPause !== true) throw new Error('计划里没带上停顿决定');
+  const mm = T.synthesisTextOf('minimax', long, plan, T.capabilitiesOf('minimax', 'speech-2.8-hd'));
+  const mmPauses = (mm.match(/<#/g) || []).length;
+  if (mmPauses < 1 || mmPauses > 3) throw new Error('MiniMax 的停顿标记数量不对：' + mmPauses + ' → ' + mm);
+  if (mm.indexOf('好。<#') >= 0) throw new Error('太短的句子不该插停顿：' + mm);
+  if (mm.replace(/<#[0-9.]+#>/g, '').indexOf('明天九点的会记得带材料。') < 0) {
+    throw new Error('插停顿把原文改动了：' + mm);
+  }
+  const off = T.speechPlanOf(long, cfg({ naturalPause: false }), { manual: true });
+  if (/<#/.test(T.synthesisTextOf('minimax', long, off, T.capabilitiesOf('minimax', 'speech-2.8-hd')))) {
+    throw new Error('关掉自然停顿还在插标记');
+  }
+  /* 没有可控停顿字段的家：一个字都不许插（别假装做了） */
+  ['fish_audio', 'elevenlabs', 'siliconflow', 'custom_openai'].forEach((p) => {
+    const t = T.synthesisTextOf(p, long, plan, T.capabilitiesOf(p, T.modelsOf(p)[0].id));
+    if (/<#|<break/.test(t)) throw new Error(p + ' 没有停顿字段却插了标记：' + t);
+  });
+
+  /* ---- Azure：情绪走 express-as 风格、语速走 prosody、停顿走 break，且都要转义正确 ---- */
+  const azPlan = T.speechPlanOf('今天真开心！谢谢你陪我。', cfg({ pace: 110 }), { manual: true });
+  const az = T.buildRequest({
+    provider: 'azure', conn: { apiKey: 'k' }, model: 'azure-neural',
+    voiceId: 'zh-CN-XiaoxiaoNeural', plan: azPlan, originalText: '今天真开心！谢谢你陪我。', output: T.settings().output
+  });
+  if (az.rawBody.indexOf("style='whispering'") >= 0) throw new Error('whisper 才该出 whispering');
+  if (az.rawBody.indexOf('<mstts:express-as style="cheerful"') < 0) throw new Error('开心没映射成 Azure 的 cheerful：' + az.rawBody);
+  if (az.rawBody.indexOf('xmlns:mstts=') < 0) throw new Error('用了 mstts 命名空间却没声明');
+  if (!/styledegree="1\.\d+"|styledegree="0\.\d+"/.test(az.rawBody)) throw new Error('styledegree 没按情绪幅度给：' + az.rawBody);
+  /* 语速要跟**计划里的 pace** 一致（计划本身还会按情绪微调，别写死数字） */
+  if (az.rawBody.indexOf('<prosody rate="' + azPlan.pace + '"') < 0) {
+    throw new Error('语速没进 prosody（计划 ' + azPlan.pace + '）：' + az.rawBody);
+  }
+  if (Math.abs(azPlan.pace - 1.1) > 0.11) throw new Error('用户设的语速没进计划：' + azPlan.pace);
+  const deg = Number((az.rawBody.match(/styledegree="([0-9.]+)"/) || [])[1]);
+  if (!(deg >= 0.01 && deg <= 2)) throw new Error('styledegree 超出官方范围（0.01–2）：' + deg);
+  /* 表里没有的音色：不发风格（官方说无效风格会被忽略，但我们不发没核对过的） */
+  const az2 = T.buildRequest({
+    provider: 'azure', conn: { apiKey: 'k' }, model: 'azure-neural',
+    voiceId: 'en-US-AvaMultilingualNeural', plan: azPlan, originalText: 'Hello there.', output: T.settings().output
+  });
+  if (az2.rawBody.indexOf('express-as') >= 0) throw new Error('没核对过的音色不该发 express-as');
+  /* 停顿标签不能被转义（先转义正文、再插标签） */
+  const azPause = T.buildRequest({
+    provider: 'azure', conn: { apiKey: 'k' }, model: 'azure-neural',
+    voiceId: 'zh-CN-XiaoxiaoNeural', plan: T.speechPlanOf(long, cfg({}), { manual: true }),
+    originalText: long, output: T.settings().output
+  });
+  if (azPause.rawBody.indexOf('<break time="350ms"/>') < 0) throw new Error('Azure 的 break 没插进去：' + azPause.rawBody);
+  if (azPause.rawBody.indexOf('&lt;break') >= 0) throw new Error('break 被转义成了文本：' + azPause.rawBody);
+  if (azPause.rawBody.indexOf('&lt;') >= 0) throw new Error('正文里的尖括号该被转义：' + azPause.rawBody);
+
+  return { 方向: dir2.emotion + ' / ' + dir1.performanceTags.join(','), 语速: dir1.pace,
+    MiniMax停顿: mmPauses, Azure风格: (az.rawBody.match(/style="([a-z-]+)"/) || [])[1] + '@' + deg,
+    Azure语速: (az.rawBody.match(/rate="([0-9.]+)"/) || [])[1] };
+});
+
 t('角色语音：单一状态源（charVoice 角色层覆盖出厂值）', () => {
   const T = S.tts;
   const base = T.voiceConfigOf('ch-tts-test');

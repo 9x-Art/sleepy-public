@@ -99,10 +99,10 @@
     emotionIntensity: 50,          /* 0–100 */
     restraint: 70,                 /* 0–100，越高越克制（先减标签再加字） */
     emotionAuto: true,
-    naturalPause: true,
+    naturalPause: true,            /* 自然停顿：MiniMax `<#x#>` / Azure `<break/>`，其余家没有这个口子 */
     allowedEmotions: EMOTIONS.slice(),
     allowedPerformanceTags: TAGS_DEFAULT_ON.slice(),
-    characterDirection: '',        /* 角色专属表达方向，拼进导演提示（模型版用） */
+    characterDirection: '',        /* 角色专属表达方向：规则版当**低权重先验**用（见 speechPlanOf） */
     autoplay: 'global',            /* manual | auto | global */
     keepTranscript: true,          /* 保留文字稿（气泡里同时有字） */
     manualRead: true               /* 长按菜单里给不给「朗读」 */
@@ -211,8 +211,8 @@
         'zh-CN-XiaoyiNeural（晓伊）。中国的用户可以换成自己资源所在的节点',
       models: [
         {
-          id: 'azure-neural', label: '神经网络语音', note: 'Azure 没有模型字段，声音由音色决定',
-          caps: { performanceTags: false, speed: false, maxCharacters: 3000 }
+          id: 'azure-neural', label: '神经网络语音', note: 'Azure 没有模型字段，声音由音色决定 · 支持情感风格与语速',
+          caps: { performanceTags: false, speed: true, maxCharacters: 3000 }
         }
       ]
     },
@@ -495,6 +495,31 @@
     { t: 'breathy', re: /(气声|喘|呼吸不稳)/ }
   ];
 
+  /* 角色「表达习惯」词典 —— **只给「表达方向」用**，和正文词典分开：
+     正文里的「哈哈」是当下在笑，方向里写的「爱笑」是这人的常态，不是一回事。
+     命中后仍然要过白名单（allowedEmotion / allowedTag），用户的开关永远优先。 */
+  var DIR_EMO = [
+    { e: 'tender', re: /(温柔|体贴|黏人|细心|照顾人)/ },
+    { e: 'concerned', re: /(爱操心|操心|爱念叨|敏感|担心)/ },
+    { e: 'cold', re: /(冷淡|话少|惜字如金|不爱说话|疏离)/ },
+    { e: 'tired', re: /(慵懒|慢悠悠|没精神|倦|懒散)/ },
+    { e: 'happy', re: /(开朗|爱笑|活泼|爱开玩笑|乐观)/ },
+    { e: 'annoyed', re: /(嘴硬|嘴毒|爱较真|爱挑刺|毒舌)/ },
+    { e: 'sad', re: /(落寞|阴郁|心事重|闷|丧)/ },
+    { e: 'disappointed', re: /(悲观|爱失望)/ },
+    { e: 'surprised', re: /(一惊一乍|大惊小怪)/ },
+    { e: 'angry', re: /(易怒|脾气大|暴躁)/ }
+  ];
+  var DIR_TAG = [
+    { t: 'sigh', re: /(叹气|长叹|唉声)/ },
+    { t: 'low', re: /(低沉|声音低|压着嗓子)/ },
+    { t: 'soft', re: /(轻声|不紧不慢|慢条斯理|柔和|语气软)/ },
+    { t: 'laugh', re: /(爱笑|常笑|笑点低|嘻嘻哈哈)/ },
+    { t: 'whisper', re: /(耳语|轻声细语|小声|压低声音)/ },
+    { t: 'breathy', re: /(气声|喘)/ },
+    { t: 'crying', re: /(爱哭|容易红眼|眼眶浅)/ }
+  ];
+
   var MAX_CHARS_SOFT = 120;   /* 超过这个字数就不再堆标签（短句也不堆） */
 
   function isCJK(s) { return /[\u4e00-\u9fa5]/.test(s); }
@@ -528,7 +553,10 @@
       intensity: 0,
       restraint: clamp01((cfg.restraint || 0) / 100),
       pace: paceRatio(cfg.pace),
-      performanceTags: []
+      performanceTags: [],
+      /* Adapter 只认 SpeechPlan，所以「要不要插自然停顿」这个决定也放在计划里
+         （Sleepy 内部扩展字段；契约 §4 那几个字段一个没改） */
+      naturalPause: cfg.naturalPause !== false
     };
     if (!cfg.enabled) { base.reason = 'disabled'; return base; }
     if (!clean) { base.reason = 'not_suitable'; return base; }
@@ -564,6 +592,23 @@
         if (m.re.test(clean)) { emotion = m.e; hitW = m.w; break; }
       }
     }
+    /* 角色专属表达方向（自由文本）：规则版只当**低权重先验** ——
+       在同一个白名单词典里找命中（「话少、爱叹气」→ sigh、「慢性子」→ 语速更慢），
+       只在正文没给出情绪时生效，强度按半句话算。
+       这段文字**绝不进合成文本**（契约 §5.2：导演不能输出服务商字符串）。 */
+    var dir = String(cfg.characterDirection || '');
+    var dirEmotion = '', dirTag = '', dirPace = 0;
+    if (dir) {
+      for (var d = 0; d < DIR_EMO.length; d++) {
+        if (DIR_EMO[d].re.test(dir) && allowedEmotion(cfg, DIR_EMO[d].e)) { dirEmotion = DIR_EMO[d].e; break; }
+      }
+      for (var d2 = 0; d2 < DIR_TAG.length; d2++) {
+        if (DIR_TAG[d2].re.test(dir) && allowedTag(cfg, DIR_TAG[d2].t)) { dirTag = DIR_TAG[d2].t; break; }
+      }
+      if (/(慢|缓|悠|不慌|不紧不慢|慢性子)/.test(dir)) dirPace = -0.04;
+      else if (/(快|急|利落|连珠|语速快)/.test(dir)) dirPace = 0.04;
+    }
+    if (emotion === 'neutral' && dirEmotion) { emotion = dirEmotion; hitW = 0.3; }
     if (emotion === 'neutral') hitW = 0.25;
 
     /* 强度 = 文本信号 × 用户的情绪幅度。标点只能**小幅**加成，不许把平静话变成吼叫 */
@@ -586,6 +631,8 @@
     /* 短句也不堆 */
     if (clean.length <= 12) tags = tags.slice(0, 1);
     if (clean.length > MAX_CHARS_SOFT) tags = [];
+    /* 正文一个字都没提示时，才用角色表达方向里的表演习惯补一个（低优先，不抢正文的） */
+    if (!tags.length && dirTag && clean.length <= MAX_CHARS_SOFT) tags.push(dirTag);
     base.performanceTags = tags;
 
     /* 语速：情绪激烈稍微快一点，克制时不动（只在 ±8% 内，别让人听出机械感） */
@@ -594,6 +641,7 @@
     } else if (emotion === 'tired' || emotion === 'sad') {
       base.pace = round2(clamp(paceRatio(cfg.pace) - 0.06, 0.7, 1.3));
     }
+    if (dirPace) base.pace = round2(clamp(base.pace + dirPace, 0.7, 1.3));
 
     base.shouldGenerate = true;
     base.seconds = sec;
@@ -696,6 +744,8 @@
     }
     var emo = MM_EMOTION[plan.emotion] || '';
     var body = tags.length ? (tags.join('') + text) : text;
+    /* 自然停顿走 `<#x#>`（这份材料 §5.1 点名的映射），必须由受控规则产生 */
+    body = speechBodyWithPauses('minimax', body, plan.naturalPause !== false);
     return { text: body, emotion: emo };
   }
 
@@ -810,6 +860,47 @@
     return body;
   }
 
+  /* ---------- 自然停顿（契约 §5.9：只作用于**临时合成文本**，绝不改原消息）----------
+     每家能力不同，所以是表驱动的：
+       · MiniMax 有秒级停顿标记 `<#0.35#>`
+       · Azure 有 SSML `<break time="350ms"/>`
+       · Fish / ElevenLabs / OpenAI 兼容那两家**没有可控的停顿字段**（ElevenLabs v3 明确不支持
+         SSML break，官方做法是靠标点自己断）→ 一个字都不插，别假装做了
+     受控规则：只在**句子末尾**插、句子够长才插、整段最多 3 处（官方也提醒插多了会不稳）。 */
+  var PAUSE_STYLE = {
+    minimax: { token: '<#0.35#>', max: 3, minLen: 6 },
+    azure: { token: '<break time="350ms"/>', max: 3, minLen: 6 }
+  };
+  /* 按句末标点切句（保留标点；连续的「！！」「？？」算同一处） */
+  function pauseSplit(text) {
+    var chars = String(text || '').split('');
+    var out = [], buf = '';
+    for (var i = 0; i < chars.length; i++) {
+      buf += chars[i];
+      if (/[。！？!?…]/.test(chars[i]) && !/[。！？!?…]/.test(chars[i + 1] || '')) { out.push(buf); buf = ''; }
+    }
+    if (buf) out.push(buf);
+    return out.length ? out : [String(text || '')];
+  }
+  /* 把停顿拼进正文。传了 escapeFn 就**逐句转义后再拼**（Azure 的 SSML：整段转义会把
+     <break/> 也转义掉）；不传就直接拼（MiniMax 走 JSON，不用转义）。 */
+  function speechBodyWithPauses(providerId, text, on, escapeFn) {
+    var st = PAUSE_STYLE[providerId];
+    var t = String(text || '');
+    if (!t) return '';
+    if (!st || on === false) return escapeFn ? escapeFn(t) : t;
+    var cnt = 0;
+    return pauseSplit(t).map(function (p) {
+      var body = escapeFn ? escapeFn(p) : p;
+      var plain = p.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
+      if (cnt < st.max && plain.length >= st.minLen && /[。！？!?…]\s*$/.test(p)) {
+        cnt++;
+        body += st.token;
+      }
+      return body;
+    }).join('');
+  }
+
   /* ---- Azure：只吃 SSML，音色写在正文里，没有 model 字段 ---- */
   function xmlEscape(s) {
     return String(s || '')
@@ -834,13 +925,71 @@
     }, allowed[0]);
     return 'audio-' + (r / 1000) + 'khz-' + b + 'kbitrate-mono-mp3';
   }
+  /* Azure 的情感风格是**按音色**给的（官方语言支持页逐个列了），所以只给文档里核对过的
+     四个中文音色建表 —— 表里没有的音色一律不发 `express-as`。
+     （官方说明：style 无效或缺失时**整个元素被忽略**、退回中性朗读，不会报错；
+     但不核对就乱发等于自己骗自己。）风格名逐字来自官方表，不做同义改写。 */
+  var AZURE_STYLES = {
+    /* affectionate, angry, assistant, calm, chat, chat-casual, cheerful, customerservice,
+       disgruntled, excited, fearful, friendly, gentle, lyrical, newscast, poetry-reading,
+       sad, serious, sorry, whispering */
+    'zh-CN-XiaoxiaoNeural': {
+      happy: 'cheerful', tender: 'gentle', concerned: 'calm', sad: 'sad', disappointed: 'sad',
+      surprised: 'excited', angry: 'angry', annoyed: 'disgruntled', cold: 'serious', whisper: 'whispering'
+    },
+    /* angry, assistant, chat, cheerful, depressed, disgruntled, embarrassed, fearful,
+       narration-relaxed, newscast, sad, serious */
+    'zh-CN-YunxiNeural': {
+      happy: 'cheerful', sad: 'sad', disappointed: 'depressed', angry: 'angry',
+      annoyed: 'disgruntled', cold: 'serious', tired: 'depressed'
+    },
+    /* angry, cheerful, depressed, disgruntled, documentary-narration, narration-relaxed,
+       sad, serious, sports-commentary, sports-commentary-excited */
+    'zh-CN-YunjianNeural': {
+      happy: 'cheerful', sad: 'sad', disappointed: 'depressed', angry: 'angry',
+      annoyed: 'disgruntled', cold: 'serious', tired: 'depressed'
+    },
+    /* affectionate, angry, cheerful, disgruntled, embarrassed, fearful, gentle, sad, serious */
+    'zh-CN-XiaoyiNeural': {
+      happy: 'cheerful', tender: 'gentle', sad: 'sad', angry: 'angry',
+      annoyed: 'disgruntled', cold: 'serious'
+    }
+  };
+  /* 情绪 → 风格（**只有这个音色真支持**才给）；`whisper` 是角色明确要求的表演，
+     优先于情绪。styledegree 用情绪幅度换算（官方范围 0.01–2，默认 1）。 */
+  function azureStyleOf(voiceId, plan) {
+    var map = AZURE_STYLES[String(voiceId || '').trim()];
+    if (!map || !plan) return null;
+    var style = '';
+    var tags = plan.performanceTags || [];
+    if (tags.indexOf('whisper') >= 0 && map.whisper) style = map.whisper;
+    if (!style) style = map[plan.emotion] || '';
+    if (!style) return null;
+    return {
+      style: style,
+      degree: round2(clamp(0.7 + clamp01(plan.intensity) * 0.9, 0.01, 2))
+    };
+  }
+
   /* xml:lang 按文本猜（中文/英文两种够用了）—— Azure 认这个字段来选发音规则 */
   function azureLangOf(text) {
     return /[\u4e00-\u9fa5]/.test(String(text || '')) ? 'zh-CN' : 'en-US';
   }
-  function buildAzureSsml(text, voiceId) {
-    return "<speak version='1.0' xml:lang='" + azureLangOf(text) + "'>" +
-      "<voice name='" + xmlEscape(voiceId) + "'>" + xmlEscape(text) + "</voice></speak>";
+  function buildAzureSsml(text, voiceId, plan) {
+    /* 顺序是「风格在外、语速在内」（官方示例就是这个嵌套） */
+    var inner = speechBodyWithPauses('azure', text, plan ? plan.naturalPause : true, xmlEscape);
+    if (plan && plan.pace && Math.abs(plan.pace - 1) > 0.001) {
+      /* 官方：rate 可以写 0.5–2 的倍数，也可以写「+20%」；用倍数没有歧义 */
+      inner = '<prosody rate="' + round2(clamp(plan.pace, 0.5, 2)) + '">' + inner + '</prosody>';
+    }
+    var st = azureStyleOf(voiceId, plan);
+    if (st) {
+      inner = '<mstts:express-as style="' + st.style + '" styledegree="' + st.degree + '">' +
+        inner + '</mstts:express-as>';
+    }
+    return "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' " +
+      "xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='" + azureLangOf(text) + "'>" +
+      "<voice name='" + xmlEscape(voiceId) + "'>" + inner + '</voice></speak>';
   }
 
   /* 服务商映射的对外入口（给 UI 的「高级诊断」看脱敏结果用） */
@@ -848,7 +997,12 @@
     if (providerId === 'minimax') return buildMiniMaxText(originalText, plan, caps).text;
     if (providerId === 'elevenlabs') return buildElevenText(originalText, plan, caps);
     if (providerId === 'fish_audio') return buildFishSynthesisText(originalText, plan);
-    /* 其余（硅基流动 / Azure / 自定义）没有标签与情绪字段 —— 原文怎么说就怎么念 */
+    if (providerId === 'azure') {
+      /* Azure 的情绪在 SSML 的 style 里、语速在 prosody 里、停顿在 break 里 ——
+         诊断要看到的是「正文 + 停顿标记」，别把整段 SSML 抖出来 */
+      return speechBodyWithPauses('azure', originalText, plan ? plan.naturalPause : true);
+    }
+    /* 其余（硅基流动 / 自定义）没有标签、情绪与停顿字段 —— 原文怎么说就怎么念 */
     return String(originalText || '');
   }
 
@@ -1004,7 +1158,7 @@
           'Ocp-Apim-Subscription-Key': conn.apiKey || ''
         },
         /* 这一家的 body **不是 JSON**，是 XML 字符串 —— transport 认 rawBody */
-        rawBody: buildAzureSsml(textA, input.voiceId),
+        rawBody: buildAzureSsml(textA, input.voiceId, plan),
         synthesisText: textA,
         expect: 'audio'
       };
@@ -1240,7 +1394,7 @@
         if (!parsed.ok) { resolve({ ok: false, plan: plan, req: req, error: parsed.error }); return; }
         resolve({
           ok: true, blob: parsed.blob, plan: plan, req: req,
-          provider: r.provider, model: r.model,
+          provider: r.provider, model: r.model, voiceId: r.voiceId,
           synthesisText: req.synthesisText,
           seconds: plan.seconds || estimateSeconds(opt.text, cfg.pace),
           requestId: parsed.requestId || null
@@ -1381,6 +1535,9 @@
     azureFormatOf: azureFormatOf,
     elevenVoiceSettingsOf: buildElevenVoiceSettings,
     elevenUrlOf: elUrl,
+    azureStyleOf: azureStyleOf,
+    speechBodyWithPauses: speechBodyWithPauses,
+    pauseSplit: pauseSplit,
     synthesisTextOf: synthesisTextOf,
 
     /* 发送 */
