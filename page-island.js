@@ -190,6 +190,11 @@
 
       [core.KIND_ISLE, core.KIND_ARCHI].forEach(function (kind, pi) {
         var page = h('section', 'isl-page');
+        /* 页面也打上房型标识：两张底图的**岩尖不在同一高度**
+           （实测屏幕 y：孤岛 505 / 群岛 483），一个固定的 top 必然有一个贴不住
+           —— 用户就是说「群岛看会更明显」。文案块的 top 按房型各写一份
+           （见 style.css 里的 .isl-word）。 */
+        page.setAttribute('data-kind', kind);
 
         /* 底图：一整幅生成插画铺满，岛和云海都在图里 ——
            不再用 CSS 画岛（那版是扁平淡绿的椭圆 + 棒棒糖树，
