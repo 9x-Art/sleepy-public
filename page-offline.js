@@ -1133,7 +1133,7 @@
         var mv = Sleepy.memoryVec;
         var q = userInput != null ? String(userInput) : lastUserTextOf(session);
         if (mv && mv.prefetch && session.charId && q) {
-          mv.prefetch(session.charId, q).then(function () { go(userInput); });
+          mv.prefetch(session.charId, session.userId, q).then(function () { go(userInput); });
           return;
         }
         go(userInput);

@@ -211,7 +211,7 @@
     var mv = Sleepy.memoryVec;
     var rq = recallQueryOf(g.chat);
     if (mv && mv.prefetch && rq) {
-      mv.prefetch(charId, rq)['catch'](function () { /* 静默 */ });
+      mv.prefetch(charId, (g.chat && g.chat.userId) || null, rq)['catch'](function () { /* 静默 */ });
     }
 
     var st = settings();

@@ -5653,6 +5653,34 @@ t('L4 槽位：线上和线下两张矩阵都挂了 recall（K03c）', () => {
   return { 线上: true, 线下: true, 位置: 'life → recall → worldbook' };
 });
 
+t('L4 召回隔离：认知屏障为真时只认「同皮套 + 同马甲」（照抄 core）', () => {
+  const V = S.memoryVec._pure.visibleTo;
+  const C = S.core;
+  const charA = 'chA', charB = 'chB', u1 = 'um1', u2 = 'um2';
+  const bAA = { charId: charA, userId: u1 };
+
+  /* ① 判据本身 */
+  if (!V(bAA, charA, u1, true)) throw new Error('同皮套 + 同马甲该可见');
+  if (V(bAA, charA, u2, true)) throw new Error('换了马甲还能看见 —— 那就是「它怎么知道我在小号说过的话」');
+  if (V(bAA, charB, u1, true)) throw new Error('换了皮套还能看见');
+  if (!V(bAA, charA, u2, false)) throw new Error('没屏障时应该互通（他知道我们是同一个人）');
+  if (!V(bAA, charB, u1, false)) throw new Error('没屏障时皮套之间也该互通');
+  if (V(null, charA, u1, false)) throw new Error('空块不该可见');
+
+  /* ② 屏障这一层得真的来自 core —— 两边各写一套判据迟早会漂 */
+  const sb = C.createSandbox('archipelago', '隔离测试岛');
+  C.setActiveSandbox(sb.id);
+  const a = C.upsertChar({ name: '隔离角色', kind: 'main' });
+  const mu = C.upsertUser({ name: '隔离甲' });
+  C.setSandboxChars(sb.id, [a.id]);
+  C.setSandboxMasks(sb.id, [mu.id]);
+  C.addLink(a.id, mu.id, 'aware', true, sb.id);        /* 开屏障 */
+  if (!C.cognitionOf(a.id, mu.id).barrier) throw new Error('core 那边屏障没开成，断言的前提不成立');
+  C.addLink(a.id, mu.id, 'aware', false, sb.id);       /* 关屏障 */
+  if (C.cognitionOf(a.id, mu.id).barrier) throw new Error('core 那边屏障没关成');
+  return { 有屏障: '只给同一身份', 无屏障: '整个大脑互通', 判据来自core: true };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

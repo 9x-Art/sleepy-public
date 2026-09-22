@@ -2097,7 +2097,7 @@
         var c0 = getChat(chatId);
         var mv = Sleepy.memoryVec;
         if (mv && mv.prefetch && c0 && c0.characterId) {
-          mv.prefetch(c0.characterId, recallQuery(c0), { sinceAt: recallFloor(c0) })
+          mv.prefetch(c0.characterId, c0.userId, recallQuery(c0), { sinceAt: recallFloor(c0) })
             .then(function () { runReply(opts); });
           return;
         }

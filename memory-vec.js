@@ -30,7 +30,11 @@
   var store = Sleepy.store;
 
   var DB_NAME = 'sleepy-vec';
-  var DB_VER = 1;
+  /* V1 → V2（2026-09-22）：块多了 rootId / userId —— 召回必须照 core 的规矩
+     按「同一个大脑 + 同一个身份」隔离（见 blocksOf）。
+     老块没这两个字段，留着就会串记忆；而**索引本来就可以重建**，
+     所以升级时直接丢掉重来，游标键也跟着换前缀（见 cursorKey）。 */
+  var DB_VER = 2;
   var STORE = 'vec';
 
   /* 切块（方案 §3 / v5 §8.2 照抄）：线上 4～6 轮。一轮 = 你我各一条，
@@ -78,11 +82,11 @@
       catch (e) { reject(e); return; }
       req.onupgradeneeded = function () {
         var db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) {
-          var os = db.createObjectStore(STORE, { keyPath: 'id' });
-          os.createIndex('charId', 'charId');
-          os.createIndex('at', 'at');
-        }
+        /* 升级即重建（理由见 DB_VER 那段）：索引可重建，串记忆不可接受 */
+        if (db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE);
+        var os = db.createObjectStore(STORE, { keyPath: 'id' });
+        os.createIndex('rootId', 'rootId');
+        os.createIndex('at', 'at');
       };
       req.onsuccess = function () { resolve(req.result); };
       req.onerror = function () { reject(req.error || new Error('打不开向量库')); };
@@ -116,21 +120,58 @@
     return 'vb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
-  /* 某个角色、当前岛的全部块（召回时一次读进来，几百条量级用游标很快） */
-  function blocksOf(charId) {
+  function rootOf(charId) {
+    return (Sleepy.core && Sleepy.core.rootIdOf)
+      ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
+  }
+
+  function scopeNow() {
+    return (Sleepy.core && Sleepy.core.scopeId) ? Sleepy.core.scopeId() : null;
+  }
+
+  /* 扫「同一个大脑」的全部块。filter 决定要不要再按别的条件剔。 */
+  function scanRoot(charId, filter) {
     var out = [];
     return withStore('readonly', function (os) {
-      var idx = os.index('charId');
-      var req = idx.openCursor(IDBKeyRange.only(charId));
+      var req = os.index('rootId').openCursor(IDBKeyRange.only(rootOf(charId)));
       req.onsuccess = function () {
         var cur = req.result;
         if (!cur) return;
-        var sid = Sleepy.core && Sleepy.core.scopeId ? Sleepy.core.scopeId() : null;
-        if (!sid || cur.value.sandboxId === sid) out.push(cur.value);
+        var b = cur.value;
+        var sid = scopeNow();
+        if ((!sid || b.sandboxId === sid) && (!filter || filter(b))) out.push(b);
         cur.continue();
       };
     }).then(function () { return out; });
   }
+
+  /* 召回用的块。**隔离规则照抄 core.memoryViewFor**，别自己发明：
+       · 有认知屏障（`cognitionOf(...).barrier`）→ 只认「同皮套 + 同马甲」的块。
+         那时候角色不知道两个号是同一个人 —— 串了就是
+         「它怎么知道我在小号说过的话」。
+       · 没屏障 → 整个大脑（大号 + 皮套）都算，这正是「他知道我们是同一个人」。
+     岛（sandboxId）两层都要过 —— 孤岛/群岛之间绝不串。 */
+  /* 这一块该不该给这个身份看见（纯函数，冒烟直接打表）。
+     判据和 core.memoryViewFor 一字不差 —— 那边怎么隔离，这边就怎么隔离。 */
+  function visibleTo(b, charId, userId, barrier) {
+    if (!b) return false;
+    if (!barrier) return true;
+    return b.charId === charId && b.userId === userId;
+  }
+
+  function blocksOf(charId, userId) {
+    var barrier = false;
+    if (Sleepy.core && Sleepy.core.cognitionOf) {
+      barrier = !!Sleepy.core.cognitionOf(charId, userId).barrier;
+    }
+    return scanRoot(charId, function (b) {
+      return visibleTo(b, charId, userId, barrier);
+    });
+  }
+
+  /* 维护用的块（条数 / 上限裁剪 / 清空）—— 这些**不该**受身份隔离影响，
+     否则「大号聊的块」永远不会被裁，能无限涨。 */
+  function allOfRoot(charId) { return scanRoot(charId, null); }
 
   function putBlock(rec) {
     return withStore('readwrite', function (os) { os.put(rec); }).then(function () {
@@ -146,7 +187,7 @@
   }
 
   function countOf(charId) {
-    return blocksOf(charId).then(function (l) { return l.length; });
+    return allOfRoot(charId).then(function (l) { return l.length; });
   }
 
   /* 全库条数（设置页显示「有没有在干活」用 —— 那边没有角色上下文） */
@@ -164,7 +205,7 @@
   }
 
   function clearAll(charId) {
-    return blocksOf(charId).then(function (l) {
+    return allOfRoot(charId).then(function (l) {
       return removeBlocks(l.map(function (b) { return b.id; }));
     });
   }
@@ -255,7 +296,9 @@
   /* 一次 sweep 最多写这么多个块（多了会一次发好几个 embedding 请求） */
   var SWEEP_MAX = 2;
 
-  function cursorKey(chatId) { return 'vecCursor:' + chatId; }
+  /* 前缀带 2：V1 → V2 那次升级把老块全丢了（见 DB_VER），
+     老游标必须跟着作废，否则它以为自己写过了、新块永远不写。 */
+  function cursorKey(chatId) { return 'vecCursor2:' + chatId; }
 
   /* 把这个对话里「还没进向量库的」消息块补上。异步、失败不影响聊天。
      幂等靠 `vecCursor:<chatId>` 记「已经切到第几条」—— 不靠内容比对。 */
@@ -287,6 +330,11 @@
         made.forEach(function (b, i) {
           recs.push({
             id: newId(),
+            /* rootId / userId 是**召回隔离的判据**（见 blocksOf）：
+               rootId = 哪个大脑，charId = 哪张皮在说，userId = 当时面对谁。
+               照 core 记忆那套「四元组可溯源」的规矩，别省。 */
+            rootId: rootOf(charId),
+            userId: userId || null,
             charId: charId,
             sandboxId: sid,
             chatId: chat.id,
@@ -314,7 +362,7 @@
   /* 上限：超了就丢最老的块。原文还在存档里，丢的只是索引。 */
   function trim(charId) {
     var max = maxBlocks();
-    return blocksOf(charId).then(function (list) {
+    return allOfRoot(charId).then(function (list) {
       if (list.length <= max) return 0;
       var sorted = list.slice().sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
       var drop = sorted.slice(0, list.length - max).map(function (b) { return b.id; });
@@ -356,13 +404,13 @@
     return parts.join('\n').slice(-1200);
   }
 
-  function prefetch(charId, query, opts) {
+  function prefetch(charId, userId, query, opts) {
     opts = opts || {};
     if (!enabled() || !charId) { lastRecall[charId] = { items: [], at: Date.now() }; return Promise.resolve([]); }
     var q = String(query || '').trim();
     if (!q) { lastRecall[charId] = { items: [], at: Date.now() }; return Promise.resolve([]); }
 
-    var work = blocksOf(charId).then(function (blocks) {
+    var work = blocksOf(charId, userId || null).then(function (blocks) {
       if (!blocks.length) return [];
       return embedTexts([q]).then(function (res) {
         if (!res.ok) return [];
@@ -414,7 +462,7 @@
     lastOf: lastOf,
     text: text,
     stats: function (charId) {
-      return blocksOf(charId).then(function (l) {
+      return allOfRoot(charId).then(function (l) {
         return { blocks: l.length, max: maxBlocks() };
       });
     },
@@ -429,6 +477,7 @@
       rank: rank,
       dropOverlapping: dropOverlapping,
       buildQuery: buildQuery,
+      visibleTo: visibleTo,
       msgLine: msgLine
     },
     MIN_MSGS: MIN_MSGS, MAX_MSGS: MAX_MSGS,
