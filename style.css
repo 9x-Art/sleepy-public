@@ -5328,11 +5328,19 @@ span.msg-avatar-initial{
 .page[data-page="island"] .app-body{position:relative;min-height:0;}
 
 /* ---- 底图：一整幅生成插画铺满 ----
-   两张图（孤岛 art/isle.webp / 群岛 art/archipelago.webp）都是 1264x1856。
-   纵横比 0.68 比手机（≈0.46）宽，所以 cover **只裁左右、不裁上下** ——
+   两张图（孤岛 art/isle.webp / 群岛 art/archipelago.webp）都是 1264x2156。
+   纵横比 0.59 比手机（≈0.46）宽，所以 cover **只裁左右、不裁上下** ——
    上方留给状态栏的那片天空、下方那片云海，都完整保住。
-   构图铁律（岛像素宽 ≤ 手机纵横比 × 图高，且云海铺到最底边）与生图提示词见
-   D:/tmp/isl-redesign/浮岛-生图提示词.txt。 */
+   构图铁律（主体像素宽 ≤ 手机纵横比 × 图高，且背景铺到最底边）见
+   D:/tmp/isl-redesign/浮岛-生图提示词.txt。
+
+   09-22 二次调整：**底部又接了 300px 云**（`D:/tmp/isl-redesign/extend-footer.py`）。
+   目的是「把岛在画面里往上挪」—— cover 下想让内容上移，一般只能裁掉上面的天空，
+   而裁得越多 cover 就把岛放得越大。给底部接云则是**纯位移**：图变高 → 缩放变小
+   （岛略小）、可视横向变宽、岛在画面里上移，三个都是想要的。
+   接缝处的坑：取样带若从**顶行**起铺，接缝会亮 28 级（实测 170→199）且
+   对比度只剩一半 → 必须**镜像起头**（第一行 = 原图最后一行）+
+   **逐行把均值/对比度重映射成原图趋势的延续**，接缝才降到 +1 级。 */
 .isl-art{
   position:absolute;inset:0;z-index:0;pointer-events:none;
   background-repeat:no-repeat;background-position:center center;
@@ -5400,8 +5408,10 @@ span.msg-avatar-initial{
 
 /* ---- 文案：压在下方云雾带里 ----
    用户 09-21：「文案整体可以靠近岛屿一点，就是可以在云雾那里」。
-   top 72.7% 是按真机 390x844 的效果定的 —— 岛的岩尖落在约 70%，
-   再往上会碰到岩尖，再往下就离底太近、跟按钮挤在一起。
+   09-22 二次调整：底图改成「底部接了 300px 云」之后岛在画面里上移了
+   （岛尖从屏幕 568px 上到 489px），文案跟着从 72.7% 提到 **64%**，
+   贴住岛的岩尖；行距也收紧了（16/8/20 → 12/6/16），
+   这样底部的留白才够（用户：「上面留白多下面很少」）。
 
    ⚠️ **这一页的字色写死暖色、不跟主题** —— 底图永远是那张暖白的晨光插画：
    · 夜灯下 --g-ink 会翻成浅字，压在同一片浅云上就是白字白底，看不见；
@@ -5409,7 +5419,7 @@ span.msg-avatar-initial{
      （用户明确「不要蓝也不要绿」）。
    所以这页是**插画页**，颜色由画定，跟朋友圈封面同类。 */
 .isl-word{
-  position:absolute;left:30px;right:30px;top:72.7%;z-index:2;
+  position:absolute;left:30px;right:30px;top:64%;z-index:2;
   text-align:center;
   pointer-events:none;   /* 纯字，别挡住「按住拖动换岛」 */
 }
@@ -5419,11 +5429,11 @@ span.msg-avatar-initial{
 }
 /* 岛上那句诗 —— 这一层的灵魂，别再写说明书 */
 .isl-poem{
-  margin:16px 0 0;font-family:var(--ff-serif);font-size:13px;
+  margin:12px 0 0;font-family:var(--ff-serif);font-size:13px;
   letter-spacing:.16em;text-indent:.16em;color:#7A6B58;
 }
-.isl-poem-from{margin:8px 0 0;font-size:9.5px;letter-spacing:.14em;color:rgba(122,107,88,.70);}
-.isl-isle-count{margin:20px 0 0;font-size:10.5px;letter-spacing:.06em;color:rgba(122,107,88,.86);}
+.isl-poem-from{margin:6px 0 0;font-size:9.5px;letter-spacing:.14em;color:rgba(122,107,88,.70);}
+.isl-isle-count{margin:16px 0 0;font-size:10.5px;letter-spacing:.06em;color:rgba(122,107,88,.86);}
 
 /* ---- 「进 岛」按钮 ----
    用户 09-21 拍板：留一个明确的按钮，整页不再当点击区。 */
