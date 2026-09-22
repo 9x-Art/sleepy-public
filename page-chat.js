@@ -2087,10 +2087,58 @@
         return out;
       }
 
+      /* L4 召回先跑一步：装配（buildMessages）是同步的，所以召回结果只能先
+         落进 memoryVec 的缓存里再装配。prefetch 自带超时 ——
+         宁可这轮不召回，也不能把聊天卡住。 */
       function requestReply(opts) {
         opts = opts || {};
         if (pending) { ctx.toast('还在等回复', 'warn'); return; }
 
+        var c0 = getChat(chatId);
+        var mv = Sleepy.memoryVec;
+        if (mv && mv.prefetch && c0 && c0.characterId) {
+          mv.prefetch(c0.characterId, recallQuery(c0), { sinceAt: recallFloor(c0) })
+            .then(function () { runReply(opts); });
+          return;
+        }
+        runReply(opts);
+      }
+
+      /* 最近两条（可能含刚发的这条）+ 当前输入 —— v5 §9.1 的查询构造，
+         本地规则抽，不调模型。 */
+      function recallQuery(c) {
+        var lines = [];
+        (c.messages || []).slice(-2).forEach(function (m) {
+          if (m.role !== 'user' && m.role !== 'assistant') return;
+          var t = String(m.content || '').trim();
+          if (t) lines.push(t.slice(0, 300));
+        });
+        return Sleepy.memoryVec._pure.buildQuery(lines, '');
+      }
+
+      /* 近期原文窗口第一条的时间：比它更早的块才值得召回 ——
+         窗口里的原文本来就在 prompt 里，再召回一遍会让模型当成两件事。 */
+      function recallFloor(c) {
+        var limit = Sleepy.api.contextLimit(c);
+        var list = (c.messages || []).filter(function (m) { return m.content; });
+        var start = list.slice(-limit)[0];
+        return start ? (start.timestamp || 0) : 0;
+      }
+
+      /* L4 写入：把还没进向量库的消息块补上。**后台跑、不 await** ——
+         它要调 embedding，绝不能挡着聊天；失败就留到下次再说
+         （游标没推进，下一轮自然重试同一批）。 */
+      function kickSweep() {
+        var mv = Sleepy.memoryVec;
+        if (!mv || !mv.sweep) return;
+        setTimeout(function () {
+          var c = getChat(chatId);
+          if (!c || !c.characterId) return;
+          mv.sweep(c.characterId, c.userId, c)['catch'](function () { /* 静默 */ });
+        }, 0);
+      }
+
+      function runReply(opts) {
         var msgs = buildMessages(opts);
         if (!msgs.length) { ctx.toast('还没有可以接的话', 'warn'); return; }
 
@@ -2237,6 +2285,8 @@
             if (split.whisper && split.whisper.trim()) {
               Sleepy.heartbeat.commit(chatId, split.whisper);
             }
+            /* 这一轮聊完了 → 后台把它索引进向量库（L4，不挡聊天） */
+            kickSweep();
           },
           /* 注意：runChat 暴露的是 onFail（全部候选都失败 / 一个候选都没有），
              不是 onError。写成 onError 的话没有任何回调会被触发，

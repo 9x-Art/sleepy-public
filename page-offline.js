@@ -1103,6 +1103,16 @@
         requestTurn(text);
       }
 
+      /* 召回查询：这一轮之前 user 最后说的一句。
+         开场（没说过话）时返回空 —— 那一轮不召回，本来也没什么「相关的过去」。 */
+      function lastUserTextOf(s) {
+        var msgs = (s && s.messages) || [];
+        for (var i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'user' && msgs[i].text) return String(msgs[i].text);
+        }
+        return '';
+      }
+
       /* 一轮对话请求。userInput=null 表示「开场」—— 角色先开口，
          不需要 user 先说话（setting：叙事设置里的开场方式）。 */
       function requestTurn(userInput) {
@@ -1118,55 +1128,69 @@
         fillMessages(body.querySelector('.off-chat-scroll'));
         setBusy(true);
 
-        var built = E.assembleOffline({
-          charId: session.charId, userId: null, session: session, userInput: userInput
-        });
-        if (userInput == null) {
-          built.messages.push({ role: 'user', content: '（开场。请按输出协议开始这个场景。）' });
+        /* L4 召回（和线上同一套）：先把「和这句话相关的旧片段」捞出来。
+           prefetch 自带超时 —— 宁可这轮不召回，也不能把场景卡住。 */
+        var mv = Sleepy.memoryVec;
+        var q = userInput != null ? String(userInput) : lastUserTextOf(session);
+        if (mv && mv.prefetch && session.charId && q) {
+          mv.prefetch(session.charId, q).then(function () { go(userInput); });
+          return;
         }
+        go(userInput);
+      }
 
-        pending = true;
-        var cand = candForSession(session);
-        callModel(cand, built.messages).then(function (r) {
-          pending = null;
-          setBusy(false);
-          if (!r.ok) {
-            ctx.toast('✗ ' + r.error, 'err');
-            return;
+      /* 线下这一轮的正文。拆出来是因为装配是同步的 ——
+         召回只能先落进 memoryVec 的缓存，再回来装配。 */
+      function go(userInput) {
+          var built = E.assembleOffline({
+            charId: session.charId, userId: null, session: session, userInput: userInput
+          });
+          if (userInput == null) {
+            built.messages.push({ role: 'user', content: '（开场。请按输出协议开始这个场景。）' });
           }
-          var parsed = E.parseOfflineReply(r.text);
-          /* 第一次生成顺带定场景：解析出 scene 就回填会话并刷新顶栏/环境条。
-             模型没带 scene（不听话）就回落默认，不打断这轮。 */
-          if (parsed.scene && session.pendingSetup) {
-            var setup = parseSetup(JSON.stringify(parsed.scene)) || fallbackSetup();
-            mutateSession(id, function (s) {
-              s.sceneName = setup.sceneName;
-              s.env.timeOfDay = setup.timeOfDay;
-              s.env.weather = setup.weather;
-              s.env.location = setup.location;
-              s.env.clockTime = setup.clockTime;
-              s.pendingSetup = false;
-            });
+
+          pending = true;
+          var cand = candForSession(session);
+          callModel(cand, built.messages).then(function (r) {
+            pending = null;
+            setBusy(false);
+            if (!r.ok) {
+              ctx.toast('✗ ' + r.error, 'err');
+              return;
+            }
+            var parsed = E.parseOfflineReply(r.text);
+            /* 第一次生成顺带定场景：解析出 scene 就回填会话并刷新顶栏/环境条。
+               模型没带 scene（不听话）就回落默认，不打断这轮。 */
+            if (parsed.scene && session.pendingSetup) {
+              var setup = parseSetup(JSON.stringify(parsed.scene)) || fallbackSetup();
+              mutateSession(id, function (s) {
+                s.sceneName = setup.sceneName;
+                s.env.timeOfDay = setup.timeOfDay;
+                s.env.weather = setup.weather;
+                s.env.location = setup.location;
+                s.env.clockTime = setup.clockTime;
+                s.pendingSetup = false;
+              });
+              session = findSession(id);
+              refreshHeader();
+              refreshEnvStrip();
+            }
+            if (parsed.paras.length) {
+              /* 开场若有对话段，用带名字的 char 块；纯描写就用场景块 */
+              var hasDialog = parsed.paras.some(function (p) { return p.type === 'dialogue'; });
+              appendMessage(id, {
+                role: (userInput == null && !hasDialog) ? 'scene' : 'char',
+                paras: parsed.paras,
+                suggests: parsed.suggests
+              });
+            }
+            if (parsed.envUpdate && parsed.envUpdate.clockTime) {
+              updateEnv(id, { clockTime: parsed.envUpdate.clockTime });
+            }
             session = findSession(id);
-            refreshHeader();
+            fillMessages(body.querySelector('.off-chat-scroll'));
             refreshEnvStrip();
-          }
-          if (parsed.paras.length) {
-            /* 开场若有对话段，用带名字的 char 块；纯描写就用场景块 */
-            var hasDialog = parsed.paras.some(function (p) { return p.type === 'dialogue'; });
-            appendMessage(id, {
-              role: (userInput == null && !hasDialog) ? 'scene' : 'char',
-              paras: parsed.paras,
-              suggests: parsed.suggests
-            });
-          }
-          if (parsed.envUpdate && parsed.envUpdate.clockTime) {
-            updateEnv(id, { clockTime: parsed.envUpdate.clockTime });
-          }
-          session = findSession(id);
-          fillMessages(body.querySelector('.off-chat-scroll'));
-          refreshEnvStrip();
-        });
+          });
       }
 
       function refreshEnvStrip() {

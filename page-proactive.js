@@ -165,6 +165,17 @@
        · 没有 K01 的短字段 → 状态签名 / 说话方式 / 红线全看不见；
        · 没有 I01 → 不知道此刻以哪张脸面对谁（掉马设定下容易串身份）。
      多花约 1.2k tokens，换它别说成客服。 */
+  /* L4 召回的查询串：最近两条消息（主动消息没有「当前输入」）。 */
+  function recallQueryOf(chat) {
+    var lines = [];
+    ((chat && chat.messages) || []).slice(-2).forEach(function (m) {
+      var t = String((m && m.content) || '').trim();
+      if (t) lines.push(t.slice(0, 300));
+    });
+    var mv = Sleepy.memoryVec;
+    return mv && mv._pure ? mv._pure.buildQuery(lines, '') : lines.join(String.fromCharCode(10));
+  }
+
   function buildSystem(charId, userId) {
     var PE = Sleepy.promptEngine;
     var ch = core.findChar(charId);
@@ -178,6 +189,10 @@
        少了这一层，TA 只能干等 [TRIGGER_CANDIDATES]，永远提不起你昨天发的那条。 */
     var life = PE.compileLife ? PE.compileLife(charId, userId || null) : '';
     if (life) sys.push(life);
+    /* L4 召回（读的是 memoryVec 的缓存 —— 本函数是同步的，预取在上面的
+       evaluate 里排掉了，用的是**上一次**的结果）。 */
+    var recall = PE.compileRecall ? PE.compileRecall(charId) : '';
+    if (recall) sys.push(recall);
     return sys;
   }
 
@@ -189,6 +204,15 @@
     if (!cand) return Promise.resolve({ ok: false, why: 'noapi' });
     if (evaluating[charId]) return Promise.resolve({ ok: false, why: 'busy' });
     evaluating[charId] = true;
+    /* L4 召回（2026-09-22）：这条路**没有「当前输入」**，所以用上一次预取的
+       结果（滞后一轮），同时把下一次的排上。主动消息本来就不要求跟当前话题
+       精确对齐 —— 「突然想起你以前说过的一件事」正是它最自然的用法。
+       不 await：它不该拖慢 TA 开口。 */
+    var mv = Sleepy.memoryVec;
+    var rq = recallQueryOf(g.chat);
+    if (mv && mv.prefetch && rq) {
+      mv.prefetch(charId, rq)['catch'](function () { /* 静默 */ });
+    }
 
     var st = settings();
     var ps = stateOf(charId);

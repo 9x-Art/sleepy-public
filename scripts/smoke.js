@@ -5532,6 +5532,127 @@ t('L1.5 近期生活动态：只收 TA 看得见的，朋友权限挡住的不�
   return { 看得见的: 2, 私密被挡: true, 权限方向对: true, 进了装配: true };
 });
 
+t('L1.5 扩源：日历经 visibility 分档，日记经授权分档', () => {
+  const C = S.core, cal = S.calendar;
+  const sb = C.createSandbox('archipelago', '视野源测试岛');
+  C.setActiveSandbox(sb.id);
+  const a = C.upsertChar({ name: '视野角色', kind: 'main' }).id;
+  const u = C.upsertUser({ name: '视野马甲' });
+  C.setSandboxChars(sb.id, [a]);
+  C.setSandboxMasks(sb.id, [u.id]);
+  S.store.set('moments', []);
+  S.store.set('diaries', []);
+
+  const tmr = cal.shiftISO(cal.todayISO(), 1);
+  const mk = (o) => cal.addEvent(Object.assign({
+    ownerCharId: a, startAt: tmr + 'T15:00', createdBy: { type: 'user', id: 'user' }
+  }, o));
+  mk({ title: '牙医复诊', visibility: 'shared_detail' });
+  mk({ title: '给他买礼物', visibility: 'private' });          /* 我的私事 */
+  mk({ title: '公司会议', visibility: 'shared_busy' });         /* 只知道忙 */
+  mk({ title: '每天开门', eventType: 'char_schedule', visibility: 'shared_detail' });
+  cal.addEvent({ ownerCharId: a, startAt: tmr + 'T20:00', title: '去河边散步',
+    visibility: 'shared_detail', createdBy: { type: 'char', id: a } });
+
+  S.store.set('diaries', [
+    C.tagScope({ id: 'd1', content: '今天有点累，但还行', timestamp: Date.now(), author: 'user' }),
+    C.tagScope({ id: 'd2', content: '书店来了个有趣的客人', timestamp: Date.now(), author: 'char', charId: a })
+  ]);
+
+  const txt = S.lifeFeed.text(a, u.id);
+  if (txt.indexOf('牙医复诊') < 0) throw new Error('shared_detail 没进');
+  if (txt.indexOf('买礼物') >= 0) throw new Error('private 的漏出去了（日历页是上帝视角，L1.5 不是）');
+  if (txt.indexOf('公司会议') >= 0) throw new Error('shared_busy 不该给标题 —— 那一档的语义是「只知道那会儿有事」');
+  if (txt.indexOf('被占住') < 0) throw new Error('shared_busy 没给「只知道忙」的表述');
+  if (txt.indexOf('每天开门') >= 0) throw new Error('作息表不该进（那是日常背景，不是临近事项）');
+  if (txt.indexOf('河边散步') < 0) throw new Error('TA 自己安排的没进');
+  if (txt.indexOf('书店来了个有趣的客人') < 0) throw new Error('TA 自己写的日记没进');
+  if (txt.indexOf('今天有点累') >= 0) throw new Error('我的日记默认关，不该进');
+
+  S.lifeFeed.setDiaryShared(a, true);
+  const t2 = S.lifeFeed.text(a, u.id);
+  if (t2.indexOf('今天有点累') < 0) throw new Error('授权之后我的日记还是没进');
+  S.lifeFeed.setDiaryShared(a, false);
+  return { 日历按档: true, 日记先授权才进: true, 作息不收: true };
+});
+
+t('L4 向量记忆：切块 / 余弦 / 重排 / 窗口去重（纯函数打表）', () => {
+  const P = S.memoryVec._pure;
+  const mk = (role, content, ts) => ({ id: 'm' + ts, role, content, timestamp: ts });
+
+  /* ① 切块：8 条起一块，不够就等更多消息 */
+  const short = [mk('user', '在吗', 1), mk('assistant', '在', 2)];
+  if (P.nextBlock(short, 0, '林渡') !== null) throw new Error('两条就切了一块 —— 应该等更多消息');
+  const many = [];
+  for (let i = 0; i < 20; i++) many.push(mk(i % 2 ? 'user' : 'assistant', '第' + i + '句' + '啊'.repeat(80), 100 + i));
+  const b1 = P.nextBlock(many, 0, '林渡');
+  if (!b1) throw new Error('够 20 条了还切不出块');
+  if (b1.msgCount < 8 || b1.msgCount > 12) throw new Error('块大小不在 8~12：' + b1.msgCount);
+  if (b1.text.indexOf('林渡：') < 0 || b1.text.indexOf('我：') < 0) throw new Error('块里没有说话人');
+  if (b1.end <= 0) throw new Error('游标没推进（会死循环）');
+  /* 接着切要能继续往下走 */
+  const b2 = P.nextBlock(many, b1.end, '林渡');
+  if (!b2 || b2.end <= b1.end) throw new Error('第二块没往前推进');
+
+  /* ② 余弦 */
+  if (Math.abs(P.cosine([1, 0], [1, 0]) - 1) > 1e-9) throw new Error('相同向量不是 1');
+  if (Math.abs(P.cosine([1, 0], [0, 1])) > 1e-9) throw new Error('正交向量不是 0');
+  if (P.cosine([1, 0], [1]) !== 0) throw new Error('长度不同应该返回 0，不该崩');
+
+  /* ③ 重排：语义为主，时间兜底。两条语义一样时，新的应该赢 */
+  const now = Date.now();
+  const oldB = { id: 'a', at: now - 60 * 86400000, vec: [1, 0] };
+  const newB = { id: 'b', at: now, vec: [1, 0] };
+  const farB = { id: 'c', at: now, vec: [0, 1] };
+  const r1 = P.rank([oldB, newB, farB], [1, 0], now);
+  if (r1[0].block.id !== 'b') throw new Error('同语义时新的没赢：' + r1.map((x) => x.block.id).join(','));
+  if (r1[r1.length - 1].block.id !== 'c') throw new Error('不相关的没排最后');
+  /* 语义差距要能压过时间差距（不能变成「只看时间」） */
+  const r2 = P.rank([oldB, farB], [1, 0], now);
+  if (r2[0].block.id !== 'a') throw new Error('时间新但不相关的排到了相关的前面');
+
+  /* ④ 窗口去重：比近期原文窗口更新的块不该被召回 */
+  const kept = P.dropOverlapping([{ block: oldB }, { block: newB }], now - 86400000);
+  if (kept.length !== 1 || kept[0].block.id !== 'a') throw new Error('窗口去重没生效');
+
+  /* ⑤ 查询构造 */
+  const q = P.buildQuery(['第一句', '第二句'], '第三句');
+  if (q.indexOf('第一句') < 0 || q.indexOf('第三句') < 0) throw new Error('查询没拼全');
+
+  /* ⑥ 没配接口 = 不工作（不偷偷回落主 API） */
+  S.store.set('vectorApi', null);
+  if (S.memoryVec.enabled()) throw new Error('没配向量接口却是 enabled');
+  S.store.set('vectorApi', { baseUrl: 'https://v.test/v1', model: 'emb-1', apiKey: '' });
+  if (!S.memoryVec.enabled()) throw new Error('配了却不 enabled');
+  S.store.set('vecCfg', { enabled: false });
+  if (S.memoryVec.enabled()) throw new Error('总开关关掉了却还是 enabled');
+  S.store.set('vecCfg', { enabled: true });
+
+  /* ⑦ 缓存空 → 不注入（不会平白多一段空壳） */
+  S.memoryVec.clearCache();
+  if (S.memoryVec.text('nobody') !== '') throw new Error('没召回到却注入了');
+
+  S.store.set('vectorApi', null);
+  S.store.set('vecCfg', {});
+  return { 块: b1.msgCount + '条/' + b1.text.length + '字', 余弦: true, 重排: true, 去重: true };
+});
+
+t('L4 槽位：线上和线下两张矩阵都挂了 recall（K03c）', () => {
+  const E = S.promptEngine;
+  const online = (E.onlineSlots || []).filter((s) => s.id === 'recall')[0];
+  const offline = (E.offlineSlots || []).filter((s) => s.id === 'recall')[0];
+  if (!online) throw new Error('线上槽位表没有 recall');
+  if (!offline) throw new Error('线下槽位表没有 recall');
+  if (online.slot !== 'K03c' || offline.slot !== 'K03c') throw new Error('槽号不是 K03c');
+  /* 位置：要排在 life（K03b）之后、worldbook（K04）之前 ——
+     v5 的分层是 L1 → L1.5 → L2 → L4，顺序错了模型读起来是乱的。 */
+  const io = E.onlineSlots.findIndex((s) => s.id === 'recall');
+  const il = E.onlineSlots.findIndex((s) => s.id === 'life');
+  const iw = E.onlineSlots.findIndex((s) => s.id === 'worldbook');
+  if (!(il < io && io < iw)) throw new Error('recall 没夹在 life 和 worldbook 之间');
+  return { 线上: true, 线下: true, 位置: 'life → recall → worldbook' };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

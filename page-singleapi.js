@@ -30,6 +30,7 @@
   var setRowValue = ui.setRowValue;
   var textField = ui.textField;
   var button = ui.button;
+  var switchField = ui.switchField;
 
   /* 两种接口的全部差异就这几行 —— 其余 UI 与逻辑完全共用 */
   var KINDS = {
@@ -191,6 +192,47 @@
     gField.card.appendChild(acts);
     body.appendChild(gField.wrap);
     body.appendChild(g1.wrap);
+
+    /* ---- 向量记忆总开关（2026-09-22，只有向量这一页有）----
+       配了接口 ≠ 要用：embedding 是花钱的，得有一把闸。
+       开关**立即生效**（不用点保存）—— 它不是一个「接口配置」，
+       是「用不用」这个行为本身。 */
+    if (kind === 'vector') {
+      var vc = store.get('vecCfg') || {};
+      var gV = group('用不用', '索引存在这台设备的浏览器里（IndexedDB），不上传。关掉开关，索引也留着。');
+      var fOn = switchField({
+        label: '按话题找回聊过的东西',
+        hint: '开着：每次说话前会先找一遍「以前聊过的相关片段」。关掉就只用已整理好的记忆和近期原文',
+        value: vc.enabled !== false
+      });
+      fOn.input.addEventListener('change', function () {
+        var cur = store.get('vecCfg') || {};
+        cur.enabled = fOn.get();
+        store.set('vecCfg', cur);
+        ctx.toast(fOn.get() ? '下次说话就会用上' : '已关掉', 'ok');
+      });
+      gV.card.appendChild(fOn.el);
+
+      /* 已经索引了多少段 —— 让用户看得见它在不在干活 */
+      var statLine = h('p', 'set-group-note', '正在看索引…');
+      gV.card.appendChild(statLine);
+      if (Sleepy.memoryVec) {
+        Sleepy.memoryVec.available().then(function (ok) {
+          if (!ok) {
+            statLine.textContent = '这台设备用不了 IndexedDB，向量记忆没法工作。';
+            return;
+          }
+          return Sleepy.memoryVec.total().then(function (n) {
+            statLine.textContent = n
+              ? ('已经索引了 ' + n + ' 段对话。聊得越多，能找回来的越多。')
+              : '还没有索引 —— 聊几轮之后就会自动开始（在后台跑，不挡聊天）。';
+          });
+        })['catch'](function () { statLine.textContent = ''; });
+      } else {
+        statLine.textContent = '';
+      }
+      body.appendChild(gV.wrap);
+    }
 
     /* ---- 清空 ---- */
     var g2 = group('恢复默认',

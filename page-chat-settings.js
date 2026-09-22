@@ -276,12 +276,17 @@
     var meId = chat.userId || ((core && core.activeUserOnIsland && core.activeUserOnIsland()) || {}).id || '';
     if (!meId) return '这个对话还没绑定身份';
     var pr = core.feedPermOf(chat.characterId, meId);
-    if (pr.iHideChar && pr.iHideFromChar) return '两个都关了 · 互相都看不见';
-    if (pr.iHideChar) return '你关了「看 TA 的」· 你看不到 TA 的动态';
-    if (pr.iHideFromChar) return '你关了「让 TA 看」· TA 看不到你的动态';
-    if (pr.charHidesMe) return 'TA 现在没让你看 TA 的朋友圈';
-    if (pr.charHidesFromMe) return 'TA 现在不看你的朋友圈';
-    return '互相都开着 · 都能看见';
+    var feed;
+    if (pr.iHideChar && pr.iHideFromChar) feed = '朋友圈：互相都看不见';
+    else if (pr.iHideChar) feed = '朋友圈：你看不到 TA 的';
+    else if (pr.iHideFromChar) feed = '朋友圈：TA 看不到你的';
+    else if (pr.charHidesMe) feed = '朋友圈：TA 没让你看 TA 的';
+    else if (pr.charHidesFromMe) feed = '朋友圈：TA 不看你的';
+    else feed = '朋友圈：互相都开着';
+    /* 2026-09-22：这一行现在不只管朋友圈了，顺手把日记授权也报出来 */
+    var diary = '日记：' + (Sleepy.lifeFeed && Sleepy.lifeFeed.diaryShared(chat.characterId)
+      ? '能看' : '看不到');
+    return feed + ' · ' + diary;
   }
 
   function openFriendPermDrawer(ctx, chat) {
@@ -327,6 +332,26 @@
           : '另外：' + chName + ' 现在不看你的朋友圈（同上）。'));
     }
 
+    /* ---- TA 还能知道什么（2026-09-22 加的「授权」落地）----
+       朋友圈由上面两个开关管；这里补的是其它 App 的数据。
+       · 日历**不用开关**：每条事件自己带可见性（private / shared_busy /
+         shared_detail / participants），在日历里逐条选就是最细的授权 ——
+         这正是 v5 §5 第 6 条要的「细分类别权限」，别再叠一层全局开关。
+       · 日记没有那种字段，所以给一个总开关，**默认关**（v5 §5 第 5 条：
+         user 私密内容默认不对角色开放）。TA 自己写的那几篇不受这个开关影响，
+         那是他自己的行为。 */
+    if (Sleepy.lifeFeed) {
+      panel.appendChild(h('h2', '', 'TA 还能知道什么'));
+      panel.appendChild(h('p', 'iol-drawer-desc',
+        '日历不用在这儿开：每条日程自己带「谁能看到」的档位，在日历里逐条选就行。'));
+      var fDiary = switchField({
+        label: '让我写的日记给 ' + chName + ' 看',
+        hint: '开了之后，TA 会知道你最近写下的东西（默认关。TA 自己写的那几篇不算）',
+        value: Sleepy.lifeFeed.diaryShared(chat.characterId)
+      });
+      panel.appendChild(fDiary.el);
+    }
+
     var actions = h('div', 'iol-drawer-actions');
     var cancel = h('button', 'iol-drawer-cancel', '先不改');
     var save = h('button', 'iol-drawer-save', '保存');
@@ -345,6 +370,9 @@
     save.addEventListener('click', function () {
       core.setFeedPerm(chat.characterId, meId, 'iHideChar', fHide.get());
       core.setFeedPerm(chat.characterId, meId, 'iHideFromChar', fMine.get());
+      if (fDiary && Sleepy.lifeFeed) {
+        Sleepy.lifeFeed.setDiaryShared(chat.characterId, fDiary.get());
+      }
       close();
       ctx.toast('记下来了', 'ok');
       if (ctx.rebuild) ctx.rebuild();
@@ -664,7 +692,7 @@
       /* ---- 朋友权限（用户 2026-09-22：「和微信一样」）---- */
       var secFriend = sectionOf(body, '朋友权限');
       secFriend.appendChild(demoRow({
-        label: '朋友圈权限',
+        label: 'TA 能知道我的什么',
         note: friendPermNote(chat),
         onClick: chat.characterId ? function () { openFriendPermDrawer(ctx, chat); } : null
       }));

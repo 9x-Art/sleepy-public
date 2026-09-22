@@ -116,6 +116,10 @@
      排在 page-moments 后面（它惰性取 momentsTab 的 listForChar / canCharSee），
      排哪都行 —— 装配时才用。 -->
 <script src="life-feed.js"></script>
+<!-- L4 动态检索层（向量记忆，v5 §L4）：IndexedDB 索引 + 召回。
+     排在 api.js / page-singleapi.js 后面（要 embed + 读向量接口配置），
+     prompt-engine 那边惰性取（装配时才用），所以位置不敏感。 -->
+<script src="memory-vec.js"></script>
 <!-- 相册（模块 J）：和负一屏照片墙共用 Sleepy.photos -->
 <script src="page-gallery.js"></script>
 <!-- 译文块（组件）：线上私聊 / 线下私聊 / 群线下**共用一份实现**，

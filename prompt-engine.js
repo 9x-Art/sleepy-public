@@ -604,6 +604,10 @@
        v5 把它排在 L1 与 L2 之间 —— 所以位置紧跟 relation。 */
     { id: 'life', slot: 'K03b', name: '近期生活动态', kind: 'program', required: false,
       note: '程序生成：TA 近期实际看见的动态（v5 §L1.5，现在只有朋友圈这一个源）' },
+    /* L4 动态检索层（v5 §L4）：**向量召回的原文块**。
+       它是异步预取的 —— 发送前 prefetch() 把结果放进缓存，装配时同步读。 */
+    { id: 'recall', slot: 'K03c', name: '相关的过去（召回）', kind: 'program', required: false,
+      note: '程序生成：向量按当前话题召回的原文块。要配「向量记忆 API」；没命中就不注入' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻条目 + 关键词命中的条目（全局书 + 挂在 TA 身上的书）' },
     { id: 'custom', slot: 'K/S', name: '自定义注入', kind: 'custom', required: false,
@@ -860,6 +864,16 @@
     return lf.text(charId, userId) || '';
   }
 
+  /* L4 动态检索层（v5 §L4）：向量按当前话题召回的**原文块**。
+     和 K03/K03b 的关系：K03 是沉淀下来的记忆、K03b 是近期视野、
+     这里是「更早、但和现在这件事有关」的那一段 —— 三者互补，别合并。
+     ★ 它是**异步预取**的（发送前 prefetch），这里同步读缓存。 */
+  function compileRecall(charId) {
+    var mv = Sleepy.memoryVec;
+    if (!mv || !mv.text) return '';
+    return mv.text(charId) || '';
+  }
+
   function compileDrop(charId) {
     if (!Sleepy.switcher) return '';
     var root = core.rootOf(charId);
@@ -1035,6 +1049,7 @@
         case 'drop': pushSlot(def, compileDrop(charId)); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'life': pushSlot(def, compileLife(charId, userId)); break;
+        case 'recall': pushSlot(def, compileRecall(charId)); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
           pushSlot(def, compileWorldbook(charId, wbText));
@@ -1092,6 +1107,8 @@
     /* L1.5 与线上同一份实现（v5 §L1.5 是跨 App 的近期视野，线上线下都在）。 */
     { id: 'life', slot: 'K03b', name: '近期生活动态', kind: 'program', required: false,
       note: '程序生成：TA 近期实际看见的动态（与线上同一份 compileLife）' },
+    { id: 'recall', slot: 'K03c', name: '相关的过去（召回）', kind: 'program', required: false,
+      note: '程序生成：向量召回的原文块（与线上同一份 compileRecall）' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻 + 关键词命中（同线上规则）' },
     /* 自定义注入（2026-09-22 通查补）：线上一直有这一槽，线下漏了 ——
@@ -1290,6 +1307,7 @@
         case 'f2': pushSlot(def, cardBody('f2')); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'life': pushSlot(def, compileLife(charId, userId)); break;
+        case 'recall': pushSlot(def, compileRecall(charId)); break;
         case 'worldbook': {
           var wbOff = (session.messages || []).map(function (m) {
             if (m.role === 'user') return String(m.text || '');
@@ -1553,6 +1571,7 @@
     /* L1.5 近期生活动态（2026-09-22）：主动消息也要这一层 ——
        不然 TA 永远不会「主动提起你昨天发的那条」。 */
     compileLife: compileLife,
+    compileRecall: compileRecall,
     cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,

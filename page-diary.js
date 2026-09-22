@@ -750,7 +750,11 @@
   Sleepy.diary = {
     autoCheck: autoCheck,
     settings: settings,
-    splitDiaryImg: splitDiaryImg
+    splitDiaryImg: splitDiaryImg,
+    /* 读口子（2026-09-22 加，给 L1.5 近期生活动态用）。
+       **只给读** —— 写一律走 addEntry / patchEntry，别从外面 set 回一份
+       过滤过的列表（那是「别的存档被整批抹掉」的老坑）。 */
+    list: getDiaries
   };
 
 })(window);
