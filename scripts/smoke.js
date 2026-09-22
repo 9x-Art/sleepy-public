@@ -5416,6 +5416,187 @@ t('wjCoread 反应：沉默合法、冷却真拦、模式能力表按 Demo 变�
   return { 沉默: '合法', 冷却: '拦', 静音: '能力表正确', 手记: '未越权' };
 });
 
+/* ======================== 语音 TTS（2.15 · 契约红线） ========================
+   这一段的重点不是「功能跑没跑」，而是**三层文本边界与白名单**：
+   标签只能由 Adapter 从白名单映射出来、原文本一个字都不许被改、
+   禁用哭腔之后难过文本里也不能出现 [sobbing]、高克制不许自动吼叫。
+   这些全是「肉眼看不出来」的类型 —— 真机上一句话读出来只是语气不对，
+   没人会怀疑是映射表被写坏了。 */
+console.log('\n--- 语音 TTS（契约红线 / 语音导演）---');
+t('tts 白名单与出厂值：强表演默认关着', () => {
+  const T = S.tts;
+  if (!T) throw new Error('Sleepy.tts 缺失');
+  if (T.EMOTIONS.length !== 11) throw new Error('情绪枚举不是 11 项');
+  if (T.TAGS.length !== 7) throw new Error('表演标签不是 7 项');
+  const v = T.DEFAULT_VOICE;
+  if (v.allowedPerformanceTags.indexOf('crying') >= 0) throw new Error('哭腔默认就开了');
+  if (v.allowedPerformanceTags.indexOf('breathy') >= 0) throw new Error('气声默认就开了');
+  if (T.settings().enabled) throw new Error('语音出厂就是开着的');
+  return { 情绪: T.EMOTIONS.length, 标签: T.TAGS.length, 默认频率: v.frequency, 最长: v.maxSeconds };
+});
+
+t('合成文本：白名单映射 + 短句不堆标签 + 原文不被改', () => {
+  const T = S.tts;
+  const original = '你怎么现在才回来？';
+  const plan = { shouldGenerate: true, emotion: 'disappointed', intensity: 0.35, restraint: 0.82, pace: 1, performanceTags: ['soft'] };
+  const built = T.buildFishSynthesisText(original, plan);
+  if (built.indexOf('[disappointed]') !== 0) throw new Error('主情绪没映射出来：' + built);
+  if (built.indexOf(original) < 0) throw new Error('原文被改写了：' + built);
+  /* 短句（<=12 字）最多一个标签 —— 所以 [soft tone] 应该被丢掉 */
+  if (/soft tone/.test(built)) throw new Error('短句堆了两个标签：' + built);
+  /* 白名单外的标签进不来（手写的坏计划也不行） */
+  const bad = T.buildFishSynthesisText(original, { shouldGenerate: true, emotion: 'neutral', intensity: 0, restraint: 0.3, pace: 1, performanceTags: ['shouting', 'screaming'] });
+  if (/\[/.test(bad)) throw new Error('白名单外的标签被拼进去了：' + bad);
+  /* 空文本必须拒绝 */
+  let threw = false;
+  try { T.buildFishSynthesisText('   ', plan); } catch (e) { threw = true; }
+  if (!threw) throw new Error('空文本没被拒');
+  return { 短句: built, 坏计划: bad, 强度档: T.buildFishSynthesisText('今天晚上一起吃饭吧，我想跟你说点事情。', plan) };
+});
+
+t('语音导演：不确定回退平静、禁用哭腔不出哭腔、高克制不吼叫', () => {
+  const T = S.tts;
+  const cfg = () => { const c = JSON.parse(JSON.stringify(T.DEFAULT_VOICE)); c.enabled = true; c.frequency = 'always'; return c; };
+  const rng = () => 0;   /* 概率判定走「一定命中」 */
+
+  const plain = T.speechPlanOf('今天天气不错。', cfg(), { rng: rng });
+  if (plain.emotion !== 'neutral') throw new Error('没有情绪词却判成了 ' + plain.emotion);
+
+  const c2 = cfg();
+  c2.allowedPerformanceTags = c2.allowedPerformanceTags.filter((t) => t !== 'crying');
+  const sad = T.speechPlanOf('别说了，我有点想哭。', c2, { rng: rng });
+  if (sad.performanceTags.indexOf('crying') >= 0) throw new Error('禁了哭腔还是给了哭腔');
+  const sadText = T.buildFishSynthesisText('别说了，我有点想哭。', sad);
+  if (/sobbing/.test(sadText)) throw new Error('禁了哭腔还是拼出了 [sobbing]');
+
+  const c3 = cfg();
+  c3.restraint = 95;
+  c3.allowedEmotions = ['angry'];
+  const angry = T.speechPlanOf('我真的受够了，你太过分了！', c3, { rng: rng });
+  if (angry.emotion !== 'angry') throw new Error('生气没判出来：' + angry.emotion);
+  if (angry.restraint < 0.7) throw new Error('克制度没进计划');
+  const angryText = T.buildFishSynthesisText('我真的受够了，你太过分了！', angry);
+  if (/shouting|screaming|very /.test(angryText)) throw new Error('高克制还加了强表演：' + angryText);
+  if (angry.performanceTags.length > 1) throw new Error('高克制没先减标签');
+
+  return { 平静: plain.emotion, 难过标签: sad.performanceTags, 生气: angryText };
+});
+
+t('语音导演：频率 / 冷却 / 长度三道筛选，手动朗读绕过频率', () => {
+  const T = S.tts;
+  const base = JSON.parse(JSON.stringify(T.DEFAULT_VOICE));
+  base.enabled = true;
+
+  const off = T.speechPlanOf('你好。', Object.assign({}, base, { enabled: false }), {});
+  if (off.shouldGenerate || off.reason !== 'disabled') throw new Error('关着还在生成');
+
+  const requested = T.speechPlanOf('你好。', Object.assign({}, base, { frequency: 'requested' }), { rng: () => 0 });
+  if (requested.shouldGenerate) throw new Error('「只在我说的时候」自己主动读了');
+
+  const manual = T.speechPlanOf('你好。', Object.assign({}, base, { frequency: 'never' }), { manual: true });
+  if (!manual.shouldGenerate || manual.reason !== 'manual_read') throw new Error('手动朗读被频率挡住了');
+
+  const cooling = T.speechPlanOf('你好。', Object.assign({}, base, { frequency: 'always', cooldownTurns: 3 }),
+    { turnsSinceVoice: 1, rng: () => 0 });
+  if (cooling.shouldGenerate || cooling.reason !== 'cooldown') throw new Error('冷却期内还是读了');
+
+  const long = T.speechPlanOf('一'.repeat(400), Object.assign({}, base, { frequency: 'always', maxSeconds: 15 }), { rng: () => 0 });
+  if (long.shouldGenerate || long.reason !== 'too_long') throw new Error('超长还是读了');
+
+  const hit = T.speechPlanOf('你好。', Object.assign({}, base, { frequency: 'always' }), { rng: () => 0 });
+  if (!hit.shouldGenerate || hit.reason !== 'frequency_match') throw new Error('该读没读');
+
+  return { 关着: off.reason, 只在我说: requested.reason, 冷却: cooling.reason,
+    太长: long.reason, 命中: hit.reason, 手动: manual.reason,
+    估算秒数: T.estimateSeconds('你'.repeat(45), 100) };
+});
+
+t('能力落到「模型」：不同档位的表达能力不一样', () => {
+  const T = S.tts;
+  const mm28 = T.capabilitiesOf('minimax', 'speech-2.8-hd');
+  const mm26 = T.capabilitiesOf('minimax', 'speech-2.6-hd');
+  const fishS1 = T.capabilitiesOf('fish_audio', 's1');
+  const el = T.providerOf('elevenlabs');
+  if (!mm28.performanceTags) throw new Error('MiniMax 2.8 该有语气词标签');
+  if (mm26.performanceTags) throw new Error('MiniMax 2.6 不该有标签');
+  if (fishS1.performanceTags) throw new Error('Fish s1 不该有标签');
+  if (!el.planned) throw new Error('ElevenLabs 没有 Adapter，必须标计划支持');
+  return { '2.8': mm28.performanceTags, '2.6': mm26.performanceTags, 's1': fishS1.performanceTags,
+    ElevenLabs: '计划支持', 字符上限: el.models.map((m) => m.id + '=' + T.capabilitiesOf('elevenlabs', m.id).maxCharacters).join(' ') };
+});
+
+t('连接状态四档：没 Key 不许显示已连接，删服务不许无条件回退', () => {
+  const T = S.tts;
+  const made = T.saveConnection({ provider: 'fish_audio', displayName: '冒烟连接' });
+  if (made.status !== 'unconfigured') throw new Error('刚建的连接不是未配置：' + made.status);
+  T.markConnection(made.id, 'connected');
+  const withKey = T.saveConnection({ id: made.id, apiKey: 'sk-test-1234567890' });
+  if (withKey.status === 'unconfigured') throw new Error('填了 Key 还是未配置');
+  T.markConnection(made.id, 'connected');
+  if (T.connection(made.id).status !== 'connected') throw new Error('测试成功没写进状态');
+  T.saveSettings({ defaultConnectionId: made.id });
+  const r = T.removeConnection(made.id);
+  if (r.fallbackTo !== null) throw new Error('删掉唯一的连接却回退到了别处');
+  if (T.maskKey('sk-test-1234567890') !== '****7890') throw new Error('脱敏只该露后四位');
+  return { 脱敏: T.maskKey('sk-test-1234567890'), 删后默认: r.fallbackTo };
+});
+
+t('请求组装与错误归一化（注入 transport，不打真网络）', async () => {
+  const T = S.tts;
+  const conn = { id: 'c1', provider: 'fish_audio', endpoint: 'https://api.fish.audio/v1/tts', apiKey: 'sk-abcdefghijkl' };
+  const plan = { shouldGenerate: true, reason: 'manual_read', emotion: 'tender', intensity: 0.5, restraint: 0.5, pace: 1.05, performanceTags: ['soft'] };
+  const original = '早点休息，别熬太晚。';
+  const req = T.buildRequest({ provider: 'fish_audio', conn: conn, model: 's2.1-pro-free', voiceId: 'v1', plan: plan, originalText: original, output: T.settings().output });
+  if (req.url.indexOf('api.fish.audio') < 0) throw new Error('地址不对：' + req.url);
+  if (req.body.reference_id !== 'v1') throw new Error('音色没带上');
+  if (req.body.text.indexOf(original) < 0) throw new Error('合成文本里没有原文');
+  if (req.body.text === original) throw new Error('标签压根没拼（温柔应该映射出 empathetic）');
+  if (req.headers.Authorization !== 'Bearer sk-abcdefghijkl') throw new Error('鉴权头不对');
+
+  /* MiniMax 的组装：情绪进 voice_setting，表演走括号语气词，且**必须**查 base_resp */
+  const mmReq = T.buildRequest({ provider: 'minimax', conn: { provider: 'minimax', endpoint: 'https://api.minimax.cn/v1/t2a_v2', apiKey: 'k' }, model: 'speech-2.8-hd', voiceId: 'male-qn-qingse', plan: plan, originalText: original, output: T.settings().output });
+  if (mmReq.body.output_format !== 'hex') throw new Error('MiniMax 该用 hex 拿音频');
+  if (mmReq.body.text.indexOf('(chuckle)') >= 0) throw new Error('没让笑却给了轻笑');
+
+  /* 401 → CREDENTIAL_INVALID；超时 → PROVIDER_TIMEOUT */
+  const r1 = await T.generate({ conn: conn, model: 's2.1-pro-free', voiceId: 'v1', text: '你好。', manual: true,
+    transport: async () => ({ ok: false, status: 401, text: '{"message":"invalid api key"}' }) });
+  if (r1.ok || r1.error.code !== 'CREDENTIAL_INVALID') throw new Error('401 没归一化：' + JSON.stringify(r1.error));
+  const r2 = await T.generate({ conn: conn, model: 's2.1-pro-free', voiceId: 'v1', text: '你好。', manual: true,
+    transport: async () => ({ ok: false, status: 0, text: 'network error' }) });
+  if (r2.error.code !== 'PROVIDER_TIMEOUT') throw new Error('连不上没归一化：' + r2.error.code);
+
+  /* 成功路径：假音频 → blob；而且**没写任何业务数据** */
+  const before = JSON.stringify(S.store.get('charVoice') || null);
+  const ok1 = await T.generate({ conn: conn, model: 's2.1-pro-free', voiceId: 'v1', text: '早点休息，别熬太晚。', manual: true,
+    transport: async () => ({ ok: true, status: 200, buffer: new ArrayBuffer(16) }) });
+  if (!ok1.ok) throw new Error('成功路径挂了：' + JSON.stringify(ok1.error));
+  if (ok1.synthesisText.indexOf('empathetic') < 0) throw new Error('温柔没映射成 empathetic：' + ok1.synthesisText);
+  if (JSON.stringify(S.store.get('charVoice') || null) !== before) throw new Error('生成过程动了业务数据');
+
+  return { fish: req.body.text, minimax: mmReq.body.text, 401: r1.error.code, 超时: r2.error.code, 假音频字节: ok1.blob.size };
+});
+
+t('角色语音：单一状态源（charVoice 角色层覆盖出厂值）', () => {
+  const T = S.tts;
+  const base = T.voiceConfigOf('ch-tts-test');
+  if (base.frequency !== 'requested') throw new Error('默认没跟上出厂值');
+  if (T.hasOwnVoice('ch-tts-test')) throw new Error('没设置过却说有');
+  T.saveVoice('ch-tts-test', { enabled: true, voiceId: 'v-1', frequency: 'often', pace: 120 });
+  const now = T.voiceConfigOf('ch-tts-test');
+  if (!now.enabled || now.voiceId !== 'v-1' || now.frequency !== 'often' || now.pace !== 120) throw new Error('存了读不回来');
+  if (now.restraint !== T.DEFAULT_VOICE.restraint) throw new Error('没动过的字段应该还是出厂值');
+  const other = T.voiceConfigOf('ch-other');
+  if (other.enabled || other.voiceId) throw new Error('改一个角色影响了另一个');
+  /* 恢复跟随默认 = 把角色层摘掉 */
+  const all = T.voiceAll();
+  delete all.byChar['ch-tts-test'];
+  S.store.set('charVoice', all);
+  if (T.hasOwnVoice('ch-tts-test')) throw new Error('摘掉之后还说有');
+  return { 覆盖后: now.frequency + ' / 语速 ' + now.pace, 别的角色: other.frequency };
+});
+
+
 /* ======================== 全页渲染冒烟 ========================
    为什么需要这一段：check.js 只验语法，而 app.js 的错误边界会把 render()
    抛出的异常**吞掉**、把那页换成「这一页出错了」—— 语法全绿照样整页崩。

@@ -900,7 +900,27 @@
         label: '聊天外观', note: apNote,
         onClick: function () { ctx.open('char-appearance', { chatId: chatId }); }
       }));
-      secPer.appendChild(demoRow({ label: '语音', note: '未设置' }));
+      /* 语音（2.15，2026-09-22 接上）：以前是个**死行**（写了 note「未设置」但没绑 onClick）。
+         现在进「角色语音」页 —— 音色、频率、情绪表达都是**角色级**的，
+         所以它跟「聊天外观」并排放在个性化里，而不是埋进全局设置。 */
+      var vNote = '未设置';
+      if (Sleepy.tts && charId) {
+        var vCfg = Sleepy.tts.voiceConfigOf(charId);
+        if (!vCfg.enabled) vNote = '没开';
+        else if (!vCfg.voiceId) vNote = '缺音色 ID';
+        else {
+          var vFreq = (Sleepy.tts.FREQUENCIES.filter(function (f) { return f.id === vCfg.frequency; })[0] || {}).label;
+          vNote = (Sleepy.tts.hasOwnVoice(charId) ? '单独设置' : '跟随默认') + ' · ' + (vFreq || vCfg.frequency);
+        }
+      }
+      secPer.appendChild(demoRow({
+        label: '语音',
+        note: vNote,
+        onClick: function () {
+          if (!Sleepy.tts) { ctx.toast('语音模块还没加载', 'warn'); return; }
+          ctx.open('char-voice', { charId: charId });
+        }
+      }));
       /* 「模型与生成」以前是个**死行**：写了 note「跟随全局」，但没绑 onClick，
          点了没反应 —— 用户说的「模型没接上个性选择」就是这个。
          现在能给**这篇对话**单独指定走哪条模型连接，存 chat.overrides.pickLabel，

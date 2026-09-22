@@ -188,11 +188,25 @@
       gTalk.card.appendChild(rowSub);
       body.appendChild(gTalk.wrap);
 
+      /* ============ 语音（2.15）============
+         2026-09-22 接上：语音也是有「服务 + 连接 + 默认档位」的一等公民，
+         所以它跟主/副 API 一样紧跟着摆在设置页面上，不埋在「其他能力」里。
+         角色级的音色 / 频率 / 表达在「角色语音」页（角色骨架页与对话设置里都能进）。 */
+      var gVoice = group('语音', '让角色把回复读出来。');
+      var rowTts = row({
+        label: '语音 TTS',
+        hint: '服务连接 · 默认模型 · 凭据说明',
+        badge: Sleepy.tts ? Sleepy.tts.summary() : '未接',
+        badgeKind: (Sleepy.tts && Sleepy.tts.settings().enabled) ? 'ok' : 'dim',
+        onClick: function () { ctx.open('settings-tts'); }
+      });
+      gVoice.card.appendChild(rowTts);
+      body.appendChild(gVoice.wrap);
+
       /* ============ 其他能力 ============
          还没接的那些也摆在这儿 —— 占位要摆在对的位置，
          不然用户根本不知道这 App 以后能长成什么样。灰着的行点不动。 */
-      var gCap = group('其他能力', '这几项还没接上，编号是它在计划里的位置。');
-      gCap.card.appendChild(row({ label: '语音 TTS', hint: '2.15 让角色把回复读出来' }));
+      var gCap = group('其他能力', '还没接上的那几项，编号是它在计划里的位置。');
       /* 向量与总结这两个都是**单份接口**（不像副 API 那样多组轮询），
          2026-09-22 接上；空着的时候：总结跟随主 API，向量没配就没配。
          行要留引用：从它们的配置页回来时 badge 得跟着变（见 refreshSummary）。 */
@@ -289,6 +303,11 @@
           setRowBadge(capRows[k], c ? (c.model || '已配置') : '未配置', c ? 'ok' : 'dim');
         });
         setRowValue(rowData, usageText());
+        /* 语音那行同理：从语音设置页回来，开关 / 连接状态得跟着变 */
+        if (Sleepy.tts && rowTts) {
+          var on = Sleepy.tts.settings().enabled;
+          setRowBadge(rowTts, Sleepy.tts.summary(), on ? 'ok' : 'dim');
+        }
         foot.textContent = '灰着的行是还没贴好的 · 当前存档 ' + usageText();
       };
       ctx.refreshSummary();

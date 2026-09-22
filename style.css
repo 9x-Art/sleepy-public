@@ -12258,3 +12258,110 @@ button.cal-ev:active{background:var(--g-glass-2);}
   border-bottom:0;border-left:3px solid rgba(214,164,90,.75);
   padding-left:11px;margin-bottom:10px;
 }
+
+/* ============================================================
+   语音 TTS（page-tts.js，2026-09-22）
+   设置页的两个新页面 + 角色语音页。一律走主题变量 ——
+   写死浅色在夜灯下会变成「白底白字」（项目里踩过好几次）。
+   ============================================================ */
+
+/* 服务详情页的头（服务名 + 状态胶囊 + 一句说明） */
+.tts-prov-head{
+  margin:2px 0 16px;padding:15px 16px;
+  border-radius:16px;
+  background:var(--g-glass-2);
+  border:1px solid var(--g-glass-line);
+}
+.tts-prov-top{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.tts-prov-name{font-size:15px;font-weight:600;color:var(--text);}
+.tts-prov-desc{margin:7px 0 0;font-size:11.5px;line-height:1.7;color:var(--text-faint);}
+
+/* 允许的情绪 / 表演标签：多选胶囊 */
+.tts-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;}
+.tts-chip{
+  padding:6px 11px;border-radius:999px;
+  border:1px solid var(--g-glass-line);
+  background:var(--g-glass-2);
+  color:var(--text-faint);
+  font-family:inherit;font-size:12px;cursor:pointer;
+}
+.tts-chip.is-on{
+  border-color:rgba(176,138,94,.5);
+  background:rgba(176,138,94,.14);
+  color:var(--g-accent-deep);
+}
+
+/* API Key 输入 + 显示/隐藏小钮 */
+.tts-key-box{display:flex;align-items:center;gap:8px;}
+.tts-key-box input{flex:1;min-width:0;}
+.tts-mini-btn{
+  flex:none;padding:6px 4px;
+  border:0;background:none;cursor:pointer;
+  color:var(--g-accent-deep);font-family:inherit;font-size:12px;
+}
+
+/* 测试结果条（成功 / 失败 / 进行中） */
+.tts-result{margin-top:12px;}
+.tts-result-box{
+  display:flex;align-items:flex-start;gap:9px;
+  padding:12px 13px;border-radius:13px;
+  background:rgba(150,145,137,.10);
+  color:var(--text-faint);font-size:11.5px;line-height:1.65;
+}
+.tts-result-box.is-ok{background:rgba(109,145,130,.10);color:#657d74;}
+.tts-result-box.is-bad{background:rgba(170,105,101,.10);color:#956864;}
+.tts-result-dot{
+  width:8px;height:8px;flex:0 0 8px;margin-top:4px;border-radius:50%;
+  background:currentColor;
+}
+
+/* 试听 / 生成过程里的小字 */
+.tts-play-note{margin:8px 2px 0;font-size:11.5px;line-height:1.6;color:var(--text-faint);}
+.tts-play-note.is-warn{color:var(--amber);}
+.tts-play-note.is-bad{color:var(--coral);}
+.tts-audio{width:100%;margin-top:10px;}
+
+/* 高级诊断（只给愿意看的人） */
+.tts-diag{
+  margin-top:10px;padding:11px 12px;border-radius:12px;
+  background:rgba(150,145,137,.08);
+  font-size:11px;line-height:1.75;color:var(--text-faint);
+  word-break:break-all;
+}
+.tts-diag p{margin:0 0 4px;}
+
+/* 试听输入框（就一行，跟着卡片走） */
+.tts-try-input{margin-bottom:10px;}
+
+/* 总开关没开时的提醒 */
+.tts-warn-note{
+  margin:10px 2px 0;font-size:11.5px;line-height:1.65;
+  color:var(--amber);
+}
+
+/* ---- 聊天气泡里的语音条（TTS 2.15）----
+   挂在正文下面，跟气泡同宽、不加边框（用户的口味：能靠留白分层就别包卡片）。
+   播放态只换颜色和图标，不做跳动动画 —— 聊天里已经有打字点了，再来一个太吵。 */
+.msg-voice{
+  display:flex;align-items:center;gap:8px;
+  width:100%;margin-top:7px;padding:8px 11px;
+  border:0;border-radius:11px;
+  background:rgba(176,138,94,.10);
+  font-family:inherit;color:var(--g-accent-deep);
+  cursor:pointer;text-align:left;
+}
+.msg-voice.is-playing{background:rgba(176,138,94,.18);}
+.msg-voice-icon{
+  flex:none;width:16px;font-size:11px;line-height:1;
+  color:var(--g-accent);
+}
+.msg-voice-wave{
+  flex:1;height:11px;min-width:34px;
+  background:repeating-linear-gradient(90deg,
+    currentColor 0 2px,transparent 2px 5px);
+  opacity:.45;
+}
+.msg-voice.is-playing .msg-voice-wave{opacity:.8;}
+.msg-voice-secs{flex:none;font-size:11px;opacity:.75;}
+/* keepTranscript=false：只留语音条，正文藏起来（搜索/记忆仍然有原文） */
+.msg-bubble.tts-no-text .msg-text{display:none;}

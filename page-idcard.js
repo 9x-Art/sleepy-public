@@ -1035,6 +1035,30 @@
       g3.card.appendChild(f.faceLockImage.el);
       body.appendChild(g3.wrap);
 
+      /* ---- 声音（2.15，2026-09-22 接上）----
+         角色级的音色 / 频率 / 情绪表达在**单独一页**（page-tts.js 的 char-voice）——
+         这一页的字段已经够多了，塞进来会把「锁脸与红线」淹掉。
+         只给已经存在的角色入口（新建时还没有 id，设置没地方挂）。 */
+      if (existing && Sleepy.tts) {
+        var gVoice = group('声音', '让 TA 把回复读出来。音色、频率、情绪表达在单独一页里定。');
+        var vCfg = Sleepy.tts.voiceConfigOf(existing.id);
+        var vConn = Sleepy.tts.connection(vCfg.connectionId) ||
+          Sleepy.tts.connection(Sleepy.tts.settings().defaultConnectionId) ||
+          Sleepy.tts.firstConnectionOf(null);
+        var vText = !vCfg.enabled ? '没开'
+          : (!vCfg.voiceId ? '缺音色 ID'
+            : ((Sleepy.tts.hasOwnVoice(existing.id) ? '单独设置' : '跟随默认') +
+              ' · ' + Sleepy.tts.connectionSummary(vConn)));
+        gVoice.card.appendChild(row({
+          label: '角色语音',
+          hint: '音色 · 什么时候读 · 允许的情绪与表达',
+          badge: vText,
+          badgeKind: (vCfg.enabled && vCfg.voiceId) ? 'ok' : 'dim',
+          onClick: function () { ctx.open('char-voice', { charId: existing.id }); }
+        }));
+        body.appendChild(gVoice.wrap);
+      }
+
       /* ---- 记忆（只对大号显示）---- */
       if (existing && kind !== 'npc') {
         body.appendChild(memoryGroup(existing, ctx));

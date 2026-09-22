@@ -95,6 +95,12 @@
      依赖 imggen 的出口，必须排在它后面 -->
 <script src="imggen.js"></script>
 <script src="page-imggen.js"></script>
+<!-- 语音 TTS（2.15）：tts.js 是统一层（契约类型 / 语音导演规则版 / 服务商 Adapter /
+     可注入 transport），page-tts 是设置页与角色语音页。
+     只依赖 store（把音频存进图库那一步才用 media），排在这儿就够；
+     page-chat 要用它挂语音条与手动朗读，所以必须排在 page-chat 之前。 -->
+<script src="tts.js"></script>
+<script src="page-tts.js"></script>
 <!-- 名片夹（模块 I）：树状层级 + 认知矩阵。必须排在 page-chat 之前，
      因为后者要读它的角色数据 -->
 <script src="page-idcard.js"></script>

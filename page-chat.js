@@ -435,6 +435,17 @@
 
   function dropMessages(chatId, ids) {
     var c0 = getChat(chatId);
+    /* 语音（2.15）：消息删了，它那条音频也该从图库清掉 ——
+       不清的话图库和存储占用里会留一堆「已经没有任何消息在引用」的音频。 */
+    if (c0 && Array.isArray(c0.messages) && Sleepy.media && Sleepy.media.remove) {
+      c0.messages.forEach(function (m) {
+        if (ids.indexOf(m.id) < 0 || !m.voice || !m.voice.mediaId) return;
+        try {
+          var r = Sleepy.media.remove(m.voice.mediaId);
+          if (r && r['catch']) r['catch'](function () { /* 清不掉不影响删除本身 */ });
+        } catch (e) { /* 同上 */ }
+      });
+    }
     mutate(chatId, function (c) {
       c.messages = c.messages.filter(function (m) { return ids.indexOf(m.id) < 0; });
     });
@@ -1234,6 +1245,15 @@
       var quote = null;      /* { role, content } */
       var selecting = false;
       var selected = {};     /* id -> true */
+      var voiceBars = {};    /* msgId -> { el, play }：语音条，重画时整批作废 */
+
+      /* 这一页里「当前对话」的唯一取法。⚠️ 别写成裸 `chat` —— 这个作用域里
+         没有那个变量（mount 的入参是 ctx），'use strict' 下会直接
+         ReferenceError，而它发生在**气泡渲染里**，整条对话会白屏。 */
+      function curCharId() {
+        var c = getChat(chatId);
+        return c ? c.characterId : null;
+      }
 
       /* ------------------------ 多选条 ------------------------ */
 
@@ -1342,6 +1362,8 @@
       function renderMessages(keepScroll) {
         var prev = msgWrap.scrollTop;
         msgWrap.innerHTML = '';
+        /* 语音条是按 id 注册的，重画之后整批作废（旧节点已经不在文档里） */
+        voiceBars = {};
 
         var c = getChat(chatId);
         if (!c) return;
@@ -1434,6 +1456,159 @@
         return Sleepy.msgTrans.needs(c && c.characterId);
       }
 
+      /* ==================== 语音（TTS 2.15） ====================
+
+         数据：音频本体在 media（IndexedDB，kind:'audio'），消息上只挂
+         `msg.voice = { mediaId, segIdx, seconds, provider, model, emotion, plan }`。
+         **原文一个字都不动** —— 标签只存在于送给服务商的那份临时合成文本里
+         （见 tts.js 的三层文本边界）。三条铁律：
+           ① 播放失败不影响这条消息本身；
+           ② 语音条是**点击播放**，自动播放被系统拦住也照样能点（契约 §9.12）；
+           ③ 没有音频的消息长得和以前一模一样（不占位、不留白）。 */
+
+      /* 这一轮距上次发语音隔了几条角色消息（冷却判据）。
+         直接从**消息本身**数出来 —— 不另存「上次读的时间」那种指针，
+         删除/编辑/撤回之后指针必然错位（项目里踩过）。 */
+      function turnsSinceVoice() {
+        var cc = getChat(chatId);
+        var msgs = (cc && cc.messages) || [];
+        var n = 0;
+        for (var i = msgs.length - 1; i >= 0; i--) {
+          var m = msgs[i];
+          if (m.voice) return n;
+          if (m.role === 'assistant' && !m.type) n++;
+        }
+        return Infinity;   /* 从来没读过：不构成冷却 */
+      }
+
+      /* 自动播放：角色设置里 auto / 跟随全局（全局默认在设置页里选） */
+      function shouldAutoPlay(cfg) {
+        if (!cfg) return false;
+        if (cfg.autoplay === 'auto') return true;
+        if (cfg.autoplay !== 'global') return false;
+        return Sleepy.tts.settings().autoPlay === 'auto';
+      }
+
+      /* 一条语音条。注册进 voiceBars（生成完要立刻播一次时靠它找 DOM）。 */
+      function voiceBarFor(msg) {
+        var v = msg.voice || {};
+        var bar = h('button', 'msg-voice');
+        bar.type = 'button';
+        var icon = h('span', 'msg-voice-icon', '▶');
+        bar.appendChild(icon);
+        bar.appendChild(h('span', 'msg-voice-wave'));   /* 装饰性小波形 */
+        bar.appendChild(h('span', 'msg-voice-secs', (v.seconds || 0) + '″'));
+        var audio = null;
+        var playing = false;
+
+        function reset() { playing = false; icon.textContent = '▶'; bar.classList.remove('is-playing'); }
+        function ensure() {
+          if (audio) return Promise.resolve(audio);
+          return Sleepy.media.url(v.mediaId).then(function (u) {
+            if (!u) return null;
+            audio = new global.Audio(u);
+            audio.addEventListener('ended', reset);
+            audio.addEventListener('pause', reset);
+            return audio;
+          });
+        }
+        function play() {
+          ensure().then(function (a) {
+            if (!a) { ctx.toast('这条语音找不到了（图库里的音频被清过）', 'err'); return; }
+            var p = a.play();
+            if (p && p.catch) {
+              p.catch(function () {
+                reset();
+                ctx.toast(Sleepy.tts.normalizedError('AUTOPLAY_BLOCKED').userText, 'warn');
+              });
+            }
+            playing = true; icon.textContent = '❚❚'; bar.classList.add('is-playing');
+          });
+        }
+        bar.addEventListener('click', function (e) {
+          e.stopPropagation();   /* 别顺带触发「多选」 */
+          if (playing && audio) { audio.pause(); reset(); return; }
+          play();
+        });
+        voiceBars[msg.id] = { el: bar, play: play };
+        return bar;
+      }
+
+      /* 把一段音频挂到某条消息上（朗读与自动读共用） */
+      function attachVoice(msgId, charId, text, res) {
+        return Sleepy.media.put(res.blob, { name: '语音', kind: 'audio' }).then(function (mid) {
+          patchMessage(chatId, msgId, {
+            voice: {
+              mediaId: mid,
+              seconds: res.seconds || 0,
+              provider: res.provider,
+              model: res.model,
+              emotion: (res.plan && res.plan.emotion) || 'neutral',
+              plan: res.plan || null,
+              at: Date.now()
+            }
+          });
+          /* keepTranscript=false → 气泡只留语音条（搜索/记忆仍然留着原文） */
+          renderMessages();
+          return { mediaId: mid };
+        });
+      }
+
+      /* 手动朗读（长按菜单里那一项）。不受主动频率限制，但仍受长度限制。 */
+      function readAloud(msg, seg) {
+        if (!Sleepy.tts) return;
+        var text = bubbleText(msg, seg ? seg.idx : null);
+        if (!String(text || '').trim()) { ctx.toast('这一句没有可读的文字', 'warn'); return; }
+        if (!Sleepy.tts.settings().enabled) {
+          ctx.toast('语音总开关还关着 —— 去「设置 → 语音 TTS」打开', 'warn');
+          return;
+        }
+        var cfg = Sleepy.tts.voiceConfigOf(curCharId());
+        if (!cfg.voiceId) { ctx.toast('这件角色还没填音色 ID', 'warn'); return; }
+        ctx.toast('正在生成语音…');
+        Sleepy.tts.generate({
+          charId: curCharId(),
+          text: text,
+          manual: true
+        }).then(function (res) {
+          if (!res.ok) {
+            ctx.toast((res.error && res.error.userText) || '语音生成失败', 'err');
+            return;
+          }
+          attachVoice(msg.id, curCharId(), text, res).then(function () {
+            var vb = voiceBars[msg.id];
+            if (vb) vb.play();   /* 用户点的 → 一定试着播 */
+          });
+        });
+      }
+
+      /* 角色回复落地后：按角色的语音设置决定要不要自动读一句。
+         失败静默（只在控制台留一行）—— 语音挂了不该弹一堆红字打扰聊天。 */
+      function maybeAutoVoice(msgId, text) {
+        if (!Sleepy.tts || !msgId || !String(text || '').trim()) return;
+        var charId = curCharId();
+        if (!charId || !Sleepy.tts.settings().enabled) return;
+        var cfg = Sleepy.tts.voiceConfigOf(charId);
+        if (!cfg.enabled || !cfg.voiceId) return;
+        /* 只读**第一段**（一轮里最多一条语音）—— 一条回复被拆成好几段，
+           每段都读会变成连播三条，听着像卡带。 */
+        var segs = (Sleepy.promptEngine && Sleepy.promptEngine.splitBubbles)
+          ? Sleepy.promptEngine.splitBubbles(text) : [text];
+        var first = String(segs[0] || text || '').trim();
+        if (!first) return;
+        var plan = Sleepy.tts.speechPlanOf(first, cfg, { turnsSinceVoice: turnsSinceVoice() });
+        if (!plan.shouldGenerate) return;
+        Sleepy.tts.generate({ charId: charId, text: first, plan: plan }).then(function (res) {
+          if (!res.ok) return;   /* 静默：自动语音失败不打扰 */
+          attachVoice(msgId, charId, first, res).then(function () {
+            if (shouldAutoPlay(cfg)) {
+              var vb = voiceBars[msgId];
+              if (vb) vb.play();
+            }
+          });
+        });
+      }
+
       function bubbleFor(msg, c, seg) {
         seg = seg || null;
         var role = msg.role === 'user' ? 'user'
@@ -1445,6 +1620,13 @@
         }
         var bubble = h('div', 'msg-bubble msg-' + role);
         bubble.setAttribute('data-id', msg.id);
+
+        /* 语音（2.15）：角色选了「不保留文字稿」时，这条气泡只留语音条 ——
+           正文其实还在（搜索、记忆、导出都用它），只是不显示。 */
+        if (msg.voice && Sleepy.tts &&
+            !Sleepy.tts.voiceConfigOf(c && c.characterId).keepTranscript) {
+          bubble.classList.add('tts-no-text');
+        }
 
         var herePending = !!(pending && pending.targetId === msg.id);
         if (herePending) bubble.classList.add('is-pending');
@@ -1524,6 +1706,11 @@
                两道闸门写在 attach 里，这里不自己判开关。 */
             if (seg && seg.trans && role === 'assistant') {
               Sleepy.msgTrans.attach(content, msg.id + ':' + seg.idx, seg.trans, c && c.characterId);
+            }
+            /* 语音条：只挂在**第一段**气泡上（一轮一条语音），
+               没有音频的消息一点痕迹都不留。 */
+            if (role === 'assistant' && msg.voice && (!seg || seg.idx === 0)) {
+              content.appendChild(voiceBarFor(msg));
             }
           }
         }
@@ -1837,6 +2024,15 @@
           { label: '多选', run: function () { enterSelect(msg.id); } },
           { label: '删除', kind: 'danger', run: function () { removeMsg(msg); } }
         ];
+        /* 「朗读」（2.15）：只在角色的话、纯文字、且角色开着「长按给朗读」时出现。
+           已经在长按的那一条上读了就写成「重读」—— 同一句话偶尔想再听一遍。 */
+        if (Sleepy.tts && msg.role === 'assistant' && !msg.type &&
+            Sleepy.tts.voiceConfigOf(curCharId()).manualRead) {
+          items.splice(4, 0, {
+            label: msg.voice ? '重读' : '朗读',
+            run: function () { readAloud(msg, seg); }
+          });
+        }
         items.forEach(function (it) {
           var b = h('button', 'msg-pop-item' + (it.kind ? ' is-' + it.kind : ''), it.label);
           b.type = 'button';
@@ -2259,15 +2455,24 @@
             }
 
             if (finalText) {
+              /* 先记住这条消息的 id —— 语音（2.15）要挂在它身上 */
+              var voiceMsgId = target;
               if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now() });
-              else addMessage(chatId, {
-                id: newId(),
-                role: 'assistant',
-                content: finalText,
-                trans: transArr,
-                timestamp: Date.now()
-              });
+              else {
+                voiceMsgId = newId();
+                addMessage(chatId, {
+                  id: voiceMsgId,
+                  role: 'assistant',
+                  content: finalText,
+                  trans: transArr,
+                  timestamp: Date.now()
+                });
+              }
               commitMemory(chatId, 'assistant', finalText);
+              /* 语音（2.15）：按这件角色的语音设置决定要不要自动读一句。
+                 放在和总结/查手机/主动消息**同一位置** —— 都不阻塞聊天，
+                 失败静默（自动语音失败绝不该弹红字打扰聊天）。 */
+              if (Sleepy.tts) maybeAutoVoice(voiceMsgId, finalText);
               /* 总结引擎（v5 10.1）：回复落地后检查累计阈值，
                  够了就后台整理，不阻塞聊天（失败静默，游标不动下轮再试） */
               if (Sleepy.summaryEngine) Sleepy.summaryEngine.onChatTurn(chatId);
