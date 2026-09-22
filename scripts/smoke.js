@@ -4600,18 +4600,101 @@ function finalReport() {
   }
 }
 console.log('\n--- 帷境（Veilscape）---');
-t('帷境四个页面注册齐，桌面入口是通栏 wj 格（不是 app 图标格）', () => {
+t('帷境页面注册齐（含 T6 谢幕），桌面入口是通栏 wj 格（不是 app 图标格）', () => {
   const reg = S.registered();
-  ['wj-foyer', 'wj-work', 'wj-create', 'wj-style'].forEach((id) => {
-    if (!reg[id]) throw new Error('缺页面：' + id);
-  });
+  ['wj-foyer', 'wj-work', 'wj-create', 'wj-style', 'wj-read', 'wj-coread', 'wj-curtain']
+    .forEach((id) => {
+      if (!reg[id]) throw new Error('缺页面：' + id);
+    });
   const d = S.desktop.defaultDesktop();
   const pages = d && d.pages ? d.pages : d;
   let entry = null;
   pages.forEach((cells) => cells.forEach((c) => { if (c.type === 'wj') entry = c; }));
   if (!entry) throw new Error('桌面上没有帷境入口');
   if (entry.w < 2) throw new Error('入口不是通栏，宽度只有 ' + entry.w);
-  return { 页面数: 4, 入口: entry.i + ' ' + entry.w + 'x' + entry.h };
+  return { 页面数: 7, 入口: entry.i + ' ' + entry.w + 'x' + entry.h };
+});
+
+/* T6 · 谢幕五路。判据来自 Demo 底注：收藏 ≠ 分享 ≠ 共读 ≠ 公开 ≠ 定史，
+   四条断言各守一条 —— 这四条链路一旦被谁"顺手合并"，这里立刻会红。 */
+
+t('T6 票根：连点两次只有一张（幂等）', () => {
+  S.store.set('wjTickets', []);
+  const w = S.wj.createDraft({ title: '票根测试' });
+  const t1 = S.wj.saveTicket(w.id);
+  const t2 = S.wj.saveTicket(w.id);
+  const list = S.wj.tickets();
+  S.wj.remove(w.id);
+  S.store.set('wjTickets', []);
+  if (list.length !== 1) throw new Error('票根多了：' + list.length);
+  if (!t1 || !t2 || t1.id !== t2.id) throw new Error('两次拿到的不是同一张');
+  return { 张数: 1, 同一张: true, 字数: t1.chars };
+});
+
+t('T6 五路独立：分享不创建同席、也不产生票根（收藏≠分享≠共读）', () => {
+  S.store.set('wjSessions', []);
+  S.store.set('wjTickets', []);
+  const w = S.wj.createDraft({ title: '五路测试' });
+  const after = S.wj.markCurtain(w.id, 'shared');
+  const c = S.wj.curtainOf(after);
+  const sessions = S.wjCoread.forWork(w.id).length;
+  const ticket = S.wj.ticketFor(w.id);
+  S.wj.remove(w.id);
+  if (!c.shared) throw new Error('shared 没记上');
+  if (sessions) throw new Error('分享竟然创建了同席');
+  if (ticket) throw new Error('分享竟然产生了票根');
+  return { shared: true, 同席: 0, 票根: 0 };
+});
+
+t('T6 幂等：同一条路重复标记不改时间戳（重复点 = 什么都没发生）', () => {
+  const w = S.wj.createDraft({ title: '幂等测试' });
+  S.wj.markCurtain(w.id, 'forumPublished');
+  /* 手动把时间改成过去，再标一次 —— 用真实时间戳比是比不出来的
+     （同一毫秒内两次标记本来就会相等）。 */
+  S.wj.mutate(w.id, function (x) {
+    x.curtain.forumPublished = '2020-01-01T00:00:00.000Z';
+    return x;
+  });
+  const again = S.wj.markCurtain(w.id, 'forumPublished');
+  const stamp = S.wj.curtainOf(again).forumPublished;
+  S.wj.remove(w.id);
+  if (stamp !== '2020-01-01T00:00:00.000Z') throw new Error('重复标记把时间改掉了');
+  return { 时间没被改: true };
+});
+
+t('T6 谢幕与三路分开记：分享过 ≠ 已经谢幕', () => {
+  const w = S.wj.createDraft({ title: '谢幕判据' });
+  S.wj.markCurtain(w.id, 'shared');
+  const afterShare = S.wj.get(w.id);
+  if (S.wj.isSealed(afterShare)) throw new Error('分享竟然把作品标成已谢幕');
+  S.wj.curtain(w.id);
+  const afterSeal = S.wj.get(w.id);
+  const sealedAt = S.wj.curtainOf(afterSeal).sealedAt;
+  S.wj.remove(w.id);
+  if (!sealedAt) throw new Error('谢幕没记上时间');
+  if (afterSeal.status !== 'completed') throw new Error('谢幕没把状态改成已完成');
+  return { 分享后未谢幕: true, 谢幕后: afterSeal.status };
+});
+
+t('T6 两种卡片：作品卡与邀请卡都渲染出关键信息', () => {
+  const UI = S.wjCurtainUI;
+  if (!UI) throw new Error('wjCurtainUI 没导出（聊天页拿不到卡片）');
+  const textOf = (el) => {
+    let s = el.textContent || '';
+    (el.children || []).forEach((c) => { s += '\n' + textOf(c); });
+    return s;
+  };
+  const share = textOf(UI.shareEl({ title: '潮声以北', chapters: 3, chars: 1200, note: '给你看看' }));
+  const base = { title: '潮声以北', scopeName: '从第一章开始', modeName: '安静陪读' };
+  const pending = textOf(UI.inviteEl(Object.assign({}, base, { answer: '' })));
+  const accepted = textOf(UI.inviteEl(Object.assign({}, base, { answer: 'accept', note: '好' })));
+  const refused = textOf(UI.inviteEl(Object.assign({}, base, { answer: 'refuse' })));
+  if (share.indexOf('潮声以北') < 0) throw new Error('作品卡没有标题');
+  if (share.indexOf('给你看看') < 0) throw new Error('作品卡没有附言');
+  if (pending.indexOf('等 TA 回应') < 0) throw new Error('邀请卡没写「等 TA 回应」');
+  if (accepted.indexOf('接受了') < 0) throw new Error('接受态没标出来');
+  if (refused.indexOf('没有答应') < 0) throw new Error('婉拒的文案不对');
+  return { 作品卡: '标题+附言', 邀请卡: '待回应/接受/婉拒' };
 });
 
 t('anchorId 不可变：局部重写只换 text，锚点与修订记录分得清', () => {

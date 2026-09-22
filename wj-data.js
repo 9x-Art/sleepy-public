@@ -356,8 +356,96 @@
     return REALITY[0];
   }
 
-  /* ---------------------- 全局文风配置（跨作品） ---------------------- */
+  /* ======================== 票根与谢幕（T6） ========================
 
+     票根**全局不 scoped**（方案 §5.1）：群岛作品无法归属单岛，删掉一座岛
+     不该连坐删掉票根。所以它**不进 favorites 那张按岛过滤的表** ——
+     收藏馆渲染时把两个来源并起来（聊天收藏按岛 + 票根全局）。
+
+     谢幕的另外三路（分享 / 邀请 / 公开）记在 work.curtain 上；
+     **票根那一路不进 curtain** —— 它的唯一真相是 wjTickets 里有没有这张，
+     记两份迟早对不上。
+     ============================================================ */
+  var KEY_TICKETS = 'wjTickets';
+
+  function tickets() {
+    var list = Sleepy.store.get(KEY_TICKETS, []);
+    return Array.isArray(list) ? list : [];
+  }
+
+  function ticketFor(workId) {
+    var list = tickets();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].workId === workId) return list[i];
+    }
+    return null;
+  }
+
+  /* 保存票根。**幂等**：一部作品只有一张 —— 连点两次拿到的是同一张
+     （方案 §7 红线 10：有副作用的动作必须幂等）。 */
+  function saveTicket(workId) {
+    var hit = ticketFor(workId);
+    if (hit) return hit;
+    var w = get(workId);
+    if (!w) return null;
+    var list = tickets();
+    var t = {
+      id: uid('tk'),
+      workId: workId,
+      title: w.title || '未命名剧本',
+      reality: w.reality || 'story',
+      chapters: chapterCount(w, true),
+      chars: charCount(w),
+      cast: (w.cast || []).map(function (c) { return c.name; }),
+      at: nowISO()
+    };
+    list.unshift(t);
+    Sleepy.store.set(KEY_TICKETS, list);
+    return t;
+  }
+
+  function removeTicket(id) {
+    var list = tickets().filter(function (t) { return t.id !== id; });
+    Sleepy.store.set(KEY_TICKETS, list);
+    return true;
+  }
+
+  /* 谢幕记账。票根那一路不在这里（见上面那段）。
+     **幂等**：已经做过的那一路再点一次原样返回，不刷新时间戳 ——
+     否则「重复点一下」会把「什么时候分享的」也一起改掉。
+
+     ⚠️ 这里**不许写 `curtain.at`**：那是「谢幕」本身的时间戳，
+     由下面的 curtain() 独占。第一版图省事在这里塞了个 at，
+     结果「分享过」被谢幕页当成了「已经谢幕」，谢幕按钮再也不出现
+     （真机脚本抓到的）。 */
+  var CURTAIN_KEYS = ['shared', 'coreadInvited', 'forumPublished'];
+
+  function curtainOf(work) {
+    return (work && work.curtain) || {};
+  }
+
+  function markCurtain(workId, key) {
+    if (CURTAIN_KEYS.indexOf(key) < 0) return null;
+    return mutate(workId, function (w) {
+      w.curtain = w.curtain || {};
+      if (!w.curtain[key]) w.curtain[key] = nowISO();
+      return w;
+    });
+  }
+
+  /* 谢幕本身：第一次进来把作品标成已完成，并记下谢幕时刻（sealedAt）。
+     status 之外什么都不动 —— 「谢幕」不是删除，也不是改权限。 */
+  function curtain(workId) {
+    return mutate(workId, function (w) {
+      w.curtain = w.curtain || {};
+      if (!w.curtain.sealedAt) w.curtain.sealedAt = nowISO();
+      if (w.status !== 'completed') w.status = 'completed';
+      return w;
+    });
+  }
+  function isSealed(work) { return !!curtainOf(work).sealedAt; }
+
+  /* ---------------------- 全局文风配置（跨作品） ---------------------- */
   var KEY_CFG = 'wjStyleCfg';
 
   function styleCfg() {
@@ -400,6 +488,12 @@
     shelf: shelf, recentReadable: recentReadable,
     styleOf: styleOf, realityOf: realityOf,
     styleCfg: styleCfg, saveStyleCfg: saveStyleCfg,
+    /* 票根与谢幕（T6） */
+    KEY_TICKETS: KEY_TICKETS, CURTAIN_KEYS: CURTAIN_KEYS,
+    tickets: tickets, ticketFor: ticketFor,
+    saveTicket: saveTicket, removeTicket: removeTicket,
+    curtainOf: curtainOf, markCurtain: markCurtain, curtain: curtain,
+    isSealed: isSealed,
     onChange: null
   };
 

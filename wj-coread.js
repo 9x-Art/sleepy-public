@@ -219,8 +219,25 @@
 
   /* ------------------------- 模型判断（可注入） ------------------------- */
 
+  /* 真机 transport（与 wj-engine 同一套约定）。
+     ⚠️ 2026-09-22 补上这个兜底：在这之前 wjCoread 只有 `_transport` 注入点，
+     生产环境里 judgeInvite / react **永远**以「没有可用的模型连接」失败 ——
+     邀请发出去以后 TA 永远不回应（T6 的邀请卡就停在「等 TA 回应」）。
+     非流式：一次拿到整个 JSON 才好解析。 */
+  function apiTransport(messages, ov) {
+    return new Promise(function (resolve, reject) {
+      var h = Sleepy.api.runChat(messages, {
+        onDone: function (cand, text) { resolve(text); },
+        onFail: function (list, lastErr) {
+          reject(new Error((lastErr && lastErr.error) || '模型没有返回'));
+        }
+      }, false, ov || { maxTokens: 300 });
+      if (!h) reject(new Error('还没有可用的模型连接，去 设置 → 模型连接 填 API'));
+    });
+  }
+
   function transport(opts) {
-    return (opts && opts.transport) || Sleepy.wjCoread._transport || null;
+    return (opts && opts.transport) || Sleepy.wjCoread._transport || apiTransport;
   }
 
   function charCard(charId) {

@@ -491,6 +491,12 @@
       acts.appendChild(btn('邀请同席', 'wj-btn', function () {
         Sleepy.nav.open('wj-coread', { workId: w.id });
       }));
+      /* 谢幕（T6）：作品去向的五条路都挂在那儿。
+         它是**唯一**能把作品标成「已完成」的入口 —— 在这之前，
+         门厅的「已完成」那一档一直是空的。 */
+      acts.appendChild(btn('谢幕', 'wj-btn', function () {
+        Sleepy.nav.open('wj-curtain', { id: w.id });
+      }));
     }
     copy.appendChild(acts);
     hero.appendChild(copy);

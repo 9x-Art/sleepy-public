@@ -560,6 +560,18 @@
     /* 查岗：没被察觉的查岗消息在 buildMessages 里整条过滤（TA 不该知道），
        能走到 attachText 的都是被察觉的 —— TA 得知道有人看了自己 */
     if (m.type === 'checkin') return '[对方刚刚「查岗」看了你一眼，你察觉到了视线：' + (m.caption || '看到了你的样子') + ']';
+    /* 帷境的两种卡片（T6）：TA 得知道自己收到了什么 ——
+       作品卡是「可以读了回应」，邀请卡是「等 TA 回应」。
+       只报事实（标题 + 附言），**剧本正文一个字都不进来**：
+       分享不等于 TA 读过了，更不等于那是 TA 的经历。 */
+    if (m.type === 'wj-share') {
+      return '[我分享了一部私人剧本：《' + (m.title || '未命名') + '》' +
+        (m.note ? '，附言：' + m.note : '') + '；这是作品，不是发生过的事]';
+    }
+    if (m.type === 'wj-invite') {
+      return '[我邀请你一起同席共读《' + (m.title || '未命名') + '》' +
+        (m.answer ? '；你已经回应了' : '；还没有回应') + ']';
+    }
     return m.content || '';
   }
 
@@ -640,6 +652,8 @@
     if (msg.type === 'pat') return (msg.content || '拍了拍');
     if (msg.type === 'checkin') return '[查岗]' + (msg.caption ? ' ' + msg.caption : '');
     if (msg.type === 'phone-invite') return '[手机邀请]' + (msg.content ? ' ' + msg.content : '');
+    if (msg.type === 'wj-share') return '[作品]《' + (msg.title || '未命名') + '》';
+    if (msg.type === 'wj-invite') return '[同席邀请]《' + (msg.title || '未命名') + '》';
     var raw = String(msg.content || '');
     var pe = Sleepy.promptEngine;
     if (pe && pe.splitBubblesT) {
@@ -1465,6 +1479,8 @@
           content.appendChild(attachCard(msg));
         } else if (msg.type === 'checkin') {
           content.appendChild(checkinCard(msg));
+        } else if (msg.type === 'wj-share' || msg.type === 'wj-invite') {
+          content.appendChild(wjCard(msg));
         } else {
           var textEl = h('div', 'msg-text');
           var shown;
@@ -1597,6 +1613,21 @@
         box.appendChild(h('div', 'msg-checkin-cap', '你悄悄看了一眼：' + (msg.caption || '…')));
         if (msg.noticed) box.appendChild(h('span', 'msg-checkin-tag', 'TA 发现了'));
         return box;
+      }
+
+      /* 帷境那两种卡片（T6）：作品卡 / 同席邀请卡。
+         渲染在 page-wj-curtain.js 里（**本文件先加载**，所以只能惰性取 ——
+         加载期读 Sleepy.wjCurtainUI 会拿到 undefined）。
+         卡片不是「说了什么」，所以不带时间/长按菜单之外的任何聊天气泡装饰。 */
+      function wjCard(msg) {
+        var UI = Sleepy.wjCurtainUI;
+        if (!UI) return h('div', 'msg-text', '（帷境还没准备好）');
+        if (msg.type === 'wj-share') return UI.shareEl(msg);
+        return UI.inviteEl(msg, {
+          onEnter: function () {
+            ctx.open('wj-read', { id: msg.workId, session: msg.sessionId });
+          }
+        });
       }
 
       function attachCard(msg) {
@@ -3233,7 +3264,8 @@
       var emptyWrap = h('div', 'empty');
       emptyWrap.appendChild(h('div', 'empty-paper'));
       emptyWrap.appendChild(h('p', 'empty-text', '还没有收藏过任何一条'));
-      emptyWrap.appendChild(h('p', 'empty-hint', '长按一条消息，选「收藏」'));
+      emptyWrap.appendChild(h('p', 'empty-hint',
+        '长按一条消息，选「收藏」；帷境的作品在谢幕时可以存一张票根'));
       body.appendChild(emptyWrap);
       body.appendChild(listWrap);
 
@@ -3241,8 +3273,49 @@
         /* 读取方：只列当前房里的收藏 */
         var list = Sleepy.core.scoped(store.get('favorites'));
         if (!Array.isArray(list)) list = [];
+        /* 票根（帷境 T6）：**全局不 scoped**（群岛作品不归属单岛），
+           所以跟聊天收藏分两段列 —— 换一座岛，票根不该跟着消失。 */
+        var tk = (Sleepy.wj && Sleepy.wj.tickets) ? Sleepy.wj.tickets() : [];
         listWrap.innerHTML = '';
-        emptyWrap.style.display = list.length ? 'none' : 'flex';
+        emptyWrap.style.display = (list.length || tk.length) ? 'none' : 'flex';
+
+        if (tk.length && Sleepy.wjCurtainUI) {
+          listWrap.appendChild(h('p', 'chat-list-sect', '票根'));
+          tk.forEach(function (t) {
+            var tItem = h('div', 'fav-item');
+            tItem.appendChild(Sleepy.wjCurtainUI.ticketEl(t, { small: true }));
+
+            var tMeta = h('div', 'fav-meta');
+            var when = new Date(t.at || 0).getTime();
+            tMeta.appendChild(h('span', 'fav-src',
+              '帷境 · ' + (when ? relativeTime(when) : '—')));
+
+            var tJump = h('button', 'fav-btn', '去看看');
+            tJump.type = 'button';
+            tJump.addEventListener('click', function () {
+              if (!Sleepy.wj || !Sleepy.wj.get(t.workId)) {
+                ctx.toast('这部剧本已经不在门厅里了', 'err');
+                return;
+              }
+              ctx.open('wj-work', { id: t.workId });
+            });
+
+            var tDel = h('button', 'fav-btn is-danger', '移除');
+            tDel.type = 'button';
+            tDel.addEventListener('click', function () {
+              /* 只收票根，作品一个字都不动 ——「收藏纪念」是这个意思 */
+              Sleepy.wj.removeTicket(t.id);
+              rebuild();
+              ctx.toast('票根收起来了', 'ok');
+            });
+
+            tMeta.appendChild(tJump);
+            tMeta.appendChild(tDel);
+            tItem.appendChild(tMeta);
+            listWrap.appendChild(tItem);
+          });
+          if (list.length) listWrap.appendChild(h('p', 'chat-list-sect', '聊天收藏'));
+        }
 
         list.forEach(function (f) {
           var item = h('div', 'fav-item');

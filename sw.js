@@ -84,7 +84,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v93';
+var CACHE = 'sleepy-v94';
 var CORE = [
   './',
   './index.html',

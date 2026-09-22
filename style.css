@@ -11232,7 +11232,12 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .w-wj-line{font-size:10.5px;letter-spacing:.04em;color:var(--g-ink-3);}
 
-.page[data-page^="wj-"]{
+/* 帷境的色板。**页面和弹层共用一份** —— 弹层（.wj-sheet）挂在 #phone 上
+   （.page 有 transform，fixed 在那里面会退化成相对定位，见文件里那条老坑），
+   所以它不在 .page 里面：变量只定义在 .page 上的话，弹层拿到的是空值，
+   面板会变成一块透明玻璃（真机截图抓到的）。 */
+.page[data-page^="wj-"],
+.wj-sheet{
   /* 2026-09-21（用户：「太深了，但原本的颜色真的很好看」）：整体提亮一档 ——
      夜蓝 → 靛蓝（色相不动，只提亮度）；纸本从米色改冷灰白
      （用户：「不要再用米色或者奶油色了」），正文/次级字跟着调冷。 */
@@ -11251,7 +11256,9 @@ button.cal-ev:active{background:var(--g-glass-2);}
   --wj-paper-2:#d2d7e0;
   --wj-ink:#20262f;
   --wj-green:#9db5a8;
+}
 
+.page[data-page^="wj-"]{
   --bg:#16203a;
   --bg-2:rgba(255,255,255,.07);
   --bg-3:rgba(255,255,255,.11);
@@ -11920,4 +11927,180 @@ button.cal-ev:active{background:var(--g-glass-2);}
   border:1px solid rgba(145,170,156,.5);border-radius:5px;
   padding:11px 13px;margin:10px 0;font-size:12px;line-height:1.8;
   color:var(--wj-text);font-family:var(--ff-serif);background:rgba(145,170,156,.06);
+}
+
+/* ==================== 帷境 · 谢幕与去向（T6） ====================
+   五路卡 + 票根 + 两种聊天卡片 + 弹层。
+   配色只用 --wj-*（深夜蓝 / 月光纸 / 酒红 / 灰绿），不引新变量。
+   票根是唯一一件会离开帷境的东西（进收藏馆），所以它的缺口色做成了变量。 */
+
+/* ---- 票根：:before/:after 两个半圆缺口咬出票根形 ----
+   缺口色 = 它当时所在的底色，必须跟着容器走：谢幕页是深夜蓝，
+   收藏馆（浅色页面）里覆盖成页面底色 —— 写死一个色，两处必错一处。 */
+.wj-ticket{
+  --wj-ticket-hole:var(--wj-night);
+  position:relative;display:flex;align-items:stretch;
+  margin-top:12px;border-radius:3px;
+  background:var(--wj-paper);color:var(--wj-ink);
+  box-shadow:0 16px 36px rgba(0,0,0,.34);
+}
+.wj-ticket:before,
+.wj-ticket:after{
+  content:'';position:absolute;width:18px;height:18px;border-radius:50%;
+  background:var(--wj-ticket-hole);top:calc(50% - 9px);
+}
+.wj-ticket:before{left:-9px;}
+.wj-ticket:after{right:-9px;}
+.wj-ticket-main{flex:1;min-width:0;padding:16px 14px;}
+.wj-ticket .wj-eyebrow{color:#8a8378;}
+.wj-ticket-title{
+  margin:6px 0 5px;font-family:var(--ff-serif);font-size:16px;font-weight:500;
+  color:var(--wj-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.wj-ticket-meta{margin:0;font-size:10.5px;color:#5d5a52;}
+.wj-ticket-line{margin:4px 0 0;font-size:10px;letter-spacing:.06em;color:#805763;}
+/* 存根：虚线分隔 + 编号（编号由 id 与字数派生，只为了每张不一样） */
+.wj-ticket-stub{
+  flex:none;width:62px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:3px;
+  border-left:1px dashed rgba(126,113,94,.42);padding:10px 6px;
+}
+.wj-ticket-stub-tag{font-size:8px;letter-spacing:.16em;color:#8a8378;}
+.wj-ticket-stub-no{font-family:var(--ff-serif);font-size:17px;color:var(--wj-ink);}
+.wj-ticket.is-small .wj-ticket-main{padding:13px 12px;}
+.wj-ticket.is-small .wj-ticket-title{font-size:14px;}
+
+/* ---- 谢幕页 ---- */
+.wj-curtain-seal .wj-btn{margin-top:10px;}
+.wj-curtain-warn{
+  margin:18px 0 0;text-align:center;font-size:10px;letter-spacing:.08em;
+  color:var(--wj-wine-lite);opacity:.85;
+}
+
+/* ---- 五路卡：四张两列 + history 通栏（Demo 的版式） ---- */
+.wj-routes{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px;}
+.wj-route{
+  display:flex;flex-direction:column;gap:4px;text-align:left;
+  padding:13px 12px;border:1px solid var(--wj-line);border-radius:5px;
+  background:rgba(255,255,255,.025);
+  font:inherit;color:inherit;cursor:pointer;
+}
+.wj-route.is-wide{grid-column:1/-1;}
+.wj-route.is-wine{
+  border-color:rgba(200,150,160,.42);background:rgba(138,95,107,.10);
+}
+.wj-route.is-done{
+  border-color:rgba(157,181,168,.36);background:rgba(157,181,168,.09);
+}
+.wj-route-tag{font-size:8.5px;letter-spacing:.16em;color:var(--wj-dimmer);}
+.wj-route.is-wine .wj-route-tag{color:var(--wj-wine-lite);}
+.wj-route-name{font-size:13px;color:var(--wj-text);}
+.wj-route-hint{font-size:10px;line-height:1.7;color:var(--wj-dim);}
+.wj-route-state{font-size:9px;letter-spacing:.1em;color:var(--wj-dimmer);}
+.wj-route.is-done .wj-route-state{color:var(--wj-green);}
+
+/* ---- 五路的弹层（挂 #phone；结构照 page-chat-settings 的 .iol-drawer，
+       配色换成帷境自己那套） ---- */
+.wj-sheet{
+  position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;
+  background:rgba(8,12,22,0);transition:background .24s var(--ease);
+}
+.wj-sheet.show{background:rgba(8,12,22,.62);}
+.wj-sheet-panel{
+  width:100%;max-height:86%;overflow-y:auto;
+  background:var(--wj-night-2);
+  border-top:1px solid var(--wj-line);
+  border-radius:14px 14px 0 0;
+  padding:20px 18px calc(20px + env(safe-area-inset-bottom,0px));
+  transform:translateY(24px);opacity:0;
+  transition:transform .26s var(--ease),opacity .26s var(--ease);
+}
+.wj-sheet.show .wj-sheet-panel{transform:none;opacity:1;}
+.wj-sheet-title{
+  margin:0 0 6px;font-family:var(--ff-serif);font-size:16px;font-weight:500;
+  color:var(--wj-text);
+}
+.wj-sheet-desc{margin:0 0 10px;font-size:11px;line-height:1.8;color:var(--wj-dim);}
+.wj-sheet-cap{
+  margin:14px 0 7px;font-size:9px;letter-spacing:.18em;
+  color:var(--wj-dimmer);text-transform:uppercase;
+}
+.wj-sheet-block{margin-top:12px;}
+.wj-sheet-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.wj-sheet-modes{display:flex;flex-direction:column;gap:8px;}
+.wj-sheet-notice{
+  margin:12px 0 0;padding:10px 12px;border-radius:4px;font-size:10.5px;line-height:1.75;
+  border:1px solid rgba(200,150,160,.34);background:rgba(138,95,107,.10);
+  color:var(--wj-wine-lite);
+}
+.wj-sheet-actions{display:flex;flex-direction:column;gap:8px;margin-top:18px;}
+.wj-sheet-actions .wj-quiet{
+  background:none;border:0;color:var(--wj-dimmer);
+  font-size:11px;letter-spacing:.06em;padding:8px;cursor:pointer;font-family:inherit;
+}
+
+/* ---- 聊天里的作品卡（.share）：书脊 + 正文列 ---- */
+.wj-share{
+  display:flex;overflow:hidden;max-width:284px;
+  border:1px solid rgba(120,132,156,.22);border-radius:10px;
+  background:#fff;
+}
+.wj-share-cover{
+  flex:none;width:58px;display:flex;align-items:center;justify-content:center;
+  padding:12px 8px;
+  background:linear-gradient(160deg,#243252,#16203a);
+}
+.wj-share-cover-t{
+  writing-mode:vertical-rl;max-height:96px;overflow:hidden;
+  font-family:var(--ff-serif);font-size:11px;letter-spacing:.1em;color:#e6e9ef;
+}
+.wj-share-main{padding:12px;min-width:0;}
+.wj-share .wj-eyebrow{color:var(--g-ink-3);}
+.wj-share-title{margin:5px 0 3px;font-size:14px;color:var(--g-ink);}
+.wj-share-meta{margin:0;font-size:10px;color:var(--g-ink-3);}
+.wj-share-note{
+  margin:9px 0 0;padding:7px 10px;border-left:2px solid rgba(176,138,94,.5);
+  background:rgba(247,242,234,.72);
+  font-size:11px;line-height:1.75;color:var(--g-ink-2);
+}
+.wj-share-foot{margin:9px 0 0;font-size:9px;line-height:1.6;color:var(--g-ink-3);}
+
+/* ---- 聊天里的邀请卡（.invite）：深色 + meta 两格 + 四个回答 ---- */
+.wj-invite{
+  max-width:290px;padding:14px;border-radius:10px;
+  background:linear-gradient(160deg,#243252,#16203a);
+  border:1px solid rgba(214,223,240,.20);
+  box-shadow:0 10px 24px rgba(20,30,52,.28);
+  color:var(--wj-text);
+}
+.wj-invite .wj-eyebrow{color:var(--wj-dimmer);}
+.wj-invite-title{
+  margin:6px 0 10px;font-family:var(--ff-serif);font-size:14px;font-weight:500;
+  color:var(--wj-text);
+}
+.wj-invite-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.wj-invite-meta-cell{border:1px solid var(--wj-line-soft);border-radius:4px;padding:7px 9px;}
+.wj-invite-meta-cell small{display:block;font-size:8.5px;letter-spacing:.1em;color:var(--wj-dimmer);}
+.wj-invite-meta-cell b{font-size:11px;font-weight:500;color:var(--wj-silver);}
+.wj-invite-answers{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px;}
+.wj-invite-ans{
+  text-align:center;font-size:10px;padding:7px 4px;border-radius:4px;
+  border:1px solid var(--wj-line-soft);color:var(--wj-dim);
+}
+.wj-invite-ans.is-on{
+  border-color:rgba(157,181,168,.62);background:rgba(157,181,168,.14);color:var(--wj-text);
+}
+.wj-invite-ans.is-off{opacity:.38;}
+.wj-invite-note{
+  margin:9px 0 0;font-family:var(--ff-serif);font-size:11px;line-height:1.75;
+  color:var(--wj-silver);
+}
+.wj-invite-foot{margin:8px 0 0;font-size:9.5px;line-height:1.6;color:var(--wj-dimmer);}
+.wj-invite-go{width:100%;margin-top:10px;}
+
+/* 票根进收藏馆（浅色页面）：缺口改成页面底色，投影也收掉 ——
+   收藏馆里每一件都是平铺的，单独一张浮起来会像点错了。 */
+.fav-item .wj-ticket{
+  --wj-ticket-hole:var(--g-base);
+  box-shadow:none;border:1px solid var(--line);
 }
