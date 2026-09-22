@@ -4818,6 +4818,35 @@ t('审计修复：删作品时共读会话与审阅记录一起收掉', () => {
   return { 删前: before.sessions + '/' + before.canon, 删后: after.sessions + '/' + after.canon };
 });
 
+/* 2026-09-22 用户拍板的两条语义（衔接审计留下的那两问）。 */
+
+t('文风底座：全局是「新作品的起点」—— 改全局只影响之后新建的作品', () => {
+  S.store.set('wjWorks', []);
+  S.store.set('wjStyleCfg', null);
+  const oldOne = S.wj.createDraft({ title: '先建的那部' });
+  const oldBefore = S.wj.styleOf(oldOne).params.distance;
+  S.wj.saveStyleCfg({ distance: 90, preset: '静水' });   /* 用户去文风台拉了滑杆 */
+  const fresh = S.wj.createDraft({ title: '后建的那部' });
+  const freshDistance = S.wj.styleOf(fresh).params.distance;
+  const oldAfter = S.wj.styleOf(S.wj.get(oldOne.id)).params.distance;
+  /* 顺带确认「四根滑杆跟预设一样」时不显示成「自定义」 */
+  const freshName = S.wj.styleOf(fresh).name;
+  S.wj.remove(oldOne.id);
+  S.wj.remove(fresh.id);
+  S.store.set('wjStyleCfg', null);
+  S.store.set('wjWorks', []);
+  if (freshDistance !== 90) throw new Error('新作品没拿到全局底座：' + freshDistance);
+  if (oldAfter !== oldBefore) throw new Error('改全局把老作品也改了（老 ' + oldBefore + '→' + oldAfter + '）');
+  return { 老作品: oldAfter, 新作品: freshDistance, 新作品文风名: freshName };
+});
+
+t('取材档位：「选择性读取」已从选项里收起（勾选器从来没做过）', () => {
+  const ids = S.wj.MATERIAL.map((m) => m.id);
+  if (ids.indexOf('select') >= 0) throw new Error('select 还留在选项里，用户会选到一个假档位');
+  if (!S.wj.MATERIAL_LABEL.select) throw new Error('老存档的 label 兜底没了');
+  return { 档位: ids.join('/'), 老存档兜底: S.wj.MATERIAL_LABEL.select };
+});
+
 t('T6 两种卡片：作品卡与邀请卡都渲染出关键信息', () => {
   const UI = S.wjCurtainUI;
   if (!UI) throw new Error('wjCurtainUI 没导出（聊天页拿不到卡片）');

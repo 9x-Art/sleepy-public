@@ -49,15 +49,19 @@
   ];
   var USER_POS_LABEL = { actor: '作为人物出场', observer: '幕外旁观', hidden: '完全隐去' };
 
-  /* 创作取材：只设置「模型能读到什么」，读到了不等于人物知道作品存在 */
+  /* 创作取材：只设置「模型能读到什么」，读到了不等于人物知道作品存在。
+
+     「选择性读取」（select，逐条勾选留痕/时间线）**先收起来了**
+     （2026-09-22 用户拍板）：那个勾选器从来没做过，选它实际按 tone 执行。
+     留着就是骗人，所以从选项里拿掉；`MATERIAL_LABEL` 里保留 select 的文案，
+     老存档（materialScope:'select'）照旧显示与降级执行，不报错。 */
   var MATERIAL = [
     { id: 'none', name: '不读取', hint: '只使用基础人设与本篇临时设定。' },
     { id: 'tone', name: '只读关系与性格底色', hint: '知道人物如何思考与相处，不调用具体共同事件。' },
-    { id: 'select', name: '选择性读取', hint: '逐条勾选可用于本篇的留痕、关系与时间线事实。' },
     { id: 'world', name: '读取当前世界资料', hint: '高度贴合现有生活；仍不会让角色知道作品存在。' }
   ];
   var MATERIAL_LABEL = { none: '不读取', tone: '只读关系与性格底色',
-    select: '选择性读取', world: '读取当前世界资料' };
+    select: '选择性读取（已收起）', world: '读取当前世界资料' };
 
   /* 时间落点：只管「取哪一段空白」。（「平行时间线」已删 —— 那是真实性的事） */
   var TIME_ANCHOR = [
@@ -200,6 +204,18 @@
     var work = defaults();
     if (patch) for (var k in patch) if (patch.hasOwnProperty(k)) work[k] = patch[k];
     if (!work.title) work.title = '未命名剧本';
+    /* 文风：开帷这一刻把**全局底座**快照进这一篇（2026-09-22 用户拍板：
+       全局是「新作品的起点」，不是活的默认值）。以后改全局只影响新作品 ——
+       「我只是调了下滑杆，三个月前那部作品的文风全变了」是最不想看到的。
+       用户在开帷里单独调过（patch 带了 style）就不覆盖。 */
+    var sc = styleCfg();
+    if (!patch || !patch.styleId) work.styleId = sc.preset || work.styleId;
+    if (work.style == null) {
+      work.style = {
+        distance: sc.distance, density: sc.density,
+        pace: sc.pace, dialogue: sc.dialogue
+      };
+    }
     work.id = uid('work');
     list.unshift(work);
     write(list);
@@ -337,16 +353,23 @@
     var id = (work && work.styleId) || '静水';
     var base = STYLE_PRESETS[id] || STYLE_PRESETS['静水'];
     var custom = (work && work.style) || null;
+    var params = {
+      distance: custom && custom.distance != null ? custom.distance : base.distance,
+      density: custom && custom.density != null ? custom.density : base.density,
+      pace: custom && custom.pace != null ? custom.pace : base.pace,
+      dialogue: custom && custom.dialogue != null ? custom.dialogue : base.dialogue
+    };
+    /* 「自定义」的判据是**四根滑杆真的和预设不一样**，不是「有没有 style 字段」——
+       开帷时会快照一份全局底座进来，那份常常正好等于预设，
+       照字段判会把所有作品都标成「自定义」。 */
+    var isCustom = STYLE_PARAMS.some(function (p) {
+      return params[p.key] !== base[p.key];
+    });
     return {
       id: id,
-      name: custom ? '自定义（基于' + id + '）' : id,
-      desc: custom ? '' : base.desc,
-      params: {
-        distance: custom && custom.distance != null ? custom.distance : base.distance,
-        density: custom && custom.density != null ? custom.density : base.density,
-        pace: custom && custom.pace != null ? custom.pace : base.pace,
-        dialogue: custom && custom.dialogue != null ? custom.dialogue : base.dialogue
-      }
+      name: isCustom ? ('自定义（基于' + id + '）') : id,
+      desc: isCustom ? '' : base.desc,
+      params: params
     };
   }
 
