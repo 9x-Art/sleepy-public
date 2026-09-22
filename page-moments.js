@@ -509,7 +509,7 @@
     }
     paintWall();
 
-    cover.appendChild(h('span', 'mo-cover-tip', '点一下换壁纸 · 长按贴网址'));
+    cover.appendChild(h('span', 'mo-cover-tip', '点一下换壁纸（手机相册）· 长按贴网址'));
     var wallPress = null;
     cover.addEventListener('pointerdown', function (e) {
       if (e.button !== undefined && e.button !== 0) return;
@@ -541,9 +541,11 @@
     cover.addEventListener('pointerleave', wallCancel);
     cover.addEventListener('click', function (e) {
       if (cover.__lpFired) { cover.__lpFired = false; e.preventDefault(); return; }
-      openPhotoPick(ctx, function (p) {
-        setWall(p.mediaId ? { mediaId: p.mediaId } : (p.url ? { url: p.url } : null));
+      pickSystemPhoto(ctx, function (mid) {
+        if (!mid) return;
+        setWall({ mediaId: mid });
         paintWall();
+        ctx.toast('换上了', 'ok');
       });
     });
 
@@ -692,6 +694,38 @@
      用户：「以后相册里有的图可以拿出来用」。相册里的图本来就已经在图库里，
      这里只是把 mediaId 借过来引用一次，**不复制第二份**。
      皮复用表情那层底部浮层（.stk-panel），不另造一套。 */
+  /* 从**手机系统相册**选一张（2026-09-22 用户：「我要的是用手机系统里的图做背景」）。
+     跟 openPhotoPick 的区别：那个是**小手机相册**（角色发过的图），
+     封面以前走的就是它 —— 图库当然是空的，还堵一句「相册还是空的」，
+     把用户挡在门外。这个直接开系统文件选择器。
+     存进去的只有 mediaId（objectURL 活不过刷新，不进存档）。 */
+  function pickSystemPhoto(ctx, onPick) {
+    var file = h('input');
+    file.type = 'file';
+    file.accept = 'image/*';
+    file.style.display = 'none';
+    file.addEventListener('change', function () {
+      var picked = file.files && file.files[0];
+      file.value = '';
+      if (!picked) return;
+      if (!Sleepy.media || !Sleepy.media.shrink || !Sleepy.media.put) {
+        ctx.toast('图库没就绪，选不了图', 'err');
+        return;
+      }
+      ctx.toast('正在处理图片…');
+      Sleepy.media.shrink(picked, 1280).then(function (r) {
+        return Sleepy.media.put(r.blob, { name: '朋友圈壁纸', kind: 'wall', w: r.w, h: r.h });
+      }).then(function (mid) {
+        onPick(mid);
+      }, function () {
+        ctx.toast('这张图读不出来', 'err');
+      });
+    });
+    var host = document.getElementById('phone') || ctx.el;
+    host.appendChild(file);
+    file.click();
+  }
+
   function openPhotoPick(ctx, onPick) {
     var host = document.getElementById('phone') || ctx.el;
     var list = (Sleepy.photos && Sleepy.photos.all) ? Sleepy.photos.all() : [];

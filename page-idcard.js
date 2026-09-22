@@ -914,7 +914,9 @@
       noneOpt.value = '';
       uSel.appendChild(noneOpt);
       users.forEach(function (u) {
-        var o = h('option', '', u.name + (u.persona ? ' · ' + u.persona.slice(0, 18) : ''));
+        /* 人设现在是多行的 —— 选项里只取第一行，不然换行会把选择框撑乱 */
+        var pLine = u.persona ? String(u.persona).split(/\r?\n/)[0].trim().slice(0, 18) : '';
+        var o = h('option', '', u.name + (pLine ? ' · ' + pLine : ''));
         o.value = u.id;
         if (u.id === boundId) o.selected = true;
         uSel.appendChild(o);
@@ -1516,10 +1518,15 @@
       top.appendChild(cols);
       form.appendChild(top);
 
-      f.persona = textField({
-        label: '一句话人设',
+      /* user 的人设（2026-09-22 用户：「群岛和孤岛都没地方写 user 的大号人设，
+         只有马甲」）—— 原来这里是**单行**的「一句话人设」，写不下什么。
+         改成多行：一句话也行，想写多长写多长（整段会进 [USER_CORE]）。 */
+      f.persona = textArea({
+        label: '人设',
         value: existing ? (existing.persona || '') : '',
-        placeholder: '比大号话少、喜欢用句号'
+        rows: 6,
+        counter: true,
+        placeholder: '你在这个身份下是什么样：说话习惯、在意什么、和对方是什么关系……一句话也行，想写长就写长'
       });
       form.appendChild(f.persona.el);
 
