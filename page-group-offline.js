@@ -213,8 +213,14 @@
     presentParts(s).forEach(function (p) {
       var m = partMeta(s, p);
       var rec = core.findChar(p.ownerId);
-      ppl.push(m.name + (m.npc ? '（NPC）' : '') + '：' +
-        String((rec && rec.content) || '（暂无人设，按名字与场合自然扮演）').slice(0, 900));
+      /* 人设 + 角色卡的短字段（说话方式/状态/身份/红线）——短字段走
+         charMetaLines，和私聊 K01、群聊 [ENTITY_KNOWLEDGE] 是同一份
+         （2026-09-22 预设通查：以前这里只给 content，同一个人
+         在私聊里「说话短、在整理旧书」，进了群线下就只剩一段人设原文）。 */
+      var bits = [String((rec && rec.content) || '（暂无人设，按名字与场合自然扮演）').slice(0, 900)];
+      var meta = (E.charMetaLines && rec) ? E.charMetaLines(rec) : [];
+      meta.forEach(function (t) { bits.push(t); });
+      ppl.push(m.name + (m.npc ? '（NPC）' : '') + '：' + bits.join('；'));
     });
     parts.push(ppl.join('\n'));
 

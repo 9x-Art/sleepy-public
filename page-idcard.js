@@ -825,7 +825,7 @@
          原本的 hint 写着「用在桌面的双城时间」，那个组件早撤了。 */
       f.status = textField({
         label: '状态签名',
-        hint: '留给桌面角色卡显示（角色卡上架组件商城后生效）',
+        hint: '显示在桌面角色卡的第二行（组件商城能装一张角色卡）',
         value: existing ? (existing.status || '') : '',
         placeholder: '开会中…'
       });

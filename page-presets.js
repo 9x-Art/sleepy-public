@@ -141,7 +141,9 @@
         seqOff.appendChild(h('p', 'pp-sec-note', '线下每轮的装配顺序。'));
 
         E.offlineSlots.forEach(function (def) {
-          if (def.id === 'history') return;
+          /* custom 与线上一致：单独在下面「自定义注入」区块里列，
+             不混进注入序列（序列里那一行点不开，看着像坏掉） */
+          if (def.id === 'custom' || def.id === 'history') return;
           var isCard = def.kind === 'card';
           var meta = E.cardMeta(def.id);
           var toks = isCard ? E.estimate(E.cardBody(def.id)) : 0;
@@ -170,7 +172,8 @@
         addBtn.addEventListener('click', function () { ctx.open('preset-custom-edit', {}); });
         cusHead.appendChild(addBtn);
         cus.appendChild(cusHead);
-        cus.appendChild(h('p', 'pp-sec-note', '插在关系记忆之后、输出协议之前。'));
+        cus.appendChild(h('p', 'pp-sec-note',
+          '线上线下的装配里都会注入 —— 位置在关系记忆（线下是世界书）之后、输出协议之前。'));
 
         if (!E.customCards().length) {
           cus.appendChild(h('p', 'pp-empty', '还没有自定义注入'));

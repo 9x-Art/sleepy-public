@@ -173,6 +173,23 @@
     return list.filter(function (c) { return !c.userId || c.userId === u.id; });
   }
 
+  /* 列表顺序：**置顶的搬到最前**，其余原样跟在后头（2026-09-22 用户五.6）。
+
+     只搬置顶项，非置顶项之间一个都不动 —— 「最近说话的排前面」是另一件事
+     （现在也没有：新会话 unshift 到最前，之后收消息不重排），
+     顺手改掉会让用户看见整个列表自己跳，不属于这次要的东西。
+
+     置顶时间新的排更上（口径同新建会话：unshift 到最前）。 */
+  function withPinnedFirst(list) {
+    var pin = [];
+    var rest = [];
+    for (var i = 0; i < list.length; i++) {
+      (list[i].pinned ? pin : rest).push(list[i]);
+    }
+    pin.sort(function (a, b) { return (b.pinnedAt || 0) - (a.pinnedAt || 0); });
+    return pin.concat(rest);
+  }
+
   /* 找「这个账号 × 这个角色」的那一条私聊。
 
      **必须是 (characterId, userId) 双匹配。** 同一个角色被大号和小号分别
@@ -273,6 +290,23 @@
         rebuild();
         ctx.toast(t ? '备注好了' : '备注清掉了', 'ok');
       });
+    });
+
+    /* 置顶（2026-09-22 用户五.6）。备注/删除之外菜单里的第三项。
+       置顶**不动 updatedAt** —— 那是「这条对话什么时候有动静」，
+       跟「我想把它钉在上面」是两回事（所以不走 mutate，它末尾会刷时间）。 */
+    var willPin = !chat.pinned;
+    item(willPin ? '置顶该聊天' : '取消置顶', function () {
+      var all = allChats();
+      var now = Date.now();
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].id !== chat.id) continue;
+        all[i].pinned = willPin;
+        all[i].pinnedAt = willPin ? now : 0;
+      }
+      saveChats(all);
+      rebuild();
+      ctx.toast(willPin ? '置顶好了' : '取消置顶了', 'ok');
     });
 
     item('删除对话', function () {
@@ -926,7 +960,8 @@
     ]);
 
     function rebuild() {
-      var chats = viewChats();
+      /* 置顶项先搬上来（withPinnedFirst 只搬置顶，别的不动） */
+      var chats = withPinnedFirst(viewChats());
       var people = getCharacters();
       var inRoom = getChats();          /* 全屋的（不分马甲），只用来写空态文案 */
       listWrap.innerHTML = '';
@@ -996,7 +1031,9 @@
       }
 
       chats.forEach(function (chat) {
-        var item = h('div', 'chat-item');
+        /* is-pinned 铺一层极淡的底 —— 微信那种「置顶项看得见但不着色」
+           （色板里的浅驼，不是灰：用户明确不要灰底）。 */
+        var item = h('div', 'chat-item' + (chat.pinned ? ' is-pinned' : ''));
 
         /* 头像：以前私聊项只有名字和时间，头像位空着（.chat-item 的 gap:14
            留出一道白），看着像漏画了东西。沿用通讯录那套首字圆头像；
@@ -3258,7 +3295,8 @@
   /* 给冒烟单测用的小工具（页面逻辑不依赖它） */
   Sleepy.chatUtil = {
     extractStickers: extractStickers,
-    extractPats: extractPats
+    extractPats: extractPats,
+    withPinnedFirst: withPinnedFirst
   };
 
   Sleepy.chatStore = {

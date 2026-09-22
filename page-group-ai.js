@@ -138,6 +138,12 @@
     } else {
       lines.push('人设：（没写设定，按名字和常识演一个有分寸的普通人）');
     }
+    /* 角色卡的短字段（说话方式 / 当前状态 / 身份 / 红线）：走私聊 K01 的
+       同一份实现（charMetaLines）。以前这里只给 content，而且 speech 只在
+       NPC 分支里给 —— 于是群里的大号全是一个腔调（2026-09-22 预设通查）。 */
+    var meta = (Sleepy.promptEngine && Sleepy.promptEngine.charMetaLines)
+      ? Sleepy.promptEngine.charMetaLines(rec) : [];
+    meta.forEach(function (t) { lines.push(t); });
     if (isNpc) {
       var knownBy = rec.knownBy || null;
       if (knownBy) {
@@ -153,7 +159,6 @@
         });
         if (names.length) lines.push('TA 认识群里这些人：' + names.join('、') + '。');
       }
-      if (rec.speech) lines.push('说话与行为方式：' + String(rec.speech).slice(0, 80));
     }
     return lines.join('\n');
   }

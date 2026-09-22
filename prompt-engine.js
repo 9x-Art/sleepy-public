@@ -799,11 +799,12 @@
      （「过一遍预设系统，把没加的但是该加的加上」）。
      content 仍然是**原文、不做结构化处理**，这几行只是挂在它前面。
      nationality 只用来交代口吻/文化背景 —— **不参与任何计算**（那是三件套的事）。 */
-  function compileCharacter(charId) {
-    var c = core.findChar(charId);
-    if (!c) return '';
-    var text = String(c.content || '').trim();
-
+  /* 角色卡上那几个**短字段** → 注入行。
+     K01 和群聊的 [ENTITY_KNOWLEDGE] **共用这一份** —— 两处各写一遍的结果
+     就是「私聊里看得见状态签名，群里看不见」（2026-09-22 通查发现的第一处）。
+     返回数组，前缀和排版交给调用方。 */
+  function charMetaLines(c) {
+    if (!c) return [];
     var meta = [];
     if (c.speech) meta.push('说话与行为方式：' + String(c.speech).trim());
     if (c.status) meta.push('当前状态：' + String(c.status).trim());
@@ -814,6 +815,14 @@
     if (who.length) meta.push('身份：' + who.join(' · '));
     /* 红线：用户自己写的「绝对不要做」。这是硬约束，必须进。 */
     if (c.neverDo) meta.push('绝对不要做（红线）：' + String(c.neverDo).trim());
+    return meta;
+  }
+
+  function compileCharacter(charId) {
+    var c = core.findChar(charId);
+    if (!c) return '';
+    var text = String(c.content || '').trim();
+    var meta = charMetaLines(c);
 
     if (!text && !meta.length) return '';
     return '[CHARACTER]\n' +
@@ -1065,6 +1074,12 @@
       note: '记忆认知层（[U→C] 归档）' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻 + 关键词命中（同线上规则）' },
+    /* 自定义注入（2026-09-22 通查补）：线上一直有这一槽，线下漏了 ——
+       用户在预设 app 里写的卡，一进线下叙事就一句都不生效，
+       而用户那边的感受是「我加的设定有时管用有时不管用」。
+       位置与线上一致：K 区（世界书之后）、S 区的叙事设置之前。 */
+    { id: 'custom', slot: 'K/S', name: '自定义注入', kind: 'custom', required: false,
+      note: '用户自己加的卡，逐张一行（与线上同一份）' },
     { id: 'narrative', slot: 'S', name: '叙事设置', kind: 'program', required: true,
       note: '视角/时态/文风/字数等，来自会话的叙事设置' },
     { id: 'scene', slot: 'S07/S08', name: '场景状态', kind: 'program', required: true,
@@ -1260,6 +1275,20 @@
             return parasText(m.paras);
           }).join('\n').slice(-4000);
           pushSlot(def, compileWorldbook(charId, wbOff));
+          break;
+        }
+        /* 自定义卡：逐张展开（与线上 assembleOnline 的 case 'custom' 同一套口径）。
+           线下这里是**新增**的一槽 —— 以前用户在预设里写的卡只对线上生效。 */
+        case 'custom': {
+          cfg().custom.forEach(function (cc) {
+            var ccOn = cardEnabled(cc.id);
+            slots.push({
+              id: cc.id, slot: 'K/S', name: cc.title,
+              tokens: estimate(ccOn ? cc.body : ''), tokensOff: estimate(cc.body),
+              on: ccOn, required: false, locked: false, hidden: false, note: '自定义'
+            });
+            if (ccOn) messages.push({ role: 'system', content: cc.body });
+          });
           break;
         }
         case 'narrative': pushSlot(def, narrativeText(session)); break;
@@ -1493,6 +1522,13 @@
     /* 装配与解析 */
     assembleOnline: assembleOnline,
     assembleOffline: assembleOffline,
+    /* K01 的两个出口（2026-09-22 通查）：主动消息和群聊以前各自手拼
+       `[CHARACTER]` + content，于是状态签名/说话方式/红线全看不见。
+       导出给它们复用，别再有第二份实现。
+       charMetaLines 是「几个短字段 → 注入行」，群聊按行拼、K01 按块拼。 */
+    compileCharacter: compileCharacter,
+    charMetaLines: charMetaLines,
+    compileI01: compileI01,
     cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,

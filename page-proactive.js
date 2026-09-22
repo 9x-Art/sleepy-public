@@ -155,6 +155,28 @@
     try { return JSON.parse(t.slice(i, j + 1)); } catch (e) { return null; }
   }
 
+  /* 主动消息的 system 段。**纯函数**（smoke 直接测）——
+     为什么单独抽出来：这一段 2026-09-22 才补上共享外壳 / K01 / I01，
+     而「补没补上」用真机跑要 mock 一整圈 gate + API，一眼看不出来。
+     以前这里只有 proactive 卡 + content 原文，三样都缺：
+       · 没有共享外壳 → [角色声音] 那段根本没进来（v84 写「F1/F2/主动消息
+         三类共用」，实际漏了这一路），而**这条路要直接产出发给 user 的那句话**，
+         是最需要「像这个人」的地方；
+       · 没有 K01 的短字段 → 状态签名 / 说话方式 / 红线全看不见；
+       · 没有 I01 → 不知道此刻以哪张脸面对谁（掉马设定下容易串身份）。
+     多花约 1.2k tokens，换它别说成客服。 */
+  function buildSystem(charId, userId) {
+    var PE = Sleepy.promptEngine;
+    var ch = core.findChar(charId);
+    var sys = [PE.cardBody('shell'), PE.cardBody('proactive')];
+    var k01 = PE.compileCharacter ? PE.compileCharacter(charId) : '';
+    if (k01) sys.push(k01);
+    else if (ch && ch.content) sys.push('[CHARACTER]\n' + ch.content + '\n[/CHARACTER]');
+    var i01 = PE.compileI01 ? PE.compileI01(charId, userId || null) : '';
+    if (i01) sys.push(i01);
+    return sys;
+  }
+
   function evaluate(charId, opts) {
     opts = opts || {};
     var g = gateFor(charId, opts);
@@ -168,8 +190,8 @@
     var ps = stateOf(charId);
     var ch = core.findChar(charId);
 
-    var sys = [Sleepy.promptEngine.cardBody('proactive')];
-    if (ch && ch.content) sys.push('[CHARACTER]\n' + ch.content + '\n[/CHARACTER]');
+    /* 2026-09-22 预设通查：system 段改走 buildSystem（共享外壳 + K01 + I01） */
+    var sys = buildSystem(charId, (g.chat && g.chat.userId) || null);
 
     var user = [];
     user.push('[TRIGGER_CANDIDATES]\n' + g.cands.map(function (c) {
@@ -293,6 +315,7 @@
   Sleepy.proactiveEngine = {
     sweep: sweep,
     evaluate: evaluate,
+    buildSystem: buildSystem,
     gateFor: gateFor,
     gateWhyText: gateWhyText,
     candidatesFor: candidatesFor,

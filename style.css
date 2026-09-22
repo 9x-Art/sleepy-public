@@ -24,6 +24,11 @@
   --g-accent-deep:#8A6844;     /* 压过一层的棕，用于文字态 */
   --g-accent-soft:#EAD9C2;     /* 浅驼 */
   --g-accent-pale:#F7F2EA;     /* 浅驼卡底（原来是米白底，现在只当浅色块用） */
+  /* 置顶会话铺的那层「暖色洗」（2026-09-22 用户五.6）。
+     刻意**不跟 --g-accent**：主题色有薄荷绿（夜灯）和蓝（sea），
+     拿它铺底会得到一块绿/蓝，而用户明确「不要蓝也不要绿」。
+     所以钉死成暖驼，夜灯单独把 alpha 压低、色值提亮一份（见 night 块）。 */
+  --g-pin-wash:rgba(176,138,94,.20);
   /* 压在主色块上的前景色（音乐卡那颗播放键）。
      浅色主题的主色是中等明度的焦糖，白图标读得清；
      夜灯主题的主色是**亮**薄荷绿，再压白色就糊了，得换成深色。 */
@@ -2576,6 +2581,14 @@ span.msg-avatar-initial{
 }
 .chat-item:active,.contact-card:active{background:var(--g-glass-2);}
 
+/* 置顶的会话（2026-09-22 用户五.6）：在玻璃卡上再压一层很淡的暖色洗。
+   刻意写在材质层**之后** —— 上面那条 `.chat-item{background:var(--g-glass)}`
+   同特异性，放前面会被它整条盖掉，等于白写。
+   颜色走 --g-pin-wash（暖驼，四主题里都不随主色变，理由见色板那条注释）；
+   :active 单独再写一条，否则置顶项按下去没反馈。 */
+.chat-item.is-pinned{background:var(--g-pin-wash);}
+.chat-item.is-pinned:active{background:color-mix(in srgb,var(--g-pin-wash) 88%,var(--g-ink-3));}
+
 /* 气泡。我方＝青提绿实心，对方＝白玻璃。
    施工卡里踩过「文字和底色同色」的坑（.msg-assistant 隐身），
    所以两边都写死对比色，不依赖继承。 */
@@ -3792,19 +3805,25 @@ span.msg-avatar-initial{
   color:var(--g-ink-3);
 }
 
-/* ---------------- 角色卡 ---------------- */
+/* ---------------- 角色卡 ----------------
+   2026-09-22：这张卡从组件商城上架了（默认户型 v16 里没有它，
+   用户点名从主屏拿掉的）。格子是 **1×1**，--dt-cell 上限 98px ——
+   头像 + 名字 + 状态三行要塞进这点地方，所以尺寸是压着算的，
+   别再往回放大（放大就溢出到隔壁格子，CSS Grid 会静默盖住，很难查）。 */
 
 .w-char{
   cursor:pointer;
+  padding:6px 4px;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
   text-align:center;
-  padding:8px;
 }
 .w-char-av{
-  width:54px;
-  height:54px;
+  width:38px;
+  height:38px;
   border-radius:50%;
   object-fit:cover;
-  margin-bottom:7px;
+  margin-bottom:5px;
   border:2px solid rgba(255,255,255,.92);
   box-shadow:0 4px 12px rgba(139,108,76,.18);
   background:var(--g-glass-2);
@@ -3813,12 +3832,12 @@ span.msg-avatar-initial{
   display:flex;
   align-items:center;
   justify-content:center;
-  font-size:20px;
+  font-size:15px;
   font-weight:700;
   color:var(--g-accent-deep);
 }
 .w-char-name{
-  font-size:13.5px;
+  font-size:11.5px;
   font-weight:700;
   color:var(--g-ink);
   max-width:100%;
@@ -3827,12 +3846,15 @@ span.msg-avatar-initial{
   text-overflow:ellipsis;
 }
 .w-char-status{
-  margin-top:4px;
-  font-size:10.5px;
+  margin-top:3px;
+  font-size:9.5px;
   color:var(--g-accent-deep);
-  background:rgba(255,255,255,.66);
+  /* 底色走 --g-glass-3 而不是写死的白：夜灯下主色 deep 是**亮薄荷绿**，
+     压在一颗白胶囊上几乎读不出来（真机截图抓到的）。跟着主题翻面之后
+     浅色主题仍是近白胶囊，夜灯下变成半透明深底 + 浅绿字。 */
+  background:var(--g-glass-3);
   border-radius:10px;
-  padding:2px 8px;
+  padding:1px 7px;
   max-width:100%;
   white-space:nowrap;
   overflow:hidden;
@@ -6553,6 +6575,9 @@ span.msg-avatar-initial{
   --g-accent-deep:#BDF5B6;
   --g-accent-soft:#3E5C42;
   --g-accent-pale:#2C3B2F;
+  /* 置顶的暖色洗在深底上：色值提亮、alpha 压低 —— 直接沿用浅色那份
+     rgba(176,138,94,.20) 在深绿底上糊成一块脏棕，几乎看不见。 */
+  --g-pin-wash:rgba(233,205,170,.16);
   --on-accent:#15240F;
   --ink-halo:0 1px 3px rgba(0,0,0,.62),0 0 2px rgba(0,0,0,.45);
   --g-ink:#E7EFE8;

@@ -36,24 +36,44 @@
   function cols() { return (Sleepy.desktop && Sleepy.desktop.COLS) || 4; }
   function rows() { return (Sleepy.desktop && Sleepy.desktop.ROWS) || 6; }
 
-  /* 默认户型里出现过的组件型号，去重。
+  /* 上架、但**不在默认户型里**的型号（2026-09-22 用户「人1」）。
+
+     默认户型收不出它们：用户点名把角色卡从主屏拿掉了（v6 那条版本记录，
+     见 page-desktop.js 顶部）。但「主屏不摆」不等于「这功能不要了」——
+     所以放进商城目录，谁想摆谁自己装回来。
+
+     角色卡（`char`）的渲染函数一直在（page-desktop.js 的 WIDGETS.char），
+     第二行显示的就是 `char.status`，也就是**状态签名**：
+     这个字段以前只喂 prompt，卡片上架之后才第一次有人真的看见它。 */
+  /* 尺寸是 1×1：默认户型 4 屏**一个 1×2 的空位都没有**（实测：
+     装 1×2 直接「桌上放不下了」），上架了却装不上等于没上架。
+     1×1 的格子只有 ~98px 见方，所以 .w-char 那一组样式跟着瘦了一档。 */
+  var EXTRA_DEFS = [
+    { type: 'char', app: '', label: '角色卡', w: 1, h: 1,
+      note: '当前角色的头像 + 名字 + 状态签名' }
+  ];
+
+  /* 默认户型里出现过的组件型号 + 上面那份上架清单，去重。
      用 `type|app|label` 当键：同一个 type 配不同 app（比如各种 App 入口）
      是不同的东西，但同一个 App 在两屏都摆过只算一件。 */
   function catalog() {
-    if (!Sleepy.desktop || !Sleepy.desktop.defaultDesktop) return [];
     var seen = {};
     var out = [];
-    Sleepy.desktop.defaultDesktop().pages.forEach(function (list) {
-      (list || []).forEach(function (c) {
-        var key = c.type + '|' + (c.app || '') + '|' + (c.label || '');
-        if (seen[key]) return;
-        seen[key] = 1;
-        out.push({
-          key: key, type: c.type, app: c.app || '',
-          label: c.label || '', w: c.w, h: c.h
-        });
+    function push(c) {
+      var key = c.type + '|' + (c.app || '') + '|' + (c.label || '');
+      if (seen[key]) return;
+      seen[key] = 1;
+      out.push({
+        key: key, type: c.type, app: c.app || '',
+        label: c.label || '', w: c.w, h: c.h, note: c.note || ''
       });
-    });
+    }
+    if (Sleepy.desktop && Sleepy.desktop.defaultDesktop) {
+      Sleepy.desktop.defaultDesktop().pages.forEach(function (list) {
+        (list || []).forEach(push);
+      });
+    }
+    EXTRA_DEFS.forEach(push);
     return out;
   }
 
@@ -226,7 +246,7 @@
         cat.forEach(function (c) {
           g2.card.appendChild(row({
             label: c.label || c.type,
-            hint: c.app ? ('App 入口 · ' + c.app) : (c.type + ' 组件'),
+            hint: c.note || (c.app ? ('App 入口 · ' + c.app) : (c.type + ' 组件')),
             value: (c.w || 1) + '×' + (c.h || 1),
             badge: '',
             onClick: function () {

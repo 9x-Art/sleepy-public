@@ -1455,6 +1455,25 @@ t('拍一拍：[拍一拍] / [拍一拍:后缀] 都认，正文抽干净', () =>
   };
 });
 
+/* 会话置顶（2026-09-22 用户五.6）：置顶的搬到最前，其余**原顺序**不动。
+   这条纯函数刻意不按时间重排 —— 非置顶项之间一个都不许动，
+   不然「收一条消息整个列表自己跳」这个副作用会跟着进来。 */
+t('会话置顶：置顶的搬到最前，其余原顺序；后置顶的排更上', () => {
+  const list = [
+    { id: 'a', pinned: false },
+    { id: 'b', pinned: true, pinnedAt: 100 },
+    { id: 'c', pinned: false },
+    { id: 'd', pinned: true, pinnedAt: 200 }
+  ];
+  const out = S.chatUtil.withPinnedFirst(list);
+  const none = S.chatUtil.withPinnedFirst([{ id: 'x' }, { id: 'y' }]);
+  return {
+    顺序: out.map((c) => c.id),
+    没置顶就是原顺序: none.map((c) => c.id),
+    原数组没被改动: list.map((c) => c.id)
+  };
+});
+
 /* 关键链路：模型写 [表情:名字] → 抽出来 → 名字能对上用户收的那张图。
    （页面里的 charSendSticker 就是按这个思路找的：先精确、再包含） */
 t('角色发表情：标签 → 名字 → 对得上那张图', () => {
@@ -2175,6 +2194,21 @@ t('组件商城：目录非空，装一件进去桌面真的多一格', () => {
   if (after - before !== 1) throw new Error('格数没变');
   S.store.set('desktop', null);
   return { 目录件数: cat.length, 装上了: res.ok, 多出来: after - before };
+});
+
+/* 角色卡上架（2026-09-22 用户「人1」）：默认户型里没有它（用户点名从主屏
+   拿掉的），但组件商城要能装回来 —— 状态签名就是靠这张卡的第二行才有人看见。 */
+t('组件商城：角色卡上架了（默认户型没有，目录里能装回来）', () => {
+  S.store.set('desktop', null);
+  const card = S.widgetStore.catalog().filter((c) => c.type === 'char')[0];
+  if (!card) throw new Error('目录里没有角色卡');
+  const res = S.widgetStore.addWidget(card);
+  if (!res.ok) throw new Error('装不上：' + res.message);
+  const onDesk = S.desktop.getDesktop().pages.some((l) =>
+    (l || []).some((c) => c.type === 'char'));
+  const st = S.desktop.skin().status;   /* 卡片第二行读的就是它 */
+  S.store.set('desktop', null);
+  return { 尺寸: card.w + '×' + card.h, 装上了: res.ok, 桌面上有: onDesk, 状态签名: st };
 });
 
 t('组件商城：桌面塞满时明说放不下，不硬塞（重叠会被 CSS 静默盖住）', () => {
@@ -2908,6 +2942,44 @@ t('线下：关掉翻译开关 → 语言照旧、协议不要 trans（两件事
   return { 开关关: '只说日语不附译文', CN: '不注入' };
 });
 
+/* ===== 预设注入清单通查（2026-09-22，用户：「完成所有的功能后重新加上
+   需要注入的东西」）。修的是三处「同一件事只做了一半」的缺口。 ===== */
+
+t('通查①：线下装配也吃自定义卡（以前只有线上吃，用户加的卡线下失效）', () => {
+  const u = S.core.activeUser() || S.core.userMasks()[0];
+  const card = S.promptEngine.addCustomCard('通查卡', '线下也要能看见这条注入。');
+  const r = S.promptEngine.assembleOffline({ charId: plTest, userId: u && u.id,
+    session: { charId: plTest, messages: [], narrativeSettings: {}, env: {} } });
+  const sys = r.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  const slot = r.slots.filter((x) => x.id === card.id)[0];
+  if (!slot || !slot.on) throw new Error('线下没有自定义卡这一槽');
+  if (sys.indexOf('线下也要能看见这条注入。') < 0) throw new Error('卡的正文没进线下 system');
+  /* 关掉这张卡 → 线下也不能再注入（开关是同一套） */
+  S.promptEngine.setCardEnabled(card.id, false);
+  const r2 = S.promptEngine.assembleOffline({ charId: plTest, userId: u && u.id,
+    session: { charId: plTest, messages: [], narrativeSettings: {}, env: {} } });
+  const slot2 = r2.slots.filter((x) => x.id === card.id)[0];
+  S.promptEngine.removeCustomCard(card.id);
+  if (slot2 && slot2.on) throw new Error('关掉的卡线下还在注入');
+  return { 槽: slot.slot, 关掉后: '不注入' };
+});
+
+t('通查②：主动消息的 system 段有共享外壳 + K01 短字段 + I01', () => {
+  const c = S.core.upsertChar({
+    name: '主动甲', kind: 'main', content: '旧书店老板，话少。',
+    status: '在整理旧书', speech: '句子短，偶尔冒一句旧诗',
+    gender: 'male', nationality: '中国', neverDo: '绝对不撒谎'
+  });
+  const u = S.core.activeUser() || S.core.userMasks()[0];
+  const sys = S.proactiveEngine.buildSystem(c.id, u && u.id).join('\n');
+  if (sys.indexOf('[角色声音]') < 0) throw new Error('主动消息没有共享外壳的角色声音');
+  if (sys.indexOf('当前状态：在整理旧书') < 0) throw new Error('主动消息看不见状态签名');
+  if (sys.indexOf('说话与行为方式：句子短') < 0) throw new Error('主动消息看不见说话方式');
+  if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('主动消息看不见红线');
+  if (sys.indexOf('awareness_mode') < 0) throw new Error('主动消息没有 I01');
+  return { 段数: S.proactiveEngine.buildSystem(c.id, u && u.id).length };
+});
+
 t('parseOfflineReply：dialogue 的 trans 单独收下，prose 不收，正文不带译文', () => {
   const para = JSON.stringify({ paras: [
     { type: 'prose', text: '他把伞递过来。' },
@@ -3024,6 +3096,18 @@ t('群线下协议：四类段落齐全，且写清「这是一篇文章」', ()
   /* 用户定的语义：听懂与听不懂都行，不强制 */
   if (sys.indexOf('由现场自然决定') < 0) throw new Error('没写「听懂多少由现场自然决定」');
   return { 段落: 4, 写法段: '一篇长文', 语言态度: '中性许可' };
+});
+
+t('通查④：群线下的 [PARTICIPANTS] 也带角色短字段（以前只给 content）', () => {
+  const c = S.core.upsertChar({ name: '轮头短字段', kind: 'main', content: '旧书店老板。',
+    status: '在整理旧书', speech: '句子短', neverDo: '不撒谎' });
+  const sess = { purpose: '', env: {}, systemSettings: {}, narrativeSettings: {},
+    participants: [{ ownerId: c.id, kind: 'char', present: true, away: false }] };
+  const sys = S.groupOfflineStore.buildSystem(sess);
+  if (sys.indexOf('说话与行为方式：句子短') < 0) throw new Error('群线下看不见说话方式');
+  if (sys.indexOf('当前状态：在整理旧书') < 0) throw new Error('群线下看不见状态签名');
+  if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('群线下看不见红线');
+  return { 段: '[PARTICIPANTS]' };
 });
 
 t('篇幅：线下三百字起步，多人线下按在场人数放大', () => {
@@ -3709,6 +3793,16 @@ t('composeRound：卡/成员/知识/历史/预算五段齐', () => {
   if (usr.indexOf('[BUDGET]') < 0) throw new Error('预算没进');
   if (r.entities.length !== 2) throw new Error('候选本体不对');
   return { 段: 5, 本体: r.entities.length };
+});
+
+t('通查③：群聊 [ENTITY_KNOWLEDGE] 也带角色短字段（以前只给 content）', () => {
+  S.core.upsertChar({ id: aiFix.m, status: '刚开完庭', speech: '说话慢，爱用长句', neverDo: '不失约' });
+  const r = S.groupAI.composeRound(aiFix.gid, { stimulus: '（通查）', budget: { actors: 2, msgs: 5 } });
+  const sys = r.messages[0].content;
+  if (sys.indexOf('当前状态：刚开完庭') < 0) throw new Error('群里看不见状态签名');
+  if (sys.indexOf('说话与行为方式：说话慢') < 0) throw new Error('群里看不见说话方式');
+  if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('群里看不见红线');
+  return { 命中: 3 };
 });
 
 t('parseRoundJSON：围栏 JSON 能剥', () => {
