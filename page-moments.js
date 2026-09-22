@@ -541,11 +541,20 @@
     cover.addEventListener('pointerleave', wallCancel);
     cover.addEventListener('click', function (e) {
       if (cover.__lpFired) { cover.__lpFired = false; e.preventDefault(); return; }
-      pickSystemPhoto(ctx, function (mid) {
-        if (!mid) return;
-        setWall({ mediaId: mid });
-        paintWall();
-        ctx.toast('换上了', 'ok');
+      pickSystemPhoto(ctx, function (r) {
+        if (r && r.mediaId) {
+          /* 落库完成：换成持久的那张，本地预览可以撤了 */
+          setWall({ mediaId: r.mediaId });
+          paintWall();
+          if (r.previewUrl) URL.revokeObjectURL(r.previewUrl);
+          ctx.toast('换上了', 'ok');
+          return;
+        }
+        /* 还没落库：先用本地预览顶上去，封面不能空着等 */
+        if (r && r.previewUrl) {
+          cover.style.backgroundImage = wallBg(r.previewUrl);
+          cover.classList.add('has-img');
+        }
       });
     });
 
@@ -712,12 +721,19 @@
         ctx.toast('图库没就绪，选不了图', 'err');
         return;
       }
-      ctx.toast('正在处理图片…');
+      /* 先**立刻**给一张（objectURL，秒出），压缩 + 落库扔后台 ——
+         用户 2026-09-22：「显示正在收入图库，然后没反应了，再过了一会儿才有，
+         中间太慢了会让人觉得是坏了」。别让人对着空气等。
+         objectURL 只是这一次的预览，进存档的仍然只有 mediaId。 */
+      var local = URL.createObjectURL(picked);
+      onPick({ previewUrl: local });
+      ctx.toast('已换上 · 正在存进图库…');
       Sleepy.media.shrink(picked, 1280).then(function (r) {
         return Sleepy.media.put(r.blob, { name: '朋友圈壁纸', kind: 'wall', w: r.w, h: r.h });
       }).then(function (mid) {
-        onPick(mid);
+        onPick({ mediaId: mid, previewUrl: local });
       }, function () {
+        URL.revokeObjectURL(local);
         ctx.toast('这张图读不出来', 'err');
       });
     });

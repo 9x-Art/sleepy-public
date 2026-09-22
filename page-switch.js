@@ -188,7 +188,7 @@
           sbBody.appendChild(h('span', 'sw-main-name', s.name || '未命名'));
           var bu = s.boundUserId ? core.findUser(s.boundUserId) : null;
           sbBody.appendChild(h('span', 'sw-main-sub',
-            '皮套' + (bu ? ' · 绑定 ' + bu.name : ' · 未绑定马甲')));
+            '小号' + (bu ? ' · 绑定 ' + bu.name : ' · 未绑定马甲')));
           sub.appendChild(sbBody);
           if (s.id === activeChar) sub.appendChild(h('span', 'sw-cur', '进行中'));
           sub.addEventListener('click', function () {
@@ -291,12 +291,12 @@
     var bound = root.boundUserId;
     options.push({ charId: root.id, userId: bound || null, name: root.name, label: '大号' });
     core.subChars(root.id).forEach(function (s) {
-      options.push({ charId: s.id, userId: s.boundUserId || null, name: s.name, label: '皮套' });
+      options.push({ charId: s.id, userId: s.boundUserId || null, name: s.name, label: '小号' });
     });
 
     var withMask = options.filter(function (o) { return o.userId; });
     if (withMask.length < 2) {
-      ctx.toast('这个角色还没有多个绑好马甲的皮套', 'warn');
+      ctx.toast('这个角色还没有多个绑好马甲的小号', 'warn');
       return;
     }
 

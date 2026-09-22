@@ -138,7 +138,7 @@
           ? Sleepy.island.childrenOf(sb.id, m.id, 'sub', 'char')
           : core.subChars(m.id);
         subs.forEach(function (k) {
-          g.appendChild(personRow(k, '皮套'));
+          g.appendChild(personRow(k, '小号'));
         });
       });
       panel.appendChild(g);

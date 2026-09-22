@@ -631,6 +631,10 @@ body{
   padding:0;
   display:inline-flex;align-items:center;justify-content:center;
 }
+/* 聊天页顶栏右侧那三个图标收紧一点（用户 2026-09-22：「右上角三个隔得太开，
+   之前的距离好一点」）—— 32px 的框里 svg 只有 18px，再加上 gap 8px，
+   视觉间隙其实到了 22px，看着就散。 */
+.head-ava-mode .app-head-side{gap:4px;}
 .head-act-icon svg{display:block;}
 .head-act:disabled{opacity:.4;cursor:default;}
 .head-act-primary{background:var(--amber);color:#2A2118;font-weight:600;}
@@ -1727,6 +1731,12 @@ span.msg-avatar-initial{
 
 /* 底部整块：引用条 + 加号面板 + 输入行 */
 .chat-foot{flex:none;display:flex;flex-direction:column;}
+/* 软键盘避让（用户 2026-09-22：「点击输入框之后键盘起来就遮住了输入框，
+   必须要输入一个字才可以看到输入框」）。
+   app.js 的 visualViewport 监听一直在写 --kb-inset，但**只有浮岛抽屉**消费了它 ——
+   聊天页这条压根没接，所以键盘弹起时输入框还压在键盘后面；
+   之所以「打一个字就露出来」，是浏览器把光标滚进了视口，不是我们在抬。 */
+.chat-foot{padding-bottom:var(--kb-inset,0px);}
 
 /* ------------------------- 多选条 ------------------------- */
 .msg-select-bar{

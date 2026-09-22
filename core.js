@@ -1204,7 +1204,7 @@
     });
   }
 
-  var KIND_LABEL = { main: '大号', sub: '皮套', npc: 'NPC' };
+  var KIND_LABEL = { main: '大号', sub: '小号', npc: 'NPC' };
 
   function kindLabel(k) { return KIND_LABEL[k] || '大号'; }
 

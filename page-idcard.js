@@ -277,7 +277,7 @@
       /* kind 归一：角色/预设（A5 旧头）= main，皮套 = sub，NPC = npc。
          岛级 NPC 的头写的是「NPC：某人 | 属于：岛：岛名」，
          parentName 带着就好，归属在 importItems 里统一按岛走。 */
-      it.kind = b.kind === '皮套' ? 'sub' : (b.kind === 'NPC' ? 'npc' : 'main');
+      it.kind = (b.kind === '小号' || b.kind === '皮套') ? 'sub' : (b.kind === 'NPC' ? 'npc' : 'main');
       it.name = it.name.trim();
       return it;
     });
@@ -383,7 +383,7 @@
       text += '===== 角色：' + m.name + ' =====\n' + (m.content || '') + '\n';
       exported[m.id] = 1;
       core.subChars(m.id).forEach(function (s) {
-        text += '===== 皮套：' + s.name + ' | 属于：' + m.name + ' =====\n' + (s.content || '') + '\n';
+        text += '===== 小号：' + s.name + ' | 属于：' + m.name + ' =====\n' + (s.content || '') + '\n';
         exported[s.id] = 1;
       });
       core.npcChars(m.id).forEach(function (s) {
@@ -400,7 +400,7 @@
     });
 
     var ok = downloadText('sleepy-characters-' + stamp() + '.md', text, 'text/markdown');
-    if (ok) ctx.toast('已导出 ' + list.length + ' 个大号（含皮套 / NPC）', 'ok');
+    if (ok) ctx.toast('已导出 ' + list.length + ' 个大号（含小号 / NPC）', 'ok');
     else ctx.toast('导出失败：浏览器拦下了下载', 'err');
   }
 
@@ -497,7 +497,7 @@
 
     ctx.setTitle(existing
       ? (isMain ? '改人设' : (kind === 'sub' ? '改这张脸' : '改这个人'))
-      : (isMain ? '加一个人设' : (kind === 'sub' ? '加一个皮套' : '加一个 NPC')));
+      : (isMain ? '加一个人设' : (kind === 'sub' ? '加一个小号' : '加一个 NPC')));
 
     /* 顶部一句交代「他会落在哪儿」，省得用户自己琢磨 */
     var line;
@@ -742,7 +742,7 @@
       }
 
       if (!existing) {
-        ctx.setTitle(kind === 'sub' ? '新建皮套'
+        ctx.setTitle(kind === 'sub' ? '新建小号'
                     : (kind === 'npc' ? '新建 NPC' : '新建大号'));
       }
 
@@ -756,11 +756,11 @@
 
       /* ---- 身份 ---- */
       var gKind = group('身份',
-        '大号是根，有独立记忆库；皮套挂在大号名下，对外是另一张脸，底层同源；' +
+        '大号是根，有独立记忆库；小号挂在大号名下，对外是另一张脸，底层同源；' +
         'NPC 属于整座岛 —— 岛上的谁认识 TA，在「岛内成员」里单独定。');
 
       var kindRow = h('div', 'seg');
-      [['main', '大号'], ['sub', '皮套'], ['npc', 'NPC']].forEach(function (k) {
+      [['main', '大号'], ['sub', '小号'], ['npc', 'NPC']].forEach(function (k) {
         var b = h('button', 'seg-btn' + (kind === k[0] ? ' is-on' : ''), k[1]);
         b.type = 'button';
         /* 已经是皮套的不能再改成大号 —— 它下面可能挂着别的引用 */
@@ -787,7 +787,7 @@
           if (m.id === parentId) o.selected = true;
           parentSel.appendChild(o);
         });
-        var pw = ui.fieldShell('属于哪个大号', '皮套挂在一个大号名下；NPC 属于整座岛，不用选。');
+        var pw = ui.fieldShell('属于哪个大号', '小号挂在一个大号名下；NPC 属于整座岛，不用选。');
         pw.appendChild(parentSel);
         gKind.card.appendChild(pw);
       }
@@ -941,7 +941,7 @@
       /* ---- 表面设定 ---- */
       var g2 = group('人设',
         kind === 'sub'
-          ? '皮套对外展示的设定。它和大号共享同一个大脑，这里写的是「这张脸」的部分。'
+          ? '小号对外展示的设定。它和大号共享同一个大脑，这里写的是「这张脸」的部分。'
           : '原样存、原样导出，不解析 —— 带什么格式都行。');
       f.content = textArea({
         label: '人设正文',
@@ -1041,7 +1041,7 @@
 
       if (existing && kind === 'main') {
         var foot = h('p', 'set-foot',
-          '删除大号会把它名下的皮套和 NPC 一起删掉。');
+          '删除大号会把它名下的小号和 NPC 一起删掉。');
         body.appendChild(foot);
       }
 
@@ -1084,7 +1084,7 @@
             : (parentSel && parentSel.value ? parentSel.value : parentId));
 
         if (kind === 'sub' && !parent) {
-          ctx.toast('皮套得挂在某个大号名下', 'err');
+          ctx.toast('小号得挂在某个大号名下', 'err');
           return;
         }
 
@@ -1262,7 +1262,7 @@
 
     if (!list.length) {
       box.appendChild(h('p', 'mem-empty',
-        '还没有记忆。聊过天之后，这里会按 [User 马甲 → Char 皮套] 归档。'));
+        '还没有记忆。聊过天之后，这里会按 [User 马甲 → Char 小号] 归档。'));
     } else {
       list.slice(0, 30).forEach(function (m) {
         var item = h('div', 'mem-item');

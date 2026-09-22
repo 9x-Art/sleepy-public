@@ -403,9 +403,20 @@
         }
       });
 
-    page.classList.toggle('is-dark-wall', !!(wall && wall.dark));
-    /* 浅色壁纸 × 深色主题（夜灯 + 奶油 = 浅字压浅底）→ 强制深字 */
-    page.classList.toggle('is-light-wall', !!(wall && !wall.dark && wall.css));
+    /* 壁纸的「深/浅」不只看壁纸自己 —— **还要看主题**（用户 2026-09-22：
+       「深颜色壁纸没问题，反倒是浅色壁纸配黑色字样开夜灯会很怪」）。
+       夜灯是深主题，铺一张浅壁纸却给深字，等于夜灯白开了。
+       所以：壁纸是深款 **或**（主题是深色 且 壁纸是浅款）→ 一律按「深底」走，
+       字色取 wallInkDark（浅字），同时给壁纸压一层暗纱（见下面的 veil）。 */
+    var wallIsLight = !!(wall && !wall.dark && wall.css);
+    /* 读**配置**而不是 DOM 上的 data-theme —— applyDesktop 可能跑在 apply 之前，
+       DOM 上那个还是上一次的值（踩过一次：night+浅壁纸照样走浅底）。 */
+    var thIdNow = (cfg && cfg.theme) || a.theme || 'grape';
+    var themeIsDark = false;
+    THEMES.forEach(function (x) { if (x.id === thIdNow) themeIsDark = !!x.dark; });
+    var treatAsDark = !!(wall && wall.dark) || (wallIsLight && themeIsDark);
+    page.classList.toggle('is-dark-wall', treatAsDark);
+    page.classList.toggle('is-light-wall', wallIsLight && !themeIsDark);
     page.classList.toggle('dt-large', !!cfg.large);
 
     if (cfg.wall === 'custom' && cfg.wallMediaId && Sleepy.media) {
@@ -418,7 +429,12 @@
         page.style.backgroundPosition = 'center';
       });
     } else if (wall && wall.css) {
-      page.style.backgroundImage = wall.css;
+      /* 夜灯 + 浅壁纸：压一层暗纱。不然浅底配浅字看不清，
+         配深字又白得刺眼 —— 两头都不对，只有把它压暗才是夜灯该有的样子。 */
+      var veil = (wallIsLight && themeIsDark)
+        ? 'linear-gradient(rgba(24,30,27,.62),rgba(24,30,27,.50)),'
+        : '';
+      page.style.backgroundImage = veil + wall.css;
       page.style.backgroundSize = '';
       page.style.backgroundPosition = '';
     } else {

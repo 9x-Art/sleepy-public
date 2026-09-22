@@ -89,7 +89,12 @@
       from: '白居易《钱塘湖春行》',
       seed: '在群岛上写一段',
       empty: '这片群岛还空着',
-      hint: '可以拉群、可以查手机，谁也不是谁的唯一'
+      /* 原文案是「可以拉群、可以查手机，谁也不是谁的唯一」——
+         用户 2026-09-22 指出两句都站不住：「查手机/拉群到后面都会都能做」，
+         而且「谁也不是谁的唯一」是在替 user 假设一段**非独占**的关系，
+         玩群像（家人、朋友那种情感）的人看到会觉得被定义。
+         群岛的特点其实只是**结构**：住得下不止一个人。就只说这个。 */
+      hint: '住得下一群人 —— 家人、朋友、同事，各有各的位置'
     }
   };
 
@@ -881,7 +886,7 @@
         }
 
         peopleSec.textContent = '人物 · 我 + ' + mains.length + ' 位角色' +
-          (subs.length ? '（含 ' + subs.length + ' 张皮套）' : '');
+          (subs.length ? '（含 ' + subs.length + ' 个小号）' : '');
 
         /* 「我」 */
         peopleStrip.appendChild(cardFor({
@@ -911,7 +916,7 @@
           peopleStrip.appendChild(cardFor({
             name: it.c.name,
             avatarOf: it.c,
-            sub: '皮套 · ' + (it.parent.name || ''),
+            sub: '小号 · ' + (it.parent.name || ''),
             onTap: function () {
               ctx.open('island-char', { sbId: sb.id, charId: it.c.id });
             }
@@ -1244,7 +1249,17 @@
         if (c.sub) p.appendChild(h('small', '', c.sub));
         core.setAvatarBg(ava, c);   /* 图库头像（avatarMedia）+ 网址头像都走这里 */
         p.addEventListener('click', function () {
-          if (kind === 'char' && c.id) ctx.open('island-char', { sbId: sb.id, charId: c.id });
+          /* 总览即入口（用户 2026-09-22：「我需要点击岛屿总览就可以直接点上面的
+             char 和 user 头像进行编辑，这是最顺畅最正常的思路」）——
+             char **直接进编辑页**（以前落到档案页，还得再点一次「编辑全文」）；
+             我 **直接进马甲编辑**（以前落到配置台，还得自己往下找「我的马甲」）。
+             想看全貌走配置台的人物条：那边点卡片进档案，两边各司其职。 */
+          if (kind === 'char' && c.id) {
+            ctx.open('contact-edit', { id: c.id, sandboxId: sb.id, simple: true });
+            return;
+          }
+          var meU = core.defaultUserOfSandbox(sb) || core.activeUser();
+          if (meU) ctx.open('mask-edit', { id: meU.id });
           else ctx.open('island-config', { id: sb.id });
         });
         return p;
@@ -1517,7 +1532,7 @@
           outBtn.addEventListener('click', function () {
             ui.confirm({
               title: '把「' + (c.name || 'TA') + '」移出「' + roomTitle(sb) + '」？',
-              note: 'TA 在这座岛里的对话会一起移除；角色本身、皮套和留痕档案都保留。不可撤销。',
+              note: 'TA 在这座岛里的对话会一起移除；角色本身、小号和留痕档案都保留。不可撤销。',
               ok: '移出',
               danger: true
             }).then(function (yes) {
