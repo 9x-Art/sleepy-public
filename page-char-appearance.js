@@ -47,7 +47,9 @@
   };
 
   var PRESETS = {
-    default: { mode: 'classic', color: 'mist', bgColor: 'none', bubbleR: 16, tail: 'bottom', tex: 'none', deco: 'none', fontSize: 100, msgGap: 14, wash: 80, bgBlur: 0, bgDim: 0 },
+    /* default 的 tail 从 'bottom' 改成 'none'（2026-09-22 用户嫌那个小角丑）——
+       企微/捡手机那两套是照参考图逐色抄的，尾巴是它们的特征，不动。 */
+    default: { mode: 'classic', color: 'mist', bgColor: 'none', bubbleR: 16, tail: 'none', tex: 'none', deco: 'none', fontSize: 100, msgGap: 14, wash: 80, bgBlur: 0, bgDim: 0 },
     wecom:   { mode: 'wecom',   color: 'mist', bgColor: '#ededee', bubbleR: 10, tail: 'top',    tex: 'none', deco: 'none', fontSize: 97,  msgGap: 10, wash: 80, bgBlur: 0, bgDim: 0 },
     phone:   { mode: 'phone',   color: 'mist', bgColor: '#b9c0cb', bubbleR: 6,  tail: 'top',    tex: 'none', deco: 'none', fontSize: 100, msgGap: 12, wash: 80, bgBlur: 0, bgDim: 0 }
   };
@@ -152,15 +154,31 @@
     if (cfg.bgDim > 0 && bg !== 'transparent') {
       bg = 'linear-gradient(rgba(0,0,0,' + (cfg.bgDim / 100).toFixed(2) + '),rgba(0,0,0,' + (cfg.bgDim / 100).toFixed(2) + ')),' + bg;
     }
-    lines.push('.msg-wrap.ap-on{gap:' + cfg.msgGap + 'px;background:' + bg + ';}');
+    /* 消息区本身**不再铺背景**（壁纸挪到整页了），见下面的 inline 设置 */
+    lines.push('.msg-wrap.ap-on{gap:' + cfg.msgGap + 'px;}');
+    /* 壁纸 / 底色铺到**整页**（用户 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
+       且上方顶栏需要做透明的」）—— 原来只铺 .msg-wrap（消息区），
+       顶栏和输入栏是两条实底色带，看着像「壁纸贴在一张纸上」。
+       背景是 transparent 时不动，免得把主题底色也盖掉。 */
+    if (bg !== 'transparent') {
+      /* 动态注入的皮肤样式要盖过基础样式 —— 这里用 !important。
+         不加的话 .page 那层更具体的规则会赢，壁纸铺不上去（踩过一次）。 */
+      /* 壁纸铺**整页**。设在这一层（.page-inner）而不是外面那层 .page：
+         外面那层被别的规则压着，写 !important 都抢不过；而这层本来就是透明的，
+         直接把背景给它最省事，也真能铺满。 */
+      lines.push('.page[data-page="chat-detail"] .page-inner{background:' + bg + ' !important;background-size:cover;background-position:center;}');
+      lines.push('.page[data-page="chat-detail"] .app-head{background:rgba(255,255,255,.06);' +
+        'backdrop-filter:blur(16px) saturate(120%);-webkit-backdrop-filter:blur(16px) saturate(120%);' +
+        'border-bottom-color:transparent;}');
+    }
     lines.push('.msg-wrap.ap-on .msg-text{font-size:calc(14px * ' + (cfg.fontSize / 100) + ');}');
 
     /* 图片壁纸才有模糊层（纯色没有可糊的东西） */
     if (cfg.bgImage && bgUrl && cfg.bgBlur > 0) {
-      lines.push('.msg-wrap.ap-on.ap-bgimg{position:relative;}');
-      lines.push('.msg-wrap.ap-on.ap-bgimg::before{content:"";position:absolute;inset:0;background:url("' + bgUrl +
+      lines.push('.page[data-page="chat-detail"].ap-bgimg{position:relative;}');
+      lines.push('.page[data-page="chat-detail"].ap-bgimg::before{content:"";position:absolute;inset:0;background:url("' + bgUrl +
         '") center / cover no-repeat;filter:blur(' + cfg.bgBlur + 'px);z-index:0;pointer-events:none;}');
-      lines.push('.msg-wrap.ap-on.ap-bgimg > *{position:relative;z-index:1;}');
+      lines.push('.page[data-page="chat-detail"].ap-bgimg > *{position:relative;z-index:1;}');
     }
 
     /* 尾巴位置 → 圆角方向 + 三角形开关 */
@@ -245,8 +263,23 @@
         document.head.appendChild(st);
         wrap.classList.remove('mode-classic', 'mode-wecom', 'mode-phone');
         wrap.classList.add('ap-on', 'mode-' + (cfg.mode || 'classic'));
-        if (cfg.bgImage) wrap.classList.add('ap-bgimg');
+        if (cfg.bgImage) { wrap.classList.add('ap-bgimg'); pageCtx.el.classList.add('ap-bgimg'); }
         pageCtx.el.classList.add('ap-accented');
+        /* 壁纸铺**整页**（用户 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
+           且上方顶栏需要做透明的」）。
+           走 inline style 而不是 CSS 注入：注入的那条怎么写都会跟基础样式
+           打架（试过 .page / .page-inner / !important，读回来还是白底），
+           inline 优先级最高、不猜层级，最稳。 */
+        var bgv = 'transparent';
+        var sk2 = SKINS[cfg.mode] || null;
+        if (cfg.bgImage && useBg) bgv = 'url("' + useBg + '")';
+        else if (cfg.bgColor === 'night') bgv = 'linear-gradient(135deg,#1a1f2e,#2a2040)';
+        else if (cfg.bgColor && cfg.bgColor !== 'none') bgv = cfg.bgColor;
+        else if (sk2) bgv = sk2.bg;
+        pageCtx.el.style.background = (bgv === 'transparent') ? '' : bgv;
+        pageCtx.el.style.backgroundSize = 'cover';
+        pageCtx.el.style.backgroundPosition = 'center';
+        pageCtx.el.style.backgroundRepeat = 'no-repeat';
       }
     }
     /* 高级自定义 CSS：作用域是整个聊天页（demo 说明如此） */

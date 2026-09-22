@@ -1151,7 +1151,11 @@ body{
      原来写死 #2A2118，在焦糖/海盐的实心气泡上对比度不够，
      而且配色换了它不换，看着像「正文不跟主题」。 */
   background:var(--amber);color:var(--on-accent,#FFFFFF);
-  border-radius:18px 3px 18px 18px;
+  /* 四角一样圆、不画三角尾巴（用户 2026-09-22：「默认的原始 ui 里气泡那个
+     小角不太好看」）—— 原来这里是 18px 3px 18px 18px + 一个贴在角上的三角形，
+     那个 3px 的"小角"就是被嫌的地方。现代聊天 UI 都不带尾巴了。
+     想要尾巴的去外观 App：气泡形状 → 尾巴位置（底部/顶部/无尾巴）。 */
+  border-radius:18px;
 }
 .msg-assistant .msg-text{
   background:var(--paper);
@@ -1160,7 +1164,7 @@ body{
      现在跟主题的 --g-ink 走（下面 2565 那段才是真正生效的一组，
      这里只是把「写死成 #2A2118」这个坑填掉，免得以后有人只改这一处）。 */
   color:var(--g-ink,#2A2118);
-  border-radius:3px 18px 18px 18px;
+  border-radius:18px;
 }
 .msg-text{
   padding:8px 12px 9px;
@@ -1169,16 +1173,9 @@ body{
   position:relative;
   box-shadow:0 1px 2px rgba(0,0,0,.08);
 }
-.msg-user .msg-text::after{
-  content:'';position:absolute;top:0;right:-6px;
-  border-style:solid;border-width:0 0 6px 6px;
-  border-color:transparent transparent transparent var(--amber);
-}
-.msg-assistant .msg-text::after{
-  content:'';position:absolute;top:0;left:-6px;
-  border-style:solid;border-width:0 6px 6px 0;
-  border-color:transparent var(--paper) transparent transparent;
-}
+/* 尾巴默认不画（外观 App 选了「底部/顶部」时由 JS 打开） */
+.msg-user .msg-text::after,
+.msg-assistant .msg-text::after{content:none;}
 .msg-time{
   font-size:10.5px;color:var(--text-faint);
   margin-top:4px;text-align:right;
@@ -5521,8 +5518,10 @@ span.msg-avatar-initial{
 .face-field{flex:none;width:92px;}
 .face-box{
   width:92px;height:92px;border-radius:10px;
+  /* 背景走玻璃变量、**不写死白色**（2026-09-22：夜灯下写死白 = 深底上一团灰块，
+     用户说「莫名其妙多了黑色框」）。 */
   border:1px solid var(--g-glass-line);
-  background:rgba(255,255,255,.62);
+  background:var(--g-glass-3);
   background-size:cover;background-position:center;
   display:grid;place-items:center;
   font-family:inherit;font-size:28px;font-weight:500;color:var(--g-accent-deep);
@@ -5558,7 +5557,8 @@ span.msg-avatar-initial{
 .simple-form .set-select:focus{outline:0;border-bottom-color:var(--g-accent);}
 /* 人设是整段文字，光一条底线不知道哪儿能打字 —— 给一层浅面（无边框、无圆角框感） */
 .simple-form .set-textarea{
-  background:rgba(249,247,243,.92);
+  /* 同上：不能写死浅色（夜灯下会白底白字，字直接看不见） */
+  background:var(--g-glass-3);
   border:0;border-radius:6px;
   padding:11px 12px;font-size:14px;line-height:1.75;
 }

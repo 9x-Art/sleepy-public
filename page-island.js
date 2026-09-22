@@ -80,7 +80,6 @@
       from: '纳兰性德《画堂春》',
       seed: '在孤岛上写一段',
       empty: '这座岛还空着',
-      hint: '一段只属于你们两个人的故事，别人进不来'
     },
     archipelago: {
       title: '群岛',
@@ -94,7 +93,6 @@
          而且「谁也不是谁的唯一」是在替 user 假设一段**非独占**的关系，
          玩群像（家人、朋友那种情感）的人看到会觉得被定义。
          群岛的特点其实只是**结构**：住得下不止一个人。就只说这个。 */
-      hint: '住得下一群人 —— 家人、朋友、同事，各有各的位置'
     }
   };
 
@@ -351,7 +349,7 @@
       var head = h('div', 'sav-head');
       head.appendChild(h('p', 'sav-poem', meta.poem));
       head.appendChild(h('p', 'sav-poem-from', meta.from));
-      head.appendChild(h('p', 'sav-hint', meta.hint));
+      if (meta.hint) head.appendChild(h('p', 'sav-hint', meta.hint));
       body.appendChild(head);
 
       var list = h('div', 'sav-list');
