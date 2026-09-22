@@ -15,7 +15,8 @@
        likes:    [{ id, kind:'mask'|'char', refId, name, at }],
        comments: [{ id, kind, refId, name, text, at }] }
    kind='mask' → 我的哪张马甲发的；kind='char' → 哪个角色发的。
-   壁纸单存：momentWall: [{ id, url, sandboxId }]（一间房一张）。
+   壁纸单存：momentWall: [{ id, url, sandboxId, userId }]（**一间房里每张脸各一张**；
+   老数据没有 userId 的当这座岛的默认，见 wallFor）。
 
    读写规矩和别处一致：**读**走 core.scoped()（只看得见本房的），
    **写**拿全量按 id 找到那条再落盘 —— 拿过滤过的列表回写会抹掉别的房的。
@@ -301,34 +302,59 @@
     return { ok: true };
   }
 
-  /* ---- 壁纸（一间房一张）----
+  /* ---- 壁纸（**按账号**，一间房里每张脸各一张）----
 
-     记录是 { url } 或 { mediaId }：
+     用户 2026-09-22：「那个封面也做按账号吧」—— 微信的封面本来就是每个号自己的。
+     记录是 { url | mediaId, sandboxId, userId }：
        · 贴网址（长按封面）→ url
        · 从相册选（点封面）→ mediaId —— **不能存 objectURL**，
          那玩意儿刷新页面就失效了
+
+     **老数据**（只有 sandboxId、没有 userId）当「这座岛的默认」：
+     哪个账号还没设自己的封面，就显示它 —— 升级老存档不会突然白掉。
+     改封面只写自己那条，**不动**默认那条（别的账号还要用）。
      wall() 返回记录对象（null = 没设），渲染方自己解析。 */
-  function wall() {
+  function wallFor(userId) {
     var list = core.scoped(store.get('momentWall'));
-    if (!list[0]) return null;
-    if (list[0].mediaId) return { mediaId: list[0].mediaId };
-    return { url: list[0].url || '' };
+    var uid = userId || ((core.activeUserOnIsland && core.activeUserOnIsland()) || {}).id || '';
+    var mine = null, fallback = null;
+    list.forEach(function (w) {
+      if (!w) return;
+      if (w.userId && uid && w.userId === uid) mine = w;
+      else if (!w.userId && !fallback) fallback = w;
+    });
+    var hit = mine || fallback;
+    if (!hit) return null;
+    if (hit.mediaId) return { mediaId: hit.mediaId };
+    return { url: hit.url || '' };
   }
+
+  function wall() { return wallFor(''); }
 
   function setWall(ref) {
     var allWalls = store.get('momentWall');
     if (!Array.isArray(allWalls)) allWalls = [];
     var sid = core.scopeId();
+    var uid = ((core.activeUserOnIsland && core.activeUserOnIsland()) || {}).id || '';
     for (var i = 0; i < allWalls.length; i++) {
-      if (allWalls[i] && allWalls[i].sandboxId === sid) {
-        if (ref) allWalls[i] = core.tagScope({ id: allWalls[i].id, url: ref.url || '', mediaId: ref.mediaId || null });
-        else allWalls.splice(i, 1);
-        store.set('momentWall', allWalls);
-        return { ok: true };
+      var w = allWalls[i];
+      if (!w || w.sandboxId !== sid) continue;
+      /* 只认「自己那条」—— uid 为空时匹配的正是没有 userId 的那条（老行为） */
+      if ((w.userId || '') !== uid) continue;
+      if (ref) {
+        allWalls[i] = core.tagScope({
+          id: w.id, url: ref.url || '', mediaId: ref.mediaId || null, userId: uid
+        });
+      } else {
+        allWalls.splice(i, 1);
       }
+      store.set('momentWall', allWalls);
+      return { ok: true };
     }
     if (!ref) return { ok: true };
-    allWalls.push(core.tagScope({ id: core.newId('mw'), url: ref.url || '', mediaId: ref.mediaId || null }));
+    var made = core.tagScope({ id: core.newId('mw'), url: ref.url || '', mediaId: ref.mediaId || null });
+    made.userId = uid;
+    allWalls.push(made);
     store.set('momentWall', allWalls);
     return { ok: true };
   }
