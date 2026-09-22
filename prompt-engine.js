@@ -599,6 +599,11 @@
       note: '有未读掉马事件才注入' },
     { id: 'relation', slot: 'K03', name: '关系与记忆', kind: 'program', required: true,
       note: 'page-switch 认知层：[U→C] 归档记忆' },
+    /* L1.5（2026-09-22 加）：记忆是「已经沉淀下来的」，这一层是
+       「还没来得及沉淀、但 TA 确实看见了」的近期视野。
+       v5 把它排在 L1 与 L2 之间 —— 所以位置紧跟 relation。 */
+    { id: 'life', slot: 'K03b', name: '近期生活动态', kind: 'program', required: false,
+      note: '程序生成：TA 近期实际看见的动态（v5 §L1.5，现在只有朋友圈这一个源）' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻条目 + 关键词命中的条目（全局书 + 挂在 TA 身上的书）' },
     { id: 'custom', slot: 'K/S', name: '自定义注入', kind: 'custom', required: false,
@@ -844,6 +849,17 @@
     return Sleepy.switcher.compileMemory(charId, userId, limit) || '';
   }
 
+  /* L1.5 近期生活动态（v5 §L1.5）：角色近期**实际看见**的跨 App 事件。
+     v1 只有朋友圈这一个源（其余几类的取舍见 life-feed.js 开头）。
+     和 compileRelation 是两层东西，别合并：记忆是「已经沉淀下来的」，
+     这里是「还没来得及沉淀、但 TA 确实看见了」的近期视野。
+     惰性取 Sleepy.lifeFeed —— 它排在本文件之后加载也能用。 */
+  function compileLife(charId, userId) {
+    var lf = Sleepy.lifeFeed;
+    if (!lf || !lf.text) return '';
+    return lf.text(charId, userId) || '';
+  }
+
   function compileDrop(charId) {
     if (!Sleepy.switcher) return '';
     var root = core.rootOf(charId);
@@ -1018,6 +1034,7 @@
         case 'phone': pushSlot(def, compilePhoneDelta(charId)); break;
         case 'drop': pushSlot(def, compileDrop(charId)); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
+        case 'life': pushSlot(def, compileLife(charId, userId)); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
           pushSlot(def, compileWorldbook(charId, wbText));
@@ -1072,6 +1089,9 @@
     { id: 'f2', slot: 'C04', name: 'F2 线下规则', kind: 'card', required: true },
     { id: 'relation', slot: 'K03', name: '关系与记忆', kind: 'program', required: true,
       note: '记忆认知层（[U→C] 归档）' },
+    /* L1.5 与线上同一份实现（v5 §L1.5 是跨 App 的近期视野，线上线下都在）。 */
+    { id: 'life', slot: 'K03b', name: '近期生活动态', kind: 'program', required: false,
+      note: '程序生成：TA 近期实际看见的动态（与线上同一份 compileLife）' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻 + 关键词命中（同线上规则）' },
     /* 自定义注入（2026-09-22 通查补）：线上一直有这一槽，线下漏了 ——
@@ -1269,6 +1289,7 @@
         case 'shell': pushSlot(def, cardBody('shell')); break;
         case 'f2': pushSlot(def, cardBody('f2')); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
+        case 'life': pushSlot(def, compileLife(charId, userId)); break;
         case 'worldbook': {
           var wbOff = (session.messages || []).map(function (m) {
             if (m.role === 'user') return String(m.text || '');
@@ -1529,6 +1550,9 @@
     compileCharacter: compileCharacter,
     charMetaLines: charMetaLines,
     compileI01: compileI01,
+    /* L1.5 近期生活动态（2026-09-22）：主动消息也要这一层 ——
+       不然 TA 永远不会「主动提起你昨天发的那条」。 */
+    compileLife: compileLife,
     cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,

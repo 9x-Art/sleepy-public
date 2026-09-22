@@ -5496,6 +5496,42 @@ t('contextLimit：对话覆盖 > 聊天默认 > 内置 40，三处共用一份�
   return { 内置默认: 40, 三层回落: '对话 > 默认 > 内置', 生成参数只有一份: true };
 });
 
+t('L1.5 近期生活动态：只收 TA 看得见的，朋友权限挡住的不进', () => {
+  const C = S.core;
+  const sb = C.createSandbox('archipelago', '动态测试岛');
+  C.setActiveSandbox(sb.id);
+  const a = C.upsertChar({ name: '动态角色', kind: 'main' }).id;
+  const u = C.upsertUser({ name: '动态马甲' });
+  C.setSandboxChars(sb.id, [a]);
+  C.setSandboxMasks(sb.id, [u.id]);
+  S.store.set('moments', []);
+  S.momentsTab.add({ text: '今天吃了拉面', name: '我', maskId: u.id });
+  S.momentsTab.add({ text: '在书店整理到很晚', characterId: a, name: '动态角色' });
+  S.momentsTab.add({ text: '这条设了私密', name: '我', maskId: u.id, privacy: 'self' });
+
+  let txt = S.lifeFeed.text(a, u.id);
+  if (txt.indexOf('今天吃了拉面') < 0) throw new Error('我看得见的动态没进');
+  if (txt.indexOf('在书店整理到很晚') < 0) throw new Error('TA 自己发的没进');
+  if (txt.indexOf('这条设了私密') >= 0) throw new Error('私密动态进了（可见范围没拦住）');
+  if (txt.indexOf('[近期生活动态]') < 0) throw new Error('没有注入头的标记');
+
+  /* 我不让他看我的 → 我发的两条都不该进，只剩他自己发的。
+     注意方向：挡他的是 iHideFromChar / charHidesFromMe，
+     用成 iHideChar（那是「我不看 TA 的」）就反了。 */
+  C.setFeedPerm(a, u.id, 'iHideFromChar', true);
+  const txt2 = S.lifeFeed.text(a, u.id);
+  if (txt2.indexOf('今天吃了拉面') >= 0) throw new Error('关了「让他看我的」还进了 —— 方向反了');
+  if (txt2.indexOf('在书店整理到很晚') < 0) throw new Error('他自己发的被误伤');
+  C.setFeedPerm(a, u.id, 'iHideFromChar', false);
+
+  /* 装配产物里要有这一段（K03b 槽） */
+  const out = S.promptEngine.assembleOnline({ charId: a, userId: u.id, history: [] });
+  const sys = (out.messages || []).filter((m) => m.role === 'system')
+    .map((m) => m.content).join('\n');
+  if (sys.indexOf('[近期生活动态]') < 0) throw new Error('K03b 槽没进装配产物');
+  return { 看得见的: 2, 私密被挡: true, 权限方向对: true, 进了装配: true };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

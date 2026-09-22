@@ -118,6 +118,53 @@
     return true;
   }
 
+  /* char 视角：这个角色看得见这条动态吗？
+     和 canSee 是**镜像**关系（那边是「我看得见谁」），别混用 ——
+     方向反了就成了「角色偷看你设了私密的东西」。
+     ⓪ 他自己发的 → 看得见
+     ① 我（马甲）发的 → 挡他的是这两个方向相反的开光：
+        iHideFromChar（我不让他看我的）+ charHidesFromMe（他不看我的）
+     ② 可见范围（privacy / visibleTo）和 canSee 同一套规则。
+     老数据没 privacy = all；link 不存在时 feedPermOf 全 false = 不拦。 */
+  function canCharSee(m, charId, userId) {
+    if (!m || !charId) return false;
+    if (m.characterId === charId) return true;              /* 自己发的 */
+    if (m.maskId && core.feedPermOf) {
+      var perm = core.feedPermOf(charId, m.maskId);
+      if (perm.iHideFromChar || perm.charHidesFromMe) return false;
+    }
+    var mode = m.privacy || 'all';
+    if (mode === 'all') return true;
+    var list = m.visibleTo || [];
+    if (mode === 'self') {
+      var selfId = m.characterId || m.maskId || null;
+      return selfId ? charId === selfId : true;
+    }
+    if (mode === 'include') return list.indexOf(charId) >= 0;
+    if (mode === 'exclude') return list.indexOf(charId) < 0;
+    return true;
+  }
+
+  /* 某个角色「近期实际看见」的动态（L1.5 近期生活动态的源，见 life-feed.js）。
+     v1 只收**我发的**和**他自己发的**：别的角色/NPC 发的动态属于他自己
+     世界里的事，模型本来就知道，再注一遍只是白烧 token。 */
+  function listForChar(charId, userId, opts) {
+    opts = opts || {};
+    var days = opts.days || 10;
+    var limit = opts.limit || 12;
+    var floor = Date.now() - days * 86400000;
+    var out = [];
+    core.scoped(all()).forEach(function (m) {
+      if (m.status === 'deleted') return;
+      if (m.characterId !== charId && !m.maskId) return;     /* 只留我发的 / TA 发的 */
+      if (!canCharSee(m, charId, userId)) return;
+      if (typeof m.at === 'number' && m.at < floor) return;
+      out.push(m);
+    });
+    return out.sort(function (a, b) { return (b.at || 0) - (a.at || 0); })
+      .slice(0, limit);
+  }
+
   /* 我在朋友圈里动了 → 让人**过一会儿**来接（逻辑在 moments-ai.js）。
      只在我（马甲）自己做事的时侯叫：替角色发的不算 ——
      那本来就是「我让他发的」，再自动回一条给自己就成自问自答了。 */
@@ -1600,7 +1647,11 @@
     addComment: addComment,
     removeComment: removeComment,
     wall: wall,
-    setWall: setWall
+    setWall: setWall,
+    /* char 视角的两个（2026-09-22 加，给 L1.5 近期生活动态用）——
+       别的模块要「这个角色看得见什么」时走它们，别自己抄一遍三道闸。 */
+    canCharSee: canCharSee,
+    listForChar: listForChar
   };
 
 })(window);

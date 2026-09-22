@@ -174,6 +174,10 @@
     else if (ch && ch.content) sys.push('[CHARACTER]\n' + ch.content + '\n[/CHARACTER]');
     var i01 = PE.compileI01 ? PE.compileI01(charId, userId || null) : '';
     if (i01) sys.push(i01);
+    /* L1.5 近期生活动态：主动消息的素材本来就该来自「他最近看见的事」——
+       少了这一层，TA 只能干等 [TRIGGER_CANDIDATES]，永远提不起你昨天发的那条。 */
+    var life = PE.compileLife ? PE.compileLife(charId, userId || null) : '';
+    if (life) sys.push(life);
     return sys;
   }
 
