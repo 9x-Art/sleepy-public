@@ -188,10 +188,15 @@
 
   /* ------------------------- 聊天投递（两路共用） -------------------------
      找「这个角色」的会话；没有就建一条（谢幕是 user 主动发起的动作，
-     不该因为还没聊过天就发不出去）。 */
+     不该因为还没聊过天就发不出去）。
+
+     ⚠️ 角色**已经不在了**就不发、也不建会话：cast 是建作品时抄下来的名单，
+     删岛/删人之后里面的 charId 会变成幽灵，照它新建会得到一条挂在
+     不存在的人身上的对话（2026-09-22 衔接审计发现的）。 */
   function chatForChar(charId, charName) {
     var cs = Sleepy.chatStore;
     if (!cs) return null;
+    if (Sleepy.core && Sleepy.core.findChar && !Sleepy.core.findChar(charId)) return null;
     var chat = cs.chatOf(charId);
     if (chat) return chat;
     return cs.createChat(charName || '对话', charId);
@@ -313,7 +318,7 @@
       var c = cast[Math.min(idx, cast.length - 1)];
       if (!c) return;
       var chat = chatForChar(c.charId, c.name);
-      if (!chat) { Sleepy.toast('没找到 TA 的对话', 'err'); return; }
+      if (!chat) { Sleepy.toast('这位角色已经不在这座岛上了', 'err'); return; }
       if (alreadySent(chat.id, w.id, 'wj-share')) {
         Sleepy.toast('TA 已经收过这部作品了');
         return;
@@ -416,10 +421,15 @@
       var c = cast[Math.min(pick.idx, cast.length - 1)];
       if (!c) return;
       var chat = chatForChar(c.charId, c.name);
-      if (!chat) { Sleepy.toast('没找到 TA 的对话', 'err'); return; }
-      /* 幂等：同一个人手上还有没结果的邀请，就不重复发 */
+      if (!chat) { Sleepy.toast('这位角色已经不在这座岛上了', 'err'); return; }
+      /* 幂等：TA 手上**还挂着一份没结果的邀请**才拦。
+         「稍后再读」（deferred）和「只收下了作品」（sharing_only）不算 ——
+         前者本来就是「改天再邀请一次」（共读页的文案就是这么写的），
+         把它们也算成「已有一份」，那条邀请就永久成了僵尸
+         （2026-09-22 衔接审计发现的）。 */
       var dup = CR().forWork(w.id).filter(function (s) {
-        return s.charId === c.charId && s.status !== 'refused';
+        return s.charId === c.charId &&
+          (s.status === 'invited' || s.status === 'active' || s.status === 'paused');
       })[0];
       if (dup) { Sleepy.toast('TA 手上已经有一份邀请了'); return; }
 
@@ -547,18 +557,36 @@
     });
   }
 
-  /* ---- ⑤ 正史审阅（T7 才做） ---- */
+  /* ---- ⑤ 正史审阅（T7） ---- */
   function sheetHistory(ctx, w) {
+    var canWrite = (w.reality === 'canon_candidate' || w.reality === 'canonized');
     var body = [
       h('p', 'wj-sheet-desc',
         '这条路可能改变现实，所以它最慢：先提取候选事实，' +
-        '再逐条查冲突，最后逐条批准 —— 小说原文一个字都不会被写进现实。'),
-      h('div', 'wj-sheet-notice',
-        '审阅台在 T7 才开工。现在点进去会看到一个空房间，所以这里先不放按钮。')
+        '再逐条查冲突，最后逐条批准 —— 小说原文一个字都不会被写进现实。')
     ];
+    if (!canWrite) {
+      body.push(h('div', 'wj-sheet-notice',
+        '这部作品的性质是「' + (wj().REALITY_LABEL[w.reality] || '普通故事') + '」——' +
+        '它在开帷时就承诺过不进入任何人的现实记忆。要定史，' +
+        '得先回开帷流程把它改成「正史候选」。'));
+    } else if (w.reality === 'canonized') {
+      body.push(h('div', 'wj-sheet-notice',
+        '这部作品已经定过史了。再点进去可以补写新的候选 —— ' +
+        '但只有重新提取过的候选才会解锁写入。'));
+    }
+
+    var sh = null;
     var acts = h('div', 'wj-sheet-actions');
-    acts.appendChild(btn('知道了', 'wj-btn', function () { if (sh) sh.close(); }));
-    var sh = openSheet(ctx, {
+    var go = btn(canWrite ? '打开审阅台' : '知道了',
+      canWrite ? 'wj-btn wj-btn-solid' : 'wj-btn', function () {
+        if (sh) sh.close();
+        if (canWrite) Sleepy.nav.open('wj-canon', { workId: w.id });
+      });
+    acts.appendChild(go);
+    acts.appendChild(btn('先不做', 'wj-quiet', function () { if (sh) sh.close(); }));
+
+    sh = openSheet(ctx, {
       title: '进入正史审阅',
       desc: '定史 = 只写结构化事实，绝不写整篇正文。',
       body: body, actions: acts

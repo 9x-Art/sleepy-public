@@ -178,6 +178,9 @@
 <script src="wj-prompt.js"></script>
 <script src="wj-check.js"></script>
 <script src="wj-coread.js"></script>
+<!-- 正史审阅的数据层（T7）：**唯一**会把作品写进现实的地方。
+     写入落点是 memoryStore / calendar（都是运行时惰性取，所以加载顺序不敏感）。 -->
+<script src="wj-canon.js"></script>
 <script src="wj-engine.js"></script>
 <script src="page-wj-foyer.js"></script>
 <script src="page-wj-work.js"></script>
@@ -187,6 +190,8 @@
      它同时导出聊天里那两种卡片（wj-share / wj-invite），
      聊天页**惰性取**（本文件在 page-chat.js 之后加载）。 -->
 <script src="page-wj-curtain.js"></script>
+<!-- 正史审阅台（T7）：四步 stepper。入口在谢幕页的「进入正史审阅」那一张卡。 -->
+<script src="page-wj-canon.js"></script>
 <script src="page-wj-style.js"></script>
 <script src="page-wj-create.js"></script>
 

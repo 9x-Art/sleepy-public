@@ -83,6 +83,13 @@
         return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
       });
   }
+
+  /* 作品被删掉时把它的会话一起收掉（2026-09-22 衔接审计：以前删作品只删
+     wjWorks，留下的 session 成了孤儿 —— 门厅里看不见、数据里一直躺着）。 */
+  function removeForWork(workId) {
+    write(read().filter(function (s) { return s.workId !== workId; }));
+    return true;
+  }
   /* 一部作品同一时刻最多一个进行中的同席 */
   function activeFor(workId) {
     return forWork(workId).filter(function (s) {
@@ -341,6 +348,7 @@
     onChange: null,
 
     all: all, get: get, mutate: mutate, forWork: forWork, activeFor: activeFor,
+    removeForWork: removeForWork,
     createInvite: createInvite, settle: settle,
     pause: pause, resume: resume, end: end,
     touchAnchor: touchAnchor, annotate: annotate, log: log,

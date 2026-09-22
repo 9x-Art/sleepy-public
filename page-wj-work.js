@@ -427,12 +427,22 @@
            它是这个项目统一的弹层样式，也是唯一带 danger 语义的。 */
         Sleepy.ui.confirm({
           title: '删除《' + w.title + '》？',
-          note: '这部作品的全部章节与正文会一起消失，不能恢复。',
+          note: '这部作品的全部章节与正文会一起消失，不能恢复。' +
+            '它的共读记录与审阅记录也会一起收掉（收藏馆里的票根留着）。',
           ok: '删除',
           danger: true
         }).then(function (yes) {
           if (!yes) return;
           D().remove(w.id);
+          /* 附属数据跟着走（2026-09-22 衔接审计：以前只删 wjWorks，
+             留下的 session / canon 成了孤儿）。票根**不动** ——
+             那是「我读过」的凭证，收藏馆里点它会说「已经不在门厅里了」。 */
+          if (Sleepy.wjCoread && Sleepy.wjCoread.removeForWork) {
+            Sleepy.wjCoread.removeForWork(w.id);
+          }
+          if (Sleepy.wjCanon && Sleepy.wjCanon.remove) {
+            Sleepy.wjCanon.remove(w.id);
+          }
           Sleepy.toast('剧本已删除');
           Sleepy.nav.back();
         });

@@ -12104,3 +12104,116 @@ button.cal-ev:active{background:var(--g-glass-2);}
   --wj-ticket-hole:var(--g-base);
   box-shadow:none;border:1px solid var(--line);
 }
+
+/* ==================== 帷境 · 正史审阅台（T7） ====================
+   四步 stepper + 候选卡 + 认知行 + 写入预览。
+   配色沿用 --wj-*，不引新变量。 */
+
+/* ---- 步进条：能回看已完成的两步，往前走要过闸门（逻辑在 wj-canon.js） ---- */
+.wjc-steps{display:flex;flex-wrap:wrap;gap:6px;}
+.wjc-step{
+  flex:1;min-width:0;padding:9px 6px;
+  border:1px solid var(--wj-line);border-radius:4px;
+  background:transparent;color:var(--wj-dimmer);
+  font:inherit;font-size:10.5px;letter-spacing:.04em;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wjc-step.is-done{color:var(--wj-green);border-color:rgba(157,181,168,.34);}
+.wjc-step.is-on{
+  color:var(--wj-text);border-color:var(--wj-silver);
+  background:rgba(255,255,255,.05);
+}
+
+/* ---- 底部导航 ---- */
+.wjc-nav{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+.wjc-blocked{
+  margin:2px 0 0;font-size:10.5px;line-height:1.7;color:var(--wj-wine-lite);
+}
+.wjc-nav .wj-quiet,.wj-panel > .wj-quiet{
+  background:none;border:0;color:var(--wj-dimmer);
+  font-size:10.5px;padding:8px;cursor:pointer;font-family:inherit;
+}
+
+/* ---- 候选卡 ---- */
+.wjc-list{display:flex;flex-direction:column;gap:9px;margin-top:10px;}
+.wjc-cand{
+  border:1px solid var(--wj-line-soft);border-radius:5px;
+  padding:11px 12px;background:rgba(255,255,255,.02);
+}
+.wjc-cand.is-keep{border-color:rgba(157,181,168,.52);background:rgba(157,181,168,.07);}
+.wjc-cand.is-reject{opacity:.5;}
+.wjc-cand.is-fixed{border-color:rgba(157,181,168,.34);}
+.wjc-cand-head{display:flex;align-items:center;gap:8px;}
+.wjc-cand-kind{font-size:9px;letter-spacing:.12em;color:var(--wj-dimmer);}
+.wjc-cand-seq{font-size:9px;color:var(--wj-dimmer);}
+.wjc-cand-warn{
+  font-size:9px;letter-spacing:.08em;color:var(--wj-wine-lite);
+  border:1px solid rgba(200,150,160,.4);border-radius:3px;padding:1px 5px;
+}
+.wjc-cand-text{
+  margin:7px 0 0;font-size:12.5px;line-height:1.75;color:var(--wj-text);
+  font-family:var(--ff-serif);
+}
+.wjc-cand-note{margin:5px 0 0;font-size:10.5px;line-height:1.7;color:var(--wj-dim);}
+.wjc-cand-date{margin:5px 0 0;font-size:10px;color:var(--wj-dimmer);}
+.wjc-cand-conflict{
+  margin:7px 0 0;font-size:10.5px;line-height:1.75;color:var(--wj-wine-lite);
+  padding-left:9px;border-left:2px solid rgba(200,150,160,.42);
+}
+.wjc-cand-fixed{
+  margin:7px 0 0;font-size:10.5px;line-height:1.75;color:var(--wj-green);
+  padding-left:9px;border-left:2px solid rgba(157,181,168,.5);
+}
+.wjc-fix-input{
+  width:100%;margin-top:8px;box-sizing:border-box;
+  background:rgba(255,255,255,.04);border:1px solid var(--wj-line);
+  border-radius:4px;padding:8px 10px;color:var(--wj-text);
+  font:inherit;font-size:11.5px;line-height:1.7;resize:vertical;
+}
+.wjc-fix-input::placeholder{color:var(--wj-dimmer);}
+
+/* ---- 三个决定 ---- */
+.wjc-cand-decs{display:flex;gap:7px;margin-top:10px;}
+.wjc-dec{
+  flex:1;padding:8px 4px;border:1px solid var(--wj-line);border-radius:4px;
+  background:transparent;color:var(--wj-dim);
+  font:inherit;font-size:11px;cursor:pointer;
+}
+.wjc-dec.is-on{color:var(--wj-text);border-color:var(--wj-silver);background:rgba(255,255,255,.06);}
+.wjc-cand.is-keep .wjc-dec.is-on{border-color:rgba(157,181,168,.7);color:var(--wj-green);}
+
+/* ---- 认知行 ---- */
+.wjc-know-row{
+  display:flex;align-items:center;gap:9px;margin-top:8px;
+  padding-top:8px;border-top:1px solid var(--wj-line-soft);
+}
+.wjc-know-name{flex:none;width:52px;font-size:12px;color:var(--wj-text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wjc-know-sel{
+  flex:none;background:rgba(255,255,255,.05);border:1px solid var(--wj-line);
+  border-radius:4px;padding:6px 8px;color:var(--wj-text);font:inherit;font-size:11px;
+}
+.wjc-know-hint{font-size:10px;line-height:1.6;color:var(--wj-dimmer);}
+
+/* ---- 写入预览 ---- */
+.wjc-plan{display:flex;flex-direction:column;gap:8px;margin:10px 0 4px;}
+.wjc-plan-row{
+  border:1px solid var(--wj-line-soft);border-radius:4px;
+  padding:10px 11px;background:rgba(255,255,255,.02);
+}
+.wjc-plan-head{display:flex;align-items:baseline;gap:8px;}
+.wjc-plan-head b{font-size:12px;font-weight:500;color:var(--wj-text);}
+.wjc-plan-level{
+  font-size:9px;letter-spacing:.1em;color:var(--wj-green);
+  border:1px solid rgba(157,181,168,.44);border-radius:3px;padding:1px 5px;
+}
+.wjc-plan-line{margin:6px 0 0;font-size:11.5px;line-height:1.75;
+  color:var(--wj-silver);font-family:var(--ff-serif);}
+
+/* ---- 写入页那句 seal（Demo 原样） ---- */
+.wjc-seal{
+  margin-top:14px;padding:12px 13px;border-radius:4px;
+  border:1px dashed rgba(200,150,160,.4);background:rgba(138,95,107,.08);
+}
+.wjc-seal p{margin:0 0 5px;font-size:10.5px;line-height:1.75;color:var(--wj-wine-lite);}
+.wjc-seal p:last-child{margin-bottom:0;}

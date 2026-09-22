@@ -4600,9 +4600,9 @@ function finalReport() {
   }
 }
 console.log('\n--- 帷境（Veilscape）---');
-t('帷境页面注册齐（含 T6 谢幕），桌面入口是通栏 wj 格（不是 app 图标格）', () => {
+t('帷境页面注册齐（含 T6 谢幕 + T7 审阅台），桌面入口是通栏 wj 格（不是 app 图标格）', () => {
   const reg = S.registered();
-  ['wj-foyer', 'wj-work', 'wj-create', 'wj-style', 'wj-read', 'wj-coread', 'wj-curtain']
+  ['wj-foyer', 'wj-work', 'wj-create', 'wj-style', 'wj-read', 'wj-coread', 'wj-curtain', 'wj-canon']
     .forEach((id) => {
       if (!reg[id]) throw new Error('缺页面：' + id);
     });
@@ -4612,7 +4612,7 @@ t('帷境页面注册齐（含 T6 谢幕），桌面入口是通栏 wj 格（不
   pages.forEach((cells) => cells.forEach((c) => { if (c.type === 'wj') entry = c; }));
   if (!entry) throw new Error('桌面上没有帷境入口');
   if (entry.w < 2) throw new Error('入口不是通栏，宽度只有 ' + entry.w);
-  return { 页面数: 7, 入口: entry.i + ' ' + entry.w + 'x' + entry.h };
+  return { 页面数: 8, 入口: entry.i + ' ' + entry.w + 'x' + entry.h };
 });
 
 /* T6 · 谢幕五路。判据来自 Demo 底注：收藏 ≠ 分享 ≠ 共读 ≠ 公开 ≠ 定史，
@@ -4674,6 +4674,148 @@ t('T6 谢幕与三路分开记：分享过 ≠ 已经谢幕', () => {
   if (!sealedAt) throw new Error('谢幕没记上时间');
   if (afterSeal.status !== 'completed') throw new Error('谢幕没把状态改成已完成');
   return { 分享后未谢幕: true, 谢幕后: afterSeal.status };
+});
+
+/* T7 · 正史审阅与写入。四条断言对着方案 §6 T7 的四条验收标准写 ——
+   「拒绝一条不删小说 / 批准一条不让所有人物自动知情 /
+     冲突未处理不能进下一步 / 重复确认不重复写入」。 */
+
+t('T7 硬闸门：冲突没处理完，不许进「人物认知」那一步', () => {
+  S.store.set('wjCanon', []);
+  const w = S.wj.createDraft({ title: '闸门测试', reality: 'canon_candidate' });
+  S.wjCanon.setCandidates(w.id, [
+    { kind: 'shared_event', text: '他们一起看过一次海。', conflict: '和他已知的时间线对不上' }
+  ]);
+  const cid = S.wjCanon.get(w.id).candidates[0].id;
+  S.wjCanon.decide(w.id, cid, 'keep');
+  const step0 = S.wjCanon.advance(w.id);          /* 0 → 1 应该放行 */
+  const blocked = S.wjCanon.blockers(S.wjCanon.get(w.id));
+  const step1 = S.wjCanon.advance(w.id);          /* 1 → 2 应该被拦 */
+  S.wj.remove(w.id);
+  S.store.set('wjCanon', []);
+  if (!step0.ok) throw new Error('第一步不该被拦：' + JSON.stringify(step0.why));
+  if (!blocked.length) throw new Error('冲突没处理竟然没有拦');
+  if (step1.ok) throw new Error('冲突没处理竟然走到了下一步');
+  return { 第一步: '放行', 被拦在: blocked[0] };
+});
+
+t('T7 批准一条不让所有人自动知情：没定认知的人一条都不写', () => {
+  S.store.set('wjCanon', []);
+  const sb = S.core.createSandbox('archipelago', '定史测试岛');
+  S.core.setActiveSandbox(sb.id);
+  const a = S.core.upsertChar({ name: '定史甲', kind: 'main' });
+  const b = S.core.upsertChar({ name: '定史乙', kind: 'main' });
+  const w = S.wj.createDraft({
+    title: '定史测试', reality: 'canon_candidate',
+    cast: [{ charId: a.id, name: '定史甲' }, { charId: b.id, name: '定史乙' }]
+  });
+  S.wjCanon.setCandidates(w.id, [{ kind: 'shared_event', text: '他们一起修好了那盏灯。' }]);
+  const cid = S.wjCanon.get(w.id).candidates[0].id;
+  S.wjCanon.decide(w.id, cid, 'keep');
+  S.wjCanon.setKnowledge(w.id, a.id, cid, '清晰记忆');   /* 只给甲定了 */
+  S.wjCanon.setStep(w.id, 3);
+
+  const beforeB = S.memoryStore.loadCharMemory(b.id).memories.length;
+  const r = S.wjCanon.write(w.id);
+  const memA = S.memoryStore.loadCharMemory(a.id).memories;
+  const afterB = S.memoryStore.loadCharMemory(b.id).memories.length;
+  S.wj.remove(w.id);
+  S.store.set('wjCanon', []);
+
+  if (!r.ok) throw new Error('没写成：' + JSON.stringify(r));
+  if (memA.length !== 1) throw new Error('甲该拿到 1 条，实 ' + memA.length);
+  if (afterB !== beforeB) throw new Error('乙被写了 —— 批准一条不等于所有人自动知情');
+  if (memA[0].content.indexOf('清楚地记得') < 0) throw new Error('认知档位没写进那条记忆');
+  return { 甲: memA.length, 乙: '没被写', 来源: memA[0].source };
+});
+
+t('T7 幂等 + 拒绝不删小说：第二次写入被挡，正文一个字没动', () => {
+  S.store.set('wjCanon', []);
+  const sb = S.core.activeSandbox() || S.core.createSandbox('archipelago', '定史岛二');
+  const a = S.core.upsertChar({ name: '定史丙', kind: 'main' });
+  const w = S.wj.createDraft({
+    title: '幂等测试', reality: 'canon_candidate',
+    cast: [{ charId: a.id, name: '定史丙' }]
+  });
+  S.wj.addChapter(w.id, '第一章');
+  const chId = S.wj.get(w.id).chapters[0].id;
+  S.wj.addPara(w.id, chId, 'prose', '他把那盏灯修好了，屋子里重新亮起来。');
+  const before = S.wj.charCount(S.wj.get(w.id));
+
+  S.wjCanon.setCandidates(w.id, [
+    { kind: 'shared_event', text: '他修好了那盏灯。' },
+    { kind: 'fragment', text: '灯亮的那一刻很安静。' }
+  ]);
+  const list = S.wjCanon.get(w.id).candidates;
+  S.wjCanon.decide(w.id, list[0].id, 'keep');
+  S.wjCanon.decide(w.id, list[1].id, 'reject');          /* 这条不写 */
+  S.wjCanon.setKnowledge(w.id, a.id, list[0].id, '片段记忆');
+  S.wjCanon.setStep(w.id, 3);
+
+  const r1 = S.wjCanon.write(w.id);
+  const r2 = S.wjCanon.write(w.id);
+  const after = S.wj.charCount(S.wj.get(w.id));
+  const mem = S.memoryStore.loadCharMemory(a.id).memories;
+  S.wj.remove(w.id);
+  S.store.set('wjCanon', []);
+
+  if (!r1.ok) throw new Error('第一次没写成功');
+  if (r2.ok) throw new Error('第二次竟然又写了一遍');
+  if (r2.why !== 'already-written') throw new Error('第二次的拒绝理由不对：' + r2.why);
+  if (after !== before) throw new Error('小说正文被改了 —— 定史绝不改正文');
+  if (mem.length !== 1) throw new Error('被拒绝的那条也写进去了');
+  return { 第一次: r1.count, 第二次: r2.why, 正文字数: after };
+});
+
+/* 2026-09-22 衔接审计修掉的两处。它们都是「跨模块的缝」——
+   单看每个模块都对，缝里漏东西。 */
+
+t('审计修复：角色删了之后，定史不再往幽灵名下写记忆', () => {
+  S.store.set('wjCanon', []);
+  const a = S.core.upsertChar({ name: '幽灵甲', kind: 'main' });
+  const w = S.wj.createDraft({
+    title: '幽灵测试', reality: 'canon_candidate',
+    cast: [{ charId: a.id, name: '幽灵甲' }]   /* cast 是建作品时抄下来的名单 */
+  });
+  S.wjCanon.setCandidates(w.id, [{ kind: 'shared_event', text: '测试用的一条事实。' }]);
+  const cid = S.wjCanon.get(w.id).candidates[0].id;
+  S.wjCanon.decide(w.id, cid, 'keep');
+  S.wjCanon.setKnowledge(w.id, a.id, cid, '清晰记忆');
+  S.wjCanon.setStep(w.id, 3);
+
+  const before = S.memoryStore.loadCharMemory(a.id).memories.length;
+  S.core.removeChar(a.id);                    /* 人没了，cast 里还留着他的 id */
+  const r = S.wjCanon.write(w.id);
+  const after = S.memoryStore.loadCharMemory(a.id).memories.length;
+  S.wj.remove(w.id);
+  S.store.set('wjCanon', []);
+
+  if (r.ok) throw new Error('往已经删掉的角色名下写成功了（幽灵记忆）');
+  if (after !== before) throw new Error('幽灵记忆被写进去了');
+  return { 写入: r.why, 幽灵记忆: 0 };
+});
+
+t('审计修复：删作品时共读会话与审阅记录一起收掉', () => {
+  S.store.set('wjSessions', []);
+  S.store.set('wjCanon', []);
+  const w = S.wj.createDraft({ title: '连坐测试' });
+  S.wjCoread.createInvite({ workId: w.id, charId: 'ch-x', charName: '某人' });
+  S.wjCanon.setCandidates(w.id, [{ kind: 'fragment', text: '一条。' }]);
+  const before = {
+    sessions: S.wjCoread.forWork(w.id).length,
+    canon: S.wjCanon.get(w.id) ? 1 : 0
+  };
+  /* 这就是 page-wj-work 删除按钮做的那两下 */
+  S.wj.remove(w.id);
+  S.wjCoread.removeForWork(w.id);
+  S.wjCanon.remove(w.id);
+  const after = {
+    sessions: S.wjCoread.forWork(w.id).length,
+    canon: S.wjCanon.get(w.id) ? 1 : 0
+  };
+  if (!before.sessions || !before.canon) throw new Error('前置数据没造出来');
+  if (after.sessions || after.canon) throw new Error('作品删了，附属数据还在');
+  return { 删前: before.sessions + '/' + before.canon, 删后: after.sessions + '/' + after.canon };
 });
 
 t('T6 两种卡片：作品卡与邀请卡都渲染出关键信息', () => {
