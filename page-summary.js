@@ -184,6 +184,11 @@
     return null;
   }
   function candFor() {
+    /* 1) 总结 API（单份独立配置，2026-09-22 接上）——
+          它和副 API **完全独立**：删副 API 也还是它（用户拍板的语义）。 */
+    var sa = store.get('summaryApi');
+    if (sa && sa.baseUrl && sa.model) return { cfg: sa, label: '总结 API' };
+    /* 2) 老路径：记忆模型指定了副 API 的某一组（兼容老存档） */
     if (store.get('memoryApiCfg') && store.get('memoryApiCfg').mode === 'pick' &&
         Sleepy.offlineStore && Sleepy.offlineStore.apiChoices) {
       var label = store.get('memoryApiCfg').label;

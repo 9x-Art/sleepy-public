@@ -338,7 +338,12 @@
         list.push(next);
         var ok = store.set('subApis', list);
         if (ok) {
-          ctx.toast('已保存', 'ok');
+          /* 顺手把**还空着的**「总结 API / 向量记忆 API」带一份进来
+             （用户 2026-09-22 拍板：加副 API 可以同步加这两个）。
+             只填空的：填过之后两边各自独立，改副 API / 删副 API 都不动它们。 */
+          var seeded = 0;
+          if (Sleepy.singleApi && Sleepy.singleApi.seedAll) seeded = Sleepy.singleApi.seedAll();
+          ctx.toast(seeded ? '已保存，总结 / 向量接口也顺手带了一份' : '已保存', 'ok');
           ctx.back();
         } else {
           ctx.toast((store.lastError() || {}).message || '保存失败', 'err');

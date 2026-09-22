@@ -404,6 +404,78 @@
 
   /* ---------------------------- 对外 ---------------------------- */
 
+  /* ------------------------- 向量（embeddings） -------------------------
+     和对话不是一回事，所以**不走 candidates()**：
+     · 端点不同（/embeddings，不是 /chat/completions）；
+     · 主 API 通常是对话模型，喂它 /embeddings 只会 404 ——
+       所以没配向量 API 时直接说「没配」，绝不偷偷回落到主 API
+       发一个注定失败的请求（那会变成「向量明明没配，却在悄悄烧钱/报错」）。
+
+     cfg = { baseUrl, apiKey, model }（没有其余对话参数可调）。
+     resolve({ok, vecs, dim, error, detail, ms}) —— 一次批量多条，
+     顺序与 texts 一一对应。 */
+  function embeddingsUrl(baseUrl) {
+    var u = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (!u) return '';
+    if (/\/embeddings$/i.test(u)) return u;
+    return u + '/embeddings';
+  }
+
+  function embed(cfg, texts, ov) {
+    return new Promise(function (resolve) {
+      cfg = cfg || {};
+      var list = (Array.isArray(texts) ? texts : [texts])
+        .map(function (t) { return String(t == null ? '' : t); });
+      var url = embeddingsUrl(cfg.baseUrl);
+      if (!url) { resolve({ ok: false, stage: 'config', error: '还没填向量接口地址' }); return; }
+      if (!cfg.model) { resolve({ ok: false, stage: 'config', error: '还没填向量模型名' }); return; }
+
+      var secs = Math.max(1, Number(ov && ov.timeoutSec) || 60);
+      var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, secs * 1000) : null;
+      var t0 = Date.now();
+
+      var headers = { 'Content-Type': 'application/json' };
+      if (cfg.apiKey) headers['Authorization'] = 'Bearer ' + cfg.apiKey;
+
+      global.fetch(url, {
+        method: 'POST', headers: headers, mode: 'cors',
+        signal: ctrl ? ctrl.signal : undefined,
+        body: JSON.stringify({ model: cfg.model, input: list })
+      }).then(function (r) {
+        return r.text().then(function (txt) {
+          if (timer) clearTimeout(timer);
+          var ms = Date.now() - t0;
+          var data = null;
+          try { data = JSON.parse(txt); } catch (e) { /* 落到下面判 */ }
+          if (!r.ok) {
+            resolve({ ok: false, stage: 'http', status: r.status, ms: ms,
+              error: 'HTTP ' + r.status, detail: txt.slice(0, 400) });
+            return;
+          }
+          if (!data || !Array.isArray(data.data)) {
+            resolve({ ok: false, stage: 'parse', ms: ms,
+              error: '返回里没有 data 数组，可能不是 embedding 接口',
+              detail: txt.slice(0, 400) });
+            return;
+          }
+          var vecs = data.data.map(function (d) { return (d && d.embedding) || null; });
+          if (!vecs.length || !vecs[0]) {
+            resolve({ ok: false, stage: 'parse', ms: ms, error: '返回的向量是空的' });
+            return;
+          }
+          resolve({ ok: true, ms: ms, vecs: vecs, dim: vecs[0].length, usage: data.usage || null });
+        });
+      })['catch'](function (e) {
+        if (timer) clearTimeout(timer);
+        var aborted = e && (e.name === 'AbortError');
+        resolve({ ok: false, stage: aborted ? 'timeout' : 'network',
+          error: aborted ? ('超时：' + secs + ' 秒内没有响应') : ((e && e.message) || '网络错误'),
+          detail: (e && e.message) || '' });
+      });
+    });
+  }
+
   Sleepy.api = {
     normalizeEndpoint: normalizeEndpoint,
     modelsUrl: modelsUrl,
@@ -414,7 +486,10 @@
        `res.message || '请求失败'`（那等于把原因全吞了）。 */
     describeError: describeError,
     streamOnce: streamOnce,
-    runChat: runChat
+    runChat: runChat,
+    /* 向量：端点与回落规则都和对话不同，见上面那段注释 */
+    embeddingsUrl: embeddingsUrl,
+    embed: embed
   };
 
 })(window);

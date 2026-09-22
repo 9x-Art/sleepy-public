@@ -4847,6 +4847,71 @@ t('取材档位：「选择性读取」已从选项里收起（勾选器从来�
   return { 档位: ids.join('/'), 老存档兜底: S.wj.MATERIAL_LABEL.select };
 });
 
+/* 2026-09-22 接上的两个「单份接口」：总结 API / 向量记忆 API。
+   用户拍板的三条语义都在这里守着（E 类待办里的「总结 api」那条）。 */
+
+t('总结 API：单份独立配置优先，且它和副 API 互不影响', () => {
+  S.store.set('summaryApi', null);
+  S.store.set('memoryApiCfg', null);
+  S.store.set('subApis', []);
+  const fallback = S.summaryEngine.candFor();       /* 都没配 → 主 API */
+  S.singleApi.saveCfg('summary', {
+    baseUrl: 'https://sum.test/v1', apiKey: 'k', model: 'cheap-1'
+  });
+  const picked = S.summaryEngine.candFor();
+  S.store.set('summaryApi', null);
+  return {
+    没配时: fallback && fallback.label !== '总结 API' ? '回落主 API' : '??',
+    配了之后: picked && picked.cfg ? picked.cfg.model : '??'
+  };
+});
+
+t('新增副 API → 空着的总结 / 向量顺手带一份；填过的不覆盖', () => {
+  S.store.set('summaryApi', null);
+  S.store.set('vectorApi', null);
+  S.store.set('subApis', [{
+    name: '便宜组', baseUrl: 'https://sub.test/v1', apiKey: 'k2', model: 'm2'
+  }]);
+  const n1 = S.singleApi.seedAll();
+  const sumAfter = S.singleApi.cfgOf('summary');
+  const vecAfter = S.singleApi.cfgOf('vector');
+
+  /* 用户改过总结 → 再换一组副 API 也不能覆盖它 */
+  S.singleApi.saveCfg('summary', { baseUrl: 'https://mine.test/v1', model: '我的模型' });
+  S.store.set('subApis', [{
+    name: '贵组', baseUrl: 'https://sub2.test/v1', apiKey: 'k3', model: 'm3'
+  }]);
+  const n2 = S.singleApi.seedAll();
+  const sumKept = S.singleApi.cfgOf('summary');
+
+  const out = {
+    第一次带了几份: n1,
+    总结带过来: sumAfter && sumAfter.model,
+    向量带过来: vecAfter && vecAfter.model,
+    第二次又带: n2,
+    用户改过的还在: sumKept && sumKept.model
+  };
+  S.store.set('summaryApi', null);
+  S.store.set('vectorApi', null);
+  S.store.set('subApis', []);
+  if (n1 !== 2) throw new Error('第一次该带两份，实 ' + n1);
+  if (sumAfter.model !== 'm2' || vecAfter.model !== 'm2') throw new Error('带过来的内容不对');
+  if (n2 !== 0) throw new Error('填过之后不该再带');
+  if (sumKept.model !== '我的模型') throw new Error('用户改过的总结 API 被覆盖了');
+  return out;
+});
+
+t('向量端点归一化：补 /embeddings，且不重复补', () => {
+  const u = S.api.embeddingsUrl;
+  const a = u('https://x.test/v1');
+  const b = u('https://x.test/v1/embeddings');
+  const c = u('');
+  if (a !== 'https://x.test/v1/embeddings') throw new Error('没补对：' + a);
+  if (b !== 'https://x.test/v1/embeddings') throw new Error('重复补了：' + b);
+  if (c !== '') throw new Error('空地址不该编出一个端点');
+  return { 补全: a, 幂等: true };
+});
+
 t('T6 两种卡片：作品卡与邀请卡都渲染出关键信息', () => {
   const UI = S.wjCurtainUI;
   if (!UI) throw new Error('wjCurtainUI 没导出（聊天页拿不到卡片）');

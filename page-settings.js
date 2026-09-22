@@ -193,8 +193,24 @@
          不然用户根本不知道这 App 以后能长成什么样。灰着的行点不动。 */
       var gCap = group('其他能力', '这几项还没接上，编号是它在计划里的位置。');
       gCap.card.appendChild(row({ label: '语音 TTS', hint: '2.15 让角色把回复读出来' }));
-      gCap.card.appendChild(row({ label: '向量记忆 API', hint: '2.13 填 embedding 模型，不是对话模型' }));
-      gCap.card.appendChild(row({ label: '总结 API', hint: '2.14 便宜模型跑记忆抽取' }));
+      /* 向量与总结这两个都是**单份接口**（不像副 API 那样多组轮询），
+         2026-09-22 接上；空着的时候：总结跟随主 API，向量没配就没配。
+         行要留引用：从它们的配置页回来时 badge 得跟着变（见 refreshSummary）。 */
+      var capRows = {};
+      [
+        { label: '向量记忆 API', hint: '2.13 填 embedding 模型，不是对话模型', kind: 'vector' },
+        { label: '总结 API', hint: '2.14 便宜模型跑记忆抽取', kind: 'summary' }
+      ].forEach(function (c) {
+        var cfg = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(c.kind) : null;
+        capRows[c.kind] = row({
+          label: c.label,
+          hint: c.hint,
+          badge: cfg ? (cfg.model || '已配置') : '未配置',
+          badgeKind: cfg ? 'ok' : 'dim',
+          onClick: function () { ctx.open('settings-' + c.kind); }
+        });
+        gCap.card.appendChild(capRows[c.kind]);
+      });
       /* 生图已经接上了（page-imggen.js）—— 用户：「不开独立 App，从设置进」 */
       var rowImg = row({
         label: '生图',
@@ -265,6 +281,13 @@
         setRowBadge(rowSub, s, s === '未配置' ? 'dim' : 'ok');
         var im = Sleepy.imggen ? Sleepy.imggenSummary() : '未配置';
         setRowBadge(rowImg, im, im === '未配置' ? 'dim' : 'ok');
+        /* 单份接口那两行（总结 / 向量）：从它们的配置页回来必须跟着变 ——
+           不刷新的话就是「明明配好了，回到设置页还写着未配置」（真机抓到的）。 */
+        ['vector', 'summary'].forEach(function (k) {
+          if (!capRows[k]) return;
+          var c = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(k) : null;
+          setRowBadge(capRows[k], c ? (c.model || '已配置') : '未配置', c ? 'ok' : 'dim');
+        });
         setRowValue(rowData, usageText());
         foot.textContent = '灰着的行是还没贴好的 · 当前存档 ' + usageText();
       };
