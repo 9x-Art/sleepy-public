@@ -5452,6 +5452,50 @@ t('所有注册页面的 render() 都不触发 app.js 的错误边界', () => {
   return { 页面数: ids.length, 全部通过: true };
 });
 
+t('记忆注入：规则类不许吃满配额，经历类有保底（2026-09-22 配额重做）', () => {
+  const ch = S.core.upsertChar({ name: '配额测试', kind: 'main' }).id;
+  const mk = (kind, content) => ({ kind, content, status: 'active' });
+  S.memoryStore.writeMemoryItems(ch, [
+    mk('boundary', '禁区甲'), mk('boundary', '禁区乙'), mk('boundary', '禁区丙'),
+    mk('correction', '纠正甲'), mk('correction', '纠正乙'), mk('correction', '纠正丙'),
+    mk('shared_event', '我们一起去看过海'),
+    mk('promise', '她答应周末陪我去旧书店'),
+    mk('user_fact', '她不吃香菜')
+  ]);
+  const inj = S.memoryStore.getMemoryInjection(ch);
+  /* 旧版这三条全是 false —— 边界 3 + 纠正 3 正好把 6 格吃满，
+     共同经历和约定一条都进不来（用户 09-22 提「六条太少」时实测到的）。 */
+  if (inj.indexOf('一起去看过海') < 0) throw new Error('共同经历被规则类挤掉了');
+  if (inj.indexOf('旧书店') < 0) throw new Error('约定被规则类挤掉了');
+  if (inj.indexOf('不吃香菜') < 0) throw new Error('事实被规则类挤掉了');
+  /* 反向也要守：规则类不能一条都不进（禁区掉了比记不住经历更危险）。 */
+  if (inj.indexOf('禁区') < 0 && inj.indexOf('纠正') < 0) {
+    throw new Error('规则类被反向饿死了');
+  }
+  const n = inj.split('\n').filter((l) => l.indexOf('- ') === 0).length;
+  if (n > 12) throw new Error('超过配额上限：' + n);
+  return { 注入条数: n, 经历类进得来: true, 规则类也还在: true };
+});
+
+t('contextLimit：对话覆盖 > 聊天默认 > 内置 40，三处共用一份回落', () => {
+  const chat = { id: 'c_ctx', messages: [], overrides: {} };
+  S.store.set('chatDefaults', {});
+  if (S.api.contextLimit(chat) !== 40) throw new Error('内置默认不是 40：' + S.api.contextLimit(chat));
+  S.store.set('chatDefaults', { contextMessages: 66 });
+  if (S.api.contextLimit(chat) !== 66) throw new Error('聊天默认没生效');
+  chat.overrides = { contextMessages: 7 };
+  if (S.api.contextLimit(chat) !== 7) throw new Error('对话覆盖没赢');
+  S.store.set('chatDefaults', {});
+  /* 生成参数的默认值**只能有一份**。store 的 chatDefaults 里再抄一份的话，
+     它在 genParams 回落的第三层、会把 api.js 那份静默盖掉 ——
+     2026-09-22 真机就这样：api.js 改成 40，实际请求还是 20。 */
+  const cdf = S.store.defaults().chatDefaults || {};
+  ['contextMessages', 'temperature', 'maxTokens', 'stream'].forEach((k) => {
+    if (k in cdf) throw new Error('store 的 chatDefaults 里不该再有生成参数：' + k);
+  });
+  return { 内置默认: 40, 三层回落: '对话 > 默认 > 内置', 生成参数只有一份: true };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

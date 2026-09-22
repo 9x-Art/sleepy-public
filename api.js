@@ -22,6 +22,20 @@
 
   var ENDPOINT_RE = /\/chat\/completions$/i;
 
+  /* 生成参数的**唯一**内置默认值表（对话覆盖和接口配置都没设时用它）。
+     2026-09-22 上下文条数 20 → 40：20 条只够十来个来回，稍微长一点的对话
+     开头就滑出视野了（用户：「有点少」）。上限仍是 200，设置页可调。
+     以前 store 的 chatDefaults 里也抄了一份，两份重复时以它为准，于是改这里
+     根本不生效（真机踩到）—— 现在 store 里不放生成参数了，老存档由
+     store.js 的 migrateChatDefaultsGenerative 清掉，见那边注释。 */
+  var GEN_DEFAULTS = {
+    temperature: 0.85,
+    maxTokens: 1024,
+    contextMessages: 40,
+    timeoutSec: 60,
+    stream: true
+  };
+
   /* 用户很容易只填到 /v1，也会有人把完整地址整条粘进来。两种都认 */
   function normalizeEndpoint(baseUrl) {
     var u = String(baseUrl || '').trim().replace(/\/+$/, '');
@@ -47,12 +61,28 @@
     }
 
     return {
-      temperature: pick('temperature', 0.85),
-      maxTokens: pick('maxTokens', 1024),
-      contextMessages: pick('contextMessages', 20),
-      timeoutSec: pick('timeoutSec', 60),
-      stream: pick('stream', true)
+      temperature: pick('temperature', GEN_DEFAULTS.temperature),
+      maxTokens: pick('maxTokens', GEN_DEFAULTS.maxTokens),
+      contextMessages: pick('contextMessages', GEN_DEFAULTS.contextMessages),
+      timeoutSec: pick('timeoutSec', GEN_DEFAULTS.timeoutSec),
+      stream: pick('stream', GEN_DEFAULTS.stream)
     };
+  }
+
+  /* 携带上下文条数的**唯一**出口：对话覆盖 > 聊天默认 > 内置默认。
+     page-chat（真聊天）/ page-presets（预演）/ page-heartbeat（心声）三处
+     本来各写一遍同样的回落 —— 改一次默认值要改三个地方，漏一个的表现
+     就是「预演里记得的事，真聊天里忘了」这种最难查的不一致。 */
+  function contextLimit(chat) {
+    var ov = null;
+    if (Sleepy.chatStore && Sleepy.chatStore.overridesOf) {
+      ov = Sleepy.chatStore.overridesOf(chat);
+    }
+    if (!ov) ov = (chat && chat.overrides) || {};
+    if (ov.contextMessages != null) return ov.contextMessages;
+    var cfg = store.get('chatDefaults') || {};
+    if (cfg.contextMessages != null) return cfg.contextMessages;
+    return GEN_DEFAULTS.contextMessages;
   }
 
   /* 候选列表：主 API（启用且有配置）排最前，然后是启用的副 API 按数组顺序 */
@@ -481,6 +511,10 @@
     modelsUrl: modelsUrl,
     fetchModels: fetchModels,
     candidates: candidates,
+    /* 上下文条数：三处（真聊天 / 预演 / 心声）共用的唯一出口 */
+    contextLimit: contextLimit,
+    /* 生成参数的内置默认值：页面表单拿它做灰字占位（别再用 store 那份） */
+    genDefaults: GEN_DEFAULTS,
     requestOnce: requestOnce,
     /* 失败原因翻译：所有「把错误显示给用户」的地方都走它，别再各写一份
        `res.message || '请求失败'`（那等于把原因全吞了）。 */

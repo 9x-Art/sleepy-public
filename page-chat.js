@@ -1961,10 +1961,9 @@
         var c = getChat(chatId);
         if (!c) return [];
 
-        /* 上下文条数：这个对话自己设了就用它的，否则跟随全局 */
-        var ov = overridesOf(c);
-        var limit = (ov.contextMessages != null) ? ov.contextMessages
-                  : (store.get('chatDefaults.contextMessages') || 20);
+        /* 上下文条数：这个对话自己设了就用它的，否则跟随全局。
+           回落规则统一在 Sleepy.api.contextLimit 里（预演页、心声共用同一份）。 */
+        var limit = Sleepy.api.contextLimit(c);
         var out = [];
 
         c.messages.forEach(function (m) {

@@ -424,8 +424,10 @@
     var chat = cs.getChat(chatId);
     if (!chat) { if (opts.onSettled) opts.onSettled(0); return; }
 
-    var cfg = store.get('chatDefaults') || {};
-    var limit = cfg.contextMessages || 20;
+    /* 心声读到多少历史，跟着那个对话自己的设置走 —— 和真聊天用同一份
+       回落规则（以前这里只看全局，会话级改过条数的话心声看到的历史
+       会和聊天对不上）。 */
+    var limit = Sleepy.api.contextLimit(chat);
 
     var context = [];
     (chat.messages || []).forEach(function (m) {

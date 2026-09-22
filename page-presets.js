@@ -468,10 +468,9 @@
         if (!c) return;
 
         /* 收历史：和 page-chat.buildMessages 同一套规则（只收 user/assistant，
-           按对话设置的条数截尾）—— 这里是只读镜像，不改聊天页一行 */
-        var ov = Sleepy.chatStore.overridesOf(c);
-        var limit = (ov.contextMessages != null) ? ov.contextMessages
-                  : (store.get('chatDefaults.contextMessages') || 20);
+           按对话设置的条数截尾）—— 这里是只读镜像，不改聊天页一行。
+           条数的回落规则也走同一份出口，别各写一遍（见 api.js contextLimit）。 */
+        var limit = Sleepy.api.contextLimit(c);
         var hist = [];
         (c.messages || []).forEach(function (m) {
           if (m.role !== 'user' && m.role !== 'assistant') return;

@@ -126,12 +126,13 @@
     promptLib: [],
     imggenEnabled: true,
 
-    /* 2.12 聊天默认参数 */
+    /* 2.12 聊天默认参数 —— **只放前端行为开关**。
+       生成参数（温度 / 单次上限 / 上下文条数 / 流式）的内置默认值统一在
+       api.js 的 GEN_DEFAULTS 里，这里不再抄一份：抄两份的时候以这里的为准，
+       于是「改默认值」会静默失效（2026-09-22 真机踩到 —— api.js 改成 40，
+       实际请求还是 20）。老存档里那几个键由 migrateChatDefaultsGenerative
+       清掉，见文件末尾。 */
     chatDefaults: {
-      contextMessages: 20,
-      maxTokens: 1024,
-      temperature: 0.85,
-      stream: true,
       /* E 模块：让模型在每次回复末尾顺带输出一段「心声」
          （用 <心声>…</心声> 包住），前端在流式过程中切出来。
          不额外占一次生成额度；关掉就完全不下这条指令。
@@ -550,6 +551,43 @@
     }
   }
 
+  /* ---- 生成参数默认值「只留一份」 ----
+     温度 / 单次上限 / 上下文条数 / 流式这几个生成参数，以前在 chatDefaults 里
+     也抄了一份默认值，和 api.js 的 GEN_DEFAULTS 重复。两份重复时以 chatDefaults
+     为准（它在 genParams 回落的第三层），于是「改默认值」会静默失效 ——
+     2026-09-22 真机踩到：api.js 改成 40，实际请求还是 20。
+
+     现在生成参数只认 api.js 那份。这里把老存档里**正好等于旧默认**的键删掉，
+     让它们回落到新默认；用户真改过的值一律留着。
+     只有 contextMessages 的默认变了（20 → 40），其余几项新旧相同、删了行为不变。 */
+  var GEN_OLD_DEFAULT = {
+    temperature: 0.85, maxTokens: 1024, contextMessages: 20, stream: true
+  };
+
+  function migrateChatDefaultsGenerative() {
+    try {
+      var raw = global.localStorage.getItem(NS + 'chatDefaults');
+      if (!raw) return;                       /* 还没有这份存档（新用户）→ 不用管 */
+      var cfg = JSON.parse(raw);
+      if (!isObj(cfg)) return;
+      var changed = false;
+      for (var k in GEN_OLD_DEFAULT) {
+        if (!has(GEN_OLD_DEFAULT, k)) continue;
+        if (cfg[k] !== GEN_OLD_DEFAULT[k]) continue;   /* 没这个键、或用户改过 → 留着 */
+        delete cfg[k];
+        changed = true;
+      }
+      if (!changed) return;
+      global.localStorage.setItem(NS + 'chatDefaults', JSON.stringify(cfg));
+      delete cache.chatDefaults;              /* 缓存里那份是旧的，扔掉重读 */
+      if (global.console && global.console.log) {
+        global.console.log('[Sleepy] 生成参数已回落到内置默认（上下文条数 20 → 40）');
+      }
+    } catch (e) {
+      /* 迁移失败不能挡住启动 —— 那就继续用老值 */
+    }
+  }
+
   /* A5 时期的「人设预设库」存在 presets 键里。后来归位到名片夹，改叫 characters。
      老存档不能丢：新键还没有数据、旧键有数据时，搬一次过去。
      旧键保留不删 —— 万一要回退到旧版本，还能找到东西。 */
@@ -733,6 +771,7 @@
   migrateKeys();
   migrateWorldbookToBooks();
   migrateMainApiPresets();
+  migrateChatDefaultsGenerative();
   migrateCharactersToTree();
   /* 必须排在 migrateCharactersToTree 之后：它可能会补一件默认 User 马甲，
      沙盒的 maskIds 要把那件一起收进来 */

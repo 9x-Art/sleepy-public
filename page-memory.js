@@ -13,7 +13,8 @@
        getMemoryInjection(charId, opts)  装配时取记忆摘要
        writeMemoryItems(charId, items)   总结引擎写入
      铁律：来源三字段不可改；只有 user_manual 可物理删除；
-           isAnchor 注入时不受 maxItems 限制；关了开关注入为空但数据保留。
+           锚点注入时不受配额限制、约定优先占座、经历类有保底（见
+           getMemoryInjection 上面那段）；关了开关注入为空但数据保留。
 
    UI：Demo v4（暖米 + 冷蓝绿）逐值移植，类名 lh- 前缀。
    ============================================================ */
@@ -339,6 +340,19 @@
 
   /* ---- 对话系统接口（指令卡第八节，只暴露这两个） ---- */
 
+  /* 注入配额（2026-09-22 用户提「六条太少」之后重做）。
+     旧版：锚点不限 + boundary 固定 3 条 + correction 固定 3 条 + 其余补满 6。
+     边界 3 + 纠正 3 正好把 6 格吃满 → **共同经历与约定一条都进不来**
+     （实测：{"注入条数":6,"共同经历":false,"约定":false,"事实":false}）。
+     根子不在「少」，在于给「规则类」发了固定配额、而「经历类」没有任何保底 ——
+     结果最该被反复看见的（我们一起做过什么、我答应过你什么）先被挤掉，
+     最不需要每轮重复的（禁区、纠错）反而霸屏。
+     现在：规则类各自有**上限**，经历类有**保底**，谁也不能把对方挤光。 */
+
+  /* 经历类：我们之间发生过什么。注入时至少要给它们一半席位。 */
+  var EXPERIENCE_KINDS = ['shared_event', 'user_fact', 'preference_like',
+    'preference_dislike', 'relationship_fact', 'habit'];
+
   function getMemoryInjection(charId, options) {
     options = options || {};
     var cfg = charConfig(charId);
@@ -347,23 +361,46 @@
     var active = file.memories.filter(function (m) { return m.status === 'active'; });
     if (!active.length && !file.understandings.length) return '';
 
-    /* 优先级：isAnchor（不受 maxItems 限制）> boundary > correction > 近期 active */
-    var maxItems = options.maxItems || 6;
-    var anchors = active.filter(function (m) { return m.isAnchor; });
-    var picked = anchors.slice();
-    function pushKind(kind, n) {
-      active.filter(function (m) { return m.kind === kind && picked.indexOf(m) < 0; })
-        .sort(function (a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); })
-        .slice(0, n)
-        .forEach(function (m) { picked.push(m); });
-    }
-    pushKind('boundary', 3);
-    pushKind('correction', 3);
-    active.filter(function (m) { return picked.indexOf(m) < 0; })
-      .sort(function (a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); })
-      .slice(0, Math.max(0, maxItems - picked.length))
-      .forEach(function (m) { picked.push(m); });
+    var maxItems = options.maxItems || 12;
+    var RULE_MAX = 3;    /* 规则类各自的上限：够用就行，不许吃满整张表 */
+    var PROMISE_N = 4;   /* 约定：越近的越可能还没兑现（兑现了会由总结引擎作废），取最近几条 */
 
+    var picked = [];
+    function take(m) { if (picked.indexOf(m) < 0) picked.push(m); }
+    function byNewest(a, b) {
+      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    }
+    function pending(kinds) {
+      return active.filter(function (m) {
+        return (!kinds || kinds.indexOf(m.kind) >= 0) && picked.indexOf(m) < 0;
+      }).sort(byNewest);
+    }
+    /* 每步都按「还剩几格」实时结算 —— 不这样做的话，先填的那组会吃满整张表，
+       后面几组拿到的就不是「保底」而是「没有」（旧版的毛病就是这个）。 */
+    function fill(kinds, n) {
+      var room = Math.min(n, base + maxItems - picked.length);
+      if (room > 0) pending(kinds).slice(0, room).forEach(take);
+    }
+
+    /* ① 锚点是用户手标的，不吃配额（原设计）。配额从它之后开始算。 */
+    active.filter(function (m) { return m.isAnchor; }).forEach(take);
+    var base = picked.length;
+
+    /* ② 约定先占座：答应过的事，优先于规则条文的重复。 */
+    fill(['promise'], PROMISE_N);
+    /* ③ 经历类保底一半席位 —— 这次修的核心，旧版没有这一步。 */
+    fill(EXPERIENCE_KINDS, Math.ceil(maxItems / 2));
+    /* ④ 规则类各保底一条（禁区不能不进），先只给一条，余量留给经历。 */
+    fill(['boundary'], 1);
+    fill(['correction'], 1);
+    /* ⑤ 还有余量才给规则类加到上限，然后经历类继续按时间补。 */
+    fill(['boundary'], RULE_MAX);
+    fill(['correction'], RULE_MAX);
+    fill(EXPERIENCE_KINDS, maxItems);
+    /* ⑥ 兜底：其他 kind（custom / 推测…）按时间补齐。 */
+    fill(null, maxItems);
+
+    picked = picked.slice(0, base + maxItems);   /* 硬上限：锚点 + 配额 */
     if (!picked.length) return '';
     var lines = ['【关于对方的记忆】（经过用户确认与整理）'];
     picked.forEach(function (m) {

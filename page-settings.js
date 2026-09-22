@@ -445,7 +445,9 @@
   /* 主 API 表单页的公共渲染（新增 / 编辑共用）。 */
   function renderMainApiForm(ctx, preset, isNew) {
     var body = ctx.body;
-    var def = store.defaults().chatDefaults;
+    /* 生成参数的内置默认值只看 api.js 那一份（GEN_DEFAULTS）——
+       store 的 chatDefaults 里已经不放生成参数了（见 store.js 的迁移注释）。 */
+    var def = Sleepy.api.genDefaults;
     var f = {};
 
     var g = group('接口');
@@ -617,7 +619,7 @@
   Sleepy.register('settings-mainapi-add', {
     title: '新增主 API',
     render: function (ctx) {
-      var def = store.defaults().chatDefaults;
+      var def = Sleepy.api.genDefaults;
       var preset = {
         id: 'map' + Date.now().toString(36),
         name: '',
