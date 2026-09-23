@@ -1735,12 +1735,13 @@
 
         var herePending = !!(pending && pending.targetId === msg.id);
         if (herePending) bubble.classList.add('is-pending');
-        if (selecting && selected[msg.id]) {
+        var myKey = selKey(msg.id, seg ? seg.idx : 0);
+        if (selecting && selected[myKey]) {
+          /* 选中态**一个气泡一份**：勾就挂在这个气泡自己身上（用户 2026-09-23
+             报的是「点第二个气泡就退出多选」—— 以前按整条算，勾也只标在
+             第一个气泡上，第二个气泡根本点不着、点了反而是取消）。
+             CSS 见 .msg-bubble.is-selected::after。 */
           bubble.classList.add('is-selected');
-          /* 多选是按**条**算的（删除也是整条删），而一条回复会被拆成好几个
-             气泡 —— 每个都打勾会让人看成「选了三条」，而计数写着 1 条。
-             所以勾只标在这条消息的**第一个**气泡上，其余气泡留描边表范围。 */
-          if (!seg || seg.idx === undefined || seg.idx === 0) bubble.classList.add('is-sel-lead');
         }
 
         if (role === 'assistant') {
@@ -1855,7 +1856,7 @@
           bubble.addEventListener('click', function () {
             if (wasLongPressed(bubble)) return;
             if (swipedRecently(bubble)) return;
-            if (selecting) toggleSelect(msg.id);
+            if (selecting) toggleSelect(myKey);
           });
         }
         return bubble;
@@ -2055,14 +2056,28 @@
         return s.bubbles ? s.bubbles.join('\n') : s.visible;
       }
 
-      /* ======================== 多选 ======================== */
+      /* ======================== 多选 ========================
+         ⚠️ 选择是**按气泡**算的，不是按整条消息（2026-09-23 用户：
+         「多选气泡的时候，点击第二个气泡就会退出多选」）。
+         以前 selected 的键是 msg.id，而一条回复会被 || 拆成好几个气泡 ——
+         点同一条的第二个气泡就是「取消同一条」，选中集合当场变空、直接
+         退出多选；删除也只能整轮删（见 removeBubbles 那段说明）。
+         所以键改成 `msgId#idx`：一条消息的每个气泡各算一份。 */
+
+      function selKey(msgId, idx) {
+        return msgId + '#' + ((idx === undefined || idx === null) ? 0 : idx);
+      }
+      function parseSelKey(k) {
+        var i = String(k).lastIndexOf('#');
+        return { id: String(k).slice(0, i), idx: Number(String(k).slice(i + 1)) || 0 };
+      }
 
       function selectedIds() { return Object.keys(selected); }
 
-      function enterSelect(id) {
+      function enterSelect(msgId, idx) {
         selecting = true;
         selected = {};
-        if (id) selected[id] = true;
+        if (msgId) selected[selKey(msgId, idx)] = true;
         renderSelection();
         renderMessages(true);
       }
@@ -2074,12 +2089,51 @@
         renderMessages(true);
       }
 
-      function toggleSelect(id) {
-        if (selected[id]) delete selected[id];
-        else selected[id] = true;
+      function toggleSelect(key) {
+        if (selected[key]) delete selected[key];
+        else selected[key] = true;
         if (!selectedIds().length) { exitSelect(); return; }
         renderSelection();
         renderMessages(true);
+      }
+
+      /* 按气泡删。文案 / 译文 / 语音 / 索引的收口都在 store 那两个函数里
+         （dropMessages / patchMessage），这里只负责「算该摘哪几段」：
+           · 一条话有多个气泡 → 把选中的下标从正文里摘掉，用 ' || ' 重拼
+             （正文的存储格式就是 `a || b || c`，见 prompt-engine.splitBubbles）
+           · 摘空了 / 本来就只有一段 / 不是分段消息（附件、表情、转账、
+             用户自己的话）→ 交给 dropMessages 把整条删掉（它连语音和图库
+             里的音频一起清）。 */
+      function removeBubbles(pairs) {
+        var byMsg = {};
+        pairs.forEach(function (p) {
+          if (!p || !p.id) return;
+          byMsg[p.id] = byMsg[p.id] || [];
+          if (byMsg[p.id].indexOf(p.idx) < 0) byMsg[p.id].push(p.idx);
+        });
+        Object.keys(byMsg).forEach(function (id) {
+          var c = getChat(chatId);
+          var msg = null;
+          ((c && c.messages) || []).forEach(function (m) { if (m.id === id) msg = m; });
+          if (!msg) return;
+          var idxs = byMsg[id];
+          if (msg.role !== 'assistant' || msg.type) { dropMessages(chatId, [id]); return; }
+          var arr = Sleepy.promptEngine
+            ? Sleepy.promptEngine.splitBubbles(msg.content || '') : [msg.content || ''];
+          if (arr.length <= 1) { dropMessages(chatId, [id]); return; }
+          var keep = [], keepTr = [];
+          arr.forEach(function (t, i) {
+            if (idxs.indexOf(i) >= 0) return;
+            keep.push(t);
+            keepTr.push(Array.isArray(msg.trans) ? (msg.trans[i] || null) : null);
+          });
+          if (!keep.length) { dropMessages(chatId, [id]); return; }
+          var patch = { content: keep.join(' || ') };
+          /* 译文是按**下标**对齐的（msg.trans[i] ↔ 第 i 个气泡）：
+             少了一段就得整份重排，不能只删自己那格。 */
+          if (Array.isArray(msg.trans)) patch.trans = keepTr;
+          patchMessage(chatId, id, patch);
+        });
       }
 
       function renderSelection() {
@@ -2089,22 +2143,23 @@
           return;
         }
         selBar.style.display = 'flex';
+        /* 数的是**气泡**（选什么删什么，选中的每一条都挂着勾，数得出对应关系） */
         selBar.appendChild(h('span', 'msg-select-info', '已选 ' + selectedIds().length + ' 条'));
 
         var del = h('button', 'msg-select-act is-danger', '删除');
         del.type = 'button';
         del.addEventListener('click', async function () {
-          var ids = selectedIds();
-          if (!ids.length) return;
+          var keys = selectedIds();
+          if (!keys.length) return;
           var yes = await ui.confirm({
-            title: '删除选中的 ' + ids.length + ' 条？',
+            title: '删除选中的 ' + keys.length + ' 条？',
             ok: '删除',
             danger: true
           });
           if (!yes) return;
-          dropMessages(chatId, ids);
+          removeBubbles(keys.map(parseSelKey));
           exitSelect();
-          ctx.toast('已删除 ' + ids.length + ' 条', 'ok');
+          ctx.toast('已删除 ' + keys.length + ' 条', 'ok');
         });
 
         var cancel = h('button', 'msg-select-act', '取消');
@@ -2131,8 +2186,10 @@
           { label: '复制', run: function () { copyMsg(msg, idx); } },
           { label: '收藏', run: function () { favorite(msg, idx); } },
           { label: '编辑', run: function () { editMsg(msg, idx); } },
-          { label: '多选', run: function () { enterSelect(msg.id); } },
-          { label: '删除', kind: 'danger', run: function () { removeMsg(msg); } }
+          /* 多选 / 删除都带上**这个气泡**：一条回复拆成几段时，
+             用户在哪个气泡上长按，就该选中 / 删掉哪一个（2026-09-23）。 */
+          { label: '多选', run: function () { enterSelect(msg.id, idx); } },
+          { label: '删除', kind: 'danger', run: function () { removeMsg(msg, idx); } }
         ];
         /* 「朗读」（2.15）：只在角色的话、纯文字、且角色开着「长按给朗读」时出现。
            已经在长按的那一条上读了就写成「重读」—— 同一句话偶尔想再听一遍。 */
@@ -2170,7 +2227,9 @@
         };
         renderQuote();
         textarea.focus();
-        ctx.toast('已引用这一句 · 输入框空着点发送就是让 TA 回这句', 'ok');
+        /* 这里原来弹一句「已引用这一句 · 输入框空着点发送就是让 TA 回这句」。
+           2026-09-23 用户：「引用不要弹出 toast」—— 引用条本身就杵在输入框上方
+           写着引了哪一句，再弹一个居中浮层纯属打扰（引用是高频动作）。 */
       }
 
       function clearQuote() {
@@ -2269,14 +2328,20 @@
         );
       }
 
-      async function removeMsg(msg) {
+      async function removeMsg(msg, idx) {
+        /* 删的是**被长按的那一个气泡**，不是整条消息（用户 2026-09-23：
+           「删除按钮是一次性删除了本次所有对话气泡而不是某个气泡」）。
+           一条回复会被 || 拆成好几段，以前这里 dropMessages 整条 → 一次
+           全没了。现在只在多气泡时才问「这一句」，一段话的附件气泡照旧
+           问「这条消息」。删掉最后一段才真删消息（见 removeBubbles）。 */
+        var many = msg.role === 'assistant' && !msg.type && bubbleSegs(msg).length > 1;
         var yes = await ui.confirm({
-          title: '删掉这条消息？',
+          title: many ? '删掉这一句？' : '删掉这条消息？',
           ok: '删除',
           danger: true
         });
         if (!yes) return;
-        dropMessages(chatId, [msg.id]);
+        removeBubbles([{ id: msg.id, idx: (idx === undefined || idx === null) ? 0 : idx }]);
         renderMessages();
         ctx.toast('已删除', 'ok');
       }

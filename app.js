@@ -668,18 +668,53 @@
     vv.addEventListener('resize', schedule);
     vv.addEventListener('scroll', schedule);
 
-    /* 键盘弹起后把正在编辑的框拉进可视区中间 ——
-       抽屉里表单长，不拉的话焦点框可能正好压在键盘下沿。 */
+    /* 聚焦的框**真的被键盘盖住**时，才把它往上拉「刚好露出来」那么多 ——
+       不居中、不整页滚、没盖住就一点都不碰。
+
+       2026-09-23 用户：「点击大部分输入框都会上下页面移动」。原来这里是
+       scrollIntoView({block:'center', behavior:'smooth'})：只要聚焦就把
+       最近那个能滚的祖先滚到「焦点框摆屏幕正中」—— 于是点哪个输入框整页
+       就上下跳一下（实测 11 个输入框里 7 个会跳，最多 1619px：表单页的
+       .page 自己就是滚动容器）。它跟键盘其实没关系，桌面端也照跳。
+       聊天页更明显：键盘弹起时它和 .chat-foot 的 --kb-inset 一起使劲，
+       就成了「输入框要上下挪动几下才能贴合键盘」。
+
+       现在的规矩：
+         · 先算「有没有被盖住」—— 没盖住直接返回（绝大多数情况）；
+         · 盖住了 → 只把最近那个滚动容器往下推刚好的距离（不再居中）；
+         · 聊天输入框整个不归它管（.chat-foot 用 --kb-inset 抬，见 style.css）。 */
+    function pullIntoView(t) {
+      var r = t.getBoundingClientRect();
+      /* 键盘上沿：有 keyboard 时 visualViewport 才会缩，用它；没有就退回 innerHeight */
+      var edge = vv.height + vv.offsetTop;
+      if (!edge) edge = global.innerHeight || 0;
+      var gap = 12;
+      if (r.bottom + gap <= edge) return;          /* 露得好好的，一点都不动 */
+      var delta = r.bottom + gap - edge;
+      var n = t.parentNode;
+      for (; n && n !== document.body; n = n.parentNode) {
+        if (!n.clientHeight) continue;
+        var cs = global.getComputedStyle(n);
+        if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight) break;
+      }
+      if (!n || n === document.body) {
+        var se = document.scrollingElement || root;
+        n = (se.scrollHeight > se.clientHeight) ? se : null;
+      }
+      if (n) n.scrollTop += delta;
+    }
     document.addEventListener('focusin', function (e) {
       var t = e.target;
       if (!t || !t.tagName) return;
       var tag = t.tagName.toLowerCase();
       if (tag !== 'input' && tag !== 'textarea') return;
+      /* 聊天输入框的贴合是自己算的（--kb-inset 把整条底栏抬到键盘上沿）——
+         这里再插一脚就是两个驱动源打架，表现是「要上下来回挪几下才贴合」。 */
+      if (t.closest && t.closest('.chat-foot')) return;
       setTimeout(function () {
         if (document.activeElement !== t) return;   /* 已经点到别处了，别抢 */
-        try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
-        catch (err) { /* 老浏览器不认参数对象，忽略 */ }
-      }, 260);
+        try { pullIntoView(t); } catch (err) { /* 算不出来就别动，别把页面搞坏 */ }
+      }, 300);
     });
   })();
 

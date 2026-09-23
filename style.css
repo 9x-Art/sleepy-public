@@ -1147,6 +1147,14 @@ body{
   padding-bottom:0;
 }
 .page[data-page="chat-detail"] .app-body{min-height:0;}
+/* 左右两条缝通到屏缘（用户 2026-09-23：「头像没有靠在屏幕边边，现在太中间了」
+   —— 三种内置外观都是这个距离）。
+   上一轮（2026-09-22）只把 .msg-wrap **自己**的左右内边距从 16 收到 6，
+   但外面还压着 .page-inner 的 22px（跟底栏那次同一个坑）：6 + 22 = 28px，
+   头像离屏缘仍然有 28px。这里把 22px 抵掉，只留 .msg-wrap 自己那 6px ——
+   「贴边但没贴死」。多选条是同一层的整宽条，一起抵，免得它孤零零往里缩。 */
+.page[data-page="chat-detail"] .msg-wrap,
+.page[data-page="chat-detail"] .msg-select-bar{margin-left:-22px;margin-right:-22px;}
 /* 底栏通到屏缘（用户 2026-09-22：「下面底栏左右两边直接用底栏颜色铺满」）——
    .page-inner 左右各有 22px 内边距，底栏坐在里面就短了一截；
    白底时代看不出来，铺了壁纸之后左右两条缝就会露出壁纸。
@@ -1805,10 +1813,11 @@ span.msg-avatar-initial{
 }
 /* 多选时选中态要一眼看得出来（用户五.13「长按多选没做好」）：
    光一条 1.5px 的 outline 太弱，圈里圈外都容易看漏，所以补一枚实心勾。
-   ⚠️ 勾只挂在 .is-sel-lead（这条消息的**第一个**气泡）上：多选按「条」计数，
-   一条回复拆成三个气泡的话，每个都打勾会看成「选了三条」。
+   ⚠️ 勾挂在**每一个被选中的气泡**上（.is-selected），不是只挂第一个：
+   多选从 2026-09-23 起按**气泡**计数（用户报的「点第二个气泡就退出多选」），
+   一条回复拆成三段、你选了两段，屏幕上就该看到两个勾、条子写着「已选 2 条」。
    （绝对定位的伪元素不挤进 flex 流，不影响气泡排版。） */
-.msg-bubble.is-sel-lead::after{
+.msg-bubble.is-selected::after{
   content:"✓";
   position:absolute;top:-5px;right:-5px;
   width:19px;height:19px;border-radius:50%;
