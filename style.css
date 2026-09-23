@@ -12489,3 +12489,79 @@ button.cal-ev:active{background:var(--g-glass-2);}
   border:0;background:rgba(255,255,255,.16);color:#fff;
   font-size:15px;line-height:1;cursor:pointer;
 }
+
+/* ---------------- 开屏（冷启动遮罩） ----------------
+   见 splash.js。z-index 取 300，高于 #statusbar(60)、.page(10)，
+   所以连状态栏一起盖住 —— 冷启动那一屏要干净；
+   摘掉遮罩时，状态栏和早就渲染好的桌面一起露出来。
+   颜色刻意不写死成"手机框的颜色"，而是跟着当前主题走（见 splash.js 的 token()），
+   天亮亮到 --g-base、sleepy 用 --g-accent，接回主界面不会跳色。 */
+@font-face{
+  font-family:'Cormorant Garamond';
+  font-style:normal;
+  font-weight:400;
+  src:url(data:font/woff2;base64,d09GMgABAAAAAAWkABAAAAAACegAAAVHAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGhYbgTYcLgZgP1NUQVREAFwRCAqHFIVgCxAAATYCJAMcBCAFhHAHIAwHGw4IyMTgcdO/R1LLKxWlDbTUnIprakYn6rA5Upu5s7EvrvGB+5kueP59LTi1irfMvDIry6SkAzrABudb1K3pTDSIdYPjpBQEgC1kuwREgEVwF4CDChlg8wrK6uDZM2vyWEKMmKweQ4ztmjreALa/9NwoGKOePB7WicjjZiGBNYhTgqxBB96KMrCwhLmz+HeHcBkPAfOPAikypwQWFakoxq1mENPDEQ6GKoMLVrgMkOIVZRzkC7IeFg0SjaRR/AWl0S7IIO2IwZfr122HRMwiH86hyuDiGRWVFflYBCVmMcP/f0TCbDHhrzoOslgyiUKJRHztTsAlIPnnzBgxciqhkBg1tWss6VQ7XAFQ4IOSuQqCSMl6s+TSNYkb1C7XFncBiyIOdssebgkl1BiLiZiCWdfUXzxW/FwcFg3iJnGDuPoe9d3VJBFF2FNYSTE7AI6gIyFgJhMHgA3AIYREfwpYyrK2lhxraRvCy5QqX6emOdKZDdSbE8jd5bROoAJX703lDVTglJSnck7geEqUdZKo3S7nBFlZ1l/OwcfmOW/KczIq5+o1L177bTW/NFPteVn/JZMpzt1s9h46wGkemeTbXj2n2rthRr3LOVO9Zotfx9YDSTqDu2DUu7T2D1DtxTCj3uXQo0adwX3v3iG+Y5Hx4JC7UbYP70+UHyhozrj57b5PtS/Nflt3XOE0pjKdwX0d4lXdNtOD6zVPeONeqh0Y2E+1F/mhI1euHOGHrj7cx/vrdnEaw+ABTrNP1n/48uXDsv5r9xo1B/ghqj17Nmiv2Ww280NbtgySRQepdj8WmuyzBPNrTrNLpjO4H71Kta/If1IdnKjzlwrKfPk4T1fVkh+pqNZVZxZEOvQZnCca7CoXtK5r1+qdJzYbvQq9FrRIK70K9A7dCpo1I6CZ5qdV6atSa9PiFtd4df9kyE6jec0lho60+vRKXUdyfhoGafxdp6aNdcFl75UGhAWEJxW+U+jb6PGrvIwbqVox+lcXXw/v/FF7HYTYUFn6Yp8Rvu2Fnmi29ny4rNux5/jt6FLVwozoGWTKlLYhWyrLi50R+2sjkpxUvKq25UqFOoV5J+aPSOcNzMTZI0foosOyFH8E5L/YFO4cEHEjoKEhe35iSGRr/Ps+s1SnFpakJ6kKbXK7I1qyCsqD0MsFTklWKDjprbd0Ml6akTF8c9ea9nbtcoX/v/4R4TZ24mdZLs4v/coPnj6zrrKs9yocZU6T3Ub5uC4azbcnF2W2J/cEC2PGZp4atrGPdnCVevh79yZMK5heMb66viRm/16Ld9N+TpEe1TnvYALMcr/4XJ/p0kFWAACAAGCR823qrvc67NN+s2aYLwES+KB3+tq2Qz/Zne4qrvn/CzaRLWcmtYQx1GDsz+aJa/6vZhOZL3GMdd5iRW6AEAFu+A5xxCheJ5GwIhfFW/j6JHBb4WvWWkZOPAeFhp31rA117yI5GZPAn3gxJbAlTkwGBXjEZBGDQaYFPLGQaQkVqhh2SIDnFsIsoSMUaLCDlNkfXwM1RmAaxqILkyFAjVEYgZGY6mHqOZKfgihEYQIXV2M8+sTm8ZiKsRiFnsrhU6BGJCZgMkYgV8c4EV1DULgouqr549GLCBSDumuqokEiT8aoju9SIg6RUEGF6EUWKyVeZc+0vzYVFahEBfKRiqYvG3t7Ybd9ImaJ0rvmVCIGwXfHQ4k6jIQaykUUVVA8AaOhRk/RmY1p91zYrZhCk8EYgVHS5dPQjUj0YALGIQq56GpQd9019xQUPA9M6Ri4iTLk97FP8XdAHEbMz7fwHBGXHWPXAAAAAA==) format('woff2');
+}
+
+/* 预遮罩：index.html 里写死的夜色空壳（见 splash.js 的文件头）。
+   splash.js 一执行就把它改成 #splash，这个选择器当场失效、交给下面那条正式规则。
+   留这一条是**兜底**：万一 splash.js 根本没跑起来（脚本报错 / 被拦），
+   7 秒后它自己也退开 —— 否则用户会被永久黑屏锁在门外。
+   JS 正常时走不到 7 秒：splash.js 冷启动一两百毫秒内就执行完了。 */
+#splash-pre{ animation:sp-bail 0s linear 7s forwards; }
+@keyframes sp-bail{ to{ opacity:0; visibility:hidden; } }
+
+#splash{
+  position:absolute;inset:0;z-index:300;
+  overflow:hidden;
+  background:#0B1220;
+  font-size:19px;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+#splash .sp-stage{
+  position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(125% 78% at 50% 6%,rgba(150,190,240,.30) 0%,rgba(150,190,240,0) 58%),
+    linear-gradient(108deg,rgba(255,255,255,.10) 0%,rgba(255,255,255,0) 26%,rgba(255,255,255,0) 74%,rgba(180,210,245,.09) 100%),
+    linear-gradient(165deg,#16233A 0%,#0D1626 52%,#131F33 100%);
+}
+#splash .sp-spot{
+  position:absolute;left:50%;top:46%;width:190%;height:190%;
+  transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,rgba(150,180,230,.17) 0%,rgba(150,180,230,.06) 34%,rgba(150,180,230,0) 68%);
+}
+#splash .sp-glow{
+  position:absolute;left:50%;bottom:-100px;width:340px;height:260px;margin-left:-170px;
+  border-radius:50%;filter:blur(42px);background:rgba(140,180,235,.22);
+}
+#splash::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),inset 0 -1px 0 rgba(255,255,255,.045);
+}
+
+#splash .sp-slot{position:absolute;transform:translate(-50%,-50%);text-align:center;}
+#splash .sp-w{
+  display:block;font-family:var(--ff-serif);
+  font-size:.68em;line-height:1.4;white-space:pre-line;
+  color:#E8F0FA;opacity:0;
+}
+#splash .sp-w.sm{font-size:.52em;}
+#splash .sp-w.vert{writing-mode:vertical-rl;}
+
+#splash .sp-slogan{
+  position:absolute;left:0;right:0;top:44%;transform:translateY(-50%);
+  text-align:center;opacity:0;font-family:var(--ff-serif);
+  font-size:2.9em;line-height:1.5;color:#F2F7FD;
+}
+#splash .sp-echo{
+  position:absolute;left:0;right:0;top:55%;
+  text-align:center;opacity:0;
+  font-size:.52em;letter-spacing:.18em;color:#F2F7FD;
+}
+#splash .sp-logo{
+  position:absolute;left:0;right:0;top:46%;
+  text-align:center;opacity:0;
+  font-family:'Cormorant Garamond',Georgia,serif;
+  font-size:2.4em;letter-spacing:.06em;text-indent:.06em;
+}

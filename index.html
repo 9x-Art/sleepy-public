@@ -35,6 +35,16 @@
 
 <div id="phone">
 
+  <!-- 开屏预遮罩（见 splash.js）。**为什么要有它**：splash.js 排在所有脚本最后
+       （要等 bootHome 把桌面渲染完，摘遮罩那一下才不白屏），所以它执行之前
+       浏览器已经把桌面画出来了 —— 探针实测：桌面 742ms 渲染完、遮罩 881ms 才插进来，
+       中间那一百多毫秒用户看到的是空桌面，像是「先闪一下主页，然后黑掉开始动画」。
+       在这儿先写死一层夜色，**第一帧就是夜色**；splash.js 执行时把它升级成 #splash。
+
+       ⚠️ 行内样式只服务于"第一帧"，接管后一律走 style.css 的 #splash
+       （别在这儿改配色/加样式，否则又是两份）。 -->
+  <div id="splash-pre" aria-hidden="true" style="position:absolute;inset:0;z-index:300;background:#0B1220"></div>
+
   <!-- 青提玻璃的极光底色。放在所有层最下面，不跟着页面滚动 -->
   <div class="ambient" aria-hidden="true"><div class="ambient-3"></div></div>
 
@@ -212,6 +222,10 @@
 <script src="page-wj-canon.js" defer></script>
 <script src="page-wj-style.js" defer></script>
 <script src="page-wj-create.js" defer></script>
+<!-- 开屏（冷启动遮罩）。**必须排最后**：page-chat-settings.js 末尾的
+     Sleepy.bootHome() 已经跑过，桌面渲染完成，遮罩下面是有内容的，
+     摘掉遮罩那一下才不会白屏。 -->
+<script src="splash.js" defer></script>
 
 <script>
 /* PWA：只在 http(s) 下注册 SW。file:// 双击打开本来就是全离线的，

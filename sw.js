@@ -13,6 +13,44 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v117（2026-09-23）：开屏**收尾** —— 播完自动进桌面，另加一层预遮罩。
+   · 上一版唯一的出口是 `pointerdown`：动画停在 sleepy 上就再也不动了，
+     用户只看到名字停在那儿、以为卡死（得自己想起来点一下）。
+     现在 sleepy 浮现完停住 `logoHold`，再 `finish(CFG.outFade)` 自己摘遮罩；
+     点任意处仍然只是**提前**结束。`CFG` 新增 `logoHold:850` / `outFade:420`，
+     全程约 9.5 秒进桌面。
+   · index.html 的 `#phone` 里先写死一层夜色空壳 `#splash-pre`（行内样式），
+     splash.js 一执行就把它**升级**成 `#splash`（换 id + 摘掉行内样式，不留两份样式）。
+     **为什么非要有它**：splash.js 排在所有脚本最后，在它执行之前浏览器画的已经是桌面。
+     探针实测：**桌面 742ms 渲染完、遮罩 881ms 才插进来** —— 中间那 139ms 就是
+     「一进网址先闪一下主页」。有了预遮罩，第一帧就是夜色。
+   · 三条早退（`?splash=0` / 没有 `#phone` / 减少动效）都要 `bail()` 掉预遮罩，
+     漏一条就是**永久黑屏**；style.css 另加 `#splash-pre{animation:sp-bail …7s}` 兜底
+     （splash.js 万一报错，7 秒后自己退开，不会把人锁在门外）。
+   → 必须跳版本：index.html / style.css / splash.js 都改了。
+
+   v116（2026-09-23）：**新增冷启动开屏**。`#phone` 里盖一层全屏遮罩
+   （`splash.js`，`z-index:300`，连状态栏一起盖住），播一段约 8.2 秒的动画：
+   十六句古今中外的诗句散落浮出 → 收敛成一个「爱」→ 天亮 → sleepy 浮现，
+   然后摘掉遮罩，露出**早就渲染好的**桌面。点任意处可跳过。
+   · **「减少动效」是 splash.js 自己拦的，不能靠 CSS** ——
+     style.css 里那条 `[data-motion="off"] *{animation:none!important}` 只杀
+     CSS 动画，**杀不到 WAAPI**（`el.animate()` 不受 `animation` 属性管辖）。
+     系统级 `prefers-reduced-motion` 同理。两条命中就整段不播。
+   · index.html 末尾新增 `<script src="splash.js" defer>`，**必须排最后**：
+     `page-chat-settings.js` 末尾的 `Sleepy.bootHome()` 跑完，桌面才有内容；
+     遮罩下面早就有东西，摘掉那一下才不会白屏。
+   · style.css 末尾新增 `#splash` 一整套样式，外加 **Cormorant Garamond 的
+     `@font-face`（base64 内嵌，只含 s l e p y 五个字形，1.88 KB）**。
+     **内嵌而不是外链**：`file://` 下外链字体会被 CORS 拦掉，
+     而「双击 index.html 就能开」是不能破的底线。
+   · 颜色不写死：天亮亮到**当前主题**的 `--g-base`、sleepy 用 `--g-accent`，
+     所以青提玻璃 / 海盐 / 蜜桃 / 夜灯下都不会跳色。
+   · 调试开关：`?splash=0` 关掉、`?splash=1` 强制播放。
+   · 不写任何「已播过」标记 —— 页面加载就等于冷启动（切页走 `.page` 栈，永不重载），
+     加了存储只会让「刷新不播」，调不动。
+   → 必须跳版本：index.html / style.css 都改了，且**新增了 splash.js**。
+
    v107（2026-09-22）：修「小号这里的名字点不了」—— 根因是**点标题不聚焦**：
    `.set-label` 是独立一行、既不包裹输入框也没有 `for`，而单行字段只有 34px 高、
    标题就贴在上方 11.5px 处，手指稍微偏上就落在标题上（看起来就是"字段点不动"）。
@@ -136,7 +174,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v114';
+var CACHE = 'sleepy-v117';
 var CORE = [
   './',
   './index.html',
