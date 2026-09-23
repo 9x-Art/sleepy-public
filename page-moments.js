@@ -47,6 +47,15 @@
 
   function saveAll(list) { store.set('moments', list); }
 
+  /* 向量索引联动（见 memory-vec 的素材源「朋友圈」）。
+     **变更时显式喊一声**（施工卡 §5-3）—— 不做 store.onChange 统一监听：
+     时机隐式、出错难查。全都后台跑，索引失败绝不能挡住发布 / 删除，所以吞异常。 */
+  function vecCall(name, args) {
+    var mv = Sleepy.memoryVec;
+    if (!mv || typeof mv[name] !== 'function') return;
+    try { mv[name].apply(mv, args || []); } catch (e) { /* 静默 */ }
+  }
+
   /* 壁纸挂了（外网图、URL 打错）时底下还有一层兜底渐变 ——
      **渐变和 url 分两层写**：只设 url 的话图一挂整个封面就空了。
      色值引用 CSS 里的 --mo-wall-*（内联样式里也能用 var()），
@@ -233,6 +242,8 @@
 
     list.unshift(item);
     saveAll(list);
+    /* 新动态进向量库（岛级公共池，一条一个事件包）—— 后台跑，不挡发布 */
+    vecCall('sweepMoments');
     return item;
   }
 
@@ -337,6 +348,9 @@
       if (keep.length === list[i].comments.length) continue;
       list[i].comments = keep;
       saveAll(list);
+      /* 评论是**事件包**的一部分 → 重切那一条动态（不是删整个源）：
+         不重切的话，TA 会引用一条已经被删掉的评论。 */
+      vecCall('refreshMoment', [momentId]);
       return { ok: true };
     }
     return { ok: false };
@@ -346,6 +360,9 @@
      （用户：「评论和朋友圈可手动删除」）—— 入口在动态右上角那个「⋯」。 */
   function remove(momentId) {
     saveAll(all().filter(function (m) { return m.id !== momentId; }));
+    /* 删了就失效 —— 留着索引等于「删了也没用，它还记得」。
+       按**条目 id** 精确命中（不是 sourceId —— 那会把整个源删掉，§8.4）。 */
+    vecCall('forget', [{ kind: 'moment', ids: [momentId] }]);
     return { ok: true };
   }
 

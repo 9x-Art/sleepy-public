@@ -483,9 +483,62 @@
       '每一条都是真实聊过的一小段。清理不影响聊天记录。');
     var staleWrap = h('div', 'vec-stale-wrap');
     gIdx.card.appendChild(staleWrap);
+
+    /* ---- 「现在扫一遍」----
+       为什么要有这个按钮：索引是聊天时**后台悄悄建**的，失败也不吭声 ——
+       用户看到的是「聊了半天一条都没有」，然后不知道该怪接口还是怪我。
+       这个按钮把过程摊开：清了退避、扫了本岛哪几场、新增几块、谁失败、失败原因。
+       （它同时是「重开记忆开关之后的补扫」和「换 embedding 模型之后重建」的入口。） */
+    var sweepNote = h('p', 'set-group-note', '');
+    var sweepBtn = button('现在扫一遍（把本岛的聊天补进索引）', 'dl-btn is-primary', function () {
+      if (!Sleepy.memoryVec || !Sleepy.memoryVec.sweepIsland) return;
+      sweepBtn.disabled = true;
+      sweepNote.textContent = '正在扫…（要一条条算向量，聊得多会慢一点）';
+      Sleepy.memoryVec.sweepIsland().then(function (r) {
+        sweepBtn.disabled = false;
+        sweepNote.textContent = sweepReport(r);
+        renderList2();                 /* 扫完刷新下面那份列表，看得见新增 */
+      }, function (e) {
+        sweepBtn.disabled = false;
+        sweepNote.textContent = '扫的时候出错了：' + ((e && e.message) || e);
+      });
+    });
+    var sweepActs = h('div', 'dl-actions');
+    sweepActs.appendChild(sweepBtn);
+    gIdx.card.appendChild(sweepActs);
+    gIdx.card.appendChild(sweepNote);
+
     var listWrap = h('div', 'vec-list');
     listWrap.appendChild(h('p', 'set-group-note', '正在读索引…'));
     gIdx.card.appendChild(listWrap);
+
+    /* 把 sweepIsland 的结果翻译成人话 —— 每一种「没成」都要说得出下一步该干什么 */
+    function sweepReport(r) {
+      if (!r) return '没有结果。';
+      if (r.why === 'off') return '向量接口还没配好（或者总开关关着）—— 先把上面那几项填好，再点一次。';
+      if (r.why === 'noidb') return '这台设备用不了 IndexedDB，索引存不下来。';
+      if (r.why === 'noisland') return '现在还没落岛（没有"当前岛"）—— 先去浮岛选一座岛。';
+      if (r.why === 'nochat') return '本岛还没有聊过天的角色。';
+      if (r.why === 'error') return '扫的时候出错了：' + (r.error || '未知原因');
+      if (r.why === 'nothing') {
+        return '本岛 ' + r.chats + ' 场聊天都已经在索引里了（跑了 ' + r.rounds + ' 轮，没有新内容）。';
+      }
+      var head = r.ok
+        ? '扫完：' + r.chats + ' 场聊天，新增 ' + r.added + ' 段（' + r.rounds + ' 轮）。'
+        : '部分失败：' + r.chats + ' 场里 ' + r.failed.length + ' 场没扫成，新增 ' + r.added + ' 段。';
+      if (r.failed.length) {
+        var f = r.failed.slice(0, 2).map(function (x) {
+          var why = x.why === 'backoff' ? '接口连不上（正在退避）'
+            : x.why === 'embed' ? '算向量失败'
+            : x.why === 'off' ? '接口没配'
+            : x.why === 'noidb' ? '存不进索引'
+            : x.why;
+          return (x.name || x.chatId) + '：' + why + (x.error ? '（' + String(x.error).slice(0, 60) + '）' : '');
+        }).join('；');
+        head += ' ' + f + (r.failed.length > 2 ? ' 等' : '');
+      }
+      return head;
+    }
 
     var gTry = group('试试召回',
       '写一句现在可能说的话，看它会捞回哪些旧片段。');
@@ -512,9 +565,23 @@
         var g = Sleepy.groupStore && Sleepy.groupStore.findGroup(r.groupId);
         return (g && g.name) || '一个不在当前岛的群';
       }
+      if (!r.charId) {
+        /* 岛级 / 账号级池（2026-09-23 向量补源）：没有角色可问，按池说。
+           `island:<id>` / `user:<id>` 是 memory-vec 的池主键（见那边的注释）。 */
+        var pool = String(r.ownerKey || '').split(':')[0];
+        if (pool === 'island') return '这座岛上的朋友圈';
+        if (pool === 'user') return '我写的日记';
+        return '一段素材';
+      }
       var c = Sleepy.core && Sleepy.core.findChar(r.charId);
       return (c && c.name) || '一位不在当前岛的角色';
     }
+
+    /* 池的中文名（概览按 kind 分组显示用） */
+    var VEC_KIND_CN = {
+      chat: '对话', offline: '线下', group: '群聊',
+      moment: '动态', diary: '日记', mem: '档案', phone: '手机'
+    };
 
     function dayText(ts) {
       if (!ts) return '—';
@@ -523,6 +590,9 @@
     }
 
     function forgetOf(r) {
+      /* 岛级 / 账号级池没有 charId / groupId 可推 —— 直接用 ownerKey。
+         （只认 charId 的话那两行的「清掉」会变成清 0 条，静默失败。） */
+      if (r.ownerKey) return { ownerKey: r.ownerKey };
       return r.groupId ? { groupId: r.groupId } : { charId: r.charId };
     }
 
@@ -593,9 +663,20 @@
           var line = h('div', 'vec-row');
           var main = h('div', 'vec-row-main');
           main.appendChild(h('div', 'vec-row-name', name));
+          /* 当前数 / 上限（**分池**）+ 最近 / 最早时间 —— 分池淘汰之后
+             「一共多少段」不再等于「快满了」（见 memory-vec 的 poolMax）。 */
+          var bits = [];
+          if (r.chatCount) bits.push('对话 ' + r.chatCount + '/' + r.chatMax);
+          if (r.memoCount) bits.push('素材 ' + r.memoCount + '/' + r.memoMax);
           main.appendChild(h('div', 'vec-row-meta',
-            r.blocks + ' 段' + (r.sources > 1 ? ' · 来自 ' + r.sources + ' 场' : '') +
-            ' · 最近 ' + dayText(r.newestAt)));
+            r.blocks + ' 段' + (bits.length ? '（' + bits.join(' · ') + '）' : '') +
+            ' · 最近 ' + dayText(r.newestAt) +
+            (r.oldestAt ? ' · 最早 ' + dayText(r.oldestAt) : '')));
+          var kd = r.kinds || {};
+          var detail = Object.keys(kd).map(function (x) {
+            return (VEC_KIND_CN[x] || x) + ' ' + kd[x];
+          }).join(' · ');
+          if (detail) main.appendChild(h('div', 'vec-row-meta', detail));
           line.appendChild(main);
           line.appendChild(button('清掉', 'dl-btn is-danger', function () {
             ui.confirm({
@@ -638,8 +719,20 @@
          试的时候要用**当前这个身份**，否则有认知屏障时什么都捞不到。 */
       var uid = (Sleepy.core && Sleepy.core.activeUserOnIsland
         && (Sleepy.core.activeUserOnIsland() || {}).id) || null;
+      /* 岛级 / 账号级池（朋友圈 / 我写的日记）自己没有「谁在看」——
+         试召回得指定一个人，用当前岛上的活跃角色
+         （池里的东西最终是给某个角色召回的）。 */
+      var cid = t.row.charId;
+      if (!cid && !t.row.groupId && Sleepy.core && Sleepy.core.activeCharOnIsland) {
+        cid = ((Sleepy.core.activeCharOnIsland() || {}).id) || null;
+      }
+      if (!t.row.groupId && !cid) {
+        outWrap.appendChild(h('p', 'set-group-note',
+          '这条索引不属于某个具体角色 —— 先降落在一座岛上再试。'));
+        return;
+      }
       var f = t.row.groupId ? { groupId: t.row.groupId }
-        : { charId: t.row.charId, userId: uid };
+        : { charId: cid, userId: uid };
       Sleepy.memoryVec.probe(f, q).then(function (r) {
         outWrap.innerHTML = '';
         if (!r.ok) { outWrap.appendChild(h('p', 'set-group-note', whyNoProbe(r))); return; }

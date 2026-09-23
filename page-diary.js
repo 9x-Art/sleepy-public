@@ -87,35 +87,72 @@
     var list = store.get('diaries');
     return Array.isArray(list) ? list : [];
   }
+
+  /* 向量索引联动（见 memory-vec 的素材源「日记」）。
+     **变更时显式喊一声**（施工卡 §5-3），后台跑、失败不挡写日记。 */
+  function vecCall(name, args) {
+    var mv = Sleepy.memoryVec;
+    if (!mv || typeof mv[name] !== 'function') return;
+    try { mv[name].apply(mv, args || []); } catch (e) { /* 静默 */ }
+  }
   function getDiaries() {
     var list = writableDiaries();
     return (core && core.scoped) ? core.scoped(list) : list;
   }
+  /* 写一篇。**归属要盖章**（2026-09-23 向量补源时补）：
+       · sandboxId —— 日记属于「写它的那间房」（core.tagScope）。
+         不盖的话，有岛时 core.scoped 会把它当别岛的过滤掉 —— 新写的日记
+         当场就从列表里消失（这是补归属之前就存在的坑）。
+       · userId    —— **user 写的**日记记下写它的是哪个马甲。日记是私密内容
+         （方案 §5-2），向量那边按 user:<账号> 分池（见 memory-vec 的 sweepDiary）；
+         没有它就做不到「按账号隔离」。char 写的不记 —— 他的日记挂在他自己名下，
+         跟 user 用哪个号无关。 */
   function addEntry(rec) {
-    var item = {
+    var item = core.tagScope({
       id: 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       content: String(rec.content || ''),
       timestamp: rec.timestamp || Date.now(),
       status: rec.status || 'written',
       author: rec.author || 'user'
-    };
+    });
     if (rec.charId) item.charId = rec.charId;
     if (rec.mediaId) item.mediaId = rec.mediaId;   /* 配图（生图 / 相册选图） */
+    if (!item.charId) {
+      var u = (core.activeUserOnIsland && core.activeUserOnIsland()) || null;
+      item.userId = rec.userId || (u && u.id) || null;
+    }
     var all = writableDiaries();
     all.push(item);
     store.set('diaries', all);
+    /* 新日记进向量库（我写的挂账号池、他写的挂角色池）—— 后台跑 */
+    vecCall('sweepDiary');
     return item;
   }
   function patchEntry(id, patch) {
     var all = writableDiaries();
+    var hit = null;
     all.forEach(function (x) {
       if (x.id !== id) return;
       for (var k in patch) x[k] = patch[k];
+      hit = x;
     });
     store.set('diaries', all);
+    /* 正文改了 → **定向重建那一条**（不是重新扫）—— 旧正文不能留在索引里，
+       否则 TA 会引用一句你早就改掉的话（见 memory-vec.refreshDiary）。 */
+    if (hit) vecCall('refreshDiary', [hit]);
   }
   function removeEntry(id) {
-    store.set('diaries', writableDiaries().filter(function (x) { return x.id !== id; }));
+    var all = writableDiaries();
+    var hit = null;
+    all.forEach(function (x) { if (x.id === id) hit = x; });
+    store.set('diaries', all.filter(function (x) { return x.id !== id; }));
+    /* 删了就失效（按条目 id 精确命中，不是整个源） */
+    if (hit) {
+      vecCall('forget', [{
+        kind: 'diary', charId: hit.charId || null,
+        userId: hit.userId || null, sourceId: 'diary', ids: [id]
+      }]);
+    }
   }
 
   function charNameOf(d) {

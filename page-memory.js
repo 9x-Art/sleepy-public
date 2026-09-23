@@ -107,6 +107,16 @@
   }
 
   function charMemKey(charId) { return 'charMem:' + charId; }
+
+  /* 向量索引联动（见 memory-vec 的素材源「记忆档案」）。
+     **变更时显式喊一声**（施工卡 §5-3），后台跑、失败不挡档案操作。
+     · 新增 → sweepMem（补新条目）
+     · 改 / 确认 / 作废 / 删 / 加锚 → refreshMem（那条重切，或状态变了就清块） */
+  function vecCall(name, args) {
+    var mv = Sleepy.memoryVec;
+    if (!mv || typeof mv[name] !== 'function') return;
+    try { mv[name].apply(mv, args || []); } catch (e) { /* 静默 */ }
+  }
   function loadCharMemory(charId) {
     return store.get(charMemKey(charId)) || {
       version: '1', charId: charId, updatedAt: nowIso(),
@@ -199,6 +209,8 @@
     if (patch && patch.isUserEdited) m.isUserEdited = true;
     m.updatedAt = nowIso();
     saveCharMemory(file);
+    /* 改一条 → 定向重建那一条（内容 / 状态 / 锚点任一变了都算） */
+    vecCall('refreshMem', [charId, memoryId]);
   }
 
   function addMemoryItem(charId, item) {
@@ -214,6 +226,7 @@
     };
     file.memories.unshift(m);
     saveCharMemory(file);
+    vecCall('sweepMem', [charId]);          /* 新档案进库（他记着的事） */
     return m;
   }
 
@@ -224,6 +237,8 @@
     if (!m || m.source !== 'user_manual') return false;
     file.memories = file.memories.filter(function (x) { return x.id !== memoryId; });
     saveCharMemory(file);
+    /* 不在了 → refreshMem 顺手把旧块清掉（不是重建） */
+    vecCall('refreshMem', [charId, memoryId]);
     return true;
   }
 
@@ -237,14 +252,21 @@
     var want = {};
     memoryIds.forEach(function (id) { want[id] = 1; });
     var n = 0;
+    var changed = [];
     file.memories.forEach(function (m) {
       if (want[m.id] && m.status === 'pending') {
         m.status = 'active';
         m.updatedAt = nowIso();
+        changed.push(m.id);
         n++;
       }
     });
-    if (n) saveCharMemory(file);
+    if (n) {
+      saveCharMemory(file);
+      /* pending → active = 「这条现在能用了」→ 进索引。
+         只重建**真变了**的那几条，别把整批没变的白 embed 一遍。 */
+      changed.forEach(function (id) { vecCall('refreshMem', [charId, id]); });
+    }
     return n;
   }
   function invalidateMemoryItem(charId, memoryId) {
@@ -431,6 +453,8 @@
       });
     });
     saveCharMemory(file);
+    /* 总结引擎写完 → 新档案进向量库（只接 active，pending 等确认时再进） */
+    vecCall('sweepMem', [charId]);
   }
 
   /* ---------------------------- 对外 ---------------------------- */

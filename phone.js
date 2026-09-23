@@ -42,6 +42,14 @@
   function load(key) { return arr(store.get(key)); }
   function save(key, list) { store.set(key, list); }
 
+  /* 向量索引联动（见 memory-vec 的素材源「查手机」——本轮只接备忘/计划/订单）。
+     **变更时显式喊一声**（施工卡 §5-3），后台跑、失败不挡 App 数据变更。 */
+  function vecCall(name, args) {
+    var mv = Sleepy.memoryVec;
+    if (!mv || typeof mv[name] !== 'function') return;
+    try { mv[name].apply(mv, args || []); } catch (e) { /* 静默 */ }
+  }
+
   function pick(key, filter) {
     var sid = core.scopeId();
     return load(key).filter(function (r) {
@@ -508,7 +516,7 @@
   }
 
   function addPlan(phoneId, o) {
-    return insert('phonePlans', {
+    var rec = insert('phonePlans', {
       id: 'pl_' + newId(),
       phoneId: phoneId,
       charId: o.charId,
@@ -521,6 +529,8 @@
       createdAt: Date.now(),
       updatedAt: Date.now()
     });
+    vecCall('sweepPhone', [o.charId]);         /* 新计划进库 */
+    return rec;
   }
 
   function movePlan(planId, toStatus, reason) {
@@ -531,6 +541,8 @@
     p.status = toStatus;
     p.updatedAt = Date.now();
     patch('phonePlans', planId, p);
+    /* 计划推进了 → 那句「（brewing）」不再对 → 定向重建那一条 */
+    vecCall('refreshPhone', [p.charId, 'plan', planId]);
     return p;
   }
 
@@ -774,12 +786,14 @@
   }
 
   function addNote(phone, o, at) {
-    return insert('phoneNotes', {
+    var rec = insert('phoneNotes', {
       id: 'pn_' + newId(), phoneId: phone.id, charId: phone.charId,
       title: o.title || '', content: o.content || '',
       folder: o.folder || null,
       status: 'confirmed', at: at || Date.now()
     });
+    vecCall('sweepPhone', [phone.charId]);     /* 新备忘进库 */
+    return rec;
   }
   function addHistory(phone, o, kind, at) {
     return insert('phoneBrowser', {
@@ -800,12 +814,14 @@
     });
   }
   function addOrder(phone, o, at) {
-    return insert('phoneShop', {
+    var rec = insert('phoneShop', {
       id: 'po_' + newId(), phoneId: phone.id, charId: phone.charId,
       title: o.title, price: o.price || 0, purpose: o.purpose || '',
       /* 订单记录购买用途 —— 不能默认都是送人的（总纲 §11·2） */
       status: o.status || 'ordered', history: [], at: at || Date.now()
     });
+    vecCall('sweepPhone', [phone.charId]);     /* 新订单进库 */
+    return rec;
   }
   function moveOrder(phone, title, toStatus) {
     var hit = pick('phoneShop', function (x) {
@@ -816,6 +832,8 @@
     hit.history.push({ from: hit.status, to: toStatus, at: Date.now() });
     hit.status = toStatus;
     patch('phoneShop', hit.id, hit);
+    /* 状态变了 → 那句话（「状态 ordered」）不再对 → 定向重建那一条 */
+    vecCall('refreshPhone', [phone.charId, 'shop', hit.id]);
     return hit;
   }
 

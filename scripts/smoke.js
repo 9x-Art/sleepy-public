@@ -7281,6 +7281,36 @@ t('W1–W15 清空六项 / 向量回滚 / 快照去留 / 三向边界（串行�
     out.W15 = '回滚：正式数据 + 过程数据 + 索引状态都回来了';
   }
 
+  /* W16 「现在扫一遍」这个入口的四种"没成"，每种都要说得清原因
+     —— 它就是「聊了半天一条都没有」时的诊断入口，说不清就等于没做。 */
+  {
+    S.store.set('vecCfg', {});
+    S.store.set('vectorApi', null);
+    const off = await MV.sweepIsland();
+    chk('W16 没配向量接口时 why 不是 off（用户会以为接口好的）', off.why === 'off');
+    chk('W16 off 时不该报 ok', off.ok !== true);
+
+    S.store.set('vectorApi', { baseUrl: 'https://v.test/v1', model: 'emb-1', apiKey: '' });
+    const prevSb = S.core.activeSandbox();
+    S.core.setActiveSandbox(null);
+    const noIsland = await MV.sweepIsland();
+    chk('W16 没落岛时 why 不是 noisland（该提示"先去选岛"）', noIsland.why === 'noisland');
+
+    const sb16 = S.core.createSandbox('isle', 'W16岛');
+    S.core.setActiveSandbox(sb16.id);
+    const noIdb = await MV.sweepIsland();
+    chk('W16 有岛但本机没有 IDB 时 why 不是 noidb', noIdb.why === 'noidb');
+
+    S.core.removeSandbox(sb16.id);
+    S.core.setActiveSandbox(prevSb ? prevSb.id : null);
+
+    const apiSrc = fs.readFileSync(path.join(ROOT, 'page-singleapi.js'), 'utf8');
+    chk('W16 设置页没把按钮接到 sweepIsland', apiSrc.indexOf('memoryVec.sweepIsland()') >= 0);
+    chk('W16 按钮没有把结果说成人话（sweepReport）', apiSrc.indexOf('function sweepReport') >= 0);
+    chk('W16 sweepIsland 没导出', typeof MV.sweepIsland === 'function');
+    out.W16 = { 没配接口: off.why, 没落岛: noIsland.why, 没IDB: noIdb.why };
+  }
+
   /* W11 静态护栏 */
   {
     const bak = fs.readFileSync(path.join(ROOT, 'page-backup.js'), 'utf8');

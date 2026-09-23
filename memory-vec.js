@@ -746,6 +746,79 @@
      刻意**不**做打包入口：清空页要按项目分开报告，某一件失败时必须说得出是哪一件 ——
      所以它按零件调用（clearCursors / clearFailures / clearCache / snapDrop）。 */
 
+  /* ---- 手动把「本岛的聊天」补进索引（设置页那个按钮，2026-09-23）----
+     为什么需要它：sweep 是聊天时**后台悄悄跑的**，而且失败全静默
+     （why 只可能是 off / backoff / embed / noidb，谁也看不见）——
+     用户唯一的反馈就是「聊了半天，一条都没有」，然后不知道该怪谁。
+     这个入口一次做三件事：
+       ① **清退避**：用户主动重试，不该被上一次的失败挡着（否则点了毫无反应）；
+       ② **多轮切块**：一轮最多切 2 块（SWEEP_MAX），聊得多就得跑好几轮；
+       ③ **把每一条的结果报出来**：哪一场失败、什么原因、接口说了什么。
+     只扫**本岛**会话（块的 sandboxId 用当前岛盖章，扫别岛的会话会把它们的原文盖上本岛的章）。 */
+  function sweepIsland(opts) {
+    opts = opts || {};
+    var out = { ok: false, why: '', chats: 0, added: 0, rounds: 0, failed: [] };
+    if (!enabled()) { out.why = 'off'; return Promise.resolve(out); }
+    var core = Sleepy.core;
+    var sid = scopeNow();
+    if (!core || !sid) { out.why = 'noisland'; return Promise.resolve(out); }
+
+    return available().then(function (okAvail) {
+      if (!okAvail) { out.why = 'noidb'; return out; }
+
+      var members = {};
+      if (core.charsOfSandbox) {
+        core.charsOfSandbox(sid).forEach(function (c) { if (c && c.id) members[c.id] = 1; });
+      }
+      var chats = (store.get('chats') || []).filter(function (c) {
+        if (!c || !c.characterId || !((c.messages || []).length)) return false;
+        var root = core.rootIdOf ? (core.rootIdOf(c.characterId) || c.characterId) : c.characterId;
+        return !!(members[root] || members[c.characterId]);
+      });
+      out.chats = chats.length;
+      if (!chats.length) { out.ok = true; out.why = 'nochat'; return out; }
+
+      clearFailures();                       /* ① 手动重试：先把上次的退避清掉 */
+
+      var ROUNDS = opts.rounds || 8;
+      return chats.reduce(function (chain, c) {
+        return chain.then(function () {
+          var n = 0;
+          function round() {
+            if (n >= ROUNDS) return Promise.resolve();
+            n++;
+            out.rounds++;
+            return sweep(c.characterId, c.userId, c).then(function (r) {
+              if (r && r.ok) {
+                out.added += (r.added || 0);
+                if (!r.added) return;        /* 切完了（或本来就没新内容）→ 这场不用再跑 */
+                return round();              /* ② 还有就接着切 */
+              }
+              out.failed.push({
+                chatId: c.id, name: c.name || '', why: (r && r.why) || 'unknown',
+                error: (r && r.error) || ''
+              });
+            }, function (e) {
+              out.failed.push({
+                chatId: c.id, name: c.name || '', why: 'throw',
+                error: (e && e.message) || String(e)
+              });
+            });
+          }
+          return round();
+        });
+      }, Promise.resolve()).then(function () {
+        out.ok = !out.failed.length;
+        out.why = out.ok ? (out.added ? 'ok' : 'nothing') : 'partial';
+        return out;
+      });
+    })['catch'](function (e) {
+      out.why = 'error';
+      out.error = (e && e.message) || String(e);
+      return out;
+    });
+  }
+
   /* ------------------- 原文变了 → 索引跟着失效（2026-09-22 晚） -------------------
      为什么是「删块」而不是「重切」：
        · 重切要重新 embed（花钱），而且会切出一批和现有块**重叠**的新块 ——
@@ -1893,6 +1966,9 @@
     available: available,
     /* 写入：对话三源 + 素材四源，内核都是同一份 sweepSource（见那边的注释） */
     sweep: sweep,                 /* 线上私聊 */
+    /* 手动把本岛聊天补进索引（设置页「现在扫一遍」按钮用）——
+       清退避 + 多轮切块 + 逐条报结果，见函数注释 */
+    sweepIsland: sweepIsland,
     sweepOffline: sweepOffline,   /* 线下私聊 */
     sweepGroup: sweepGroup,       /* 群聊（线上 + 群线下共用，消息都在 groupMessages） */
     /* 素材四源（2026-09-23 向量补源）—— 一条一块、超长分片 */
