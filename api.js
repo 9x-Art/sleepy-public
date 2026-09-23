@@ -60,11 +60,19 @@
       return fallback;
     }
 
+    /* 超时下限 5 秒。老存档里可能存过 timeoutSec: 0 —— 那是编辑页清空
+       输入框时 Math.round(null) 写进去的（2026-09-23 修），而 0 在 pick 里
+       被当成「有效值」，最后算成 Math.max(1, 0) = 1 秒：真机报的
+       「查手机超时：1 秒没有响应」就是它（查手机走的就是主 API）。
+       UI 里本来也不让人填小于 5，所以这里钳一下就够了，不用迁存档。 */
+    var tout = pick('timeoutSec', GEN_DEFAULTS.timeoutSec);
+    if (!(tout >= 5)) tout = GEN_DEFAULTS.timeoutSec;
+
     return {
       temperature: pick('temperature', GEN_DEFAULTS.temperature),
       maxTokens: pick('maxTokens', GEN_DEFAULTS.maxTokens),
       contextMessages: pick('contextMessages', GEN_DEFAULTS.contextMessages),
-      timeoutSec: pick('timeoutSec', GEN_DEFAULTS.timeoutSec),
+      timeoutSec: tout,
       stream: pick('stream', GEN_DEFAULTS.stream)
     };
   }
@@ -328,9 +336,19 @@
       var headers = {};
       if (cfg.apiKey) headers['Authorization'] = 'Bearer ' + cfg.apiKey;
 
-      global.fetch(url, { method: 'GET', headers: headers, mode: 'cors' })
+      /* 拉模型列表也要有超时 —— 以前一点兜底都没有，接口不响应时会一直转圈
+         （2026-09-23 全链路排查补）。口径跟其它请求一致：60 秒。
+         用户 2026-09-23：「api 调用很多时候要到 60s，设置 60s 超时就可以」。 */
+      var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 60000) : null;
+
+      global.fetch(url, {
+        method: 'GET', headers: headers, mode: 'cors',
+        signal: ctrl ? ctrl.signal : undefined
+      })
         .then(function (r) {
           return r.text().then(function (txt) {
+            if (timer) clearTimeout(timer);
             if (!r.ok) {
               resolve({ ok: false, message: 'HTTP ' + r.status, detail: txt.slice(0, 200) });
               return;
@@ -349,7 +367,10 @@
           });
         })
         ['catch'](function (err) {
-          resolve({ ok: false, message: '连不上：网络错误，或这个接口没有开 CORS',
+          if (timer) clearTimeout(timer);
+          var aborted = err && err.name === 'AbortError';
+          resolve({ ok: false,
+            message: aborted ? '超时：拉取模型列表没有响应' : '连不上：网络错误，或这个接口没有开 CORS',
             detail: (err && err.message) || String(err) });
         });
     });
@@ -515,6 +536,9 @@
     contextLimit: contextLimit,
     /* 生成参数的内置默认值：页面表单拿它做灰字占位（别再用 store 那份） */
     genDefaults: GEN_DEFAULTS,
+    /* 三层回落后的生成参数（纯函数）。导出是为了冒烟能直接打表验
+       「超时下限」这类回退 —— 别在别处再写一份回落。 */
+    genParams: genParams,
     requestOnce: requestOnce,
     /* 失败原因翻译：所有「把错误显示给用户」的地方都走它，别再各写一份
        `res.message || '请求失败'`（那等于把原因全吞了）。 */

@@ -798,12 +798,15 @@
      发送从此断在半路（用户消息入了库、回复永远不来）。 */
   function commitMemory(cId, role, text) {
     var core = Sleepy.core;
-    if (!core) return;
+    if (!core) return null;
     var c = getChat(cId);
-    if (!c || !c.characterId || !text) return;
+    if (!c || !c.characterId || !text) return null;
     var rootId = core.rootIdOf(c.characterId);
-    if (!rootId) return;
-    core.addMemory({
+    if (!rootId) return null;
+    /* 返回刚落的这条记录（带 id）—— 调用方把 id 挂到消息上，
+       reroll 时才能把它从记忆库精确删掉，否则模型读到自己上一版
+       会顺着往下讲（用户报的「像是继续说」）。 */
+    return core.addMemory({
       rootId: rootId,
       fromCharId: c.characterId,
       toUserId: c.userId || null,
@@ -1534,6 +1537,30 @@
         return bar;
       }
 
+      /* 语音条旁边那枚「文」小钮（微信那种：语音条是主形态）。
+         文字稿默认显不显跟角色的 keepTranscript 走（渲染时已经据此挂了
+         .tts-no-text），点这里手动翻一下 —— 翻过就记进 textShowOverride，
+         重绘也保得住。正文一个字都不动，只改显示。 */
+      function voiceTextToggle(bubble, msg) {
+        var b = h('button', 'msg-voice-text', '文');
+        b.type = 'button';
+        b.title = '显示 / 隐藏文字稿';
+        function sync() {
+          var shown = !bubble.classList.contains('tts-no-text');
+          b.classList[shown ? 'add' : 'remove']('is-on');
+          b.setAttribute('aria-pressed', shown ? 'true' : 'false');
+        }
+        b.addEventListener('click', function (e) {
+          e.stopPropagation();       /* 别顺带触发「多选」 */
+          var shown = !bubble.classList.contains('tts-no-text');
+          textShowOverride[msg.id] = !shown;
+          bubble.classList.toggle('tts-no-text');
+          sync();
+        });
+        sync();
+        return b;
+      }
+
       /* 把一段音频挂到某条消息上（朗读与自动读共用） */
       function attachVoice(msgId, charId, text, res) {
         return Sleepy.media.put(res.blob, { name: '语音', kind: 'audio' }).then(function (mid) {
@@ -1641,6 +1668,12 @@
         });
       }
 
+      /* 文字稿的手动翻看状态：msgId -> true(强制显示) / false(强制隐藏)。
+         缺省（没记过）＝跟角色的 keepTranscript 走。
+         只活在内存里（不落库）—— 重绘要保住用户刚翻的那一下，
+         切走聊天时这个闭包没了，自然清干净。 */
+      var textShowOverride = {};
+
       function bubbleFor(msg, c, seg) {
         seg = seg || null;
         var role = msg.role === 'user' ? 'user'
@@ -1653,11 +1686,15 @@
         var bubble = h('div', 'msg-bubble msg-' + role);
         bubble.setAttribute('data-id', msg.id);
 
-        /* 语音（2.15）：角色选了「不保留文字稿」时，这条气泡只留语音条 ——
-           正文其实还在（搜索、记忆、导出都用它），只是不显示。 */
-        if (msg.voice && Sleepy.tts &&
-            !Sleepy.tts.voiceConfigOf(c && c.characterId).keepTranscript) {
-          bubble.classList.add('tts-no-text');
+        /* 语音（2.15）：语音条是主形态，正文默认显不显跟角色的 keepTranscript
+           走；用户点过语音条旁边那枚「文」钮就听他的（textShowOverride）。
+           正文本身一个字都不动 —— 搜索、记忆、导出照旧用 msg.content。 */
+        if (msg.voice && Sleepy.tts) {
+          var textOv = textShowOverride[msg.id];
+          var wantText = (textOv === undefined)
+            ? !!Sleepy.tts.voiceConfigOf(c && c.characterId).keepTranscript
+            : !!textOv;
+          if (!wantText) bubble.classList.add('tts-no-text');
         }
 
         var herePending = !!(pending && pending.targetId === msg.id);
@@ -1674,8 +1711,7 @@
           /* 头像包一层：未读心声光点挂这里（用户定的位置 —— 不在顶栏），
              点头像还是看没说出口的话 */
           var avWrap = h('span', 'msg-ava-wrap');
-          var av = h('img', 'msg-avatar');
-          av.src = AVATAR;
+          var av = charAvatarEl(c);
           av.alt = '角色';
           av.title = '看没说出口的话';
           avWrap.appendChild(av);
@@ -1740,9 +1776,13 @@
               Sleepy.msgTrans.attach(content, msg.id + ':' + seg.idx, seg.trans, c && c.characterId);
             }
             /* 语音条：只挂在**第一段**气泡上（一轮一条语音），
-               没有音频的消息一点痕迹都不留。 */
+               没有音频的消息一点痕迹都不留。
+               旁边跟一枚「文」钮 —— 语音条是主形态，文字稿可手动翻。 */
             if (role === 'assistant' && msg.voice && (!seg || seg.idx === 0)) {
-              content.appendChild(voiceBarFor(msg));
+              var vRow = h('div', 'msg-voice-row');
+              vRow.appendChild(voiceBarFor(msg));
+              vRow.appendChild(voiceTextToggle(bubble, msg));
+              content.appendChild(vRow);
             }
           }
         }
@@ -1877,20 +1917,23 @@
         if (msg.type === 'photo' && msg.mediaId && Sleepy.media) {
           var box = h('div', 'msg-photo');
           var img = h('img', 'msg-photo-img');
+          var fullSrc = '';        /* 取到 objectURL 后存这儿，点开大图要用 */
           img.alt = msg.caption || msg.name || '照片';
           box.appendChild(img);
           Sleepy.media.url(msg.mediaId).then(function (src) {
-            if (src) { img.src = src; return; }
+            if (src) { fullSrc = src; img.src = src; return; }
             box.classList.add('is-missing');
             box.appendChild(h('span', 'msg-photo-miss', '这张图找不到了'));
           }, function () {
             box.classList.add('is-missing');
             box.appendChild(h('span', 'msg-photo-miss', '图库打不开'));
           });
-          /* TA 发的图带图注（[生图:描述] / 让 TA 发的那张） */
-          if (msg.caption && msg.role === 'assistant') {
-            box.appendChild(h('div', 'msg-photo-cap', msg.caption));
-          }
+          /* 点一下看整张。图注只在**放大态**里出现 —— 铺在气泡里会把
+             「一张照片」变成「一张配了解释的卡片」（用户 2026-09-23 报的）。 */
+          box.addEventListener('click', function () {
+            if (!fullSrc) return;
+            ui.imageViewer(fullSrc, { caption: msg.caption || '', alt: img.alt });
+          });
           return box;
         }
 
@@ -1917,8 +1960,7 @@
       function pendingBubble() {
         var bubble = h('div', 'msg-bubble msg-assistant is-pending');
 
-        var av = h('img', 'msg-avatar');
-        av.src = AVATAR;
+        var av = charAvatarEl(getChat(chatId));
         av.alt = '角色';
         bubble.appendChild(av);
 
@@ -2427,6 +2469,10 @@
           onDone: function (cand, text) {
             if (mySeq !== reqSeq) return;
 
+            /* 这条回复最终挂在哪个气泡上 —— 它自带的心声要挂到同一处，
+               reroll 时才知道该删哪条（见下面 commit 那段）。 */
+            var replyMsgId = null;
+
             /* 正文和心声在同一次输出里，这里一刀切开
                （parseReply 同时认 [WHISPER] 与旧 <心声>，见 splitReplyOf） */
             var split = splitReplyOf(text);
@@ -2489,7 +2535,10 @@
             if (finalText) {
               /* 先记住这条消息的 id —— 语音（2.15）要挂在它身上 */
               var voiceMsgId = target;
-              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now() });
+              /* memoryId 挂在消息上：reroll 时按它把这条回复从记忆库删掉 */
+              var memRec = commitMemory(chatId, 'assistant', finalText);
+              var memId = memRec ? memRec.id : null;
+              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId });
               else {
                 voiceMsgId = newId();
                 addMessage(chatId, {
@@ -2497,10 +2546,11 @@
                   role: 'assistant',
                   content: finalText,
                   trans: transArr,
-                  timestamp: Date.now()
+                  timestamp: Date.now(),
+                  memoryId: memId
                 });
               }
-              commitMemory(chatId, 'assistant', finalText);
+              replyMsgId = voiceMsgId;
               /* 语音（2.15）：按这件角色的语音设置决定要不要自动读一句。
                  放在和总结/查手机/主动消息**同一位置** —— 都不阻塞聊天，
                  失败静默（自动语音失败绝不该弹红字打扰聊天）。 */
@@ -2539,9 +2589,13 @@
             updateSendUI();
 
             /* 心声是这条回复自带的，入库即可 —— 不需要再发一次请求。
-               模型没写标签就什么都不发生，属于正常情况。 */
+               模型没写标签就什么都不发生，属于正常情况。
+               hbId 挂在同一口气泡上，reroll 时才删得掉这条心声。 */
             if (split.whisper && split.whisper.trim()) {
-              Sleepy.heartbeat.commit(chatId, split.whisper);
+              var hbRec = Sleepy.heartbeat.commit(chatId, split.whisper);
+              if (hbRec && hbRec.id && replyMsgId) {
+                patchMessage(chatId, replyMsgId, { hbId: hbRec.id });
+              }
             }
             /* 这一轮聊完了 → 后台把它索引进向量库（L4，不挡聊天） */
             kickSweep();
@@ -2577,6 +2631,7 @@
         var partial = split.visible.trim();
         var beat = (split.closed && split.whisper) ? split.whisper : '';
         var target = pending.targetId;
+        var stoppedMsgId = target;      /* 半截回复挂在哪个气泡上，心声就跟到哪 */
 
         reqSeq++;                       /* 让在途回调统统失效 */
         if (handle) { try { handle.abort(); } catch (e) { /* 忽略 */ } }
@@ -2588,19 +2643,29 @@
              （用户是主动停的，别再给他弹东西出来）。 */
           var pSt = extractStickers(partial);
           var pText = pSt.text;
-          if (target) patchMessage(chatId, target, { content: pText, timestamp: Date.now() });
-          else addMessage(chatId, {
-            id: newId(),
-            role: 'assistant',
-            content: pText,
-            timestamp: Date.now()
-          });
-          commitMemory(chatId, 'assistant', pText);
+          var memRec = commitMemory(chatId, 'assistant', pText);
+          var memId = memRec ? memRec.id : null;
+          if (target) patchMessage(chatId, target, { content: pText, timestamp: Date.now(), memoryId: memId });
+          else {
+            stoppedMsgId = newId();
+            addMessage(chatId, {
+              id: stoppedMsgId,
+              role: 'assistant',
+              content: pText,
+              timestamp: Date.now(),
+              memoryId: memId
+            });
+          }
         } else if (target) {
           patchMessage(chatId, target, { content: '（这条被停掉了）' });
         }
 
-        if (beat.trim()) Sleepy.heartbeat.commit(chatId, beat);
+        if (beat.trim()) {
+          var hbRec = Sleepy.heartbeat.commit(chatId, beat);
+          if (hbRec && hbRec.id && stoppedMsgId) {
+            patchMessage(chatId, stoppedMsgId, { hbId: hbRec.id });
+          }
+        }
 
         renderMessages();
         updateSendUI();
@@ -2618,7 +2683,25 @@
         if (reason === null) return;
         var note = String(reason).trim();
 
-        patchMessage(chatId, msg.id, { content: '' });
+        /* 「重说」要真的重说：buildMessages 已经用 excludeId 把这条原文
+           剔出历史了，但**记忆库**里那条还在 —— 模型读到自己上一版的答案，
+           就会顺着往下讲（用户报的「像是继续说」）。
+           落库时把 memoryId / hbId 挂在消息上（见 onDone / stopReply），
+           这里按 id 精确删掉。
+           老消息身上没记 hbId 的退路：被 reroll 的必然是最后一条助手消息，
+           所以删「at >= 它的那条心声」是安全的。 */
+        if (msg.memoryId && Sleepy.core && Sleepy.core.dropMemories) {
+          Sleepy.core.dropMemories(function (m) { return m.id === msg.memoryId; });
+        }
+        if (Sleepy.heartbeat) {
+          if (msg.hbId && Sleepy.heartbeat.drop) {
+            Sleepy.heartbeat.drop(chatId, msg.hbId);
+          } else if (msg.timestamp && Sleepy.heartbeat.dropLastAfter) {
+            Sleepy.heartbeat.dropLastAfter(chatId, msg.timestamp);
+          }
+        }
+
+        patchMessage(chatId, msg.id, { content: '', memoryId: null, hbId: null });
         requestReply({ excludeId: msg.id, targetId: msg.id, note: note });
       }
 
@@ -3003,6 +3086,18 @@
             patchMessage(chatId, opts.replaceId, base);
             return { ok: true, replaced: true };
           }
+          /* 新生成的图顺手收进相册 —— 以前只写了 media（图库），相册里翻不到，
+             想再找那张图只能回聊天记录里翻（用户 2026-09-23 报的）。
+             重画（replaceId）不算新图，上面已经 return 掉了。 */
+          if (Sleepy.photos && Sleepy.photos.add && r.mediaId) {
+            try {
+              Sleepy.photos.add([{
+                mediaId: r.mediaId,
+                caption: opts.caption || '',
+                name: opts.name || opts.caption || '照片'
+              }]);
+            } catch (e) { /* 相册记不上不该拦这张图发出去 */ }
+          }
           if (opts.as === 'assistant') {
             base.caption = opts.caption || '发给你一张照片';
             base.content = base.caption;
@@ -3345,6 +3440,23 @@
           av.textContent = n.charAt(0).toUpperCase();
         }
         av.alt = '我';
+        return av;
+      }
+
+      /* 角色侧头像：**跟账号同步**（用户 2026-09-22：「chat 聊天里气泡旁的
+         头像也没同步」）。以前这里写死 `av.src = AVATAR`（一颗灰圆占位），
+         不管角色设没设头像都一样 —— 现在本地图 avatarMedia 优先、
+         其次网址头像，两样都没有才回落到那颗占位图。
+         setAvatarImg 是**异步**的（本地图要先从 IndexedDB 取 objectURL），
+         所以先挂占位、拿到再换，中间不会闪空白。 */
+      function charAvatarEl(c) {
+        var av = h('img', 'msg-avatar');
+        var ch = (c && c.characterId) ? findCharacter(c.characterId) : null;
+        if (ch && (ch.avatar || ch.avatarMedia)) {
+          Sleepy.core.setAvatarImg(av, ch);
+        } else {
+          av.src = AVATAR;
+        }
         return av;
       }
 

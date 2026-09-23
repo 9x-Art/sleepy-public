@@ -140,7 +140,12 @@
       var initial = names.initialOf
         ? names.initialOf(it.name)
         : String(it.name || '?').charAt(0).toUpperCase();
-      card.appendChild(h('span', 'contact-av', initial));
+      var av = h('span', 'contact-av', initial);
+      /* 头像要跟账号同步：本地图 avatarMedia 优先、其次网址头像，
+         都没有才留首字（用户 2026-09-22：「加号添加新的对话那个可选列表
+         没有同步 char 和 npc 头像」）。 */
+      if (Sleepy.core && Sleepy.core.setAvatarBg) Sleepy.core.setAvatarBg(av, it);
+      card.appendChild(av);
 
       var main = h('div', 'contact-main');
       main.appendChild(h('div', 'contact-name', it.name || '未命名'));
@@ -469,33 +474,40 @@
     var old = host.querySelector('.iol-drawer');
     if (old && old.parentNode) old.parentNode.removeChild(old);
 
-    var cfg = store.get('memoryApiCfg') || { mode: 'main' };
+    var cfg = store.get('memoryApiCfg') || { mode: 'summary' };
     var choices = (Sleepy.offlineStore && Sleepy.offlineStore.apiChoices)
       ? Sleepy.offlineStore.apiChoices() : [];
+    var sumCfg = (Sleepy.singleApi && Sleepy.singleApi.cfgOf)
+      ? Sleepy.singleApi.cfgOf('summary') : null;
 
     var wrap = h('div', 'iol-drawer');
     var panel = h('div', 'iol-drawer-panel');
     panel.appendChild(h('h2', '', '记忆整理用的模型'));
     panel.appendChild(h('p', 'iol-drawer-desc',
-      '总结引擎和群记忆结算用的模型。没指定或指定的模型被删掉时，回落主 API。'));
+      '默认走「总结 API」—— 设置里专门给记忆抽取配的那份便宜模型。' +
+      '它没配、或这里指定的模型被删掉时，才回落主 API。'));
 
+    /* 选项按钮走 .iol-drawer-opt（自己一套 padding / 字号）。
+       别再用 .iol-drawer-cancel —— 那个类只给抽屉**底部那两个动作钮**定过尺寸，
+       单拎出来当选项用会退回浏览器默认按钮大小，真机上点不准。 */
     function optionRow(label, desc, active, onPick) {
-      var r = h('button', 'iol-drawer-cancel' + (active ? ' is-active' : ''));
+      var r = h('button', 'iol-drawer-opt' + (active ? ' is-active' : ''));
       r.type = 'button';
-      r.style.cssText += 'display:block;width:100%;text-align:left;margin-top:8px;';
       r.appendChild(h('span', '', label));
-      if (desc) r.appendChild(h('small', '', '　' + desc));
+      if (desc) r.appendChild(h('small', '', desc));
       r.addEventListener('click', onPick);
       panel.appendChild(r);
       return r;
     }
 
-    optionRow('跟随主 API', '', cfg.mode !== 'pick', function () {
-      store.set('memoryApiCfg', { mode: 'main' });
-      ctx.toast('记忆整理将使用主 API', 'ok');
-      close();
-      ctx.rebuild();
-    });
+    optionRow('跟随总结 API',
+      sumCfg ? ('总结 API · ' + (sumCfg.model || '已配置')) : '还没配总结 API（先回落主 API）',
+      cfg.mode !== 'pick', function () {
+        store.set('memoryApiCfg', { mode: 'summary' });
+        ctx.toast('记忆整理将走总结 API', 'ok');
+        close();
+        ctx.rebuild();
+      });
     choices.forEach(function (c) {
       optionRow(c.label, c.desc, cfg.mode === 'pick' && cfg.label === c.label, function () {
         store.set('memoryApiCfg', { mode: 'pick', label: c.label });
@@ -547,11 +559,13 @@
     }
 
     (o.options || []).forEach(function (op) {
-      var r = h('button', 'iol-drawer-cancel' + (op.v === o.current ? ' is-active' : ''));
+      /* .iol-drawer-opt 是选项自己的类（见 style.css）—— 复用 .iol-drawer-cancel
+         会让按钮退回浏览器默认尺寸，真机小到点不准（用户原话
+         「角色设置里有的点开之后选择的按钮超级小」）。 */
+      var r = h('button', 'iol-drawer-opt' + (op.v === o.current ? ' is-active' : ''));
       r.type = 'button';
-      r.style.cssText += 'display:block;width:100%;text-align:left;margin-top:8px;';
       r.appendChild(h('span', '', op.label));
-      if (op.desc) r.appendChild(h('small', '', '　' + op.desc));
+      if (op.desc) r.appendChild(h('small', '', op.desc));
       r.addEventListener('click', function () {
         if (o.onPick) o.onPick(op.v);
         ctx.toast('已更新', 'ok');
@@ -624,10 +638,14 @@
       var body = ctx.body;
       body.innerHTML = '';
 
-      /* 头部：头像圈 + 名字 */
+      /* 头部：头像圈 + 名字。
+         头像走核心那套：有真图（本地图 avatarMedia 或网址）就铺图，
+         没有才留首字 —— 以前这里**只画首字**，用户报
+         「角色设置里也没有[头像]」。.cs-ava.has-img 的登记见 style.css。 */
       var head = h('div', 'cs-head');
       var ava = h('div', 'cs-ava');
       ava.textContent = (chName || '?').slice(0, 1);
+      if (ch) coreRef.setAvatarBg(ava, ch);
       head.appendChild(ava);
       var headMain = h('div', 'cs-head-main');
       headMain.appendChild(h('p', 'cs-head-name', chName));
@@ -641,10 +659,9 @@
         label: '线上聊天预设', note: '注入内容在「预设」App 里管理',
         onClick: function () { ctx.open('presets'); }
       }));
-      secChat.appendChild(demoRow({
-        label: '用户身份', note: '以哪个身份和 ' + chName + ' 相处'
-        /* 身份系统还没接进聊天 —— 先不给箭头（灰行占位） */
-      }));
+      /* 「用户身份」这一行 2026-09-22 **整行删掉**（用户：「角色设置里
+         『用户身份』功能去掉」）。它本来就是没绑 onClick 的灰行占位，
+         而身份系统真正的入口在「浮岛」和「我」两处 —— 摆在这儿只是噪音。 */
       secChat.appendChild(demoRow({
         label: '主动消息', note: '允许他在合适的时候来找你',
         switched: csRow.proactive,
@@ -705,11 +722,19 @@
         switched: csRow.memory,
         onSwitch: function (v) { csRow.set('memory', v); }
       }));
-      /* 记忆模型（v5 12.1）：总结/整理可以走独立模型，默认跟随主 API */
-      var memCfg = store.get('memoryApiCfg') || { mode: 'main' };
+      /* 记忆模型（v5 12.1 / 2026-09-22 改默认）：
+         记忆整理**默认跟着「总结 API」**跑 —— 用户原话
+         「记忆整理用的模型默认应该是总结模型呀」。总结 API 是设置里
+         专门给记忆抽取配的那份便宜模型；只有连它也空着的时候，
+         引擎才回落主 API（回落链在 page-summary.js 的 candFor 里）。 */
+      var memCfg = store.get('memoryApiCfg') || { mode: 'summary' };
+      var sumCfgNow = (Sleepy.singleApi && Sleepy.singleApi.cfgOf)
+        ? Sleepy.singleApi.cfgOf('summary') : null;
       secMem.appendChild(demoRow({
         label: '记忆整理用的模型',
-        note: memCfg.mode === 'pick' ? (memCfg.label || '指定模型') + '（没配置会回落主 API）' : '跟随主 API',
+        note: memCfg.mode === 'pick'
+          ? ((memCfg.label || '指定连接') + ' · 单独指定')
+          : (sumCfgNow ? '跟随总结 API' : '跟随总结 API（还没配 → 主 API）'),
         onClick: function () { openMemoryApiDrawer(ctx); }
       }));
       secMem.appendChild(demoRow({

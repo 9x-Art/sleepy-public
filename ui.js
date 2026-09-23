@@ -170,20 +170,26 @@
     if (o.step !== undefined) input.step = String(o.step);
     wrap.appendChild(input);
     bindLabel(wrap, input);
+    function get() {
+      var raw = String(input.value).trim();
+      /* 空输入返回 null，语义是「不设置这一项，交给上层兜底」。
+         以前会回落到初始值，于是「清空输入框」这个动作等于没做。 */
+      if (raw === '') return null;
+      var v = parseFloat(raw);
+      if (isNaN(v)) return o.value == null ? null : o.value;
+      if (o.min !== undefined && v < o.min) v = o.min;
+      if (o.max !== undefined && v > o.max) v = o.max;
+      return v;
+    }
     return {
       el: wrap,
       input: input,
-      get: function () {
-        var raw = String(input.value).trim();
-        /* 空输入返回 null，语义是「不设置这一项，交给上层兜底」。
-           以前会回落到初始值，于是「清空输入框」这个动作等于没做。 */
-        if (raw === '') return null;
-        var v = parseFloat(raw);
-        if (isNaN(v)) return o.value == null ? null : o.value;
-        if (o.min !== undefined && v < o.min) v = o.min;
-        if (o.max !== undefined && v > o.max) v = o.max;
-        return v;
-      }
+      get: get,
+      /* 整数项存库用这个 —— 别写 Math.round(field.get())：
+         空输入 get() 回 null，而 Math.round(null) 是 0，偏偏 0 在
+         api.genParams 里是**有效值**，会真的发出去一个 max_tokens: 0
+         （2026-09-23 修）。 */
+      getNum: function () { var v = get(); return v == null ? null : Math.round(v); }
     };
   }
 
@@ -755,6 +761,45 @@
     return pop.el;
   }
 
+  /* ---------------------------- 大图查看器 ----------------------------
+     点聊天里 / 相册里的照片 → 铺满整屏看原图。
+     用户 2026-09-22：「生的图……无法点击放大」。项目里以前一个查看器都没有，
+     所以先在这儿做一个通用的：任何地方拿到一个图片地址就能调。
+
+     为什么挂在 #phone 上：.page 上有 transform，fixed 会在那儿退化成
+     absolute（这条踩过好几次）。关掉的三种手势：点任意处 / 点右上角 ✕ / Esc。
+     只有一张图，所以不做左右翻页 —— 需要时再扩。 */
+  function imageViewer(src, opts) {
+    opts = opts || {};
+    var host = document.getElementById('phone') || document.body;
+    var mask = h('div', 'imgv-mask');
+    var img = h('img', 'imgv-img');
+    img.alt = opts.alt || '图片';
+    img.src = src;
+    var close = h('button', 'imgv-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭');
+    mask.appendChild(img);
+    if (opts.caption) mask.appendChild(h('p', 'imgv-cap', opts.caption));
+    mask.appendChild(close);
+    host.appendChild(mask);
+    requestAnimationFrame(function () { mask.classList.add('is-open'); });
+
+    var done = false;
+    function shut() {
+      if (done) return;
+      done = true;
+      mask.classList.remove('is-open');
+      document.removeEventListener('keydown', onKey);
+      setTimeout(function () { if (mask.parentNode) mask.parentNode.removeChild(mask); }, 200);
+    }
+    function onKey(e) { if (e.key === 'Escape') shut(); }
+    mask.addEventListener('click', function (e) { e.stopPropagation(); shut(); });
+    close.addEventListener('click', function (e) { e.stopPropagation(); shut(); });
+    document.addEventListener('keydown', onKey);
+    return mask;
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.ui = {
@@ -784,7 +829,9 @@
     anchorPopover: anchorPopover,
     modelPicker: modelPicker,
     modelPickButton: modelPickButton,
-    closePopover: closePopover
+    closePopover: closePopover,
+    /* 铺满整屏看一张图（聊天气泡 / 相册都用它） */
+    imageViewer: imageViewer
   };
 
 })(window);

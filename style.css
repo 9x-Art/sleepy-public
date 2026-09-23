@@ -417,6 +417,44 @@ body{
 #toast.err{border-color:rgba(192,122,107,.65);color:#A04A42;}
 #toast.ok{border-color:rgba(111,155,106,.65);color:#4E7A48;}
 
+/* ---- 报错卡（2026-09-22）----
+   用户：「api 出错报错的 toast 太简单，注意 toast 需要报错内容可复制，
+   且里面不出现我们未来的网址」。
+   所以 err 且带 detail 的时候不再是那颗自己会消失的小胶囊，而是这张卡：
+   ① 正文**可选可复制**（pointer-events 必须打开，不然选不中）
+   ② 一个「复制」按钮（老浏览器退回「选中全部」）
+   ③ 不自动消失 —— 用户自己点「知道了」
+   网址过滤在 JS 里做（app.js 的 scrubOwnUrl），样式这层不管。 */
+#toast.is-card{
+  pointer-events:auto;
+  max-width:86%;
+  width:86%;
+  padding:14px 15px 12px;
+  text-align:left;
+  border-radius:16px;
+  font-size:12.5px;
+}
+#toast.is-card .toast-head{
+  font-size:11px;font-weight:600;letter-spacing:1.6px;
+  color:#A04A42;margin-bottom:7px;
+}
+#toast.is-card .toast-body{
+  max-height:38vh;overflow-y:auto;
+  white-space:pre-wrap;word-break:break-word;
+  line-height:1.6;color:var(--text);
+  -webkit-user-select:text;user-select:text;
+}
+#toast.is-card .toast-acts{
+  display:flex;gap:8px;justify-content:flex-end;margin-top:11px;
+}
+#toast.is-card .toast-acts button{
+  padding:7px 14px;border-radius:10px;border:1px solid var(--g-glass-line);
+  background:rgba(255,255,255,.6);font-family:inherit;font-size:12px;
+  color:var(--text-dim);cursor:pointer;
+}
+#toast.is-card .toast-copy{color:var(--g-accent-deep);border-color:rgba(176,138,94,.42);}
+#toast.is-card .toast-acts button:active{background:rgba(176,138,94,.16);}
+
 .greet{margin:14px 0 26px;}
 .greet-title{
   margin:0;
@@ -1119,8 +1157,11 @@ body{
 .msg-wrap{
   flex:1;overflow-y:auto;
   /* 左右各留 16（原来是 18）：气泡的最大宽度是按这个盒子的百分比算的，
-     两侧的留白直接吃掉正文的可用宽度（用户五.11「长回复气泡很窄」）。 */
-  padding:16px 16px 8px;
+     两侧的留白直接吃掉正文的可用宽度（用户五.11「长回复气泡很窄」）。
+     2026-09-22 再收到 16 → 6：用户要的是「左右的头像往两边一些，
+     靠着屏幕稍稍一点点的距离，现在有点往中间挤了」—— 头像就在这一层
+     的边缘上，留白减多少，头像就往外挪多少。6px 是「贴边但没贴死」。 */
+  padding:16px 6px 8px;
   display:flex;flex-direction:column;gap:12px;
   /* 滚到底／回弹时的连锁滚动别传给外层页面 —— 上面那层已经不滚了，
      留着这条是防 iOS 的橡皮筋把整页拖出来 */
@@ -2687,6 +2728,14 @@ span.msg-avatar-initial{
   -webkit-overflow-scrolling:touch;
 }
 .dt-screen::-webkit-scrollbar{display:none;}
+
+/* ---- 第 0 屏（负一屏）的垂直配平 ----
+   这一屏只有一个「照片墙」大组件。网格行高是按**宽度**算出来的
+   （--dt-cell 取宽/高里小的那个），在很多设备上 6 行加起来不到这一屏的
+   可用高度，于是整屏「上面挤满、下面空一片」（用户 2026-09-22 报的）。
+   组件本身没法定高，所以在**屏这一层**把网格竖直居中：
+   safe center = 内容装不下时自动退回 start，不会被裁掉上半截。 */
+.dt-screen.is-neg1 .dt-grid{align-content:center;align-content:safe center;}
 
 .dt-tail{
   flex:0 0 1px;
@@ -5743,7 +5792,12 @@ span.msg-avatar-initial{
    看着就像头像没生效）。漏登记 = 头像图白接。 */
 .chat-item-ava.has-img,.addr-av.has-img,
 .iol-ava.has-img,.iol-member-ava.has-img,.ipro-ava.has-img,.ipro-mini.has-img,
-.iol-pick-ava.has-img,.pick-av.has-img{
+.iol-pick-ava.has-img,.pick-av.has-img,
+/* 2026-09-22 补登三个漏网的：「我」页那颗大头像（.me-av）、切换账号列表里的
+   小圆（.mtb-mini）、角色设置页顶部那颗（.cs-ava）。
+   漏登记的后果就是**首字压在照片上** —— 用户报的「头像还是会有首字遮盖住头像」
+   正是这一条。以后凡是新增接了 core.setAvatarBg() 的类，都往这串里加。 */
+.me-av.has-img,.mtb-mini.has-img,.cs-ava.has-img,.contact-av.has-img{
   color:transparent;background-size:cover;background-position:center;
 }
 .addr-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
@@ -6186,7 +6240,7 @@ span.msg-avatar-initial{
    以前发照片只存了个文件名，气泡里永远是一张灰卡。
    现在真能看见图了；图取不到时退化成一句「这张图找不到了」。 */
 .msg-photo{
-  max-width:210px;border-radius:12px;overflow:hidden;
+  max-width:250px;border-radius:12px;overflow:hidden;
   background:rgba(0,0,0,.06);line-height:0;
   cursor:pointer;
 }
@@ -6206,6 +6260,9 @@ span.msg-avatar-initial{
 
 .stk-group{margin-bottom:16px;}
 .stk-group:not(.is-open){margin-bottom:10px;}
+/* 收起时 head 下面没有网格，那 10px 会白留着 ——
+   整行看起来贴着卡片顶（用户 2026-09-23 报的「内容靠近顶部」） */
+.stk-group:not(.is-open) .stk-group-head{margin-bottom:0;}
 .stk-group:last-child{margin-bottom:0;}
 .stk-group-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;}
 /* 组头整块可点（展开/收起）。注意**不能把 button 嵌进 button** ——
@@ -6366,6 +6423,10 @@ span.msg-avatar-initial{
   flex:none;padding:5px 13px;border-radius:999px;
   border:1px solid var(--g-glass-line);background:rgba(255,255,255,.62);
   font-family:inherit;font-size:12px;color:var(--text-dim);cursor:pointer;
+  /* 分类名必须在胶囊里**正正好好居中** —— 显式写死，别指望 <button> 的
+     浏览器默认居中（键盘可聚焦的按钮在个别 UA / 主题里会贴左）。 */
+  display:inline-flex;align-items:center;justify-content:center;
+  text-align:center;line-height:1.2;
 }
 .stk-panel-chip.is-on{
   background:var(--g-accent);border-color:var(--g-accent-deep);color:#FFFDF9;
@@ -8140,10 +8201,14 @@ div.pp-row:active{background:none;}
   font-size:11px;font-weight:600;letter-spacing:2.4px;
   color:var(--text-faint);
 }
-/* demo 行比默认 set-row 高一档，小注一行截断 */
+/* demo 行比默认 set-row 高一档。小注**最多两行**（2026-09-22 改）：
+   原来是 nowrap + 省略号，一行截断 —— 「锁屏密码」那条小注有三十多个字，
+   截完只剩前半句，用户报「注释看不完全」。两行足够放下最长的那几条，
+   再长才收省略号。 */
 .cs-row{min-height:56px;}
 .cs-row .set-row-hint{
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
+  overflow:hidden;line-height:1.5;
   margin-top:3px;
 }
 .cs-inline-switch{margin-right:2px;}
@@ -8898,6 +8963,26 @@ div.pp-row:active{background:none;}
 .iol-drawer-actions{display:flex;gap:10px;margin-top:20px;}
 .iol-drawer-actions button{flex:1;padding:12px;border-radius:13px;font-family:inherit;font-size:12.5px;cursor:pointer;}
 .iol-drawer-cancel{background:#eef2eb;color:#988f82;border:0;}
+/* 抽屉里「可选项」那种按钮（page-chat-settings 的 openPickDrawer）。
+   以前图省事复用了 .iol-drawer-cancel —— 那个类**只对 .iol-drawer-actions
+   底下的按钮**定义过 padding / 字号，单拎出来用就退回浏览器默认按钮尺寸
+   （约 1px 6px 内边距），真机上小到点不准（用户：「选择的按钮超级小」）。
+   所以给它自己一套：整行可点、左边对齐、选中态看得出来。 */
+.iol-drawer-opt{
+  display:block;width:100%;box-sizing:border-box;
+  margin-top:8px;padding:12px 14px;
+  border:1px solid rgba(139,108,76,.20);border-radius:13px;
+  background:rgba(255,255,255,.72);
+  font-family:inherit;font-size:13px;line-height:1.5;
+  text-align:left;color:#514c43;cursor:pointer;
+}
+.iol-drawer-opt small{display:block;margin-top:3px;font-size:11px;color:#988f82;line-height:1.5;}
+.iol-drawer-opt.is-active{
+  background:rgba(169,132,88,.12);border-color:rgba(169,132,88,.5);
+  color:var(--g-accent-deep, #8A6844);
+}
+.iol-drawer-opt.is-active small{color:var(--g-accent-deep, #8A6844);}
+.iol-drawer-opt:active{background:rgba(169,132,88,.18);}
 .iol-drawer-save{background:#a98458;color:#fff;border:0;letter-spacing:.08em;}
 .iol-drawer-save.is-danger{background:#b5645a;box-shadow:0 8px 18px rgba(155,84,74,.22);}
 
@@ -9261,12 +9346,6 @@ div.pp-row:active{background:none;}
 .gen-preview-cap{margin:8px 0 0;font-size:11.5px;color:var(--text-dim);text-align:center;}
 .gen-status{margin:0 2px 8px;font-size:11.5px;color:var(--text-dim);min-height:16px;}
 .gen-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
-
-/* TA 发的图带图注 */
-.msg-photo-cap{
-  padding:6px 9px 7px;font-size:11px;line-height:1.5;
-  color:var(--text-dim);border-top:1px solid var(--line);
-}
 
 /* ---- 日记配图 ---- */
 .dia-pic{margin-top:10px;}
@@ -12363,5 +12442,50 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .msg-voice.is-playing .msg-voice-wave{opacity:.8;}
 .msg-voice-secs{flex:none;font-size:11px;opacity:.75;}
+/* 语音条 + 文字稿开关（语音条是主形态，文字稿点「文」钮翻） */
+.msg-voice-row{display:flex;align-items:center;gap:8px;margin-top:7px;}
+.msg-voice-row .msg-voice{flex:1;width:auto;margin-top:0;}
+.msg-voice-text{
+  flex:none;width:24px;height:24px;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:8px;
+  background:transparent;font-family:inherit;
+  font-size:11px;color:var(--text-faint);cursor:pointer;
+}
+.msg-voice-text.is-on{
+  color:var(--g-accent-deep);border-color:currentColor;
+  background:rgba(176,138,94,.10);
+}
 /* keepTranscript=false：只留语音条，正文藏起来（搜索/记忆仍然有原文） */
 .msg-bubble.tts-no-text .msg-text{display:none;}
+
+/* ============================================================
+   看图：点聊天里的照片放大（ui.imageViewer）
+   ------------------------------------------------------------
+   铺满一整块手机屏，点任意处 / ✕ / Esc 关。
+   用 absolute 而不是 fixed：#phone 是 position:relative，
+   absolute 正好被它裁在手机屏范围内 —— 桌面下不会溢到窗口两边去。
+   ============================================================ */
+.imgv-mask{
+  position:absolute;inset:0;z-index:210;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;padding:28px 18px;
+  background:rgba(12,10,8,.9);
+  opacity:0;transition:opacity .18s ease;
+}
+.imgv-mask.is-open{opacity:1;}
+.imgv-img{
+  max-width:100%;max-height:76vh;
+  border-radius:10px;object-fit:contain;
+  box-shadow:0 18px 50px rgba(0,0,0,.5);
+}
+.imgv-cap{
+  margin:0;max-width:92%;text-align:center;
+  font-size:12.5px;line-height:1.6;color:rgba(255,255,255,.84);
+}
+.imgv-close{
+  position:absolute;top:calc(env(safe-area-inset-top) + 12px);right:14px;
+  width:34px;height:34px;border-radius:50%;
+  border:0;background:rgba(255,255,255,.16);color:#fff;
+  font-size:15px;line-height:1;cursor:pointer;
+}

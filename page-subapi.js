@@ -43,7 +43,11 @@
       if (!url) { resolve({ ok: false, stage: 'config', message: '先填接口地址' }); return; }
       if (!cfg.model) { resolve({ ok: false, stage: 'config', message: '先填模型名' }); return; }
 
-      var secs = Math.max(1, cfg.timeoutSec || 60);
+      /* 数字化的下限兜底：cfg.timeoutSec 可能是 0，也可能是字符串 '0'（老存档）。
+         后者是 truthy —— `cfg.timeoutSec || 60` 拦不住它，会被
+         Math.max(1, '0') 算成 **1 秒**（2026-09-23 全链路排查）。 */
+      var secs = Number(cfg.timeoutSec);
+      if (!(secs >= 5)) secs = 60;
       var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
       var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, secs * 1000) : null;
       var t0 = Date.now();
@@ -172,7 +176,7 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var g = group('API 列表', '用于其他功能：后台任务、总结等，也可以当备用通道。');
+      var g = group('API 列表', '给后台任务等用，也可以当备用通道。');
       var listCard = g.card;
 
       var g2 = group('轮询规则', '请求失败时自动跳下一个；全部失败则报错。');
@@ -240,9 +244,10 @@
     render: function (ctx) {
       var body = ctx.body;
       var f = {};
-      /* 新增表单的数字项要给默认值。以前全留空，numField 拿到 NaN 就回落成
-         undefined，最后存下 maxTokens:null、stream:false —— 能跑，但存档很脏。 */
-      var def = store.get('chatDefaults') || {};
+      /* 生成参数的默认值只看 api.js 那一份（GEN_DEFAULTS）—— store 的
+         chatDefaults 里已经不放生成参数了（见 store.js 的迁移注释）。
+         数字项留空＝用内置默认，灰字就是它。 */
+      var def = Sleepy.api.genDefaults;
 
       var g = group('接口');
       f.name = textField({ label: '备注名', placeholder: '' });
@@ -275,14 +280,18 @@
       f.model = mp.f.model;
       body.appendChild(g.wrap);
 
-      var g2 = group('生成参数');
-      f.temperature = numField({ label: '温度', hint: '越高越发散', value: def.temperature, min: 0, max: 2, step: 0.05 });
+      var g2 = group('生成参数', '这个接口自己的。留空就用内置默认值（灰字就是它）。');
+      f.temperature = numField({ label: '温度', hint: '留空＝用内置默认 · 越高越发散', value: null, min: 0, max: 2, step: 0.05 });
+      f.temperature.input.placeholder = String(def.temperature);
       g2.card.appendChild(f.temperature.el);
-      f.maxTokens = numField({ label: '单次回复上限', value: def.maxTokens, min: 64, max: 32768, step: 64 });
+      f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝用内置默认', value: null, min: 64, max: 32768, step: 64 });
+      f.maxTokens.input.placeholder = String(def.maxTokens);
       g2.card.appendChild(f.maxTokens.el);
-      f.contextMessages = numField({ label: '携带上下文条数', hint: '越多越记得住，也越贵', value: def.contextMessages, min: 2, max: 200, step: 2 });
+      f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝用内置默认 · 越多越记得住，也越贵', value: null, min: 2, max: 200, step: 2 });
+      f.contextMessages.input.placeholder = String(def.contextMessages);
       g2.card.appendChild(f.contextMessages.el);
-      f.timeoutSec = numField({ label: '超时（秒）', value: 60, min: 5, max: 300, step: 5 });
+      f.timeoutSec = numField({ label: '超时（秒）', hint: '留空＝用内置默认', value: null, min: 5, max: 300, step: 5 });
+      f.timeoutSec.input.placeholder = String(def.timeoutSec);
       g2.card.appendChild(f.timeoutSec.el);
       body.appendChild(g2.wrap);
 
@@ -323,9 +332,9 @@
           apiKey: f.apiKey.get(),
           model: f.model.get(),
           temperature: f.temperature.get(),
-          maxTokens: Math.round(f.maxTokens.get()),
-          contextMessages: Math.round(f.contextMessages.get()),
-          timeoutSec: Math.round(f.timeoutSec.get()),
+          maxTokens: f.maxTokens.getNum(),
+          contextMessages: f.contextMessages.getNum(),
+          timeoutSec: f.timeoutSec.getNum(),
           stream: f.stream.get(),
           enabled: f.enabled.get()
         };
@@ -415,14 +424,19 @@
       f.model = mp.f.model;
       body.appendChild(g.wrap);
 
-      var g2 = group('生成参数');
-      f.temperature = numField({ label: '温度', hint: '越高越发散', value: item.temperature, min: 0, max: 2, step: 0.05 });
+      var g2 = group('生成参数', '这个接口自己的。留空就用内置默认值（灰字就是它）。');
+      var def = Sleepy.api.genDefaults;
+      f.temperature = numField({ label: '温度', hint: '留空＝用内置默认 · 越高越发散', value: item.temperature, min: 0, max: 2, step: 0.05 });
+      f.temperature.input.placeholder = String(def.temperature);
       g2.card.appendChild(f.temperature.el);
-      f.maxTokens = numField({ label: '单次回复上限', value: item.maxTokens, min: 64, max: 32768, step: 64 });
+      f.maxTokens = numField({ label: '单次回复上限', hint: '留空＝用内置默认', value: item.maxTokens, min: 64, max: 32768, step: 64 });
+      f.maxTokens.input.placeholder = String(def.maxTokens);
       g2.card.appendChild(f.maxTokens.el);
-      f.contextMessages = numField({ label: '携带上下文条数', hint: '越多越记得住，也越贵', value: item.contextMessages, min: 2, max: 200, step: 2 });
+      f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝用内置默认 · 越多越记得住，也越贵', value: item.contextMessages, min: 2, max: 200, step: 2 });
+      f.contextMessages.input.placeholder = String(def.contextMessages);
       g2.card.appendChild(f.contextMessages.el);
-      f.timeoutSec = numField({ label: '超时（秒）', value: item.timeoutSec, min: 5, max: 300, step: 5 });
+      f.timeoutSec = numField({ label: '超时（秒）', hint: '留空＝用内置默认', value: item.timeoutSec, min: 5, max: 300, step: 5 });
+      f.timeoutSec.input.placeholder = String(def.timeoutSec);
       g2.card.appendChild(f.timeoutSec.el);
       body.appendChild(g2.wrap);
 
@@ -468,9 +482,9 @@
           apiKey: f.apiKey.get(),
           model: f.model.get(),
           temperature: f.temperature.get(),
-          maxTokens: Math.round(f.maxTokens.get()),
-          contextMessages: Math.round(f.contextMessages.get()),
-          timeoutSec: Math.round(f.timeoutSec.get()),
+          maxTokens: f.maxTokens.getNum(),
+          contextMessages: f.contextMessages.getNum(),
+          timeoutSec: f.timeoutSec.getNum(),
           stream: f.stream.get(),
           enabled: f.enabled.get()
         };

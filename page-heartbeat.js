@@ -130,19 +130,55 @@
   }
 
   /* 把一段心声原文入库。一轮只收第一条。
-     模型不听话写了好几行时，取第一句 —— 那是它最想说的。 */
+     模型不听话写了好几行时，取第一句 —— 那是它最想说的。
+     返回刚入库的那条记录（调用方要把 id 挂到消息上，reroll 时好按它删）。 */
   function commit(chatId, rawBeat) {
     var cs = chatStore();
-    if (!cs || !chatId) return 0;
+    if (!cs || !chatId) return null;
     var items = parseLines(rawBeat, 1);
-    if (!items.length) return 0;
+    if (!items.length) return null;
 
+    var rec = { id: newId(), text: items[0], at: Date.now(), read: false };
     cs.mutate(chatId, function (c) {
       if (!Array.isArray(c.heartbeats)) c.heartbeats = [];
-      c.heartbeats.push({ id: newId(), text: items[0], at: Date.now(), read: false });
+      c.heartbeats.push(rec);
     });
     syncDots(chatId);
-    return 1;
+    return rec;
+  }
+
+  /* 按 id 删一条心声。reroll 用：这条回复被重说了，它带的那句心声也该跟着走。 */
+  function drop(chatId, hbId) {
+    if (!chatId || !hbId) return 0;
+    var cs = chatStore();
+    if (!cs) return 0;
+    var n = 0;
+    cs.mutate(chatId, function (c) {
+      if (!Array.isArray(c.heartbeats)) return;
+      var before = c.heartbeats.length;
+      c.heartbeats = c.heartbeats.filter(function (x) { return x.id !== hbId; });
+      n = before - c.heartbeats.length;
+    });
+    if (n) syncDots(chatId);
+    return n;
+  }
+
+  /* 老消息身上没记 hbId 时的退路：删掉 at >= ts 的那一条。
+     被 reroll 的必然是最后一条助手消息，所以最多命中一条，删它是安全的。 */
+  function dropLastAfter(chatId, ts) {
+    if (!chatId || !ts) return 0;
+    var cs = chatStore();
+    if (!cs) return 0;
+    var hit = null;
+    cs.mutate(chatId, function (c) {
+      if (!Array.isArray(c.heartbeats)) return;
+      for (var i = c.heartbeats.length - 1; i >= 0; i--) {
+        if (c.heartbeats[i].at >= ts) { hit = c.heartbeats[i].id; break; }
+      }
+      if (hit) c.heartbeats = c.heartbeats.filter(function (x) { return x.id !== hit; });
+    });
+    if (hit) syncDots(chatId);
+    return hit ? 1 : 0;
   }
 
   /* 给 buildMessages 用的系统指令，放在消息数组最前面。
@@ -473,6 +509,8 @@
     splitReply: splitReply,
     replySpec: replySpec,
     commit: commit,
+    drop: drop,
+    dropLastAfter: dropLastAfter,
     generate: generate
   };
 

@@ -57,123 +57,123 @@
 </div>
 
 <!-- 加载顺序即依赖顺序，不要调换：store → core（世界观数据层）→ ui（组件层）→ app（壳子/页面栈）→ 各页面 -->
-<script src="store.js"></script>
-<script src="core.js"></script>
-<script src="ui.js"></script>
-<script src="app.js"></script>
-<script src="api.js"></script>
+<script src="store.js" defer></script>
+<script src="core.js" defer></script>
+<script src="ui.js" defer></script>
+<script src="app.js" defer></script>
+<script src="api.js" defer></script>
 <!-- 二进制仓库（IndexedDB）：照片 / 附件 / 表情包的图片本体都存这儿，
      localStorage 里只留一个 mediaId。必须排在 photos.js 前面。 -->
-<script src="media.js"></script>
+<script src="media.js" defer></script>
 <!-- 照片数据层：负一屏的照片墙和相册 App 共用同一份数据。
      必须排在 page-desktop.js 之前，因为后者的 wall 组件要调它 -->
-<script src="photos.js"></script>
+<script src="photos.js" defer></script>
 <!-- 桌面（模块 H）。它注册的是 'home'，所以要在 app.js 之后、别的页面之前 -->
-<script src="page-desktop.js"></script>
+<script src="page-desktop.js" defer></script>
 <!-- 系统级切号 / 面具轮盘 / 记忆认知层。它要给 'home' 的 render 包一层，
      所以必须排在 page-desktop.js 后面；chat 页要调它的 API，也要排在 page-chat 前 -->
-<script src="page-switch.js"></script>
+<script src="page-switch.js" defer></script>
 <!-- 预设注入引擎（第一轮）：prompt-engine 是数据与装配核心，
      page-presets 是它的配置 app。都排在 page-chat 前 —— 后者要调引擎。 -->
-<script src="prompt-engine.js"></script>
-<script src="page-presets.js"></script>
-<script src="page-settings.js"></script>
+<script src="prompt-engine.js" defer></script>
+<script src="page-presets.js" defer></script>
+<script src="page-settings.js" defer></script>
 <!-- 外观（配色 / 字号 / 动效）：数据在 appearance 键里，这里负责落到 DOM。
      排在哪都行，但 app 启动时会调一次 Sleepy.appearance.apply()，
      所以它得排在 app.js 的启动流程之前 —— 也就是在 body 里、app.js 之后。 -->
-<script src="page-appearance.js"></script>
+<script src="page-appearance.js" defer></script>
 <!-- 组件商城：读 desktop 的默认户型当目录，读 desktopRemoved 当「你删过的」。
      必须在 page-desktop.js 之后（要用它的 defaultDesktop / COLS / ROWS）。 -->
-<script src="page-widgetstore.js"></script>
-<script src="page-backup.js"></script>
-<script src="page-subapi.js"></script>
+<script src="page-widgetstore.js" defer></script>
+<script src="page-backup.js" defer></script>
+<script src="page-subapi.js" defer></script>
 <!-- 单份接口配置（总结 API / 向量记忆 API）：它们和副 API **完全独立**，
      只是「新增副 API 时顺手带一份进来」。所以必须排在 page-subapi 之后。 -->
-<script src="page-singleapi.js"></script>
+<script src="page-singleapi.js" defer></script>
 <!-- 生图（2.16）：imggen 是引擎（数据 + 拼提示词 + 调接口），
      要用 store 和 media（图库收图）；page-imggen 是设置页，
      依赖 imggen 的出口，必须排在它后面 -->
-<script src="imggen.js"></script>
-<script src="page-imggen.js"></script>
+<script src="imggen.js" defer></script>
+<script src="page-imggen.js" defer></script>
 <!-- 语音 TTS（2.15）：tts.js 是统一层（契约类型 / 语音导演规则版 / 服务商 Adapter /
      可注入 transport），page-tts 是设置页与角色语音页。
      只依赖 store（把音频存进图库那一步才用 media），排在这儿就够；
      page-chat 要用它挂语音条与手动朗读，所以必须排在 page-chat 之前。 -->
-<script src="tts.js"></script>
-<script src="tts-director.js"></script>
-<script src="page-tts.js"></script>
+<script src="tts.js" defer></script>
+<script src="tts-director.js" defer></script>
+<script src="page-tts.js" defer></script>
 <!-- 名片夹（模块 I）：树状层级 + 认知矩阵。必须排在 page-chat 之前，
      因为后者要读它的角色数据 -->
-<script src="page-idcard.js"></script>
+<script src="page-idcard.js" defer></script>
 <!-- 浮岛（造物主层）：名片夹的进化版，已取代名片夹的树状列表页。
      它要用 page-idcard 暴露的 Sleepy.charIO（导入导出的入口在配置台），
      所以排在后面 -->
-<script src="page-island.js"></script>
+<script src="page-island.js" defer></script>
 <!-- 世界书（模块 B）：设置里挂入口，排在 contacts 后面无所谓 -->
-<script src="page-worldbook.js"></script>
+<script src="page-worldbook.js" defer></script>
 <!-- 心声是模块 E，page-chat 要用它的 overlay，所以排在 page-chat 之前 -->
-<script src="page-heartbeat.js"></script>
-<script src="page-diary.js"></script>
-<script src="page-moments.js"></script>
+<script src="page-heartbeat.js" defer></script>
+<script src="page-diary.js" defer></script>
+<script src="page-moments.js" defer></script>
 <!-- 朋友圈里「角色自己动」：自己发动态 / 回来评论 / 回我发的那条。
      排在 page-moments 后面（它要用 momentsTab 的 add / addComment / canSee），
      也排在 api.js 后面（要打模型）。 -->
-<script src="moments-ai.js"></script>
+<script src="moments-ai.js" defer></script>
 <!-- L1.5 近期生活动态（v5 §L1.5）：角色「近期实际看见」的跨 App 事件。
      排在 page-moments 后面（它惰性取 momentsTab 的 listForChar / canCharSee），
      排哪都行 —— 装配时才用。 -->
-<script src="life-feed.js"></script>
+<script src="life-feed.js" defer></script>
 <!-- L4 动态检索层（向量记忆，v5 §L4）：IndexedDB 索引 + 召回。
      排在 api.js / page-singleapi.js 后面（要 embed + 读向量接口配置），
      prompt-engine 那边惰性取（装配时才用），所以位置不敏感。 -->
-<script src="memory-vec.js"></script>
+<script src="memory-vec.js" defer></script>
 <!-- 相册（模块 J）：和负一屏照片墙共用 Sleepy.photos -->
-<script src="page-gallery.js"></script>
+<script src="page-gallery.js" defer></script>
 <!-- 译文块（组件）：线上私聊 / 线下私聊 / 群线下**共用一份实现**，
      所以排在三个页面之前。依赖 ui.js 的 h，语言与开关在运行时
      从 calendar 惰性取（calendar.js 排在后面，不影响）。 -->
-<script src="msg-trans.js"></script>
-<script src="page-chat.js"></script>
+<script src="msg-trans.js" defer></script>
+<script src="page-chat.js" defer></script>
 <!-- 线上群聊（实施总纲 v1）：core-group 是群数据层（本体/账号两层模型，
      消息单列一张表），page-group 是建群流程 + 群消息页 + 群详情页。
      群数据层只用 core 的作用域纪律，排在 core 之后即可；
      页面要读 chat 列表的入口（消息 tab 挂群入口），排在 page-chat 后。 -->
-<script src="core-group.js"></script>
-<script src="page-group.js"></script>
+<script src="core-group.js" defer></script>
+<script src="page-group.js" defer></script>
 <!-- 群聊调度引擎（阶段 D/E）：普通轮次单调用（调度+发言）、输出校验、
      波次续聊与 user 抢占。要打模型，排在 api.js / prompt-engine.js 后；
      用 groupStore，排在 core-group.js 后。 -->
-<script src="page-group-ai.js"></script>
+<script src="page-group-ai.js" defer></script>
 <!-- 线下模式（Chat 内的第二空间）：数据层 + 入口页 + 场景页。
      Prompt 装配走 prompt-engine.assembleOffline，所以排在它后面。 -->
-<script src="page-offline.js"></script>
-<script src="page-group-offline.js"></script>
+<script src="page-offline.js" defer></script>
+<script src="page-group-offline.js" defer></script>
 <!-- 钱包（流水从对话消息里扫）与表情包管理（聊天 App「我」那一屏的两个入口） -->
-<script src="page-wallet.js"></script>
-<script src="page-stickers.js"></script>
+<script src="page-wallet.js" defer></script>
+<script src="page-stickers.js" defer></script>
 <!-- 聊天 App 容器（4 Tab：消息 / 通讯录 / 朋友圈 / 我）。
      它是壳，内容由 page-chat（消息）、page-moments（朋友圈）、
      page-switch（我）各自提供，所以必须排在它们后面。
      另外它注册 chat-list / moments / me 三个入口 id ——
      这三个页面 id 在别的文件里**已经不再注册**了，别加回去。 -->
-<script src="page-app.js"></script>
+<script src="page-app.js" defer></script>
 <!-- 对话设置 / 挑角色的浮层：要用 page-chat 暴露的 chatStore，所以排在它后面。
      文件末尾还有一段「点火」（Sleepy.bootHome），要保持最后加载。 -->
-<script src="page-chat-settings.js"></script>
-<script src="page-char-appearance.js"></script>
-<script src="page-memory.js"></script>
-<script src="page-summary.js"></script>
-<script src="page-proactive.js"></script>
+<script src="page-chat-settings.js" defer></script>
+<script src="page-char-appearance.js" defer></script>
+<script src="page-memory.js" defer></script>
+<script src="page-summary.js" defer></script>
+<script src="page-proactive.js" defer></script>
 <!-- 查手机系统：phone.js 只依赖 store/core，page-phone.js 要用 chatStore
      （镜像真实聊天）和 core-group（群岛群聊），排在它们之后。
      page-phone-ai.js 是生成链（结算/冷启动），要走 prompt-engine 的卡和
      offlineStore 的模型候选，排最后。 -->
-<script src="phone.js"></script>
-<script src="page-phone.js"></script>
-<script src="page-phone-ai.js"></script>
+<script src="phone.js" defer></script>
+<script src="page-phone.js" defer></script>
+<script src="page-phone-ai.js" defer></script>
 <!-- App 工坊（第 4 批）：要用 phone.ensurePhone（安装时建壳）和 island 的
      charsOfSandbox，排最后；同名 registry 覆盖 page-phone.js 里的门面。 -->
-<script src="page-workshop.js"></script>
+<script src="page-workshop.js" defer></script>
 
 <!-- 日历（《日历系统 · 产品与实施总纲 v1》）：
      calendar-data.js 是内置离线数据包（必须是 .js —— file:// 下 fetch json
@@ -181,9 +181,9 @@
      page-calendar.js 是页面。数据层要读 memoryStore 与 core，
      两个都只取函数引用、在调用时才解引用，所以排这里也安全；
      页面排在 page-desktop.js 之后，桌面那格才点得开。 -->
-<script src="calendar-data.js"></script>
-<script src="calendar.js"></script>
-<script src="page-calendar.js"></script>
+<script src="calendar-data.js" defer></script>
+<script src="calendar.js" defer></script>
+<script src="page-calendar.js" defer></script>
 
 <!-- 帷境（Veilscape）——《帷境总体设计目标与实施意图总纲 v1》+ 8 张 Demo。
      wj-data.js 是数据层（**0 模型调用**，对齐 calendar.js 那条红线），
@@ -192,26 +192,26 @@
      页面按依赖排：门厅在最前（详情页与创建页借用它的 wjUI 小工具），
      阅读页在详情页之后，创建流程最后（它要跳文风设置台，两边的 params 约定写在各自文件头）。
      入口在桌面主屏第 6 行的通栏卡（defaultDesktop 里 type:'wj'）。 -->
-<script src="wj-data.js"></script>
-<script src="wj-prompt.js"></script>
-<script src="wj-check.js"></script>
-<script src="wj-coread.js"></script>
+<script src="wj-data.js" defer></script>
+<script src="wj-prompt.js" defer></script>
+<script src="wj-check.js" defer></script>
+<script src="wj-coread.js" defer></script>
 <!-- 正史审阅的数据层（T7）：**唯一**会把作品写进现实的地方。
      写入落点是 memoryStore / calendar（都是运行时惰性取，所以加载顺序不敏感）。 -->
-<script src="wj-canon.js"></script>
-<script src="wj-engine.js"></script>
-<script src="page-wj-foyer.js"></script>
-<script src="page-wj-work.js"></script>
-<script src="page-wj-read.js"></script>
-<script src="page-wj-coread.js"></script>
+<script src="wj-canon.js" defer></script>
+<script src="wj-engine.js" defer></script>
+<script src="page-wj-foyer.js" defer></script>
+<script src="page-wj-work.js" defer></script>
+<script src="page-wj-read.js" defer></script>
+<script src="page-wj-coread.js" defer></script>
 <!-- 谢幕页（T6）：五路去向下挂在详情页的「谢幕」上。
      它同时导出聊天里那两种卡片（wj-share / wj-invite），
      聊天页**惰性取**（本文件在 page-chat.js 之后加载）。 -->
-<script src="page-wj-curtain.js"></script>
+<script src="page-wj-curtain.js" defer></script>
 <!-- 正史审阅台（T7）：四步 stepper。入口在谢幕页的「进入正史审阅」那一张卡。 -->
-<script src="page-wj-canon.js"></script>
-<script src="page-wj-style.js"></script>
-<script src="page-wj-create.js"></script>
+<script src="page-wj-canon.js" defer></script>
+<script src="page-wj-style.js" defer></script>
+<script src="page-wj-create.js" defer></script>
 
 <script>
 /* PWA：只在 http(s) 下注册 SW。file:// 双击打开本来就是全离线的，

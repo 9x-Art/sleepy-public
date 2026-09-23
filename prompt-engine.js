@@ -688,17 +688,22 @@
        barrier（记忆物理隔离）        → char_knows_events（情况二）
        cognition = unaware（不知情）  → char_sensing（情况四，suspicion 从 0 起步）
        cognition = aware（已知情）    → merged（情况一）
+       cognition = single（没有小号） → single（情况五，2026-09-23 加）
        char_pretending（情况三）      → 预留，暂无数据源
      suspicion_level 的程序化更新（SIGNAL 输入驱动）后置，先恒为 0。 */
   function awarenessOf(charId, userId) {
     var cog = core.cognitionOf(charId, userId);
     if (cog.barrier) return { mode: 'char_knows_events', cog: cog };
+    if (cog.cognition === 'single') return { mode: 'single', cog: cog };
     if (cog.cognition === 'aware') return { mode: 'merged', cog: cog };
     return { mode: 'char_sensing', cog: cog };
   }
 
   var MODE_NOTES = {
     merged: '双方都清楚对面是谁，大小号只是身份玩法。正常相处，不必掩饰你知道另一重身份。',
+    /* 「没有小号」：对面只有一张脸。别让它去揣测一个不存在的第二重身份 ——
+       那会演成疑神疑鬼，或者凭空编出「你是不是还有个号」的剧情。 */
+    single: '对面就这一个身份，没有大小号之分。正常相处，不用揣测或防备另一重身份。',
     char_knows_events: '你按「一个新认识的人」来接触对方。只能使用通过当前这重身份互动积累的信息，不能无故流露出对另一重身份的熟悉，不能跨身份引用记忆。',
     char_pretending: '你其实知道对面是谁，但当前剧情要求不点破。克制要来自真实的心理张力，可以在措辞、停顿和动作里留下微妙，但不能直接说破，也不能因此让回应空洞失真。',
     char_sensing: '你还不确定对面是谁。记忆里可能出现说不清的熟悉片段，你可以有既视感，但置信度不高时按普通新识相处，不主动挑明出处。'
@@ -1223,6 +1228,11 @@
       } else {
         lines.push('这是全新场景的第一轮：请写开场——先用 prose 段建立时间地点氛围，然后 char 可以先开口（用 dialogue 段），像他先注意到了对方；不代写 user 的到来和反应。');
       }
+      /* 用户 2026-09-23 报的：「开场太复述人设，像把设定念一遍」。
+         角色卡（K01）就摆在上下文里，第一轮最容易顺手做一次人物介绍。
+         设定是用来**演**的，不是用来报的。 */
+      lines.push('开场不要复述角色设定：外貌、性格、身世、喜好这些写在设定里的话不要直接说出来，' +
+        '让它们从具体的动作、神态、语气和场景细节里透出来 —— 写他此刻的样子，不是做人物介绍。');
     }
     return lines.join('\n');
   }

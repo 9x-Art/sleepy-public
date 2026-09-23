@@ -50,7 +50,11 @@
       if (!url) { resolve({ ok: false, stage: 'config', message: '先填接口地址' }); return; }
       if (!cfg.model) { resolve({ ok: false, stage: 'config', message: '先填模型名' }); return; }
 
-      var secs = Math.max(1, cfg.timeoutSec || 60);
+      /* 数字化的下限兜底：cfg.timeoutSec 可能是 0，也可能是字符串 '0'（老存档）。
+         后者是 truthy —— `cfg.timeoutSec || 60` 拦不住它，会被
+         Math.max(1, '0') 算成 **1 秒**（2026-09-23 全链路排查）。 */
+      var secs = Number(cfg.timeoutSec);
+      if (!(secs >= 5)) secs = 60;
       var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
       var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, secs * 1000) : null;
       var t0 = Date.now();
@@ -192,7 +196,7 @@
          2026-09-22 接上：语音也是有「服务 + 连接 + 默认档位」的一等公民，
          所以它跟主/副 API 一样紧跟着摆在设置页面上，不埋在「其他能力」里。
          角色级的音色 / 频率 / 表达在「角色语音」页（角色骨架页与对话设置里都能进）。 */
-      var gVoice = group('语音', '让角色把回复读出来。');
+      var gVoice = group('语音');
       var rowTts = row({
         label: '语音 TTS',
         hint: '服务连接 · 默认模型 · 凭据说明',
@@ -421,7 +425,7 @@
       var body = ctx.body;
 
       var g = group('主 API 预设',
-        '可以存好几套，随时切换当前使用的那套。点一个进去改。');
+        '可以存好几套，随时切换当前使用的那套。');
       var listCard = g.card;
 
       function refresh() {
@@ -540,9 +544,9 @@
         apiKey: f.apiKey.get(),
         model: f.model.get(),
         temperature: f.temperature.get(),
-        maxTokens: Math.round(f.maxTokens.get()),
-        contextMessages: Math.round(f.contextMessages.get()),
-        timeoutSec: Math.round(f.timeoutSec.get()),
+        maxTokens: f.maxTokens.getNum(),
+        contextMessages: f.contextMessages.getNum(),
+        timeoutSec: f.timeoutSec.getNum(),
         stream: f.stream.get(),
         enabled: f.enabled.get()
       };

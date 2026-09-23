@@ -53,7 +53,89 @@
   var toastEl = null;
   var toastTimer = null;
 
-  function toast(msg, kind) {
+  /* ---- 报错 toast 的第一道闸：**不许出现我们自己的网址** ----
+     产品规矩（用户 2026-09-22）：「里面不出现我们未来的网址」。
+     原因是那种网址在用户的设备上不一定打得开（还没上线的域名、
+     或者本机调试地址），写在报错里只会让人白点一下。
+     所以统一在这里抹掉 —— 只在**报错路径**上抹（正常文案里要提线上地址
+     的话仍然照写），抹掉之后用一句人话占位，别留空括号。 */
+  var OWN_URL = /https?:\/\/[^\s"'<>()]*\b(?:[a-z0-9-]*\.)?sleepy(?:[-a-z0-9]*)?\.(?:pages\.dev|cn|com|app|net|dev|xyz)\b[^\s"'<>()]*/gi;
+  var OWN_URL_BARE = /\b[a-z0-9-]*\.?sleepy[uU]?-?\d+\.pages\.dev\b/gi;
+
+  function scrubOwnUrl(s) {
+    var t = String(s == null ? '' : s);
+    return t.replace(OWN_URL, '（本机地址已省略）').replace(OWN_URL_BARE, '（本机地址已省略）');
+  }
+
+  /* 报错卡：标题 + 可复制的正文 + 一个「复制」按钮。
+     为什么不用同一颗胶囊：报错正文经常是服务商回的一大段 JSON
+     （`model not found` / `invalid api key` 这种真正有用的信息都在里面），
+     两颗字挤在一个会自己消失的胶囊里既读不完也复制不了。
+     规则：带 detail 的 err 才升级成卡；普通提示（ok / warn / 无 detail 的 err）
+     仍然是那颗小胶囊。 */
+  function buildToastCard() {
+    toastEl.innerHTML = '';
+    toastEl.classList.add('is-card');
+    var head = document.createElement('div');
+    head.className = 'toast-head';
+    head.textContent = '出错了';
+    var body = document.createElement('div');
+    body.className = 'toast-body';
+    var acts = document.createElement('div');
+    acts.className = 'toast-acts';
+    var copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'toast-copy';
+    copy.textContent = '复制';
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.textContent = '知道了';
+    acts.appendChild(copy);
+    acts.appendChild(close);
+    toastEl.appendChild(head);
+    toastEl.appendChild(body);
+    toastEl.appendChild(acts);
+    toastEl.__body = body;
+
+    copy.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var text = body.textContent || '';
+      var done = function () {
+        copy.textContent = '已复制';
+        setTimeout(function () { copy.textContent = '复制'; }, 1400);
+      };
+      if (global.navigator && global.navigator.clipboard && global.navigator.clipboard.writeText) {
+        global.navigator.clipboard.writeText(text).then(done, fallbackCopy);
+      } else {
+        fallbackCopy();
+      }
+      /* 老浏览器 / 非安全上下文没有 clipboard API —— 退回选中文本，
+         用户按 Ctrl/⌘+C 也能拿走（这就是「可复制」的兜底）。 */
+      function fallbackCopy() {
+        try {
+          var r = document.createRange();
+          r.selectNodeContents(body);
+          var sel = global.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(r);
+          done();
+        } catch (err) { done(); }
+      }
+    });
+    close.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hideToast();
+    });
+  }
+
+  function hideToast() {
+    if (!toastEl) return;
+    toastEl.className = '';
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+  }
+
+  function toast(msg, kind, opts) {
     if (!toastEl) {
       if (!phone) return;
       toastEl = document.createElement('div');
@@ -61,10 +143,32 @@
       toastEl.setAttribute('role', 'status');
       phone.appendChild(toastEl);
     }
-    toastEl.textContent = msg;
+    opts = opts || {};
+    /* 报错一律过一遍网址闸（普通文案不动） */
+    var text = (kind === 'err') ? scrubOwnUrl(msg) : String(msg == null ? '' : msg);
+    var detail = (kind === 'err' && opts.detail) ? scrubOwnUrl(opts.detail) : '';
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+
+    if (kind === 'err' && (detail || opts.copy)) {
+      if (!toastEl.__body) buildToastCard();
+      toastEl.__body.textContent = text + (detail ? '\n' + detail : '');
+      toastEl.className = 'show err is-card';
+      /* 报错卡不自己消失 —— 用户得有时间读完、复制 */
+      return;
+    }
+
+    if (toastEl.__body) { toastEl.innerHTML = ''; toastEl.__body = null; }
+    toastEl.classList.remove('is-card');
+    toastEl.textContent = text;
     toastEl.className = 'show' + (kind ? ' ' + kind : '');
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { toastEl.className = ''; }, 2400);
+    /* 报错比普通提示多留一会儿 */
+    toastTimer = setTimeout(function () { toastEl.className = ''; }, kind === 'err' ? 4200 : 2400);
+  }
+
+  /* 报错的两段式口子：`apiFail(msg, res)` —— 第一行是人话，
+     第二行是服务商原文（可复制）。describeError 的返回值就是原文那一行。 */
+  function apiFail(human, detail) {
+    toast(human || '出错了', 'err', { detail: detail || '', copy: true });
   }
 
   /* ------------------------- 状态栏 / 问候 ------------------------- */
@@ -169,6 +273,7 @@
       params: entry.params,
       store: Sleepy.store,
       toast: toast,
+      apiFail: apiFail,
       setTitle: function (t) { titleEl.textContent = t; },
       setActions: function (list) {
         sideEl.innerHTML = '';
@@ -603,6 +708,10 @@
   };
 
   Sleepy.toast = toast;
+  /* 报错专用（可复制、不过期、自动过网址闸）。页面里给 API 失败用这个，
+     比 ctx.toast(describeError(res), 'err') 多出一个可复制的原文块。 */
+  Sleepy.apiFail = apiFail;
+  Sleepy.scrubOwnUrl = scrubOwnUrl;
   Sleepy.el = { phone: phone, stack: stack, home: home };
   Sleepy.historyOK = function () { return histOK; };
 
@@ -651,6 +760,7 @@
       params: {},
       store: Sleepy.store,
       toast: toast,
+      apiFail: apiFail,
       setTitle: function () {},          /* 桌面没有标题栏，吞掉 */
       setActions: function () {},
       open: open,

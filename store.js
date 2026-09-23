@@ -193,6 +193,13 @@
     mainApis: [],
     mainApiId: null,
 
+    /* 总结 API 也存多套预设（2026-09-23 对齐主 API）：summaryApi 这个老键保留，
+       始终镜像「当前使用」的那套，cfgOf / page-summary / page-settings 只读镜像。
+       ⚠️ 向量记忆**没有这一层** —— 它要 embedding 模型、副 API 是对话模型，
+       复制和多套都没有意义（用户 2026-09-23 明确），它还是单个 vectorApi。 */
+    summaryApis: [],
+    summaryApiId: null,
+
     /* 副 API 每组重试次数（1~5） */
     subRetry: 2,
 
@@ -551,6 +558,35 @@
     }
   }
 
+  /* 总结改成多预设之前，它只有单个对象（summaryApi）。
+     老配置整包变成第一套预设并设为当前，镜像键继续镜像当前配置，cfgOf 无感。
+     （向量不走多预设，所以不在这里。） */
+  function migrateSummaryApiPresets() {
+    try {
+      if (global.localStorage.getItem(NS + 'summaryApis')) return;
+      var raw = global.localStorage.getItem(NS + 'summaryApi');
+      if (!raw) return;
+      var cfg = JSON.parse(raw);
+      if (!cfg || (!cfg.baseUrl && !cfg.model)) return;
+      var id = 'summig1';
+      var list = [{
+        id: id,
+        name: cfg.name || '总结模型',
+        baseUrl: cfg.baseUrl || '',
+        apiKey: cfg.apiKey || '',
+        model: cfg.model || '',
+        seededFrom: cfg.seededFrom || ''
+      }];
+      global.localStorage.setItem(NS + 'summaryApis', JSON.stringify(list));
+      global.localStorage.setItem(NS + 'summaryApiId', JSON.stringify(id));
+      if (global.console && global.console.log) {
+        global.console.log('[Sleepy] 已把原总结 API 存为第一套预设');
+      }
+    } catch (e) {
+      /* 迁移失败不能挡住启动 */
+    }
+  }
+
   /* ---- 生成参数默认值「只留一份」 ----
      温度 / 单次上限 / 上下文条数 / 流式这几个生成参数，以前在 chatDefaults 里
      也抄了一份默认值，和 api.js 的 GEN_DEFAULTS 重复。两份重复时以 chatDefaults
@@ -771,6 +807,7 @@
   migrateKeys();
   migrateWorldbookToBooks();
   migrateMainApiPresets();
+  migrateSummaryApiPresets();
   migrateChatDefaultsGenerative();
   migrateCharactersToTree();
   /* 必须排在 migrateCharactersToTree 之后：它可能会补一件默认 User 马甲，

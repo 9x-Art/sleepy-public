@@ -449,13 +449,35 @@
     return out;
   }
 
+  /* 一颗朋友圈头像。
+     ⚠️ 2026-09-22 修：以前只查 `core.findChar(refId)` —— 角色的能找到，
+     **我（马甲 / user）永远找不到**，于是我自己发的每一条动态都是一个首字。
+     用户报的「朋友圈的头像没有同步账号」就是这一条。
+     现在按 kind 分流：mask → findUser，char → findChar，没标 kind 的两个都试。 */
   function avatarEl(who, cls) {
-    var av = h('span', cls, core.initialOf(who.name || '?'));
+    who = who || {};
     var rec = who;
-    if (!(who.avatar || who.avatarMedia) && who.refId) {
-      var c = core.findChar(who.refId);
-      if (c) rec = c;
+    var isUser = who.kind === 'mask';
+
+    if (who.refId) {
+      var found = null;
+      if (who.kind === 'mask') found = core.findUser ? core.findUser(who.refId) : null;
+      else if (who.kind === 'char') found = core.findChar ? core.findChar(who.refId) : null;
+      /* 没标 kind（老调用点 / 临时对象）：两边都试一遍 */
+      if (!found) {
+        found = (core.findChar && core.findChar(who.refId)) ||
+                (core.findUser && core.findUser(who.refId)) || null;
+      }
+      if (found) {
+        rec = found;
+        /* char 表里没这个人 + user 表里有 → 它是件马甲（首字要按「名字→微信名」取） */
+        if (!isUser && core.findUser && !(core.findChar && core.findChar(found.id)) &&
+            core.findUser(found.id)) isUser = true;
+      }
     }
+
+    var label = (rec && rec.name) || who.name || '';
+    var av = h('span', cls, isUser ? core.initialOfUser(rec) : core.initialOf(label || '?'));
     /* 本地图 avatarMedia 优先，回落网址；has-img 由 helper 异步加 */
     core.setAvatarBg(av, rec);
     return av;
@@ -654,12 +676,15 @@
       });
     });
 
-    /* 顶部那颗「我的头」也过卫兵 —— 显示成上一座岛的人比显示成「我」更糟 */
+    /* 顶部那颗「我的头」也过卫兵 —— 显示成上一座岛的人比显示成「我」更糟。
+       直接把**当前马甲这条记录**递进去（别只递名字 + 网址）：
+       recorder 里有 avatarMedia，只递 avatar 的话本地图那份头像是拿不到的。 */
     var me = core.activeUserOnIsland ? core.activeUserOnIsland() : null;
     var meHead = h('div', 'mo-me');
-    meHead.appendChild(h('span', 'mo-me-name', me ? me.name : '我'));
+    meHead.appendChild(h('span', 'mo-me-name', me ? core.labelOfUser(me) : '我'));
     meHead.appendChild(avatarEl(
-      { name: me ? me.name : '我', refId: null, avatar: me ? me.avatar : '' }, 'mo-me-av'));
+      me ? { kind: 'mask', refId: me.id, name: core.labelOfUser(me), avatar: me.avatar, avatarMedia: me.avatarMedia }
+         : { kind: 'mask', name: '我' }, 'mo-me-av'));
     meHead.title = '这是你 · 换脸去「我」那一屏';
     cover.appendChild(meHead);
     panel.appendChild(cover);
@@ -907,7 +932,12 @@
   }
 
   function momentCard(m, people, repaint, ctx) {
-    var author = { name: m.name || '某人', refId: m.characterId, kind: m.characterId ? 'char' : 'mask' };
+    /* 作者是谁：角色发的比 characterId，我（马甲）发的比 maskId
+       （见本文件头部的记录形状）。**maskId 不能漏** —— 漏了的话
+       我自己发的动态连头像都找不到人（老代码就是这么写的）。 */
+    var author = m.characterId
+      ? { kind: 'char', refId: m.characterId, name: m.name || '某人' }
+      : { kind: 'mask', refId: m.maskId, name: m.name || '我' };
     var card = h('div', 'moment-item');
 
     card.appendChild(avatarEl(author, 'mo-avatar'));

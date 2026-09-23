@@ -577,11 +577,19 @@
     { key: 'flirt', label: '调情局', cog: 'aware', barrier: false,
       hint: '明牌。双方都知道对方有别的身份，不用装' },
     { key: 'deny', label: '死装局', cog: 'unaware', barrier: true,
-      hint: '记忆完全隔离。连既视感都没有，装到底' }
+      hint: '记忆完全隔离。连既视感都没有，装到底' },
+    /* 2026-09-23 加（用户报的「岛认知缺这一档」）：前三档都预设了
+       「你（user）有小号」。这一档是「我就一张脸」—— 对面没有第二重身份
+       要辨认、也没有要防的东西，正常相处即可。
+       cog 单独一个值：前三档的组合（aware/unaware × barrier）都用满了，
+       复用一个的话 lockKeyOf 会把它显示成别的档。 */
+    { key: 'single', label: '没有小号', cog: 'single', barrier: false,
+      hint: '我就这一个号。没有别的身份要认，正常相处' }
   ];
 
   function lockKeyOf(cog) {
     if (cog.barrier) return 'deny';
+    if (cog.cognition === 'single') return 'single';
     return cog.cognition === 'aware' ? 'flirt' : 'puzzle';
   }
 
@@ -675,7 +683,11 @@
   }
   function cogLabel(cog) {
     if (cog.barrier) return '记忆壁垒';
-    return cog.cognition === 'aware' ? '知道我是谁' : (cog.cognition === 'merged' ? '两套记忆都知道' : '不知道我的马甲');
+    /* 'merged' 那个分支是死的：cognition 只有 aware / unaware / single 三个值，
+       merged 是 prompt-engine.awarenessOf 的 **mode**（由 aware 推出来），
+       不在这个字段里。2026-09-23 顺手清掉，并补上新加的 single。 */
+    if (cog.cognition === 'single') return '没有别的号';
+    return cog.cognition === 'aware' ? '知道我是谁' : '不知道我的马甲';
   }
 
   /* ---- 总览（两种房型共用，按 sb.kind 分支） ---- */

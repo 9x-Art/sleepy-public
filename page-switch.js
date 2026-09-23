@@ -601,9 +601,17 @@
     panel.innerHTML = '';
 
     var sb = core.activeSandbox();
-    /* 「当前是谁」必须问 core.activeUser()，**不能取列表第一项** ——
-       账号列表里第一件只是「最早建的」，跟此刻戴着哪张脸无关。 */
-    var u = core.activeUser();
+    /* 「当前是谁」必须问指针，**不能取列表第一项** ——
+       账号列表里第一件只是「最早建的」，跟此刻戴着哪张脸无关。
+
+       ⚠️ 2026-09-22 修：这里原来问的是 `core.activeUser()` ——
+       那个口子带**跨岛兜底**（还有 `|| ensureDefaultUser()`），
+       于是刚建完第二座岛、指针还停在第一座岛的马甲上时，
+       这一页会把**上一座岛的我**显示出来（用户报的
+       「新建一座岛屿之后，第一座岛上的 user 账号直接复制过去了，
+       退出再进去才消失」——「消失」其实是重新渲染时指针被卫兵判成 null）。
+       跟当前身份走的读一律走 activeUserOnIsland()（见 core 的指针卫兵）。 */
+    var u = core.activeUserOnIsland ? core.activeUserOnIsland() : core.activeUser();
     if (!u) {
       panel.appendChild(h('p', 'set-group-note', '还没有任何账号 · 先去浮岛配置台建一个'));
       return;
@@ -721,7 +729,7 @@
     if (!sb) { ctx.toast('先进一座岛', 'warn'); return; }
     var mates = core.masksOfSandbox(sb);
     if (!mates.length) { ctx.toast('这座岛上还没有账号', 'warn'); return; }
-    var cur = core.activeUser();
+    var cur = core.activeUserOnIsland ? core.activeUserOnIsland() : core.activeUser();
     var dft = core.defaultUserOfSandbox(sb);
 
     /* 挂 #phone —— 祖先带 transform 时 fixed 会退化成相对该祖先定位 */

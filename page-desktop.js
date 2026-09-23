@@ -2433,7 +2433,11 @@
       var pages = [];
 
       d.pages.forEach(function (cells, pi) {
-        var screen = h('div', 'dt-screen');
+        /* 第 0 屏（负一屏）单独挂一个类：那一屏只有一个「照片墙」大组件，
+           它按行算出来的高度比这一屏可用高度矮一截，于是整屏是
+           「上面挤满、下面空一片」（用户 2026-09-22 的原话）。
+           样式里只给这一屏把网格**垂直居中**（见 .dt-screen.is-neg1）。 */
+        var screen = h('div', 'dt-screen' + (pi === 0 ? ' is-neg1' : ''));
         var grid = h('div', 'dt-grid');
 
         /* 网格底纹：编辑态才显形。平时是一层极淡的点阵，
@@ -2567,10 +2571,28 @@
         scroller.scrollTo({ left: i * scroller.clientWidth, behavior: 'smooth' });
       });
 
-      /* 首屏落在「主屏」（第 1 屏），负一屏往左滑才出来 */
+      /* 首屏落在「主屏」（第 1 屏），负一屏往左滑才出来。
+
+         ⚠️ 必须是**瞬移**，不能是动画（2026-09-22 用户报的坑）：
+         .dt-scroll 上写着 scroll-behavior:smooth，那是给「点页码」用的；
+         直接赋值 scrollLeft 也会被它接管 → 每次进桌面都从负一屏
+         **平滑滑**到主屏，中间那几百毫秒里手指点在主屏图标的位置，
+         落到的是还在屏幕上的**负一屏「＋加照片」格子**。
+         用户原话：「每次点进去之后要加载一段时间才能点击主屏的图标，
+         不然就会点击到负一屏加图片的地方」—— 说的就是这个动画窗口。
+         所以程序性定位一律先把 scroll-behavior 压成 auto，落位再还原。 */
+      function jumpTo(left) {
+        var prev = scroller.style.scrollBehavior;
+        scroller.style.scrollBehavior = 'auto';
+        scroller.scrollLeft = left;
+        /* 读一次 scrollLeft 强制布局，确保 auto 这一帧就把最终位置定死 */
+        void scroller.scrollLeft;
+        scroller.style.scrollBehavior = prev || '';
+      }
+
       function goHome() {
         if (scroller.clientWidth) {
-          scroller.scrollLeft = scroller.clientWidth;
+          jumpTo(scroller.clientWidth);
         } else {
           setTimeout(goHome, 60);
         }
@@ -2609,7 +2631,7 @@
             grid.appendChild(node);
           });
         });
-        if (scroller.clientWidth) scroller.scrollLeft = cellIndex * scroller.clientWidth;
+        if (scroller.clientWidth) jumpTo(cellIndex * scroller.clientWidth);
         syncDots();
       };
     },

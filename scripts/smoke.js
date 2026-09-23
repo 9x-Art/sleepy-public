@@ -246,7 +246,10 @@ Object.keys(win).forEach((k) => { if (!(k in ctx)) ctx[k] = win[k]; });
 
 function scriptOrder() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  const re = /<script\s+src="([^"]+)"><\/script>/g;
+  /* 宽松一点：src 后面还可能有别的属性（2026-09-23 给全部脚本加了 defer）——
+     以前写成 `src="..."` 紧跟 `>`，加了 defer 就一个都匹配不到，
+     冒烟会静默地「共 0 个脚本」然后全线崩。 */
+  const re = /<script\s+src="([^"]+)"[^>]*><\/script>/g;
   const out = [];
   let m;
   while ((m = re.exec(html))) out.push(m[1]);
@@ -3263,13 +3266,17 @@ t('assembleOnline：槽位按矩阵顺序出，历史原文垫底', () => {
   if (slots.indexOf('c05') > slots.indexOf('history')) throw new Error('输出协议跑到历史后面了');
   return { 槽位数: slots.length, system: kinds.filter((x) => x === 'system').length };
 });
-t('I01 四态映射：barrier→char_knows_events / unaware→char_sensing / aware→merged', () => {
+t('I01 认知映射：barrier→char_knows_events / unaware→char_sensing / aware→merged / single→single', () => {
   S.core.addLink(s1, u1, 'unaware', true);
   if (S.promptEngine.awarenessOf(s1, u1).mode !== 'char_knows_events') throw new Error('barrier 映射错了');
   S.core.setBarrier(s1, u1, false);
   if (S.promptEngine.awarenessOf(s1, u1).mode !== 'char_sensing') throw new Error('unaware 映射错了');
   S.core.setCognition(s1, u1, 'aware');
   if (S.promptEngine.awarenessOf(s1, u1).mode !== 'merged') throw new Error('aware 映射错了');
+  /* 2026-09-23：初始认知锁新加的第四档「没有小号」，要有自己的 mode，
+     复用一个已有的会被 lockKeyOf 显示成别的档 */
+  S.core.setCognition(s1, u1, 'single');
+  if (S.promptEngine.awarenessOf(s1, u1).mode !== 'single') throw new Error('single 映射错了');
   S.core.setCognition(s1, u1, 'unaware');   /* 还原，别污染后面的断言 */
   return 'ok';
 });
@@ -4905,8 +4912,10 @@ t('总结 API：单份独立配置优先，且它和副 API 互不影响', () =>
   };
 });
 
-t('新增副 API → 空着的总结 / 向量顺手带一份；填过的不覆盖', () => {
+t('新增副 API → 空着的总结顺手带一份；向量不参与（它要 embedding，不是对话模型）', () => {
   S.store.set('summaryApi', null);
+  S.store.set('summaryApis', []);
+  S.store.set('summaryApiId', '');
   S.store.set('vectorApi', null);
   S.store.set('subApis', [{
     name: '便宜组', baseUrl: 'https://sub.test/v1', apiKey: 'k2', model: 'm2'
@@ -4926,17 +4935,117 @@ t('新增副 API → 空着的总结 / 向量顺手带一份；填过的不覆�
   const out = {
     第一次带了几份: n1,
     总结带过来: sumAfter && sumAfter.model,
-    向量带过来: vecAfter && vecAfter.model,
+    向量: vecAfter ? '被带过来了（不该）' : '没动（对）',
     第二次又带: n2,
     用户改过的还在: sumKept && sumKept.model
   };
   S.store.set('summaryApi', null);
+  S.store.set('summaryApis', []);
+  S.store.set('summaryApiId', '');
   S.store.set('vectorApi', null);
   S.store.set('subApis', []);
-  if (n1 !== 2) throw new Error('第一次该带两份，实 ' + n1);
-  if (sumAfter.model !== 'm2' || vecAfter.model !== 'm2') throw new Error('带过来的内容不对');
+  if (n1 !== 1) throw new Error('第一次该只带一份（总结），实 ' + n1);
+  if (!sumAfter || sumAfter.model !== 'm2') throw new Error('带过来的内容不对');
+  if (vecAfter) throw new Error('向量不该被带 —— 副 API 是对话模型，带过来是 404 配置');
   if (n2 !== 0) throw new Error('填过之后不该再带');
   if (sumKept.model !== '我的模型') throw new Error('用户改过的总结 API 被覆盖了');
+  return out;
+});
+
+t('单份接口多预设：切「当前」镜像跟着换，cfgOf 只认当前那套', () => {
+  S.store.set('subApis', []);
+  S.singleApi.clearCfg('summary');
+
+  /* 第一套：saveCfg 写完自动成为当前 */
+  const a = S.singleApi.saveCfg('summary', { baseUrl: 'https://a.test/v1', model: 'ma' });
+  if (!S.singleApi.cfgOf('summary') || S.singleApi.cfgOf('summary').model !== 'ma') {
+    throw new Error('第一套没成为当前');
+  }
+
+  /* 手动补第二套（模拟编辑页保存），再切过去 */
+  const list = S.singleApi.presetsOf('summary');
+  list.push({ id: 'psum2', name: '乙', baseUrl: 'https://b.test/v1', apiKey: '', model: 'mb' });
+  S.store.set('summaryApis', list);
+  S.singleApi.setActive('summary', 'psum2');
+  const switchTo2 = S.singleApi.cfgOf('summary');
+  if (!switchTo2 || switchTo2.model !== 'mb') throw new Error('切过去之后镜像没换');
+  if (S.summaryEngine.candFor().cfg.model !== 'mb') throw new Error('消费方（candFor）没跟着换');
+
+  /* 切回第一套 */
+  S.singleApi.setActive('summary', a.id);
+  if (S.singleApi.cfgOf('summary').model !== 'ma') throw new Error('切回来不对');
+
+  /* 清空 = 连预设一起清，cfgOf 变没配 */
+  S.singleApi.clearCfg('summary');
+  if (S.singleApi.presetsOf('summary').length) throw new Error('清空之后预设还在');
+  if (S.singleApi.cfgOf('summary')) throw new Error('清空之后 cfgOf 该是 null');
+  return { 第一套: 'ma', 切到第二套: switchTo2.model, 清空后: '没配' };
+});
+
+t('「从副 API 复制一份」只给总结；向量明确拒绝（协议不同，复制来是错的）', () => {
+  S.singleApi.clearCfg('summary');
+  S.singleApi.clearCfg('vector');
+  S.store.set('subApis', [{
+    name: '便宜组', baseUrl: 'https://sub.test/v1', apiKey: 'k', model: 'm2'
+  }]);
+  const one = S.singleApi.copyFromSub('summary');
+  const two = S.singleApi.copyFromSub('summary');
+  const list = S.singleApi.presetsOf('summary');
+  const vecCopy = S.singleApi.copyFromSub('vector');
+  const out = { 总结份数: list.length, 向量复制: vecCopy === null ? '拒绝（对）' : '居然成功了' };
+  S.singleApi.clearCfg('summary');
+  S.singleApi.clearCfg('vector');
+  S.store.set('subApis', []);
+  if (!one || !two) throw new Error('总结的复制没成功');
+  if (list.length !== 2) throw new Error('该无条件复制出两份，实 ' + list.length);
+  if (one.id === two.id) throw new Error('两份 id 撞了');
+  if (vecCopy !== null) throw new Error('向量不该能被复制 —— 它要的是 embedding 模型');
+  return out;
+});
+
+t('numField.getNum：留空回 null 而不是 0（0 在 genParams 里是有效值）', () => {
+  const f = S.ui.numField({ label: 'x', value: null, min: 0, max: 100, step: 1 });
+  if (f.getNum() !== null) throw new Error('留空该回 null，实 ' + f.getNum());
+  f.input.value = '0';
+  if (f.getNum() !== 0) throw new Error('显式填 0 该保留，实 ' + f.getNum());
+  f.input.value = '12.6';
+  if (f.getNum() !== 13) throw new Error('该四舍五入，实 ' + f.getNum());
+  return { 留空: null, 显式0: 0, 小数: 13 };
+});
+
+t('心声 commit 回传记录，drop / dropLastAfter 删得掉（reroll 要按它清）', () => {
+  const chat = S.chatStore.createChat('心声测试', null);
+  const r1 = S.heartbeat.commit(chat.id, '第一句心声');
+  if (!r1 || !r1.id) throw new Error('commit 该回传带 id 的记录');
+  const r2 = S.heartbeat.commit(chat.id, '第二句心声');
+  if (S.heartbeat.unreadCount(S.chatStore.getChat(chat.id)) !== 2) throw new Error('该有两条未读');
+
+  if (S.heartbeat.drop(chat.id, r1.id) !== 1) throw new Error('按 id 没删掉');
+  if (S.heartbeat.unreadCount(S.chatStore.getChat(chat.id)) !== 1) throw new Error('删完该剩一条');
+
+  /* 老消息没记 hbId 的退路：删 at >= 它的那条 */
+  if (S.heartbeat.dropLastAfter(chat.id, r2.at) !== 1) throw new Error('退路没删掉');
+  if (S.heartbeat.unreadCount(S.chatStore.getChat(chat.id)) !== 0) throw new Error('该清空');
+
+  if (S.heartbeat.drop(chat.id, 'nope') !== 0) throw new Error('删不存在的该返回 0');
+  return { 回传id: !!r1.id, 按id删: 1, 退路删: 1 };
+});
+
+t('genParams：timeoutSec 有 5 秒下限（老存档的 0 不会再变成 1 秒超时）', () => {
+  S.store.set('chatDefaults', {});
+  const g = S.api.genParams;
+  const dirty0 = g({ baseUrl: 'x', model: 'm', timeoutSec: 0 }, {});
+  const dirty1 = g({ baseUrl: 'x', model: 'm', timeoutSec: 1 }, {});
+  const ok120 = g({ baseUrl: 'x', model: 'm', timeoutSec: 120 }, {});
+  const bare = g({ baseUrl: 'x', model: 'm' }, {});
+  const out = { 脏0: dirty0.timeoutSec, 脏1: dirty1.timeoutSec, 正常: ok120.timeoutSec, 缺省: bare.timeoutSec };
+  if (dirty0.timeoutSec !== 60) throw new Error('0 该回落 60，实 ' + dirty0.timeoutSec);
+  if (dirty1.timeoutSec !== 60) throw new Error('1 该回落 60，实 ' + dirty1.timeoutSec);
+  if (ok120.timeoutSec !== 120) throw new Error('正常值不该被动，实 ' + ok120.timeoutSec);
+  if (bare.timeoutSec !== 60) throw new Error('缺省该 60，实 ' + bare.timeoutSec);
+  /* 其余参数不受影响：0 仍然是有效值（0 度温、maxTokens 0 是用户明确选的） */
+  const zeroTemp = g({ baseUrl: 'x', model: 'm', temperature: 0 }, {});
+  if (zeroTemp.temperature !== 0) throw new Error('温度的 0 被吃掉了');
   return out;
 });
 
