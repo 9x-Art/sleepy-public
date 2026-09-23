@@ -2176,10 +2176,21 @@
         });
       }
 
+      /* 条子是从**上面**插进流里的（它 append 在 .msg-wrap 之前），所以它一露面，
+         消息区就矮一条子那么高、顶边也被推下去同样多 —— 结果是**用户眼前的
+         这段对话整体往下滑 47px**（用户 2026-09-23：「聊天里面的多选，我点一个
+         气泡之后页面就会下滑」；量过：进多选前 wrap.top=100，进了之后 147，
+         参照气泡的屏幕坐标 109 → 156。**点气泡本身不动**，动的是这一下露面）。
+
+         规矩：不管条子露不露面，眼前的内容都不许挪位。
+         做法 = 拿高度差补 scrollTop —— 补完气泡的屏幕坐标原封不动；
+         贴底时会被浏览器夹回新的最大值，也就是「仍然贴着底」，正是要的。 */
       function renderSelection() {
+        var h0 = msgWrap.clientHeight;
         selBar.innerHTML = '';
         if (!selecting) {
           selBar.style.display = 'none';
+          if (msgWrap.clientHeight !== h0) msgWrap.scrollTop += (h0 - msgWrap.clientHeight);
           return;
         }
         selBar.style.display = 'flex';
@@ -2208,6 +2219,11 @@
 
         selBar.appendChild(del);
         selBar.appendChild(cancel);
+
+        /* 补回条子占掉的那点高度，眼前的内容原封不动（见函数开头那段注释）。
+           ⚠️ 这句必须放在**所有**会改 selBar 高度的事情之后（现在是末尾，
+           条子里只有一行字，改文案不改高度，但以后加了第二行就靠这句兜住）。 */
+        if (msgWrap.clientHeight !== h0) msgWrap.scrollTop += (h0 - msgWrap.clientHeight);
       }
 
       /* ======================== 长按菜单 ========================

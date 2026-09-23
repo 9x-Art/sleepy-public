@@ -1778,13 +1778,21 @@
     });
   }
 
+  /* 一次批量取向量。**字段名只能跟着 api.js 的契约走**：
+     `Sleepy.api.embed` 回的是 `{ ok, vecs, dim, ms }`（api.js 里那句
+     `resolve({ ok: true, ms: ms, vecs: vecs, dim: vecs[0].length })`）。
+
+     ⚠️ 这里曾经写的是 `r.vectors || r.embeddings` —— 两个名字都不存在，
+     于是**每一次**写入都停在 `返回里没有向量`：L4 向量记忆从上线那天起
+     一条块都没落过库，而且失败原因被 kickSweep 的 catch 吞掉，
+     用户在设置页只能看到「还没有索引」（2026-09-23 拿「现在扫一遍」
+     才把它逼出来）。改这个字段之前，先去 api.js 看一眼那边到底回什么。 */
   function embedTexts(texts) {
     var v = Sleepy.singleApi ? Sleepy.singleApi.cfgOf('vector') : null;
     if (!v) return Promise.resolve({ ok: false, error: '没配向量接口' });
     return Sleepy.api.embed(v, texts).then(function (r) {
       if (!r.ok) return { ok: false, error: r.error };
-      /* 服务端有时返回单个对象、有时返回数组，api.js 那边已经归一 */
-      var vecs = r.vectors || r.embeddings || [];
+      var vecs = r.vecs;
       if (!Array.isArray(vecs) || !vecs.length) return { ok: false, error: '返回里没有向量' };
       return { ok: true, vectors: vecs };
     });
@@ -1978,6 +1986,10 @@
     sweepPhone: sweepPhone,       /* 查手机三类：备忘 / 计划 / 订单 */
     /* 定向重建：改了一条**旧**条目时用它（删旧块 + 单条重切，§8.1） */
     reindexItem: reindexItem,
+    /* ⚠️ **只为冒烟导出**：smoke 的 W17 拿它验「api.embed 回的 vecs 和
+       这里读的是同一个名字」—— 这个字段名错过一次，L4 静默报废了一个版本。
+       页面代码别用它，写入一律走上面那几个 sweep。 */
+    embedTexts: embedTexts,
     /* 素材「改一条」的语义化入口 —— 调用方只喊一声，不用自己组装文本 */
     refreshMoment: refreshMoment,
     refreshDiary: refreshDiary,

@@ -6238,6 +6238,19 @@ t('P0-1 回复里的 [手机] 痕迹落进查手机（真实数据链路）', ()
     pcs.indexOf('rootIdOf(chat.characterId)') < 0);
 }
 
+/* 静态护栏：多选条是**从上面插进流里**的（append 在 .msg-wrap 之前），
+   它一露面就把消息区顶下去一条子那么高（量过：wrap.top 100 → 147、
+   参照气泡的屏幕坐标 109 → 156）—— 用户 2026-09-23：「聊天里面的多选，
+   我点一个气泡之后页面就会下滑」。守的是「露面前后都把高度差补回 scrollTop」
+   那两句别被顺手删掉：删了就是「一进多选，整段对话往下滑」。
+   ⚠️ 露面的路（selecting=true，在函数末尾）和收起的路（selecting=false，
+   早退分支里）各要有一句，只留一句 = 退出多选时又跳一下。 */
+{
+  const pcs2 = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  const nSelFix = pcs2.split('msgWrap.scrollTop += (h0 - msgWrap.clientHeight)').length - 1;
+  ok('多选条露面/收起都补了高度差（露一条 = 进出多选各跳一次 47px）', nSelFix >= 2);
+}
+
 
 
 console.log('\n--- 第二批证据探针（只读断言，不改任何行为）---');
@@ -6970,7 +6983,7 @@ console.log('\n--- 项目 1 复核修订回归（向量回滚 / 快照去留 / �
 /* 与第一版一样：这一整段会真清 store、真关召回门，必须写成
    **一条串行链 + 先等其它异步断言落定**（t() 的异步断言是并发跑的）。
    段内编号对应复核意见的两批要求：清空侧 6 条 → W1/W2/W3/W4；导入回滚 2 条 → W8/W9。 */
-t('W1–W15 清空六项 / 向量回滚 / 快照去留 / 三向边界（串行）', async () => {
+t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一遍 / 向量字段契约（串行）', async () => {
   const chk = (name, cond) => { if (!cond) throw new Error(name); };
   while (asyncPending > 1) await new Promise((r) => setTimeout(r, 20));
 
@@ -7307,8 +7320,38 @@ t('W1–W15 清空六项 / 向量回滚 / 快照去留 / 三向边界（串行�
     const apiSrc = fs.readFileSync(path.join(ROOT, 'page-singleapi.js'), 'utf8');
     chk('W16 设置页没把按钮接到 sweepIsland', apiSrc.indexOf('memoryVec.sweepIsland()') >= 0);
     chk('W16 按钮没有把结果说成人话（sweepReport）', apiSrc.indexOf('function sweepReport') >= 0);
+    chk('W16 空索引的文案没跟上次扫描结果对上（扫失败还说"会自动开始"）',
+      apiSrc.indexOf('(lastSweep && !lastSweep.ok)') >= 0);
     chk('W16 sweepIsland 没导出', typeof MV.sweepIsland === 'function');
     out.W16 = { 没配接口: off.why, 没落岛: noIsland.why, 没IDB: noIdb.why };
+  }
+
+  /* W17 向量写入的**字段契约**：`Sleepy.api.embed` 回的是 `vecs`，
+     memory-vec 必须读**同一个名字**。
+     2026-09-23 真实事故：那边写的是 `r.vectors || r.embeddings`（两个都不存在），
+     于是每一次写入都停在「返回里没有向量」——L4 从上线起一条块都没落过库，
+     而失败被 kickSweep 的 catch 吞掉，用户只能看到「还没有索引」。
+     这条**真走一遍** api.embed（假 fetch 回 OpenAI 形状），不是查字符串。 */
+  {
+    S.store.set('vectorApi', { baseUrl: 'https://v.test/v1', model: 'emb-1', apiKey: '' });
+    const realFetch = win.fetch;
+    win.fetch = () => Promise.resolve({
+      ok: true, status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        data: [{ embedding: [0.1, 0.2, 0.3] }, { embedding: [0.4, 0.5, 0.6] }],
+        usage: { total_tokens: 4 }
+      }))
+    });
+    let got = null;
+    try { got = await MV.embedTexts(['甲', '乙']); }
+    finally { win.fetch = realFetch; }
+    chk('W17 真走一次 api.embed 之后 embedTexts 说失败（字段名又和 api.js 对不上了）：' + (got && got.error), got && got.ok === true);
+    chk('W17 向量条数不对（必须与 texts 一一对应）', Array.isArray(got.vectors) && got.vectors.length === 2);
+    chk('W17 单条向量的维度不对', !!(got.vectors[0] && got.vectors[0].length === 3));
+    /* 召回那条线走的是同一个 embedTexts —— 顺手确认它没被换掉 */
+    chk('W17 召回没走同一个 embedTexts（两处各读各的字段 = 迟早又错一次）',
+      /return embedTexts\(\[q\]\)/.test(fs.readFileSync(path.join(ROOT, 'memory-vec.js'), 'utf8')));
+    out.W17 = '2 段 × ' + got.vectors[0].length + ' 维（字段名 vecs 对得上）';
   }
 
   /* W11 静态护栏 */

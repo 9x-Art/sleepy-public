@@ -490,16 +490,22 @@
        这个按钮把过程摊开：清了退避、扫了本岛哪几场、新增几块、谁失败、失败原因。
        （它同时是「重开记忆开关之后的补扫」和「换 embedding 模型之后重建」的入口。） */
     var sweepNote = h('p', 'set-group-note', '');
+    /* 上一次「现在扫一遍」的结果。空索引时那句文案要跟它对得上 ——
+       刚扫失败、列表还是空的，却写「聊几轮之后会自动开始」，
+       用户会以为一切正常（2026-09-23 用户截图里就是这两句并排出现）。 */
+    var lastSweep = null;
     var sweepBtn = button('现在扫一遍（把本岛的聊天补进索引）', 'dl-btn is-primary', function () {
       if (!Sleepy.memoryVec || !Sleepy.memoryVec.sweepIsland) return;
       sweepBtn.disabled = true;
       sweepNote.textContent = '正在扫…（要一条条算向量，聊得多会慢一点）';
       Sleepy.memoryVec.sweepIsland().then(function (r) {
         sweepBtn.disabled = false;
+        lastSweep = r;
         sweepNote.textContent = sweepReport(r);
         renderList2();                 /* 扫完刷新下面那份列表，看得见新增 */
       }, function (e) {
         sweepBtn.disabled = false;
+        lastSweep = { ok: false, why: 'error', error: (e && e.message) || String(e) };
         sweepNote.textContent = '扫的时候出错了：' + ((e && e.message) || e);
       });
     });
@@ -652,8 +658,10 @@
         listWrap.innerHTML = '';
         targets = [];
         if (!list.length) {
-          listWrap.appendChild(h('p', 'set-group-note',
-            '还没有索引 —— 聊几轮之后会自动开始（在后台跑，不挡聊天）。'));
+          /* 扫失败之后这一句必须换掉：空索引 + 「会自动开始」＝ 用户以为没事 */
+          listWrap.appendChild(h('p', 'set-group-note', (lastSweep && !lastSweep.ok)
+            ? '还没扫成 —— 上面那条写着原因，改好之后再点一次「现在扫一遍」。'
+            : '还没有索引 —— 聊几轮之后会自动开始（在后台跑，不挡聊天）。'));
           fillPick();
           return;
         }
