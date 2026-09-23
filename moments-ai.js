@@ -248,13 +248,16 @@
 
   /* ---------------------------- ② 回复 ---------------------------- */
 
-  function pendingAll() {
-    return core.scoped(store.get(PENDING_KEY)) || [];
-  }
+  /* 待回复队列：**读用 scoped、写用全量**（跟 chats 一个纪律）。
+     把过滤过的列表写回去 = 别的岛的待回复被整批抹掉
+     （2026-09-23 审计的 P0：schedule / tick / flush 原本都是这么写的）。 */
+  function allPending() { return store.get(PENDING_KEY) || []; }
+  function pendingAll() { return core.scoped(allPending()); }
   function savePending(list) { store.set(PENDING_KEY, list); }
 
   function schedule(kind, o) {
-    var list = pendingAll();
+    /* 写路径：必须在**全量**上加/存 —— 见 allPending 的注释 */
+    var list = allPending();
     var now = Date.now();
     /* 赞的反应用短延迟（被赞这种事不用装没看见），评论/回帖还是装一会儿 */
     var dMin = o.delayMin != null ? o.delayMin : DELAY_MIN;
@@ -742,7 +745,8 @@
 
     var head = due[0];
     running = true;
-    savePending(list.filter(function (p) { return p.id !== head.id; }));
+    /* 只从**全量**里摘掉这一条 —— 拿 scoped 的结果回写会抹掉别的岛的待回复 */
+    savePending(allPending().filter(function (p) { return p.id !== head.id; }));
     runOne(head, function () {
       running = false;
       if (done) done(1);
@@ -751,14 +755,36 @@
 
   /* 让所有还没到点的立刻到期 —— 只给「我现在就想看」的调试用 */
   function flush() {
+    /* 只让**本岛**的立刻到期，但写回**全量**（否则抹掉别的岛的待回复） */
     var list = pendingAll();
+    var mine = {};
+    list.forEach(function (p) { mine[p.id] = true; });
+    var all = allPending();
     var now = Date.now();
-    list.forEach(function (p) { if (p.dueAt > now) p.dueAt = now; });
-    savePending(list);
+    all.forEach(function (p) { if (mine[p.id] && p.dueAt > now) p.dueAt = now; });
+    savePending(all);
     return list.length;
   }
 
-  function clearPending() { savePending([]); }
+  /* 清「本岛」的待回复 —— **默认语义就该是这个**。
+     以前是 `savePending([])`，等于把别的岛的待回复一起清掉，
+     跟 schedule / tick 那个 P0 是同一类坑（用户 2026-09-23 验收时点名要改）。
+     老条目没有 sandboxId 的（迁移前）按纪律不动（同 core.removeSandbox 的取舍）——
+     scoped() 虽然对每座岛都返回它，但清队列/删房一律不碰没盖章的老数据。
+     返回清掉的条数。 */
+  function clearPending() {
+    var all = allPending();
+    var sid = core.scopeId();
+    /* 还没分房（老状态）：scoped() 本来就返回全部，那「本岛」就是全部 */
+    var keep = sid ? all.filter(function (p) { return p.sandboxId !== sid; }) : [];
+    var gone = all.length - keep.length;
+    if (gone) savePending(keep);
+    return gone;
+  }
+
+  /* 真·全局清空。名字必须写明「全部」，别在别处顺手用它 ——
+     想让某座岛安静下来，用 clearPending()。 */
+  function clearAllPending() { savePending([]); }
 
   var timer = null;
   function start() {
@@ -781,6 +807,7 @@
     tick: tick,
     flush: flush,
     clearPending: clearPending,
+    clearAllPending: clearAllPending,
     setRefresh: setRefresh,
     start: start,
     DELAY_MIN: DELAY_MIN,

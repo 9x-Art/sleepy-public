@@ -391,16 +391,46 @@
 
   /* ---------------------- 导出 / 导入 / 清理 ---------------------- */
 
-  function exportAll() {
+  /* ---- 过程数据 vs 正式用户数据（2026-09-23 用户口径）----
+     过程数据 = **不属于用户正式存档**的中间产物：
+       · 迁移备份 charMemBackup:*（里面是迁移前的记忆原文）
+       · 迁移事务状态 charMemMigrationState
+       · 索引回滚进度 vecCursor* / vecFail:* / vecEpoch
+     它们只在当前设备、只在一次操作的窗口里活着：
+       · **用户导出**（备份文件）不带它们 —— 备份只装正式数据，
+         换设备导入也不该把旧的迁移/恢复过程带回新设备；
+       · **内部回滚快照**（导入失败回滚用）**必须**带上它们 ——
+         不然回滚完存档回来了、进度的账却对不上；
+       · **用户导入**忽略它们 —— 本机的迁移事务状态只由本机的迁移流程管，
+         旧备份不能把它带回来、更不能覆盖掉。（sleepy.rb.* 不在 store 的
+         命名空间里，本来就进不了导出，也不需要在这里排除。） */
+  var PROCESS_KEYS = ['charMemMigrationState', 'vecEpoch'];
+  var PROCESS_PREFIXES = ['charMemBackup:', 'vecCursor', 'vecFail:'];
+
+  function isProcessKey(top) {
+    if (PROCESS_KEYS.indexOf(top) >= 0) return true;
+    for (var i = 0; i < PROCESS_PREFIXES.length; i++) {
+      if (String(top).indexOf(PROCESS_PREFIXES[i]) === 0) return true;
+    }
+    return false;
+  }
+
+  /* scope：'user'（默认，给用户备份）| 'internal-snapshot'（给导入失败回滚） */
+  function exportAll(opts) {
+    var scope = (opts && opts.scope) || 'user';
+    var withProcess = scope === 'internal-snapshot';
     var out = {
       app: 'sleepy',
       schema: SCHEMA,
+      scope: scope,
       exportedAt: new Date().toISOString(),
       data: {}
     };
     var top;
     for (top in DEFAULTS) {
-      if (has(DEFAULTS, top)) out.data[top] = clone(load(top));
+      if (!has(DEFAULTS, top)) continue;
+      if (!withProcess && isProcessKey(top)) continue;
+      out.data[top] = clone(load(top));
     }
 
     /* 兜底：把带 NS 前缀、但**没登记进 DEFAULTS** 的键也带上。
@@ -416,6 +446,7 @@
         if (!k || k.indexOf(NS) !== 0) continue;
         var key = k.slice(NS.length);
         if (!key || has(out.data, key)) continue;
+        if (!withProcess && isProcessKey(key)) continue;   /* 过程数据不进用户备份 */
         out.data[key] = clone(load(key));
       }
     } catch (e) {
@@ -425,10 +456,16 @@
     return out;
   }
 
+  /* 两个具名包装：让调用点一眼看得出拿的是哪一种，不用去记 scope 的字符串 */
+  function exportUserData() { return exportAll({ scope: 'user' }); }
+  function exportInternalSnapshot() { return exportAll({ scope: 'internal-snapshot' }); }
+
   /* 只认自己导出的结构。
      注意：这里是 .json 备份文件，和 D8「禁止导入角色卡 json / 酒馆格式」
-     不是一回事——D8 禁的是外部角色卡格式，这是用户自己的全量存档。 */
-  function importAll(payload) {
+     不是一回事——D8 禁的是外部角色卡格式，这是用户自己的全量存档。
+     canImport 与 importAll 用同一份规则：导入前要先「只校验、不写入」
+     （清空向量库之前必须先确认这个备份是能用的，否则会清完了才发现导不进去）。 */
+  function canImport(payload) {
     if (!isObj(payload) || payload.app !== 'sleepy' || !isObj(payload.data)) {
       return { ok: false, message: '这不是 Sleepy 的备份文件' };
     }
@@ -437,17 +474,28 @@
     if (payload.schema > SCHEMA) {
       return { ok: false, message: '备份版本比当前版本新（schema ' + payload.schema + '）' };
     }
+    return { ok: true };
+  }
+
+  function importAll(payload) {
+    var v = canImport(payload);
+    if (!v.ok) return v;
 
     var written = [];
+    var skipped = [];
     for (var top in payload.data) {
       if (!has(payload.data, top)) continue;
+      /* 用户备份只能写**正式用户数据**：过程数据一律忽略 ——
+         本机的迁移事务状态只由本机的迁移流程管，旧备份不能把它带回来、
+         更不能覆盖掉当前正在跑的那个事务。（用户口径 2026-09-23） */
+      if (isProcessKey(top)) { skipped.push(top); continue; }
       var base = has(DEFAULTS, top) ? clone(DEFAULTS[top]) : null;
       var incoming = unwrapSelf(top, payload.data[top]);
       cache[top] = base !== null ? merge(base, incoming) : clone(incoming);
       if (persist(top)) written.push(top);
     }
     notify('*', true);
-    return { ok: true, keys: written };
+    return { ok: true, keys: written, skipped: skipped };
   }
 
   /* 2.6 存档体积：按 UTF-16 估算，键名也算进去 */
@@ -484,6 +532,33 @@
     cache = {};
     notify('*', true);
     return true;
+  }
+
+  /* 只清**正式用户数据**（过程数据留着）—— 给「用户备份导入」的覆盖语义用。
+     为什么不能用 clearAll：导入一份用户备份不该把本机正在跑的
+     迁移 / 恢复事务状态也一起抹掉（那些由各自的流程自己管，见 isProcessKey）。
+     清空全部数据仍然走 clearAll（那才是「清空一切」，含过程数据）。 */
+  function clearUserData() {
+    var cleared = [];
+    try {
+      var ls = global.localStorage;
+      for (var i = 0; i < ls.length; i++) {
+        var k = ls.key(i);
+        if (!k || k.indexOf(NS) !== 0) continue;
+        var top = k.slice(NS.length);
+        if (isProcessKey(top)) continue;          /* 过程数据留着 */
+        cleared.push(top);
+      }
+      for (var j = 0; j < cleared.length; j++) {
+        delete cache[cleared[j]];
+        ls.removeItem(NS + cleared[j]);
+      }
+    } catch (e) {
+      lastError = { type: 'clear', key: null, message: (e && e.message) || String(e) };
+      return { ok: false, cleared: cleared.length, message: (e && e.message) || String(e) };
+    }
+    notify('*', true);
+    return { ok: true, cleared: cleared.length };
   }
 
   /* ---------------------------- 对外 ---------------------------- */
@@ -824,9 +899,19 @@
     setMany: setMany,
     remove: remove,
     exportAll: exportAll,
+    /* 两种导出作用域（见 isProcessKey 的注释）：
+         exportUserData()         用户备份 —— 排除迁移/恢复/索引过程数据
+         exportInternalSnapshot() 内部回滚快照 —— 必须带上过程数据 */
+    exportUserData: exportUserData,
+    exportInternalSnapshot: exportInternalSnapshot,
+    isProcessKey: isProcessKey,
     importAll: importAll,
+    /* 只校验不写入 —— 导入流程第一步用它（见 canImport 的注释） */
+    canImport: canImport,
     usage: usage,
     clearAll: clearAll,
+    /* 只清正式用户数据（导入覆盖用）—— 过程数据留给各自的流程管 */
+    clearUserData: clearUserData,
     /* 只为测试与排障暴露：正常路径由本文件加载时自动跑一次。
        它是幂等的（已经迁过就直接返回 null），重复调用不会重复建房。 */
     migrateToSandbox: migrateToSandbox,

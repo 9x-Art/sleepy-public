@@ -6054,6 +6054,240 @@ t('角色语音：单一状态源（charVoice 角色层覆盖出厂值）', () =
    判定方式：拦截 console.error —— app.js 的 logError 打的是 '[Sleepy]' 前缀，
    只认这个前缀，避免误伤页面里正常的 console.error。
    跑在最后：它会切 activeSandbox + 真的压页面栈，放前面会打扰其它断言。 */
+console.log('\n--- P0 回归（2026-09-23 审计确认的两个确定性缺陷）---');
+
+/* P0-2：待回复队列的写回必须走全量。
+   修之前 schedule / tick 都是「读 scoped → 原样回写」，换岛时把别的岛的
+   待回复整批抹掉。这条测试走真实数据链路：真建两座岛、真调 schedule / tick
+   （dueAt 由 schedule 自己排，不用外部塞）。
+   flush 的「只处理本岛」与 clearPending 的语义各有一条专门测试锁（见下面两条）。 */
+t('P0-2 待回复队列跨岛不互相抹掉（schedule + tick 都按全量写回）', () => {
+  const prev = S.core.activeSandbox();
+  S.store.set('momentPending', []);
+
+  /* 岛 A：排一条待回复 */
+  const cA = S.core.upsertChar({ name: '回归岛A角色', kind: 'main' }).id;
+  const sbA = S.core.createSandbox('archipelago', '回归岛A');
+  S.core.setSandboxChars(sbA.id, [cA]);
+  S.core.setActiveSandbox(sbA.id);
+  const itemA = S.momentsAI.schedule('replyComment', {
+    momentId: 'regress-a', charId: cA, charName: 'A'
+  });
+
+  /* 岛 B：再排一条 —— 修之前这一步就把岛 A 那条抹掉了 */
+  const cB = S.core.upsertChar({ name: '回归岛B角色', kind: 'main' }).id;
+  const sbB = S.core.createSandbox('archipelago', '回归岛B');
+  S.core.setSandboxChars(sbB.id, [cB]);
+  S.core.setActiveSandbox(sbB.id);
+  const itemB = S.momentsAI.schedule('replyComment', {
+    momentId: 'regress-b', charId: cB, charName: 'B'
+  });
+
+  const idsInStore = () => S.store.get('momentPending').map((p) => p.id);
+
+  try {
+    /* ① schedule 不许抹掉别的岛 */
+    const afterSchedule = idsInStore();
+    if (afterSchedule.indexOf(itemA.id) < 0) {
+      throw new Error('岛 A 的待回复被岛 B 的 schedule 抹掉了（库里只剩 ' + afterSchedule.length + ' 条）');
+    }
+
+    /* ② 在岛 B 上跑一次 tick：只该摘掉岛 B 那条。
+       （先 flush 把本岛那条拉到「现在到期」—— 这里只当**造数据的步骤**用，
+         flush 自己的语义由下一条测试单独锁。
+         momentId 是假的，runOne 找不到动态会立刻 done —— 不碰网络。） */
+    S.momentsAI.flush();
+    S.momentsAI.tick();
+    const afterTick = idsInStore();
+    if (afterTick.indexOf(itemA.id) < 0) {
+      throw new Error('岛 A 的待回复被岛 B 的 tick 抹掉了（库里只剩 ' + afterTick.length + ' 条）');
+    }
+    if (afterTick.indexOf(itemB.id) >= 0) throw new Error('岛 B 自己那条没被 tick 摘掉');
+
+    return { schedule后剩: afterSchedule.length, tick后剩: afterTick.length, 岛A仍在: true, 岛B已摘: true };
+  } finally {
+    /* 断言失败也要收拾干净，别污染后面的全页渲染冒烟 */
+    S.momentsAI.clearAllPending();
+    S.core.removeSandbox(sbA.id);
+    S.core.removeSandbox(sbB.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
+/* flush 的语义锁定（用户 2026-09-23 验收要求单列）：
+   只处理**当前岛** —— 不动别的岛的条目、不改它们的 dueAt、也不整批回写。
+   修之前的写法是「改 scoped 列表 → savePending(它)」，会把别的岛整批抹掉。 */
+t('flush 只处理当前岛：别的岛条目一条不动、内容逐字段不变', () => {
+  const prev = S.core.activeSandbox();
+  S.store.set('momentPending', []);
+
+  const cA = S.core.upsertChar({ name: 'flush岛A角色', kind: 'main' }).id;
+  const sbA = S.core.createSandbox('archipelago', 'flush岛A');
+  S.core.setSandboxChars(sbA.id, [cA]);
+  S.core.setActiveSandbox(sbA.id);
+  const itemA = S.momentsAI.schedule('replyComment', { momentId: 'flush-a', charId: cA, charName: 'A' });
+
+  const cB = S.core.upsertChar({ name: 'flush岛B角色', kind: 'main' }).id;
+  const sbB = S.core.createSandbox('archipelago', 'flush岛B');
+  S.core.setSandboxChars(sbB.id, [cB]);
+  S.core.setActiveSandbox(sbB.id);
+  const itemB = S.momentsAI.schedule('replyComment', { momentId: 'flush-b', charId: cB, charName: 'B' });
+
+  const rowOf = (id) => S.store.get('momentPending').filter((p) => p.id === id)[0];
+
+  try {
+    const aBefore = JSON.stringify(rowOf(itemA.id));
+    const n = S.momentsAI.flush();
+    if (n !== 1) throw new Error('flush 只该动本岛 1 条，实际 ' + n);
+
+    const aAfter = rowOf(itemA.id);
+    if (!aAfter) throw new Error('flush 把别的岛的条目抹掉了');
+    if (JSON.stringify(aAfter) !== aBefore) {
+      throw new Error('flush 改了别的岛条目的内容（dueAt 或其它字段）');
+    }
+    const bAfter = rowOf(itemB.id);
+    if (!bAfter) throw new Error('flush 把本岛的条目弄丢了');
+    if (bAfter.dueAt > Date.now()) throw new Error('flush 没把本岛条目拉到「现在到期」');
+
+    return { flush动了: n, 别岛条目未变: true, 本岛已到期: true };
+  } finally {
+    S.momentsAI.clearAllPending();
+    S.core.removeSandbox(sbA.id);
+    S.core.removeSandbox(sbB.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
+/* clearPending 的语义（用户 2026-09-23 验收要求改）：
+   默认只清**本岛**；要真·全局清空得显式叫 clearAllPending()。
+   以前它是 savePending([])，等于顺手把别的岛的待回复一起清了。 */
+t('clearPending 只清本岛；clearAllPending 才清全部', () => {
+  const prev = S.core.activeSandbox();
+  S.store.set('momentPending', []);
+
+  const cA = S.core.upsertChar({ name: 'clear岛A角色', kind: 'main' }).id;
+  const sbA = S.core.createSandbox('archipelago', 'clear岛A');
+  S.core.setSandboxChars(sbA.id, [cA]);
+  S.core.setActiveSandbox(sbA.id);
+  const itemA = S.momentsAI.schedule('replyComment', { momentId: 'clear-a', charId: cA, charName: 'A' });
+
+  const cB = S.core.upsertChar({ name: 'clear岛B角色', kind: 'main' }).id;
+  const sbB = S.core.createSandbox('archipelago', 'clear岛B');
+  S.core.setSandboxChars(sbB.id, [cB]);
+  S.core.setActiveSandbox(sbB.id);
+  const itemB = S.momentsAI.schedule('replyComment', { momentId: 'clear-b', charId: cB, charName: 'B' });
+
+  try {
+    const gone = S.momentsAI.clearPending();
+    if (gone !== 1) throw new Error('clearPending 只该清本岛 1 条，实际 ' + gone);
+    const ids = S.store.get('momentPending').map((p) => p.id);
+    if (ids.indexOf(itemA.id) < 0) throw new Error('clearPending 把别的岛的待回复清了');
+    if (ids.indexOf(itemB.id) >= 0) throw new Error('clearPending 没清掉本岛那条');
+
+    S.momentsAI.clearAllPending();
+    if (S.store.get('momentPending').length !== 0) throw new Error('clearAllPending 没清干净');
+
+    return { 本岛清掉: gone, 别岛仍在: true, 全清后剩: 0 };
+  } finally {
+    S.momentsAI.clearAllPending();
+    S.core.removeSandbox(sbA.id);
+    S.core.removeSandbox(sbB.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
+/* P0-1：AI 回复里的 [手机] 痕迹要真的落进查手机。
+   调的是 runReply 回复后处理用的**同一个函数**（applyPhoneTrace）。
+   修之前那里引用了不存在的 chat → ReferenceError 被 catch 吞掉，
+   痕迹一条都没落过库，而且全程不报错。这里真建 岛/角色/对话/手机壳。 */
+t('P0-1 回复里的 [手机] 痕迹落进查手机（真实数据链路）', () => {
+  const prev = S.core.activeSandbox();
+  const c = S.core.upsertChar({ name: '回归手机角色', kind: 'main' }).id;
+  const sb = S.core.createSandbox('isle', '回归手机岛');
+  S.core.setSandboxChars(sb.id, [c]);
+  S.core.setActiveSandbox(sb.id);
+
+  const chat = S.chatStore.createChat('回归手机对话', c);
+  const ph = S.phone.ensurePhone(sb.id, c);
+  const before = S.phone.listNotes(ph.id).length;
+
+  const raw = ['今天去跑了步。',
+    '[手机] {"app":"notes","op":"add_note","payload":{"title":"训练","content":"加了组"}}',
+    '晚安。'].join('\n');
+  const r = S.chatApp.applyPhoneTrace(chat.id, raw);
+
+  const notes = S.phone.listNotes(ph.id);
+  const landed = notes.some((n) => n.title === '训练');
+
+  S.core.removeSandbox(sb.id);
+  S.core.setActiveSandbox(prev ? prev.id : null);
+
+  if (!landed) throw new Error('手机痕迹没落库（备忘条数 ' + before + '→' + notes.length + '）');
+  if (r.text.indexOf('[手机]') >= 0) throw new Error('正文里还留着 [手机] 标签');
+  if (r.applied !== 1) throw new Error('落库条数不对：' + r.applied);
+  return { 落库: landed, 条数: before + '→' + notes.length, 标签已剥离: true };
+});
+
+/* P0-1 的静态护栏：那行曾经内联写成 `chat.characterId`（runReply 作用域里
+   根本没有 chat），报错被 catch 吞掉、痕迹全丢。上面那条测试守的是行为，
+   这条守的是「别再把这套逻辑抄回 runReply」这个复发点。 */
+{
+  const pcs = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  ok('P0-1 护栏：回复后处理只调 applyPhoneTrace，不再内联 chat.xxx',
+    pcs.indexOf('applyPhoneTrace(chatId, finalText)') >= 0 &&
+    pcs.indexOf('rootIdOf(chat.characterId)') < 0);
+}
+
+
+
+console.log('\n--- 第二批证据探针（只读断言，不改任何行为）---');
+
+/* 项目 5 的现状证据：charMem 的归属**不一致** ——
+   私聊总结传「皮套」（page-summary.js:253 chat.characterId）、
+   群线下传 root（page-group-offline.js:1946 oid=ownerId）、
+   留痕只列大号（page-memory.js:170 charsOfSandbox）。
+   这里把现状钉成可观测事实，免得后面「以为是一套库」。
+   ⚠️ 本探针只写 charMem 两个键并在 finally 里删掉，不改生产行为。 */
+t('探针：charMem 归属 —— 皮套与 root 落在两个不同的键上', () => {
+  const prev = S.core.activeSandbox();
+  const root = S.core.upsertChar({ name: '探针大号', kind: 'main' }).id;
+  const sub = S.core.upsertChar({ name: '探针皮套', kind: 'sub', parentId: root }).id;
+  const sb = S.core.createSandbox('isle', '探针岛');
+  S.core.setSandboxChars(sb.id, [root]);
+  S.core.setActiveSandbox(sb.id);
+
+  try {
+    /* 走真实写入口（addMemoryItem 会顺手喊 sweepMem；node 无 indexedDB → 静默跳过） */
+    S.memoryStore.addMemoryItem(sub, { kind: 'shared_event', content: '皮套这条' });
+    S.memoryStore.addMemoryItem(root, { kind: 'shared_event', content: '大号这条' });
+
+    const subFile = S.store.get('charMem:' + sub) || { memories: [] };
+    const rootFile = S.store.get('charMem:' + root) || { memories: [] };
+    const twoSeparateKeys = subFile.memories.length === 1 && rootFile.memories.length === 1;
+
+    /* 留痕列出来的人里没有皮套（只有大号 + 岛内 NPC） */
+    const listed = (S.memoryStore.loadIsland().chars || []).map((c) => c.id);
+    const subHiddenFromUI = listed.indexOf(sub) < 0 && listed.indexOf(root) >= 0;
+
+    /* L0 注入也按 charId 走：各自只看得到自己那一套 */
+    const injSub = S.memoryStore.getMemoryInjection(sub) || '';
+    const injRoot = S.memoryStore.getMemoryInjection(root) || '';
+    const injectSplit = injSub.indexOf('皮套这条') >= 0 &&
+      injSub.indexOf('大号这条') < 0 && injRoot.indexOf('大号这条') >= 0;
+
+    if (!twoSeparateKeys) throw new Error('两个 charId 没落在两个键上（前提变了，先看清代码）');
+    if (!subHiddenFromUI) throw new Error('留痕列表居然列了皮套（前提变了）');
+    if (!injectSplit) throw new Error('L0 注入没按 charId 分裂（前提变了）');
+
+    return { 两键独立: true, 皮套留痕不可见: true, 注入按皮套分裂: true };
+  } finally {
+    S.store.remove('charMem:' + sub);
+    S.store.remove('charMem:' + root);
+    S.core.removeSandbox(sb.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
 console.log('\n--- 全页渲染冒烟（每个注册页面真跑一次 render）---');
 t('所有注册页面的 render() 都不触发 app.js 的错误边界', () => {
   const ids = Object.keys(S.registered()).filter((id) => id !== 'home');
@@ -6414,6 +6648,46 @@ t('L4 游标：记消息 id 不记下标 —— 删掉中间一条不会让后�
   return { 正常: 5, 删前面一条: from, 兜底: 5 };
 });
 
+t('L4 空条目：跳过空行、且游标必须越过去（不然原地重扫）', () => {
+  const P = S.memoryVec._pure;
+  const lineOf = (m) => m.text || '';
+  const msgs = [
+    { id: 'm0', timestamp: 1, text: '第一条' },
+    { id: 'm1', timestamp: 2, text: '' },        /* 空 → 该被跳过 */
+    { id: 'm2', timestamp: 3, text: '第三条' }
+  ];
+
+  /* 正常一条一块 */
+  const b0 = P.blockerOne(msgs, 0, lineOf);
+  if (!b0 || b0.end !== 1 || b0.msgIds[0] !== 'm0') throw new Error('m0 该单独成块');
+
+  /* ★ 从空条目起切：跳过它、切到下一条有内容的 —— 而且 end 要越过两者 */
+  const b1 = P.blockerOne(msgs, 1, lineOf);
+  if (!b1) throw new Error('跳过空条目之后该切到 m2');
+  if (b1.msgIds[0] !== 'm2') throw new Error('该切到 m2，实得 ' + b1.msgIds[0]);
+  if (b1.end !== 3) throw new Error('end 该越过 m1+m2（=3），实得 ' + b1.end);
+
+  /* 到底了 → null（没有可进库的了） */
+  if (P.blockerOne(msgs, 3, lineOf) !== null) throw new Error('到底该返回 null');
+
+  /* ★★ 一路全空：必须给 skipTo 让游标推过去，否则停在原地、下次重扫同一段。
+     群聊里「整段都是撤回消息」就是这个形状。 */
+  const empties = [
+    { id: 'e0', timestamp: 1, text: '' },
+    { id: 'e1', timestamp: 2, text: '' }
+  ];
+  const sk1 = P.blockerOne(empties, 0, lineOf);
+  if (!sk1 || sk1.skipTo !== 2) {
+    throw new Error('blockerOne 全空该给 skipTo=2，实得 ' + JSON.stringify(sk1));
+  }
+  const sk2 = P.nextBlock(empties, 0, lineOf);
+  if (!sk2 || sk2.skipTo !== 2) {
+    throw new Error('nextBlock 全空也该给 skipTo=2，实得 ' + JSON.stringify(sk2));
+  }
+
+  return { 跳空: 'm1→m2', 到底: 'null', 全空: 'blockerOne / nextBlock 都给 skipTo' };
+});
+
 t('L4 换 embedding 模型 / 换世界之后：旧块不参与召回，旧结果不复用', () => {
   const P = S.memoryVec._pure;
 
@@ -6440,6 +6714,683 @@ t('L4 换 embedding 模型 / 换世界之后：旧块不参与召回，旧结果
   if (P.bindOk({}, { sandboxId: 'sb1' })) throw new Error('没有绑定信息的老缓存该当无效');
   return { 模型: '按模型隔离', 缓存: '按世界+角色+身份' };
 });
+
+/* ---- 2026-09-23 向量补源（朋友圈 / 日记 / 档案 / 查手机）---- */
+
+t('L4 屏障按 iso 分流：char 按皮套、user 按马甲、none 公开（缺省 both 不变）', () => {
+  const V = S.memoryVec._pure.visibleTo;
+  const byChar = { charId: 'cA', userId: null, iso: 'char' };
+  const byUser = { charId: null, userId: 'u1', iso: 'user' };
+  const open = { charId: null, userId: null, iso: 'none' };
+
+  /* 有屏障时 */
+  if (!V(byChar, 'cA', 'u9', true)) throw new Error('char 块：他自己脑子里的东西，换个马甲也该在');
+  if (V(byChar, 'cB', 'u1', true)) throw new Error('char 块：换了皮套还能看见');
+  if (!V(byUser, 'cA', 'u1', true)) throw new Error('user 块：同一个号该在');
+  if (V(byUser, 'cA', 'u2', true)) throw new Error('user 块：换个号还能看见 —— A 号做的事不该被 B 号关联到');
+  if (!V(open, 'cB', 'u2', true)) throw new Error('none 块：群消息对成员公开，屏障也不该挡');
+
+  /* 无屏障时全放行（他知道我们是同一个人） */
+  [byChar, byUser, open].forEach((b) => {
+    if (!V(b, 'cZ', 'uZ', false)) throw new Error('没屏障时该全放行');
+  });
+
+  /* 缺省 both = 老块行为一字不变 */
+  const legacy = { charId: 'cA', userId: 'u1' };
+  if (!V(legacy, 'cA', 'u1', true)) throw new Error('缺省块：同皮套同马甲该在');
+  if (V(legacy, 'cA', 'u2', true)) throw new Error('缺省块：换马甲不该在');
+  return { char: '按皮套', user: '按马甲', none: '公开', 缺省: 'both（老块不变）' };
+});
+
+t('L4 回源复核：源没了 / 认不出的 kind 一律不召回（fail closed）', () => {
+  const P = S.memoryVec._pure;
+  const C = S.core;
+  const sb = C.createSandbox('isle', '复核测试岛');
+  C.setActiveSandbox(sb.id);
+  const ch = C.upsertChar({ name: '复核角色', kind: 'main' });
+  const u = C.upsertUser({ name: '复核甲' });
+  C.setSandboxChars(sb.id, [ch.id]);
+  C.setSandboxMasks(sb.id, [u.id]);
+
+  const mt = S.momentsTab;
+  const keep = mt.add({ text: '今天吃了拉面', name: '我', maskId: u.id });
+  const gone = mt.add({ text: '这条要删掉', name: '我', maskId: u.id });
+  mt.remove(gone.id);
+
+  const snap = P.buildSnapshot(ch.id, u.id);
+  const mk = (id) => ({ kind: 'moment', itemId: id, charId: null, userId: u.id, iso: 'user' });
+  if (!P.stillVisible(mk(keep.id), ch.id, u.id, snap)) throw new Error('还在的动态该召回');
+  if (P.stillVisible(mk(gone.id), ch.id, u.id, snap)) throw new Error('删掉的动态还能召回');
+  if (P.stillVisible(mk('不存在的id'), ch.id, u.id, snap)) {
+    throw new Error('源定位不到却放行了 —— 该 fail closed');
+  }
+  if (P.stillVisible({ kind: '没见过的kind', msgIds: ['x'] }, ch.id, u.id, snap)) {
+    throw new Error('认不出的 kind 却放行了 —— 该 fail closed');
+  }
+  if (P.stillVisible({ kind: 'moment', itemId: keep.id }, ch.id, u.id, null)) {
+    throw new Error('没有快照却放行了 —— 该 fail closed');
+  }
+  return { 还在: '召回', 删了: '不召回', 认不出: '不召回' };
+});
+
+t('L4 朋友圈方向：iHideFromChar 挡住、iHideChar 不误伤（方向反了是隐私事故）', () => {
+  const P = S.memoryVec._pure;
+  const C = S.core;
+  const sb = C.createSandbox('isle', '朋友圈方向岛');
+  C.setActiveSandbox(sb.id);
+  const ch = C.upsertChar({ name: '方向角色', kind: 'main' });
+  const u = C.upsertUser({ name: '方向甲' });
+  C.setSandboxChars(sb.id, [ch.id]);
+  C.setSandboxMasks(sb.id, [u.id]);
+
+  const m = S.momentsTab.add({ text: '这条不让他看', name: '我', maskId: u.id });
+  const b = { kind: 'moment', itemId: m.id, charId: null, userId: u.id, iso: 'user' };
+
+  if (!P.stillVisible(b, ch.id, u.id, P.buildSnapshot(ch.id, u.id))) {
+    throw new Error('基线不成立：这条本来该看得见');
+  }
+  C.setFeedPerm(ch.id, u.id, 'iHideFromChar', true);
+  if (P.stillVisible(b, ch.id, u.id, P.buildSnapshot(ch.id, u.id))) {
+    throw new Error('「我不让他看我的」设了，却还能召回');
+  }
+  C.setFeedPerm(ch.id, u.id, 'iHideFromChar', false);
+  C.setFeedPerm(ch.id, u.id, 'iHideChar', true);
+  if (!P.stillVisible(b, ch.id, u.id, P.buildSnapshot(ch.id, u.id))) {
+    throw new Error('iHideChar 是「我不看他」，不该反过来挡他看我的动态');
+  }
+  return { iHideFromChar: '挡住（对）', iHideChar: '不误伤（对）' };
+});
+
+t('L4 日记授权：关掉不召回、打开就能召回（历史日记不用补建）', () => {
+  const P = S.memoryVec._pure;
+  const C = S.core;
+  const sb = C.createSandbox('isle', '日记授权岛');
+  C.setActiveSandbox(sb.id);
+  const ch = C.upsertChar({ name: '日记角色', kind: 'main' });
+  const u = C.upsertUser({ name: '日记甲' });
+  C.setSandboxChars(sb.id, [ch.id]);
+  C.setSandboxMasks(sb.id, [u.id]);
+
+  S.store.set('diaries', [C.tagScope({
+    id: 'd1', content: '今天有点累', timestamp: Date.now(),
+    status: 'written', author: 'user', userId: u.id
+  })]);
+  const b = { kind: 'diary', itemId: 'd1', charId: null, userId: u.id, iso: 'user' };
+
+  S.lifeFeed.setDiaryShared(ch.id, false);
+  if (P.stillVisible(b, ch.id, u.id, P.buildSnapshot(ch.id, u.id))) {
+    throw new Error('没授权却召回了我的日记');
+  }
+  S.lifeFeed.setDiaryShared(ch.id, true);
+  if (!P.stillVisible(b, ch.id, u.id, P.buildSnapshot(ch.id, u.id))) {
+    throw new Error('授权打开后历史日记还是召不回 —— 「全量建块 + 召回时过滤」没做到');
+  }
+  return { 关: '不召回', 开: '能召回（不用补建）' };
+});
+
+t('L4 档案状态：只有 active 能召回，pending 不进', () => {
+  const P = S.memoryVec._pure;
+  const C = S.core;
+  const sb = C.createSandbox('isle', '档案状态岛');
+  C.setActiveSandbox(sb.id);
+  const ch = C.upsertChar({ name: '档案角色', kind: 'main' });
+  C.setSandboxChars(sb.id, [ch.id]);
+
+  const MS = S.memoryStore;
+  MS.writeMemoryItems(ch.id, [
+    { kind: 'preference_food', content: '她喜欢吃辣', status: 'active', source: 'ai_summary' },
+    { kind: 'preference_food', content: '她讨厌香菜', status: 'pending', source: 'ai_summary' }
+  ]);
+  const mem = MS.loadCharMemory(ch.id).memories;
+  const act = mem.filter((x) => x.status === 'active')[0];
+  const pend = mem.filter((x) => x.status === 'pending')[0];
+  const snap = P.buildSnapshot(ch.id, null);
+
+  if (!P.stillVisible({ kind: 'mem', msgIds: [act.id] }, ch.id, null, snap)) {
+    throw new Error('active 的档案该能召回');
+  }
+  if (P.stillVisible({ kind: 'mem', msgIds: [pend.id] }, ch.id, null, snap)) {
+    throw new Error('pending 的档案不该能召回');
+  }
+  return { active: '进', pending: '不进' };
+});
+
+t('L4 查手机：三种子源各带 sourceId，备忘和订单的 id 撞了也不串', () => {
+  const P = S.memoryVec._pure;
+  const C = S.core;
+  const sb = C.createSandbox('isle', '手机源岛');
+  C.setActiveSandbox(sb.id);
+  const ch = C.upsertChar({ name: '手机角色', kind: 'main' });
+  C.setSandboxChars(sb.id, [ch.id]);
+
+  const PH = S.phone;
+  const ph = PH.ensurePhone(sb.id, ch.id);
+  const note = PH.addNote(ph, { title: '记一下', content: '买猫粮' });
+  const order = PH.addOrder(ph, { title: '猫粮', price: 99, purpose: '自用' });
+  const snap = P.buildSnapshot(ch.id, null);
+
+  if (!P.stillVisible({ kind: 'phone', sourceId: 'phone:note', msgIds: [note.id] }, ch.id, null, snap)) {
+    throw new Error('备忘该能召回');
+  }
+  if (!P.stillVisible({ kind: 'phone', sourceId: 'phone:shop', msgIds: [order.id] }, ch.id, null, snap)) {
+    throw new Error('订单该能召回');
+  }
+  if (P.stillVisible({ kind: 'phone', sourceId: 'phone:shop', msgIds: [note.id] }, ch.id, null, snap)) {
+    throw new Error('sourceId 没带子类型 —— 备忘的 id 在订单桶里命中了（串源）');
+  }
+  return { note: '进', shop: '进', 串源: '挡住（对）' };
+});
+
+t('L4 素材分片：超长切、短的不切、按段落优先、片间不重叠', () => {
+  const P = S.memoryVec._pure;
+  const segs = P.segText('啊'.repeat(2500), 1000);
+  if (segs.length !== 3) throw new Error('2500 字该切 3 片，实得 ' + segs.length);
+  if (segs.join('').length !== 2500) throw new Error('切片有丢失或重叠：' + segs.join('').length);
+
+  const short = P.segText('很短的一句', 1000);
+  if (short.length !== 1 || short[0] !== '很短的一句') throw new Error('短文本不该切');
+  if (P.segText('   ', 1000).length !== 0) throw new Error('空文本该返回空数组');
+
+  const ps = P.segText('甲'.repeat(600) + '\n\n' + '乙'.repeat(600), 1000);
+  if (ps.length !== 2) throw new Error('该按段落切 2 片，实得 ' + ps.length);
+  if (ps[0].indexOf('乙') >= 0) throw new Error('段落切点没生效（把一句话劈开了）');
+  return { 长: segs.length + '片', 短: '不切', 段落: '优先' };
+});
+
+t('L4 分片条目：blockerOne 带出 itemId/seg，msgIds 记**条目** id（一次删干净）', () => {
+  const P = S.memoryVec._pure;
+  const msgs = [
+    { id: 'd1#0', itemId: 'd1', seg: 0, segCount: 2, timestamp: 1, text: '第一片' },
+    { id: 'd1#1', itemId: 'd1', seg: 1, segCount: 2, timestamp: 1, text: '第二片' }
+  ];
+  const b = P.blockerOne(msgs, 0, (m) => m.text);
+  if (b.itemId !== 'd1' || b.seg !== 0 || b.segCount !== 2) {
+    throw new Error('分片字段没带出来：' + JSON.stringify(b));
+  }
+  if (b.msgIds[0] !== 'd1') throw new Error('msgIds 该记条目 id，实得 ' + b.msgIds[0]);
+  if (b.fromId !== 'd1#0') throw new Error('游标该走片 id（片 id 唯一）');
+  return { itemId: b.itemId, seg: b.seg + '/' + b.segCount, msgIds: b.msgIds[0] };
+});
+
+t('L4 配额分池：白名单外的 kind 一律算对话池（写死，不留「看情况」）', () => {
+  const P = S.memoryVec._pure;
+  ['chat', 'offline', 'group'].forEach((k) => {
+    if (P.poolOf(k) !== 'chat') throw new Error(k + ' 该在对话池');
+  });
+  ['moment', 'diary', 'mem', 'phone'].forEach((k) => {
+    if (P.poolOf(k) !== 'memo') throw new Error(k + ' 该在素材池');
+  });
+  if (P.poolOf('没见过的kind') !== 'chat') throw new Error('认不出的 kind 该归对话池');
+  return { 素材: 'memo（4 类）', 其余: 'chat（白名单）' };
+});
+
+t('L4 池主键：动态挂岛、我写的日记挂账号、档案挂角色，三种前缀不撞', () => {
+  const P = S.memoryVec._pure;
+  const C = S.core;
+  const sb = C.createSandbox('archipelago', '主键推导岛');
+  C.setActiveSandbox(sb.id);
+
+  if (P.islandKey('s1') !== 'island:s1') throw new Error('岛池前缀不对');
+  if (P.userKey('u1') !== 'user:u1') throw new Error('账号池前缀不对');
+  if (P.ownerKeyFor({ kind: 'moment' }) !== 'island:' + sb.id) {
+    throw new Error('动态该挂本岛公共池（一条数据一个块）');
+  }
+  if (P.ownerKeyFor({ kind: 'diary', userId: 'u1' }) !== 'user:u1') {
+    throw new Error('我写的日记该挂账号池（私密内容）');
+  }
+  if (P.ownerKeyFor({ kind: 'mem', charId: 'c1' }) === P.ownerKeyFor({ kind: 'diary', userId: 'u1' })) {
+    throw new Error('档案和日记不该共池');
+  }
+  if (new Set([P.groupKey('g'), P.islandKey('i'), P.userKey('u')]).size !== 3) {
+    throw new Error('池前缀撞了 —— 撞了就是串记忆');
+  }
+  return { 动态: 'island:<岛>', 日记: 'user:<账号>', 档案: 'rootOf(角色)' };
+});
+
+t('L4 素材文本组装：动态是事件包（正文+点赞+评论），订单带用途', () => {
+  const P = S.memoryVec._pure;
+  const txt = P.momentText({
+    text: '楼下的猫又来了', name: '我', at: 1,
+    likes: [{ id: 'l1', kind: 'char', refId: 'cX', name: '顾清和' }],
+    comments: [{ id: 'k1', kind: 'mask', refId: 'u1', name: '我', text: '好可爱' }]
+  });
+  if (txt.indexOf('楼下的猫又来了') < 0) throw new Error('正文没进事件包');
+  if (txt.indexOf('顾清和') < 0) throw new Error('点赞没进事件包');
+  if (txt.indexOf('好可爱') < 0) throw new Error('评论没进事件包');
+
+  const order = P.phoneTextOf('shop', { title: '猫粮', price: 99, purpose: '给猫', status: 'ordered' });
+  if (order.indexOf('猫粮') < 0 || order.indexOf('99') < 0 || order.indexOf('给猫') < 0) {
+    throw new Error('订单文本没带上标题 / 价格 / 用途：' + order);
+  }
+  return { 事件包: '正文+点赞+评论', 订单: '带用途' };
+});
+
+console.log('\n--- 项目 1 复核修订回归（向量回滚 / 快照去留 / 统一清空入口）---');
+
+/* 与第一版一样：这一整段会真清 store、真关召回门，必须写成
+   **一条串行链 + 先等其它异步断言落定**（t() 的异步断言是并发跑的）。
+   段内编号对应复核意见的两批要求：清空侧 6 条 → W1/W2/W3/W4；导入回滚 2 条 → W8/W9。 */
+t('W1–W15 清空六项 / 向量回滚 / 快照去留 / 三向边界（串行）', async () => {
+  const chk = (name, cond) => { if (!cond) throw new Error(name); };
+  while (asyncPending > 1) await new Promise((r) => setTimeout(r, 20));
+
+  const out = {};
+  const B = S.backupApp, MV = S.memoryVec, NS = S.store.NS;
+  const RB = B.RB_KEY;
+  const raw = (k) => localStorageStub.getItem(k);
+  const pending = () => { const v = raw(RB); return v ? JSON.parse(v) : null; };
+  const allKeys = () => {
+    const ks = [];
+    for (let i = 0; i < localStorageStub.length; i++) ks.push(localStorageStub.key(i));
+    return ks;
+  };
+
+  /* ============ 清空侧（复核意见 §三 的 6 条） ============ */
+
+  /* 预置四类敏感过程数据：迁移备份、迁移事务状态、恢复区、索引进度 */
+  S.store.set('charMemBackup:abc', { at: 1, data: { 旧记忆: '原文' } });
+  S.store.set('charMemBackup:def', { at: 2 });
+  S.store.set('charMemMigrationState', { txn: 't1', phase: 'write', status: 'running' });
+  localStorageStub.setItem('sleepy.rb.old', '{"at":1}');
+  localStorageStub.setItem(RB, '{"v":1,"at":1,"local":{"data":{"秘密":1}}}');
+  S.store.set('vecFail:chat-1', { n: 2, until: Date.now() + 60000 });
+  S.store.set('vecCursor3:chat-1', { index: 5, lastId: 'm5', epoch: 0 });
+  S.store.set('vecCursor4:chat-2', { index: 3, lastId: 'm3', epoch: 0 });
+
+  const w1 = await B.clearEverything();
+  const ks = allKeys();
+  chk('W1 迁移备份没清掉：' + ks.filter((k) => k.indexOf('charMemBackup') >= 0).join(','),
+    ks.filter((k) => k.indexOf('charMemBackup') >= 0).length === 0);
+  chk('W1 迁移事务状态没清掉', raw(NS + 'charMemMigrationState') == null);
+  chk('W1 恢复区没清掉：' + ks.filter((k) => k.indexOf('sleepy.rb') >= 0).join(','),
+    ks.filter((k) => k.indexOf('sleepy.rb') >= 0).length === 0);
+  chk('W1 vecFail 没清掉', raw(NS + 'vecFail:chat-1') == null);
+  chk('W1 vecCursor3 没清掉', raw(NS + 'vecCursor3:chat-1') == null);
+  chk('W1 vecCursor4 没清掉（游标清理不该绑版本号）', raw(NS + 'vecCursor4:chat-2') == null);
+  chk('W1 本地数据没清干净：剩 ' + S.store.usage().keys, S.store.usage().keys === 0);
+  out.W1 = '四类敏感过程数据 + 本地数据都清了';
+
+  /* W1b 第二道网：**本地清空这一步失败**时，敏感过程数据仍要被独立清掉。
+     为什么必须有这条：charMemBackup / charMemMigrationState / vecFail / vecCursor
+     都住在 sleepy.v1.* 里，`store.clearAll()` 顺手就把它们删了 ——
+     于是「清空能清掉迁移数据」这件事会被 clearAll 掩盖，
+     一旦 clearAll 自己失败（配额、异常），那些含原文的过程数据就全留下了。 */
+  {
+    S.store.set('charMemBackup:orphan', { at: 9, data: { 原文: 'x' } });
+    S.store.set('charMemMigrationState', { txn: 't2' });
+    S.store.set('vecFail:chat-9', { n: 1 });
+    S.store.set('vecCursor4:chat-9', { index: 2, lastId: 'm2', epoch: 0 });
+    const ca0 = S.store.clearAll;
+    S.store.clearAll = () => { throw new Error('注入的本地清空失败'); };
+    const w1b = await B.clearEverything();
+    S.store.clearAll = ca0;
+    chk('W1b 本地清空失败时，迁移备份还留着', raw(NS + 'charMemBackup:orphan') == null);
+    chk('W1b 本地清空失败时，迁移事务状态还留着', raw(NS + 'charMemMigrationState') == null);
+    chk('W1b 本地清空失败时，vecFail 还留着', raw(NS + 'vecFail:chat-9') == null);
+    chk('W1b 本地清空失败时，vecCursor4 还留着（游标清理绑了版本号？）',
+      raw(NS + 'vecCursor4:chat-9') == null);
+    chk('W1b 本地清空失败却整体报成功', w1b.ok === false);
+    S.store.clearAll();                 /* 真清一次，别把残留带进后面的用例 */
+    out.W1b = 'clearAll 失败时，敏感项仍被独立清掉';
+  }
+
+  /* W2 结果按六项分别报告（结构 + 命名） */
+  const rk = w1.steps.map((s) => s.key).join(',');
+  chk('W2 六项不全：' + rk,
+    rk === 'localStorage,media,vector,migrationArtifacts,restoreArtifacts,memoryCache');
+  chk('W2 结果对象结构不对',
+    !!(w1.result && w1.result.localStorage && w1.result.media && w1.result.vector &&
+      w1.result.migrationArtifacts && w1.result.restoreArtifacts && w1.result.memoryCache &&
+      typeof w1.result.ok === 'boolean'));
+  chk('W2 六项都该过：' + w1.message, w1.ok);
+  out.W2 = { 项: rk, ok: w1.result.ok, 迁移: w1.result.migrationArtifacts.detail };
+
+  /* W3 模拟其中一项失败 → 其他项仍分别报告，不能整体假报成功 */
+  {
+    const av0 = S.media.available, cl0 = S.media.clear;
+    S.media.available = () => Promise.resolve(true);
+    S.media.clear = () => Promise.reject(new Error('注入的图库失败'));
+    const w3 = await B.clearEverything();
+    S.media.available = av0;
+    S.media.clear = cl0;
+    const mediaStep = w3.steps.filter((s) => s.key === 'media')[0];
+    chk('W3 图库失败了却整体报成功（假成功）', w3.ok === false);
+    chk('W3 失败的那一项没被标失败', !!mediaStep && mediaStep.ok === false);
+    chk('W3 失败原因没写清', !!mediaStep && mediaStep.detail.indexOf('注入的图库失败') >= 0);
+    chk('W3 其他项没有各自报告（应照常给 6 项）',
+      w3.steps.length === 6 && !!(w3.result.vector && w3.result.vector.ok === true) &&
+      !!(w3.result.memoryCache && w3.result.memoryCache.ok === true));
+    out.W3 = { ok: w3.ok, 失败项: mediaStep.detail, 其它项仍在: w3.steps.length };
+  }
+
+  /* W4 清空流程不会把**恢复快照**导出到用户备份文件 */
+  localStorageStub.setItem(RB, '{"v":1,"at":1,"local":{"data":{"秘密":1}}}');
+  S.store.set('charMemBackup:zzz', { at: 3 });
+  const exported = Object.keys(S.store.exportAll().data);
+  const leaked = exported.filter((k) => k.indexOf('sleepy.rb') >= 0).length;
+  chk('W4 恢复快照被导进备份文件了：' + leaked + ' 项', leaked === 0);
+  /* 顺带记录（**不断言**）：项目 5 的迁移备份 charMemBackup:* 目前**会**被
+     exportAll 的兜底扫描带进备份文件 —— 它是过程数据还是存档内容，
+     口径要用户定（见交付文档「需要你定」那一节）。 */
+  const migLeak = exported.filter((k) => k.indexOf('charMemBackup') >= 0).length;
+  S.store.remove('charMemBackup:zzz');
+  out.W4 = { 恢复快照外泄: leaked, 迁移备份会被导出: migLeak };
+
+  /* ============ 导入侧：成功 / 校验不过 / 回滚成功 / 回滚失败 ============ */
+
+  /* W5 导入成功：覆盖写 + 快照删除 + 门复位 */
+  S.store.set('w5probe', 'A');
+  const payload = S.store.exportAll();
+  S.store.set('w5probe', 'B');
+  S.store.set('w5ghost', { only: 'B' });
+  const w5 = await B.importEverything(payload);
+  chk('W5 导入失败：' + w5.message, w5.ok);
+  chk('W5 没导入回来', S.store.get('w5probe') === 'A');
+  chk('W5 备份里没有的旧键残留了（这不是覆盖）', raw(NS + 'w5ghost') == null);
+  chk('W5 成功后快照没删', raw(RB) == null);
+  chk('W5 导入结束后召回门还关着', !MV.recallPaused());
+  chk('W5 steps 里没有「保存恢复快照」（方案 A 的快照没接上）',
+    w5.steps.map((s) => s.name).indexOf('保存恢复快照') >= 0);
+  out.W5 = '成功：覆盖 + 快照删除 + 门复位';
+
+  /* W6 校验不过：不写、不清空、不建快照、不往下走 */
+  S.store.set('w6probe', '原样');
+  const w6 = await B.importEverything({ app: 'sleepy', schema: 9999, data: { w6probe: '坏' } });
+  chk('W6 不合法备份竟然导入成功', !w6.ok);
+  chk('W6 校验失败却动了数据', S.store.get('w6probe') === '原样');
+  chk('W6 校验失败却建了快照', raw(RB) == null);
+  chk('W6 校验失败却往下走了：' + w6.steps.map((s) => s.name).join(','),
+    w6.steps.length === 1 && w6.steps[0].name === '校验备份');
+  chk('W6 校验失败后门没复位', !MV.recallPaused());
+  out.W6 = '校验不过：一笔不动';
+
+  /* W7 回滚**成功** → 快照删掉 */
+  {
+    const ia0 = S.store.importAll;
+    S.store.importAll = () => ({ ok: false, message: '注入的写入失败' });
+    S.store.set('w7probe', '现值');
+    const w7 = await B.importEverything({ app: 'sleepy', schema: S.store.SCHEMA, data: { w7probe: '新值' } });
+    S.store.importAll = ia0;
+    chk('W7 写入失败却没报错', !w7.ok);
+    chk('W7 回滚没成功：' + w7.message, w7.restored === 'ok');
+    chk('W7 回滚成功后快照没删', raw(RB) == null);
+    chk('W7 回滚后没把原值恢复回来', S.store.get('w7probe') === '现值');
+    chk('W7 回滚后门还关着', !MV.recallPaused());
+    chk('W7 失败路径不该让调用方 reload', !w7.reload);
+    out.W7 = '回滚成功：快照删除 + 值恢复';
+  }
+
+  /* W8 回滚**失败**（恢复验证不通过）→ 快照必须保留，且结果里明确标记。
+     注入点选 memoryVec.total（回滚链里唯一从**导出面**调的一环）——
+     注入 backupApp 上的同名函数是没用的：模块内部直接引用自己的函数。 */
+  {
+    const t0 = MV.total;
+    const ia0 = S.store.importAll;
+    MV.total = () => Promise.resolve(5);        /* 快照记 0 块、读回来 5 块 → 校验不过 */
+    S.store.importAll = () => ({ ok: false, message: '注入的写入失败' });
+    S.store.set('w8probe', '不许丢');
+    const w8 = await B.importEverything({ app: 'sleepy', schema: S.store.SCHEMA, data: { w8probe: '新' } });
+    S.store.importAll = ia0;
+    MV.total = t0;
+    chk('W8 回滚失败却删了快照（最后一份能回去的数据没了）', raw(RB) != null);
+    chk('W8 结果里没标记恢复失败', w8.restored === 'failed');
+    chk('W8 回滚失败后门还关着', !MV.recallPaused());
+    chk('W8 回滚失败还让调用方 reload', !w8.reload);
+    const meta = pending();
+    chk('W8 快照状态没写成 restore-failed', !!meta && meta.status === 'restore-failed');
+    chk('W8 快照没记下失败原因', !!meta && String(meta.failReason).indexOf('校验') >= 0);
+    chk('W8 提示里没说「恢复未完成」', String(w8.message).indexOf('恢复未完成') >= 0);
+    out.W8 = { 快照保留: true, status: meta.status };
+  }
+
+  /* W9 回滚抛错（恢复向量块时抛）→ 快照同样保留；resumeRestore 能接着处理 */
+  {
+    const sr0 = MV.snapRestore;
+    MV.snapRestore = () => Promise.reject(new Error('注入的恢复抛错'));
+    const w9 = await B.resumeRestore();
+    MV.snapRestore = sr0;
+    chk('W9 恢复抛错却删了快照', raw(RB) != null);
+    chk('W9 恢复抛错却报成功', !w9.ok);
+    chk('W9 恢复抛错后门还关着', !MV.recallPaused());
+    /* 撤掉注入：resumeRestore 应该把这份遗留快照处理掉 */
+    const w9b = await B.resumeRestore();
+    chk('W9 正常 resumeRestore 失败：' + w9b.message, w9b.ok);
+    chk('W9 resumeRestore 成功后快照没删', raw(RB) == null);
+    chk('W9 resumeRestore 后门还关着', !MV.recallPaused());
+    out.W9 = '抛错保留 → 再恢复成功';
+  }
+
+  /* W10 快照链路在无 IDB 环境下的三态（真机才验得到「块真存进去了」） */
+  {
+    const sb = await MV.snapBlocks();
+    chk('W10 无 IDB 时 snapBlocks 应安静成功（0 块）', !!(sb.ok && sb.count === 0));
+    const sr = await MV.snapRestore();
+    chk('W10 无 IDB 时 snapRestore 应安静成功（0 块）', !!(sr.ok && sr.count === 0));
+    const ix = MV.indexState();
+    chk('W10 indexState 结构不对', !!(ix && ix.cursors && ix.fails && typeof ix.epoch === 'number'));
+    S.store.set('vecCursor3:w10', { index: 1, lastId: 'x', epoch: 0 });
+    const ri = MV.restoreIndexState({ cursors: { 'vecCursor3:w10': { index: 9 } }, fails: {}, epoch: 7 });
+    const cur = S.store.get('vecCursor3:w10');
+    chk('W10 restoreIndexState 没写回游标', !!(ri.ok && cur && cur.index === 9));
+    chk('W10 restoreIndexState 没写回世代号', S.store.get('vecEpoch') === 7);
+    S.store.remove('vecCursor3:w10');
+    S.store.set('vecEpoch', 0);
+    out.W10 = '无 IDB 时全线安静通过';
+  }
+
+  /* ============ 三向边界：用户导出 / 内部回滚快照 / 用户导入（口径 ①） ============ */
+
+  /* W12 用户导出排除过程数据；内部回滚快照必须**包含**它们 */
+  {
+    S.store.set('charMemBackup:keep', { at: 5, data: { 原文: '旧记忆' } });
+    S.store.set('charMemMigrationState', { txn: 'tx-1', phase: 'write', status: 'running' });
+    S.store.set('vecFail:c1', { n: 1 });
+    S.store.set('vecCursor3:c1', { index: 4 });
+    S.store.set('vecEpoch', 3);
+    S.store.set('正式数据probe', '我的聊天记录');
+    localStorageStub.setItem(RB, '{"v":1,"local":{"data":{}}}');
+
+    const u = S.store.exportUserData();
+    const uk = Object.keys(u.data);
+    const proc = (k) => k.indexOf('charMemBackup') >= 0 || k === 'charMemMigrationState' ||
+      k.indexOf('sleepy.rb') >= 0 || k.indexOf('vecFail') >= 0 || k.indexOf('vecCursor') >= 0 ||
+      k === 'vecEpoch';
+    chk('W12 用户导出带上了 charMemBackup:*：' + uk.filter((k) => k.indexOf('charMemBackup') >= 0).join(','),
+      uk.filter((k) => k.indexOf('charMemBackup') >= 0).length === 0);
+    chk('W12 用户导出带上了 charMemMigrationState', uk.indexOf('charMemMigrationState') < 0);
+    chk('W12 用户导出带上了 sleepy.rb.*：' + uk.filter((k) => k.indexOf('sleepy.rb') >= 0).join(','),
+      uk.filter((k) => k.indexOf('sleepy.rb') >= 0).length === 0);
+    chk('W12 用户导出带上了索引回滚进度：' + uk.filter(proc).join(','),
+      uk.filter((k) => k.indexOf('vecFail') >= 0 || k.indexOf('vecCursor') >= 0 || k === 'vecEpoch').length === 0);
+    chk('W12 用户导出把正式数据也排除了（那才是丢数据）',
+      uk.indexOf('正式数据probe') >= 0 && u.scope === 'user');
+
+    const snap = S.store.exportInternalSnapshot();
+    const sk = Object.keys(snap.data);
+    chk('W12 内部快照没带上迁移备份', sk.indexOf('charMemBackup:keep') >= 0);
+    chk('W12 内部快照没带上迁移事务状态', sk.indexOf('charMemMigrationState') >= 0);
+    chk('W12 内部快照没带上索引回滚进度（游标/退避/世代）',
+      sk.indexOf('vecCursor3:c1') >= 0 && sk.indexOf('vecFail:c1') >= 0 && sk.indexOf('vecEpoch') >= 0);
+    chk('W12 内部快照没带上正式数据', sk.indexOf('正式数据probe') >= 0);
+    chk('W12 内部快照的作用域没标出来', snap.scope === 'internal-snapshot');
+    out.W12 = { 用户导出项: uk.length, 内部快照项: sk.length };
+  }
+
+  /* W13 带过程数据的**旧备份**导入：只写正式数据，过程数据一律忽略 */
+  {
+    S.store.remove('charMemBackup:keep');
+    const old = {
+      app: 'sleepy', schema: S.store.SCHEMA,
+      data: {
+        '正式数据probe': '备份里的值',
+        'charMemBackup:fromOld': { at: 1, data: { 原文: '旧设备带来的迁移快照' } },
+        'charMemMigrationState': { txn: 'from-old-device', status: 'running' },
+        'vecCursor3:old': { index: 9 },
+        'vecFail:old': { n: 2 },
+        'vecEpoch': 99
+      }
+    };
+    const res = S.store.importAll(old);
+    chk('W13 旧备份导入失败：' + (res.message || ''), res.ok);
+    chk('W13 正式数据没写进去', S.store.get('正式数据probe') === '备份里的值');
+    chk('W13 旧备份的 charMemBackup 被写回来了', raw(NS + 'charMemBackup:fromOld') == null);
+    const m13 = S.store.get('charMemMigrationState');
+    chk('W13 旧备份的迁移事务状态把本机的覆盖了', !m13 || m13.txn !== 'from-old-device');
+    chk('W13 旧备份的世代号被写回来了', S.store.get('vecEpoch') !== 99);
+    chk('W13 旧备份的游标被写回来了', raw(NS + 'vecCursor3:old') == null);
+    chk('W13 被忽略的项没报出来（skipped）', ((res.skipped) || []).length >= 5);
+    out.W13 = { 写入: res.keys.length, 忽略: (res.skipped || []).length };
+  }
+
+  /* W14 走**完整的用户导入流程**：本机的迁移事务状态与迁移备份都不受影响 */
+  {
+    S.store.set('charMemMigrationState', { txn: '本机事务', status: 'running' });
+    S.store.set('charMemBackup:本机', { at: 7, data: { 原文: '本机的迁移快照' } });
+    S.store.set('正式数据probe', '导入前');
+    const payload3 = S.store.exportUserData();
+    S.store.set('正式数据probe', '被改脏了');
+    const w14 = await B.importEverything(payload3);
+    chk('W14 导入失败：' + w14.message, w14.ok);
+    chk('W14 正式数据没被覆盖回来', S.store.get('正式数据probe') === '导入前');
+    const m14 = S.store.get('charMemMigrationState');
+    chk('W14 本机迁移事务状态被导入流程清掉了', !!m14 && m14.txn === '本机事务');
+    chk('W14 本机迁移备份被导入流程清掉了', raw(NS + 'charMemBackup:本机') != null);
+    out.W14 = '导入只碰正式数据';
+  }
+
+  /* W15 方案 A 的回滚完整性：正式数据 + 过程数据 + 索引状态都要回来 */
+  {
+    const ia0 = S.store.importAll;
+    S.store.importAll = () => ({ ok: false, message: '注入的写入失败' });
+    S.store.set('正式数据probe', '回滚前的值');
+    S.store.set('charMemBackup:回滚', { at: 8, data: { 原文: 'x' } });
+    S.store.set('charMemMigrationState', { txn: '回滚事务', status: 'running' });
+    S.store.set('vecCursor3:rb', { index: 6, lastId: 'm6', epoch: 0 });
+    S.store.set('vecFail:rb', { n: 2, until: Date.now() + 60000 });
+    S.store.set('vecEpoch', 4);
+    const w15 = await B.importEverything({ app: 'sleepy', schema: S.store.SCHEMA, data: { '正式数据probe': '新' } });
+    S.store.importAll = ia0;
+    chk('W15 回滚没成功：' + w15.message, w15.restored === 'ok');
+    chk('W15 正式数据没恢复', S.store.get('正式数据probe') === '回滚前的值');
+    chk('W15 迁移备份没恢复', raw(NS + 'charMemBackup:回滚') != null);
+    const m15 = S.store.get('charMemMigrationState');
+    chk('W15 迁移事务状态没恢复', !!m15 && m15.txn === '回滚事务');
+    chk('W15 游标没恢复', !!S.store.get('vecCursor3:rb') && S.store.get('vecCursor3:rb').index === 6);
+    chk('W15 退避记录没恢复', !!S.store.get('vecFail:rb') && S.store.get('vecFail:rb').n === 2);
+    chk('W15 世代号没恢复', S.store.get('vecEpoch') === 4);
+    out.W15 = '回滚：正式数据 + 过程数据 + 索引状态都回来了';
+  }
+
+  /* W11 静态护栏 */
+  {
+    const bak = fs.readFileSync(path.join(ROOT, 'page-backup.js'), 'utf8');
+    const mv = fs.readFileSync(path.join(ROOT, 'memory-vec.js'), 'utf8');
+    const st = fs.readFileSync(path.join(ROOT, 'store.js'), 'utf8');
+    chk('W11 清空没按六项报告', bak.indexOf("'migrationArtifacts'") >= 0 &&
+      bak.indexOf("'restoreArtifacts'") >= 0 && bak.indexOf("'memoryCache'") >= 0);
+    chk('W11 回滚没把向量块 / 索引状态纳进来',
+      bak.indexOf('mv.snapRestore()') >= 0 && bak.indexOf('restoreIndexState') >= 0 &&
+      bak.indexOf('verifyRestore') >= 0);
+    chk('W11 回滚失败时没有保留快照的逻辑',
+      bak.indexOf('keepRestore(') >= 0 && bak.indexOf("status = 'restore-failed'") >= 0);
+    chk('W11 删快照的地方太少（成功 + 回滚成功两处）', bak.split('dropSnapAll()').length - 1 >= 2);
+    chk('W11 importAll 被多处调用（覆盖路径不唯一）', (bak.split('store.importAll(').length - 1) === 1);
+    chk('W11 快照没放独立库（放主库会被 wipeAll 一起清掉）',
+      mv.indexOf("var SNAP_DB = 'sleepy-vec-snap'") >= 0);
+    chk('W11 游标清理绑了版本号（项目 5 换前缀后会漏）',
+      mv.indexOf("top.indexOf('vecCursor') === 0") >= 0);
+    chk('W11 清空失败分支没写清错误提示（不许静默假成功）',
+      bak.indexOf("ctx.toast('没清干净：' + r.message, 'err')") >= 0);
+    chk('W11 store.canImport 没抽出来', st.indexOf('function canImport') >= 0 &&
+      st.indexOf('canImport: canImport') >= 0);
+    /* 三向边界（口径 ①）：导出分作用域、导入前只清正式数据 */
+    chk('W11 导出没分作用域（用户备份会带过程数据）',
+      st.indexOf("var scope = (opts && opts.scope) || 'user'") >= 0 &&
+      st.indexOf('function isProcessKey') >= 0);
+    chk('W11 用户导出按钮没走 exportUserData', bak.indexOf('store.exportUserData()') >= 0);
+    chk('W11 内部回滚快照没走 exportInternalSnapshot', bak.indexOf('store.exportInternalSnapshot()') >= 0);
+    chk('W11 导入前没改用 clearUserData（会把本机迁移状态一起抹掉）',
+      bak.indexOf('store.clearUserData()') >= 0);
+    chk('W11 importAll 没跳过过程数据', st.indexOf('if (isProcessKey(top)) { skipped.push(top); continue; }') >= 0);
+    const pfi = mv.indexOf('function prefetchInto(');
+    chk('W11 召回门没排在 embedTexts 之前（关了门还是花了一次 embedding）',
+      pfi >= 0 && mv.indexOf('if (recallPaused())', pfi) > pfi &&
+      mv.indexOf('if (recallPaused())', pfi) < mv.indexOf('return embedTexts([q])', pfi));
+    out.W11 = '护栏 ok';
+  }
+
+  return out;
+});
+
+/* ---------------- 开屏（splash.js）静态护栏 ----------------
+   这里的每一条都是「很容易被好心改回去」的东西，不是复述实现。
+   开屏是一层纯 WAAPI + DOM 的遮罩，没有可 vm 测的纯逻辑
+   （bootHome 之后才跑、依赖 getComputedStyle 与 Element.animate），
+   所以护栏只能落在源码不变量上。 */
+{
+  const splash = fs.readFileSync(path.join(ROOT, 'splash.js'), 'utf8');
+  /* 注释里会提到 localStorage 之类的词（用来解释**为什么不用它**），先剥掉再查 */
+  const spCode = splash.replace(/\/\*[\s\S]*?\*\//g, '');
+  const cssSp = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  const htmlSp = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const spRule = cssSp.slice(cssSp.indexOf('#splash{'), cssSp.indexOf('#splash .sp-stage'));
+
+  ok('开屏确实被 index.html 加载了（check 只强制 page-*.js，这一条它管不到）',
+    htmlSp.indexOf('src="splash.js"') >= 0);
+
+  ok('开屏遮罩盖住了状态栏（#statusbar 是 z-index:60，遮罩必须更高）',
+    spRule.indexOf('z-index:300') >= 0);
+
+  /* 这条是踩过的坑：style.css 里 [data-motion="off"] *{animation:none!important}
+     只杀 **CSS 动画**，杀不到 **WAAPI**（el.animate 不受 animation 属性管辖）。
+     splash.js 用的是 WAAPI，所以必须自己判断「减少动效」——
+     否则用户明明关掉了动效，冷启动还是被按着看 8 秒。 */
+  ok('开屏自己拦了「减少动效」（WAAPI 不受 CSS 一刀切管辖）',
+    splash.indexOf("getAttribute('data-motion')") >= 0 &&
+    splash.indexOf('prefers-reduced-motion') >= 0);
+
+  /* 页面加载＝冷启动（站内切页走 .page 栈，永远不会重载），所以不需要任何
+     「已播过」标记。加了它只会带来一个副作用：刷新不播 —— 调试时看不到第二遍。 */
+  ok('开屏没有引入任何存储（页面加载就等于冷启动）',
+    spCode.indexOf('localStorage') < 0 &&
+    spCode.indexOf('sessionStorage') < 0);
+
+  ok('开屏可以点击跳过、并且会把自己摘掉',
+    splash.indexOf('pointerdown') >= 0 && splash.indexOf('removeChild') >= 0);
+
+  /* 播完必须**自己**收尾。上一版唯一的出口是 pointerdown：
+     动画停在 sleepy 上再也不动，用户以为卡死了（只能自己想起来点一下）。 */
+  ok('开屏在 sleepy 停住后会自动收尾（不是只能点一下才进桌面）',
+    splash.indexOf('CFG.logoHold') >= 0 &&
+    splash.indexOf('finish(CFG.outFade)') >= 0);
+
+  /* 预遮罩：本文件排在最后执行，所以它执行前浏览器画的是**桌面**。
+     探针实测：桌面 742ms 渲染完、遮罩 881ms 才插进来 —— 那 139ms 就是"闪一下主页"。 */
+  ok('index.html 先写死一层夜色预遮罩，splash.js 把它接管成 #splash',
+    htmlSp.indexOf('id="splash-pre"') >= 0 &&
+    splash.indexOf("getElementById('splash-pre')") >= 0 &&
+    splash.indexOf("el.id = 'splash'") >= 0);
+
+  /* 三条早退（?splash=0 / 没有 #phone / 减少动效）都必须摘掉预遮罩 ——
+     漏一条，「减少动效」的用户冷启动就是一片**永久黑屏**。 */
+  ok('开屏的三条早退路径都摘掉了预遮罩（漏一条就是永久黑屏）',
+    (splash.match(/bail\(\);/g) || []).length >= 3);
+
+  ok('预遮罩有 CSS 兜底（splash.js 没跑起来也不会把人锁在黑屏里）',
+    cssSp.indexOf('#splash-pre{') >= 0 && cssSp.indexOf('@keyframes sp-bail') >= 0);
+
+  /* Cormorant 必须 base64 内嵌：@font-face 指向本地 .woff2 会在 file:// 下被
+     Chrome 的 CORS 拦掉，而本项目「双击 index.html 就能开」是不能破的底线。 */
+  const faceAt = cssSp.indexOf("font-family:'Cormorant Garamond'");
+  ok('sleepy 的字体是 base64 内嵌的（外链字体会在 file:// 下加载不到）',
+    faceAt >= 0 &&
+    cssSp.slice(faceAt, faceAt + 160).indexOf('data:font/woff2;base64,') >= 0);
+
+  ok('开屏的节奏参数集中在 CFG（改时长只动一处）',
+    splash.indexOf('var CFG = {') >= 0 &&
+    splash.indexOf('CFG.gapStart') >= 0 &&
+    splash.indexOf('CFG.logoLead') >= 0);
+}
 
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。

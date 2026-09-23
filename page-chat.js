@@ -540,6 +540,42 @@
     return { text: text, descs: descs };
   }
 
+  /* 手机痕迹（查手机第 2 批）：把回复里的 [手机] 行抽出、校验、落库。
+     搭载在本次回复上，0 新增调用（架构 v1 §5.1）；手机壳不存在就顺手建
+     （幂等、0 API）。返回抽干净的正文 + 落库条数 + 授权卡负载。
+
+     ⚠️ 归属只能从 chatId **现查**：调用方 runReply 的作用域里没有 chat 变量。
+     这里曾经直接写 `chat.characterId`，'use strict' 下抛 ReferenceError，
+     又被外层的 catch 吞掉 —— 手机痕迹一条都没落过库，且全程不报错
+     （2026-09-23 审计 P0）。别再把调用方作用域里的名字抄进来。 */
+  function applyPhoneTrace(chatId, text) {
+    var out = { text: text, applied: 0, granted: null };
+    if (!Sleepy.phone || !Sleepy.core) return out;
+    try {
+      var SC = Sleepy.core;
+      var phScope = SC.scopeId();
+      if (!phScope) return out;
+      var rec = getChat(chatId);
+      var charId = rec && rec.characterId;
+      if (!charId) return out;
+      /* 痕迹挂角色的**大脑**（皮套归大号），口径同记忆 */
+      var phRec = Sleepy.phone.ensurePhone(phScope, SC.rootIdOf(charId) || charId);
+      var pd = Sleepy.phone.extractPhoneDeltas(out.text);
+      out.text = pd.text;
+      pd.list.slice(0, 3).forEach(function (d) {
+        var v = Sleepy.phone.validateDelta(d);
+        if (!v) return;
+        var res = Sleepy.phone.applyDelta(phRec, v, 'delta_' + Date.now().toString(36));
+        if (res) {
+          out.applied++;
+          /* 授权类 delta：他主动递手机 —— 正文提交后再落邀请卡 */
+          if (v.app === 'permission') out.granted = v.data;
+        }
+      });
+    } catch (e) { /* 手机痕迹失败不影响这条回复 */ }
+    return out;
+  }
+
   /* ---------------- 多模态读图（方案-生图 v2 第 2 节） ----------------
      user 发的照片以真图进上下文（OpenAI vision 的 content 数组）。
      buildMessages 是同步的，所以 data URL 要提前备好：
@@ -2497,33 +2533,14 @@
             var gi = extractGenimgs(finalText);
             finalText = gi.text;
 
-            /* 手机痕迹（查手机第 2 批）：[手机] 行抽出、校验、落库 ——
-               搭载在本次回复上，0 新增调用（架构 v1 §5.1）。
-               手机壳不存在就顺手建（幂等、0 API）。失败不拦聊天。 */
-            var pdApplied = 0;
-            if (Sleepy.phone && Sleepy.core) {
-              try {
-                var SC = Sleepy.core;
-                var phScope = SC.scopeId();
-                if (phScope) {
-                  var phOwner = SC.rootIdOf(chat.characterId) || chat.characterId;
-                  var phRec = Sleepy.phone.ensurePhone(phScope, phOwner);
-                  var pd = Sleepy.phone.extractPhoneDeltas(finalText);
-                  finalText = pd.text;
-                  var granted = null;
-                  pd.list.slice(0, 3).forEach(function (d) {
-                    var v = Sleepy.phone.validateDelta(d);
-                    if (!v) return;
-                    var res = Sleepy.phone.applyDelta(phRec, v, 'delta_' + Date.now().toString(36));
-                    if (res) {
-                      pdApplied++;
-                      /* 授权类 delta：他主动递手机 —— 正文提交后再落邀请卡 */
-                      if (v.app === 'permission') granted = v.data;
-                    }
-                  });
-                }
-              } catch (e) { /* 手机痕迹失败不影响这条回复 */ }
-            }
+            /* 手机痕迹（查手机第 2 批）：抽出 [手机] 行、校验、落库。
+               实现在 applyPhoneTrace 里（导出给冒烟走真实路径）——
+               别把这段逻辑挪回这里：这里的作用域没有 chat 变量，
+               曾经因此静默丢掉全部痕迹（见该函数注释）。 */
+            var trace = applyPhoneTrace(chatId, finalText);
+            finalText = trace.text;
+            var pdApplied = trace.applied;
+            var granted = trace.granted;
 
             if (!finalText && !st.names.length && !pt.patted && !gi.descs.length && !pdApplied) {
               ctx.toast('这次没出声，要不再试一次？', 'warn');
@@ -3831,7 +3848,10 @@
        previewOf 不许再冒出「对方回：」前缀、不许漏出 '||' 和 [译]…[/译] 标签；
        chatListTime 是照微信那套（今天给钟点、一周内给星期几）。 */
     previewOf: previewOf,
-    chatListTime: chatListTime
+    chatListTime: chatListTime,
+    /* 手机痕迹的落库入口。导出是为了让冒烟能走**真实函数**验它
+       （回复后处理调的就是这一个）—— 别在别处另写一份实现。 */
+    applyPhoneTrace: applyPhoneTrace
   };
 
 })(window);
