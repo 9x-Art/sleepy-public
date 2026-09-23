@@ -1398,6 +1398,46 @@
         textarea.style.height = Math.max(42, Math.min(textarea.scrollHeight, 120)) + 'px';
       }
 
+      /* ------------------------ 贴着底部 ------------------------
+         用户 2026-09-23：「输入完一句回车发出去，看不到自己发的，要把输入框
+         点掉才看得到」。
+
+         根因不是「消息没渲染」，是**消息区被压矮之后没有人重新贴底**：
+         键盘弹起时 .chat-foot 靠 --kb-inset 把自己抬起来（对），消息区随之
+         矮掉 300px 上下（对），但 `scrollTop` 是**按旧高度算的底部**，浏览器
+         不会替你把它夹到新的最大值 —— 底下正好是刚发出去那条所在的那一截，
+         它就掉到可视区外面（也就是键盘那一边），于是「看不到自己发的」。
+         把键盘一关，消息区涨回去、scrollTop 被夹回最大值 —— 又看得见了。
+         这就是「点掉输入框才看得到」的全部原因（不是焦点问题，也不是没渲染）。
+
+         所以：**只要上一次是「跟着底部走」的，尺寸一变就重新贴底**。
+         用 ResizeObserver 盯 .msg-wrap 自己的盒子高度（键盘收放、输入框长高、
+         加号面板展开、多选条出现，都会让它变高变矮），比去猜「谁改了高度」稳。
+         用户自己往上翻看老消息时 stickBottom 会关掉，不会再把他拽回来。 */
+      var stickBottom = true;
+      var stickRO = null;
+      function atBottom(slack) {
+        return msgWrap.scrollTop >=
+          msgWrap.scrollHeight - msgWrap.clientHeight - (slack || 0);
+      }
+      function toBottom() { msgWrap.scrollTop = msgWrap.scrollHeight; }
+      /* 容差 40px：手指抖一下、橡皮筋回弹不算「翻走了」 */
+      msgWrap.addEventListener('scroll', function () { stickBottom = atBottom(40); });
+      /* 每次进页面都要重新武装（onHide 里会摘掉，见页面注册的 onHide） */
+      function armStick() {
+        if (stickRO) { try { stickRO.disconnect(); } catch (e) { /* 没有就算了 */ } }
+        stickRO = null;
+        if (!global.ResizeObserver) return;   /* 老浏览器：退回「只在重画时贴底」 */
+        stickRO = new global.ResizeObserver(function () {
+          if (!stickBottom) return;
+          /* 同步贴一次不够 —— 键盘动画那几帧里 scrollHeight 可能还是旧值，
+             下一帧再确认一次（用户看到的「少了一截」就是这几帧）。 */
+          toBottom();
+          if (global.requestAnimationFrame) global.requestAnimationFrame(toBottom);
+        });
+        try { stickRO.observe(msgWrap); } catch (e) { stickRO = null; }
+      }
+
       function renderMessages(keepScroll) {
         var prev = msgWrap.scrollTop;
         msgWrap.innerHTML = '';
@@ -1437,7 +1477,7 @@
 
         syncBubbleDots();
         if (keepScroll) msgWrap.scrollTop = prev;
-        else msgWrap.scrollTop = msgWrap.scrollHeight;
+        else { stickBottom = true; toBottom(); }   /* 重画＝用户要看新的那条 */
       }
 
       /* 未读心声光点：只挂在**最后一条** char 气泡的头像上（多了会花）。
@@ -3703,6 +3743,7 @@
       updateSendUI();
       autoGrow();
       renderMessages();
+      armStick();          /* 盯住消息区高度：键盘收放时要重新贴底（见上面那段） */
 
       /* 从留痕「查看原文」跳进来：定位到那条气泡并短暂高亮（第三梯队 5）。
          render 阶段元素还没进文档，所以滚位放在下一个宏任务。 */
@@ -3731,6 +3772,7 @@
         Sleepy.heartbeat.syncDots(chatId);
         autoGrow();                  /* 这时候才真的挂进文档，高度算得准 */
         renderMessages();
+        armStick();                  /* onHide 摘过，回来看的时候得重新武装 */
         if (Sleepy.charAppearance) Sleepy.charAppearance.applyTo(ctx, chatId);
       };
 
@@ -3739,12 +3781,20 @@
       Sleepy.chatDetailRefresh = function () {
         if (ctx.reload) ctx.reload();
       };
+
+      /* 离开这一页时把盯消息区高度的探针摘掉：不摘的话每进一次聊天就留下
+         一个 ResizeObserver 挂在这个页面的节点上（回调还捏着整页闭包）。
+         回来时 ctx.reload → armStick 会重新挂上。 */
+      ctx.detachStick = function () {
+        if (stickRO) { try { stickRO.disconnect(); } catch (e) { /* 没有就算了 */ } stickRO = null; }
+      };
     },
     onShow: function (ctx) { if (ctx.reload) ctx.reload(); },
     onHide: function (ctx) {
       /* 离开页面时把菜单和心声浮层收掉，免得回来还开着。
          长按菜单现在是挂在 #phone 上的浮层（不在 ctx.el 里），所以要显式收。 */
       ui.closePopover();
+      if (ctx.detachStick) ctx.detachStick();
       if (ctx.el) {
         var m = ctx.el.querySelector('.msg-menu.is-open');
         var k = ctx.el.querySelector('.msg-menu-mask.is-open');
