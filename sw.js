@@ -13,6 +13,13 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v118（2026-09-26）：**部署入口修复** —— Cloudflare Pages 平台把 `/index.html`
+   自动 308 → `/`，Android Edge 在 SW 控制下处理该 308 会 ERR_FAILED，导致 PWA
+   桌面图标（manifest.start_url 原为 ./index.html）打不开。修：manifest.start_url/
+   scope/id 全改为 `/`（图标直接启动 `/`，200 正常）；`_redirects` 把 `/index.html`
+   显式重写为 `/` 的 200。跳版本只为让 **新 manifest.json 被重新缓存**（manifest 走
+   SW 缓存优先，不跳版本浏览器永远读旧 start_url）。本版**未动任何 SW 业务逻辑**。
+   → 必须跳版本：manifest.json 改了、新增了 _redirects。
    v117（2026-09-23）：开屏**收尾** —— 播完自动进桌面，另加一层预遮罩。
    · 上一版唯一的出口是 `pointerdown`：动画停在 sleepy 上就再也不动了，
      用户只看到名字停在那儿、以为卡死（得自己想起来点一下）。
@@ -174,7 +181,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v117';
+var CACHE = 'sleepy-v118';
 var CORE = [
   './',
   './index.html',

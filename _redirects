@@ -1,0 +1,6 @@
+# 让 /index.html 直接返回首页（200），不再走 Cloudflare Pages 对 index.html 的 308 → / 规范化。
+# 根因：Pages 平台会把 /index.html 自动 308 到 /，Android Edge 在 SW 控制下处理该 308 会 ERR_FAILED，
+#       导致 PWA 桌面图标（旧 start_url=./index.html）打不开。
+# 修复：把 /index.html 显式重写为 / 的 200 响应（redirects 优先级高于内置 index 规范化），
+#       同时 PWA manifest.start_url 已改为 /，双保险。
+/index.html / 200
