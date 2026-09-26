@@ -550,17 +550,22 @@
      自主生活档位（用户 2026-09-19 定：聊天 char 设置里 关/低/中/高）：
      off=完全离屏不生活；low/mid/high 只影响第 2 批结算闸门的阈值。 */
 
+  /* 项目 5 S6：autoLife 键归 root —— 存取都过 rootIdOf，皮套和大号一个档位。 */
   function autoLifeOf(charId) {
+    var rid = (Sleepy.core && Sleepy.core.rootIdOf)
+      ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
     var all = store.get('charSettings') || {};
-    var mine = (all.byChar && all.byChar[charId]) || {};
+    var mine = (all.byChar && all.byChar[rid]) || {};
     return mine.autoLife || 'off';
   }
 
   function setAutoLife(charId, level) {
+    var rid = (Sleepy.core && Sleepy.core.rootIdOf)
+      ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
     var all = store.get('charSettings') || { byChar: {} };
     all.byChar = all.byChar || {};
-    all.byChar[charId] = all.byChar[charId] || {};
-    all.byChar[charId].autoLife = level;
+    all.byChar[rid] = all.byChar[rid] || {};
+    all.byChar[rid].autoLife = level;
     store.set('charSettings', all);
   }
 

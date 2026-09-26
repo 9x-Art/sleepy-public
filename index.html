@@ -228,6 +228,40 @@
 <script src="splash.js" defer></script>
 
 <script>
+/* boot 期错误可视化（2026-09-26 真机 8-B 白屏排查加的）：
+   手机没控制台，boot 期炸了就是白屏、死无对证 —— 把 JS 错误 / Promise 拒绝
+   画成屏幕顶部的红条，截图即可回交。
+   只在**加载后 20 秒内**画（boot 窗口）；过了窗口的异常走页面错误边界，
+   不打扰正常使用。放在 SW 注册脚本旁边，不改它本身。 */
+window.__bootErr = function (msg) {
+  var b = document.getElementById('boot-err-banner');
+  if (!b) {
+    b = document.createElement('pre');
+    b.id = 'boot-err-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+      'background:#c62828;color:#fff;font:12px/1.5 monospace;padding:8px 10px;' +
+      'white-space:pre-wrap;word-break:break-all;margin:0;';
+    (document.body || document.documentElement).appendChild(b);
+  }
+  b.textContent += '\n' + msg;
+};
+(function () {
+  var bootWindow = Date.now() + 20000;
+  function paint(kind, msg) {
+    if (Date.now() > bootWindow) return;
+    try { window.__bootErr(kind + ' ' + msg); } catch (e) { /* 画不了就算了 */ }
+  }
+  window.addEventListener('error', function (e) {
+    paint('JS错误:', (e && e.message) + ' @' + (e && e.filename ? e.filename.split('/').pop() : '?') + ':' + (e && e.lineno));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    paint('Promise拒绝:', (r && (r.message || r.why)) || String(r));
+  });
+})();
+</script>
+
+<script>
 /* PWA：只在 http(s) 下注册 SW。file:// 双击打开本来就是全离线的，
    注册反而报错；装到主屏（走 serve.js 或托管）之后这里才生效。
 

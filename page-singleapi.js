@@ -484,6 +484,73 @@
     var staleWrap = h('div', 'vec-stale-wrap');
     gIdx.card.appendChild(staleWrap);
 
+    /* ---- 项目 5：DB 升级后的「重建记忆索引」提示（口径 A，2026-09-26）----
+       升级把旧块清了，历史内容不会自动回索引。提示挂在这，用户点了才开始
+       全量扫（不静默花钱）：成功清提示；失败留着原因和重试入口（不假装完成）；
+       重建中防重复点击、显示进度；没点之前新消息照常增量建块。 */
+    var rebuildWrap = h('div', 'vec-stale-wrap');
+    gIdx.card.appendChild(rebuildWrap);
+
+    function renderRebuild() {
+      rebuildWrap.innerHTML = '';
+      var MV = Sleepy.memoryVec;
+      if (!MV || !MV.rebuildState) return;
+      var st = MV.rebuildState();
+      if (!st) return;                       /* 没有提示（已重建完 / 全新装机） */
+      var row = h('div', 'vec-row vec-stale');
+      var main = h('div', 'vec-row-main');
+      var btnLabel = '重建记忆索引';
+      var note = '';
+      var running = false;
+      if (st.state === 'running') {
+        running = true;
+        main.appendChild(h('div', 'vec-row-name', '正在重建记忆索引…'));
+        note = '已扫 ' + (st.rounds || 0) + ' 轮，新增 ' + (st.added || 0) +
+          ' 段 —— 期间可以正常用，新消息不受影响。';
+        btnLabel = '重建中…';
+      } else if (st.state === 'failed') {
+        main.appendChild(h('div', 'vec-row-name', '上次重建没有完成'));
+        note = '原因：' + (st.error || st.why || '未知') +
+          ' —— 已经扫好的部分不会重复算，点下面的按钮接着扫。';
+      } else {
+        main.appendChild(h('div', 'vec-row-name', '记忆索引需要重建'));
+        note = '数据库升级后旧的索引已清空（聊天记录没动）。点「重建」会把历史内容' +
+          '重新扫进索引 —— 要一条条算向量，时间和费用取决于内容量。' +
+          '重建之前，新消息照常进索引，旧内容暂时想不起来。';
+      }
+      var noteEl = h('div', 'vec-row-meta', note);
+      main.appendChild(noteEl);
+      row.appendChild(main);
+      var btn = button(btnLabel, 'dl-btn is-primary', function () {
+        if (running || busyRebuild) return;
+        busyRebuild = true;
+        btn.disabled = true;
+        noteEl.textContent = '正在重建…（要一条条算向量，内容多会久一点）';
+        MV.rebuildIndex({
+          onProgress: function (p) {
+            noteEl.textContent = '正在重建…已扫 ' + p.rounds + ' 轮，新增 ' + p.added + ' 段';
+          }
+        }).then(function (r) {
+          busyRebuild = false;
+          if (r && r.ok) ctx.toast('重建完成：新增 ' + r.added + ' 段', 'ok');
+          else if (r && r.why === 'running') ctx.toast('已经在重建了', 'warn');
+          else ctx.toast('重建没有完成：' + ((r && (r.error || r.why)) || '未知原因'), 'warn');
+          renderRebuild();
+          renderList2();
+        }, function (e) {
+          busyRebuild = false;
+          ctx.toast('重建出错了：' + ((e && e.message) || e), 'warn');
+          renderRebuild();
+          renderList2();
+        });
+      });
+      if (running || busyRebuild) btn.disabled = true;
+      row.appendChild(btn);
+      rebuildWrap.appendChild(row);
+    }
+    var busyRebuild = false;
+    renderRebuild();
+
     /* ---- 「现在扫一遍」----
        为什么要有这个按钮：索引是聊天时**后台悄悄建**的，失败也不吭声 ——
        用户看到的是「聊了半天一条都没有」，然后不知道该怪接口还是怪我。
@@ -649,6 +716,7 @@
 
     function renderList2() {
       renderStale();
+      renderRebuild();     /* 扫描/重建有结果后，重建提示的状态要跟着刷新 */
       listWrap.innerHTML = '';
       if (!Sleepy.memoryVec || !Sleepy.memoryVec.overview) {
         listWrap.appendChild(h('p', 'set-group-note', '向量模块没加载。'));

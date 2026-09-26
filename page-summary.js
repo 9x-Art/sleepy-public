@@ -36,6 +36,13 @@
   function nowIso() { return new Date().toISOString(); }
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 
+  /* 项目 5 S6：charState / openLoops / attentionInbox 的键也归 root ——
+     皮套总结出来的心绪，就是同一个大脑的状态（本地兜底同 page-memory）。 */
+  function rootIdOf(charId) {
+    var C = Sleepy.core;
+    return (C && C.rootIdOf) ? (C.rootIdOf(charId) || charId) : (charId || null);
+  }
+
   /* ---------------------------- 解析 ----------------------------
      卡里的降级顺序最后一步是「裸 JSON / 缺字段用空结构」。
      解析失败返回 null（调用方存原文，可重试）。 */
@@ -150,13 +157,16 @@
     });
 
     if (added || superseded) {
-      file.updatedAt = nowIso();
-      store.set('charMem:' + charId, file);
+      /* 项目 5：写回必须走 memoryStore 的 saveCharMemory —— 它把门牌归到
+         rootId 并给条目补 fromCharId。直写 'charMem:'+charId 会把 root 的
+         档案写到皮套键上（迁移后读不到，等于白总结）。 */
+      M.saveCharMemory(file);
     }
 
-    /* 心绪 / 悬而未决：存下来给心绪面板和主动消息引擎接（先落库） */
+    /* 心绪 / 悬而未决：存下来给心绪面板和主动消息引擎接（先落库；键归 root，S6） */
+    var rid = rootIdOf(charId);
     if (parsed.charState && typeof parsed.charState === 'object') {
-      store.set('charState:' + charId, {
+      store.set('charState:' + rid, {
         feelings: parsed.charState.feelings || [],
         readings: parsed.charState.readings || [],
         unspoken: parsed.charState.unspoken || [],
@@ -164,10 +174,10 @@
       });
     }
     if (Array.isArray(parsed.openLoops) && parsed.openLoops.length) {
-      store.set('openLoops:' + charId, { items: parsed.openLoops.slice(0, 6), updatedAt: nowIso() });
+      store.set('openLoops:' + rid, { items: parsed.openLoops.slice(0, 6), updatedAt: nowIso() });
     }
     if (Array.isArray(parsed.attention) && parsed.attention.length) {
-      store.set('attentionInbox:' + charId, { items: parsed.attention.slice(0, 4), updatedAt: nowIso() });
+      store.set('attentionInbox:' + rid, { items: parsed.attention.slice(0, 4), updatedAt: nowIso() });
     }
 
     return { added: added, superseded: superseded };

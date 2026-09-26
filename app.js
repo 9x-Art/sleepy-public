@@ -778,11 +778,29 @@
      本文件加载时 page-desktop.js 还没跑，registry['home'] 是空的。
      所以由最后注册 home 的那个文件（page-desktop.js）在注册完成后回调。 */
   var homeMounted = false;
+  var homeRetrying = false;
+  var homeRetryTimer = null;
 
   Sleepy.bootHome = function () {
     if (homeMounted) return true;
     var def = registry['home'];
-    if (!def || !home) return false;
+    if (!def || !home) {
+      /* 点火可能跑在注册之前（脚本加载被打断 / 顺序异常时）——
+         装不上桌面就是永久白屏，没有第二次机会（2026-09-26 真机 8-B：
+         手机白屏而桌面端复现不出）。bootHome 幂等，定时重试装上为止。 */
+      if (!homeRetrying) {
+        homeRetrying = true;
+        var tries = 0;
+        homeRetryTimer = setInterval(function () {
+          tries++;
+          if (Sleepy.bootHome() === true || tries > 40) {
+            clearInterval(homeRetryTimer);
+            homeRetrying = false;
+          }
+        }, 250);
+      }
+      return false;
+    }
 
     /* 首页的 body 就是 section 本身（它不需要 .page-inner / .app-head 那套
        标题栏外壳 —— 桌面要占满整屏）。 */

@@ -106,8 +106,11 @@
       '<path d="M9.2 9.6h.01M14.8 9.6h.01"/></svg>'
   };
 
-  /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管 */
-  var PROACTIVE_HINT = '（我这边安静着，没打字，你主动开口说一句吧。）';
+  /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管。
+     2026-09-26 用户真机报：几乎每轮都拿「我继续说的话…」当开场 ——
+     光说「主动开口」模型会拿请示式开场白糊弄，禁令要写进提示本身。 */
+  var PROACTIVE_HINT = '（我这边安静着，没打字。你直接说内容——你自己的事、或你想到的话，' +
+    '不要说「我继续说」「那我说了」这类开场白，也不要问我要不要继续。）';
   /* 同样的「空发送」，但如果**上面最后一句就是我说的**（典型场景：
      我想分气泡连发三条，发完才让他开口），提示词不能再说「我没打字」——
      那会让模型以为我一句话都没说，回一句跟我刚说的完全无关的东西。
@@ -665,9 +668,13 @@
      尊重隐私的话模型自己会无视它。图没备进缓存就先文字占位 + 预载（下轮生效）。 */
   function diaryPeekMsg(charId) {
     if (!charId) return null;
-    var flag = store.get('diaryPeek:' + charId);
+    /* 项目 5 S6：读取侧归 root —— 写侧（page-diary）按 root 递字条，
+       这里原来按脸读，皮套聊天时永远读不到（写 root 读脸的现存 bug）。 */
+    var peekFrom = (Sleepy.core && Sleepy.core.rootIdOf)
+      ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
+    var flag = store.get('diaryPeek:' + peekFrom);
     if (!flag || !flag.entryId) return null;
-    store.set('diaryPeek:' + charId, null);
+    store.set('diaryPeek:' + peekFrom, null);
     var entry = null;
     var list = store.get('diaries') || [];
     for (var i = 0; i < list.length; i++) {
@@ -1196,10 +1203,21 @@
          点名字直接跳朋友圈，少点一下。未读光点跟着名字走。 */
       function ensureHeadAvatar() {
         var headEl = ctx.el.querySelector('.app-head');
-        if (!headEl || headEl.querySelector('.avatar-slot')) return;
-        headEl.classList.add('head-ava-mode');
+        if (!headEl) return;
         var c = getChat(chatId) || {};
         var ch = findCharacter(c.characterId);
+        /* 页面实例是复用的（app.js applyParams 换参数只重画 body）——
+           顶栏是 body 外面共享的那条，旧会话的名字槽还挂在上面。
+           会话没变就留用；变了必须摘掉重挂，不然换了对话、
+           顶栏还挂着上一场人的名字（2026-09-26 用户真机抓到：
+           列表里是「皮套5号」，点进去顶栏是「验收员」）。 */
+        var old = headEl.querySelector('.avatar-slot');
+        if (old) {
+          if (old.getAttribute('data-hb-chat') === chatId) return;
+          /* setActions 可能把头清过一轮：槽可能已经是脱挂状态，别硬摘 */
+          if (old.parentNode) old.parentNode.removeChild(old);
+        }
+        headEl.classList.add('head-ava-mode');
         var slot = Sleepy.heartbeat.mountName(ctx, chatId, ch ? ch.name : '对方');
         slot.classList.add('head-ava-center');
         headEl.appendChild(slot);
@@ -1473,7 +1491,7 @@
             }));
           });
         });
-        if (pending && !pending.targetId) msgWrap.appendChild(pendingBubble());
+        if (pending && !pending.targetId) msgWrap.appendChild(pendingBubbles());
 
         syncBubbleDots();
         if (keepScroll) msgWrap.scrollTop = prev;
@@ -2034,7 +2052,23 @@
         return b;
       }
 
-      function pendingBubble() {
+      /* 流式期间就按气泡协议**渐进拆段**（2026-09-26 用户：
+         「完整的气泡显示所有内容，过一会儿才拆开」—— 以前整条挤一个
+         气泡、落库才拆，观感差）。段数没变只改文本，段数变了才整页重画
+         （onDelta 那边配合，见热路径注释）。 */
+      function pendingSegs() {
+        if (!pending) return [];
+        var s = splitReplyOf(pending.raw);
+        return (s.bubbles && s.bubbles.length) ? s.bubbles : (s.visible ? [s.visible] : []);
+      }
+      function pendingBubbles() {
+        var frag = document.createDocumentFragment();
+        var segs = pendingSegs();
+        if (!segs.length) { frag.appendChild(pendingOne('')); return frag; }
+        segs.forEach(function (t) { frag.appendChild(pendingOne(t)); });
+        return frag;
+      }
+      function pendingOne(text) {
         var bubble = h('div', 'msg-bubble msg-assistant is-pending');
 
         var av = charAvatarEl(getChat(chatId));
@@ -2043,8 +2077,7 @@
 
         var content = h('div', 'msg-body');
         var textEl = h('div', 'msg-text');
-        var shown = pendingVisible();
-        if (shown) textEl.textContent = shown;
+        if (text) textEl.textContent = text;
         else textEl.appendChild(h('span', 'typing-dots', '···'));
         content.appendChild(textEl);
 
@@ -2608,17 +2641,18 @@
             pending.raw += delta;
             /* 流式热路径：以前每个 delta 都整页 renderMessages() ——
                innerHTML='' 把全部消息重画一遍，长对话接近 O(n²)。
-               is-pending 气泡第一帧就画好了（类名、停止键都在它身上），
-               之后只需要更新它那一个 .msg-text。多段气泡的 reroll（罕见）
-               和首帧回落全量，免得几段文本不同步。 */
+               2026-09-26 用户再报「整条挤一个气泡、过一会儿才拆开」——
+               拆段挪进流式：按 || 渐进拆，段数没变只改各段文本，
+               段数变了才整页重画（一条回复顶多重画几次）。
+               is-pending 气泡首帧就画好（类名、停止键都在身上）。 */
+            var segs = pendingSegs();
             var lives = msgWrap.querySelectorAll('.msg-bubble.is-pending .msg-text');
-            if (lives.length === 1) {
-              /* 正文还没吐出来（模型在发心声）就保持打字点，不用重画 */
-              var shown = pendingVisible();
-              if (shown) {
-                lives[0].textContent = shown;
+            if (lives.length === (segs.length || 1)) {
+              if (segs.length) {
+                for (var pi = 0; pi < segs.length; pi++) lives[pi].textContent = segs[pi];
                 msgWrap.scrollTop = msgWrap.scrollHeight;
               }
+              /* 还在打字点（一段正文都没有）就不动 */
             } else {
               renderMessages();
             }

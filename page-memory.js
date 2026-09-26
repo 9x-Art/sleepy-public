@@ -83,30 +83,44 @@
 
   /* ---------------------------- 数据层 ---------------------------- */
 
+  /* 项目 5（2026-09-23 定稿）：长期记忆统一归 **rootId** —— 同一个大脑
+     只有一份记忆，皮套只是「哪张脸产生的」（条目级记 fromCharId）。
+     本地兜底一份 rootIdOf：core 还没挂上时按原样返回，不让记忆层
+     因为脚本加载顺序挂掉（真挂不上时行为与归一前一致）。 */
+  function rootIdOf(charId) {
+    var C = Sleepy.core;
+    return (C && C.rootIdOf) ? (C.rootIdOf(charId) || charId) : (charId || null);
+  }
+
   function islandRaw() {
     return store.get('memoryIsland') || { name: '星屿', type: 'solo', byChar: {} };
   }
+  /* 开关归 root（项目 5 S2）：皮套里关的开关就是大号关的 ——
+     `memoryIsland.byChar` 只有一个键。isNpc 也用 root 判前缀（入参可能是脸）。 */
   function charConfig(charId) {
+    var root = rootIdOf(charId);
     var raw = islandRaw();
-    var c = raw.byChar && raw.byChar[charId];
-    var isNpc = charId.indexOf('npc') === 0;
+    var c = raw.byChar && raw.byChar[root];
+    var isNpc = String(root || '').indexOf('npc') === 0;
     return {
-      charId: charId,
+      charId: root,
       enabled: c ? c.enabled !== false : !isNpc,   /* 主角默认开，NPC 默认关 */
       level: (c && c.level) || (isNpc ? 'off' : 'full'),
       updatedAt: (c && c.updatedAt) || nowIso()
     };
   }
   function setCharConfig(charId, patch) {
+    var root = rootIdOf(charId);
     var raw = islandRaw();
     raw.byChar = raw.byChar || {};
-    raw.byChar[charId] = raw.byChar[charId] || {};
-    Object.keys(patch).forEach(function (k) { raw.byChar[charId][k] = patch[k]; });
-    raw.byChar[charId].updatedAt = nowIso();
+    raw.byChar[root] = raw.byChar[root] || {};
+    Object.keys(patch).forEach(function (k) { raw.byChar[root][k] = patch[k]; });
+    raw.byChar[root].updatedAt = nowIso();
     store.set('memoryIsland', raw);
   }
 
-  function charMemKey(charId) { return 'charMem:' + charId; }
+  /* 键归 root（项目 5 S1）：同一个大脑一个键，皮套传进来也落到 root 门牌 */
+  function charMemKey(charId) { return 'charMem:' + rootIdOf(charId); }
 
   /* 向量索引联动（见 memory-vec 的素材源「记忆档案」）。
      **变更时显式喊一声**（施工卡 §5-3），后台跑、失败不挡档案操作。
@@ -118,15 +132,35 @@
     try { mv[name].apply(mv, args || []); } catch (e) { /* 静默 */ }
   }
   function loadCharMemory(charId) {
-    return store.get(charMemKey(charId)) || {
-      version: '1', charId: charId, updatedAt: nowIso(),
+    var root = rootIdOf(charId);
+    var file = store.get(charMemKey(root));
+    if (file) {
+      /* 归一前写的老文件没有 rootId —— 补上，save 侧要靠它认门牌 */
+      if (!file.rootId) file.rootId = root;
+      return file;
+    }
+    return {
+      version: '1', charId: root, rootId: root, updatedAt: nowIso(),
       understandings: [], memories: []
     };
   }
   function saveCharMemory(file) {
+    /* 迁移写入锁（S7）：总结 / 手工写入在迁移期间一律短路，不写库 */
+    if (isMigrating()) return { ok: false, why: 'migrating' };
+    /* 归 root（S1）：写入方可能拿皮套调进来，门牌一律落 rootId；
+       条目记「哪张脸产生的」（§2.6）：缺了按写入时的脸补，推不出填 null。 */
+    var fromFace = file.charId || null;
+    var root = file.rootId || rootIdOf(fromFace) || fromFace;
+    ['understandings', 'memories'].forEach(function (k) {
+      (file[k] || []).forEach(function (it) {
+        if (it && it.fromCharId === undefined) it.fromCharId = fromFace;
+      });
+    });
+    file.rootId = root;
+    file.charId = root;
     file.updatedAt = nowIso();
-    store.set(charMemKey(file.charId), file);
-    syncIsland(file.charId);
+    store.set(charMemKey(root), file);
+    syncIsland(root);
   }
 
   /* 指令卡第九节 4：每次写入后同步 island 的 pendingCount / latest* */
@@ -217,6 +251,9 @@
     var file = loadCharMemory(charId);
     var m = {
       id: newId('mem'), charId: charId,
+      /* §2.4：写入时能拿到脸就记下（file 已归 root，脸只在这还有；
+         传进来的是大号就记大号自身） */
+      fromCharId: charId || null,
       kind: item.kind || 'custom',
       content: String(item.content || '').trim(),
       source: 'user_manual', sourceRef: '用户手动添加',
@@ -457,11 +494,383 @@
     vecCall('sweepMem', [charId]);
   }
 
+  /* ==================== 项目 5 S7/S8：charMem 归 root 迁移（2026-09-23 定稿） ====================
+     一次性的数据搬家：charMem:<皮套> / memoryIsland.byChar[皮套] /
+     charSettings 的 proactive·autoLife·memory / diaryPeek:<皮套> 全部并到 root。
+     七步流水线（最终设计 §2.8），中断靠持久化的 charMemMigrationState：
+       snapshot → merged → verified → srcDeleted → done（校验不过 → 整份恢复 → failed）
+     启动恢复三分支（S8）：未校验 → 整份恢复后重跑；已校验未删源 → 续完；done → 只清标记。
+     纪律：备份 = 源键 + 目标键双份完整快照；失败不删源键；旧源键删除前不算迁移完成。 */
+
+  var MIG_STATE_KEY = 'charMemMigrationState';
+  var MIG_DONE_KEY = 'charMemMigrated';
+  var MIG_BAK_PREFIX = 'charMemBackup:';
+  var MIG_STATUS_RANK = { invalid: 4, superseded: 3, active: 2, pending: 1 };
+
+  var migLock = false;
+  /* 写入锁（S7 + 补证 2026-09-26）：内存锁管运行中；**持久化的未完成事务
+     也算迁移中** —— 崩溃重启后的头几毫秒里 migLock 还没立起来，而
+     migRecover（整份恢复）还没跑完，这扇窗里的写入会踩到「恢复到一半」的库。
+     phase 只有未完成的那几种算（done 不存在——结束时 state 已被清掉）。 */
+  function isMigrating() {
+    if (migLock) return true;
+    var st = store.get(MIG_STATE_KEY);
+    return !!(st && st.phase && st.phase !== 'done');
+  }
+
+  /* C1 的「完整字段全同」：fromCharId 是迁移时才补的，不参与比较 */
+  function migEntryJson(e) {
+    var o = {};
+    for (var k in e) {
+      if (e.hasOwnProperty(k) && k !== 'fromCharId' && k !== 'migrationOriginalStatus') o[k] = e[k];
+    }
+    return JSON.stringify(o);
+  }
+
+  /* 把 incoming 并进 target 列表（原地改）。冲突规则 §2.4：
+     C1 全同 → 跳过；同 id 不同内容 → 按 C2/C3 挑胜者，
+     败者改新 id + superseded + supersededBy 指向真实胜者 + migrationOriginalStatus。
+     isAnchor 只参与字段合并（OR），不得改变失效状态（锚不复活）。 */
+  function migMergeIntoList(target, incoming, fromFace, report) {
+    (incoming || []).forEach(function (inc) {
+      if (!inc || !inc.id) return;
+      if (inc.fromCharId === undefined) inc.fromCharId = fromFace;
+      var dupIdx = -1;
+      for (var i = 0; i < target.length; i++) {
+        if (target[i] && target[i].id === inc.id) { dupIdx = i; break; }
+      }
+      if (dupIdx < 0) { target.push(inc); return; }
+      var dup = target[dupIdx];
+      if (migEntryJson(dup) === migEntryJson(inc)) { report.c1Skipped++; return; }   /* C1 */
+      var rDup = MIG_STATUS_RANK[dup.status] || 0;
+      var rInc = MIG_STATUS_RANK[inc.status] || 0;
+      var winner, loser;
+      if (rDup !== rInc) {
+        winner = (rDup > rInc) ? dup : inc;          /* C3 跨级：失效优先，不复活 */
+        loser = (winner === dup) ? inc : dup;
+      } else {
+        /* C2 同级：updatedAt 较新者（缺则 createdAt；都缺视为最旧） */
+        var tDup = String(dup.updatedAt || dup.createdAt || '');
+        var tInc = String(inc.updatedAt || inc.createdAt || '');
+        winner = (tDup.localeCompare(tInc) >= 0) ? dup : inc;
+        loser = (winner === dup) ? inc : dup;
+      }
+      winner.isAnchor = !!(winner.isAnchor || loser.isAnchor);
+      var loserStatus = loser.status || 'pending';
+      loser.id = loser.id + '_sup_' + Math.random().toString(36).slice(2, 6);
+      loser.status = 'superseded';
+      loser.supersededBy = winner.id;
+      loser.migrationOriginalStatus = loserStatus;
+      target[dupIdx] = winner;
+      target.push(loser);
+      report.conflicts++;
+    });
+  }
+
+  /* 用备份整份恢复（源键 + 目标键都还原；不是按 id 删） */
+  function migRestore(backup) {
+    var data = (backup && backup.data) || {};
+    Object.keys(data).forEach(function (key) {
+      if (data[key] === undefined) store.remove(key);
+      else store.set(key, data[key]);
+    });
+  }
+
+  /* 备份保留最近 3 份，更早的清掉（§2.7） */
+  function migPruneBackups() {
+    try {
+      var ls = global.localStorage;
+      var ns = (store && store.NS) || 'sleepy.v1.';
+      var keys = [];
+      for (var i = 0; i < ls.length; i++) {
+        var k = ls.key(i);
+        if (k && k.indexOf(ns) === 0 &&
+          k.slice(ns.length).indexOf(MIG_BAK_PREFIX) === 0) keys.push(k.slice(ns.length));
+      }
+      keys.sort();
+      while (keys.length > 3) store.remove(keys.shift());
+    } catch (e) { /* 清不掉就算了 */ }
+  }
+
+  function migrateCharMemToRoot() {
+    if (store.get(MIG_DONE_KEY)) return null;            /* 跑过：幂等，直接返回 */
+    var coreC = Sleepy.core;
+    if (!coreC || !coreC.rootIdOf) return null;          /* core 没就绪：下次加载再跑 */
+    var st = store.get(MIG_STATE_KEY);
+    if (st && st.phase && st.phase !== 'done') return migRecover(st);   /* S8 三分支 */
+    return migRun();
+  }
+
+  /* 启动恢复三分支（S8，最终设计 §2.5） */
+  function migRecover(st) {
+    if (st.phase === 'verified' || st.phase === 'srcDeleted') {
+      /* 已校验未删源 → 续完：删源键 → 落日志 → 清标记 */
+      (st.sources || []).forEach(function (key) { store.remove(key); });
+      store.set(MIG_DONE_KEY, { at: Date.now(), txn: st.txn, recovered: st.phase });
+      store.remove(MIG_STATE_KEY);
+      migPruneBackups();
+      return { ok: true, recovered: st.phase };
+    }
+    /* 未校验（snapshot / merged）或 failed → 用备份整份恢复 → 清标记 → 下次重跑 */
+    var backup = store.get(st.backupKey);
+    if (backup) migRestore(backup);
+    store.remove(MIG_STATE_KEY);
+    return { ok: false, recovered: st.phase, restored: !!backup };
+  }
+
+  function migRun() {
+    var coreC = Sleepy.core;
+    function rootOfOr(id) { return coreC.rootIdOf(id); }
+    var report = { sources: 0, orphans: 0, quarantined: 0, c1Skipped: 0,
+      conflicts: 0, movedIsland: 0, movedSettings: 0, movedPeek: 0, memoryOffMerged: 0 };
+
+    /* ① 读源键：前缀兜底扫（孤儿键也进视野，不猜归属） */
+    var faceIds = [];
+    try {
+      var ls0 = global.localStorage;
+      var ns0 = (store && store.NS) || 'sleepy.v1.';
+      for (var i0 = 0; i0 < ls0.length; i0++) {
+        var k0 = ls0.key(i0);
+        if (!k0 || k0.indexOf(ns0) !== 0) continue;
+        var top0 = k0.slice(ns0.length);
+        if (top0.indexOf('charMem:') === 0) faceIds.push(top0.slice('charMem:'.length));
+      }
+    } catch (e) { /* 扫不了就靠上面的空表（等于没有源） */ }
+
+    var byRoot = {};
+    faceIds.forEach(function (face) {
+      var root = rootOfOr(face);
+      if (!root) { report.orphans++; return; }          /* 孤儿键：隔离计数，不迁不删 */
+      if (root === face) return;                         /* 本来就是 root 门牌：不动 */
+      var raw = store.get('charMem:' + face);
+      if (!raw) return;
+      /* C6：understandings 无写入方、schema 无法核实 → 整键不迁不删，隔离计数 */
+      if ((raw.understandings || []).length) { report.quarantined++; return; }
+      var bucket = byRoot[root] = byRoot[root] || { faces: [], files: {} };
+      bucket.faces.push(face);
+      bucket.files[face] = raw;
+      report.sources++;
+    });
+
+    /* diaryPeek 的源键（要跟着搬到 root 门牌下） */
+    var peekSources = [];
+    try {
+      var ls1 = global.localStorage;
+      var ns1 = (store && store.NS) || 'sleepy.v1.';
+      for (var i1 = 0; i1 < ls1.length; i1++) {
+        var k1 = ls1.key(i1);
+        if (!k1 || k1.indexOf(ns1) !== 0) continue;
+        var top1 = k1.slice(ns1.length);
+        if (top1.indexOf('diaryPeek:') !== 0) continue;
+        var face1 = top1.slice('diaryPeek:'.length);
+        var root1 = rootOfOr(face1);
+        if (!root1 || root1 === face1) continue;
+        if (!store.get(top1)) continue;                  /* 空旗子不用搬 */
+        peekSources.push({ key: top1, root: root1 });
+      }
+    } catch (e) { /* 递不了字条就算了，不挡迁移 */ }
+
+    migLock = true;
+    try {
+      /* ②③ 备份：源键 + 目标键双份完整快照，先落备份再动数据；
+            state（含 sources 清单）在备份落盘后持久化 —— 中断恢复靠它 */
+      var state = {
+        txn: 'mig' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        phase: 'snapshot',
+        backupKey: MIG_BAK_PREFIX + Date.now(),
+        affectedRoots: Object.keys(byRoot),
+        sources: [], startedAt: migNowIso0(), updatedAt: migNowIso0()
+      };
+      var backup = { at: Date.now(), txn: state.txn, data: {} };
+      function keepRaw(key) {
+        if (backup.data[key] === undefined) backup.data[key] = store.get(key);
+      }
+      Object.keys(byRoot).forEach(function (root) {
+        keepRaw('charMem:' + root);                      /* 目标键预像（可能不存在） */
+        byRoot[root].faces.forEach(function (face) {
+          keepRaw('charMem:' + face);
+          state.sources.push('charMem:' + face);
+        });
+      });
+      peekSources.forEach(function (p) {
+        keepRaw(p.key);
+        keepRaw('diaryPeek:' + p.root);
+        state.sources.push(p.key);
+      });
+      keepRaw('memoryIsland');
+      keepRaw('charSettings');
+      store.set(state.backupKey, backup);
+      store.set(MIG_STATE_KEY, state);                   /* phase=snapshot 已持久化 */
+
+      /* ④ 合并并写目标 → merged */
+      var totalBefore = 0, c1Total = 0;
+      Object.keys(byRoot).forEach(function (root) {
+        var bucket = byRoot[root];
+        var target = store.get('charMem:' + root) ||
+          { version: '1', charId: root, updatedAt: migNowIso0(), understandings: [], memories: [] };
+        target.memories = target.memories || [];
+        target.understandings = target.understandings || [];
+        totalBefore += target.memories.length + target.understandings.length;
+        bucket.faces.forEach(function (face) {
+          var src = bucket.files[face];
+          totalBefore += ((src.memories || []).length) + ((src.understandings || []).length);
+          migMergeIntoList(target.memories, src.memories || [], face, report);
+          /* 走到这里的源键 understandings 一定是空的（非空已被隔离），无需合并 */
+        });
+        /* fromCharId 收口：root 自身原有的条目记自身 id（§2.4） */
+        target.memories.forEach(function (m) {
+          if (m && m.fromCharId === undefined) m.fromCharId = root;
+        });
+        target.charId = root;
+        target.rootId = root;
+        target.updatedAt = migNowIso0();
+        store.set('charMem:' + root, target);
+      });
+      c1Total = report.c1Skipped;
+
+      /* memoryIsland.byChar 归 root（enabled false 优先 C8；level 冲突按 C4） */
+      var island = store.get('memoryIsland') || { name: '星屿', type: 'solo', byChar: {} };
+      island.byChar = island.byChar || {};
+      Object.keys(byRoot).forEach(function (root) {
+        var tgt = island.byChar[root] || null;
+        byRoot[root].faces.forEach(function (face) {
+          var c = island.byChar[face];
+          if (!c) return;
+          if (!tgt) tgt = island.byChar[root] = {};
+          if (c.enabled === false) tgt.enabled = false;
+          else if (tgt.enabled === undefined && c.enabled !== undefined) tgt.enabled = c.enabled;
+          if (c.level && (!tgt.level ||
+            String(c.updatedAt || '') .localeCompare(String(tgt.updatedAt || '')) > 0)) {
+            tgt.level = c.level;
+          }
+          if (String(c.updatedAt || '') > String(tgt.updatedAt || '')) tgt.updatedAt = c.updatedAt;
+          delete island.byChar[face];
+          report.movedIsland++;
+        });
+      });
+
+      /* charSettings 字段级归 root（§2.2）：proactive false 优先；
+         autoLife 保守取低档；旧 memory:false 并入 memoryIsland 后摘掉 */
+      var csAll = store.get('charSettings') || { byChar: {} };
+      csAll.byChar = csAll.byChar || {};
+      var lifeRank = { off: 0, low: 1, mid: 2, high: 3 };
+      Object.keys(byRoot).forEach(function (root) {
+        var t = csAll.byChar[root] || null;
+        byRoot[root].faces.forEach(function (face) {
+          var c = csAll.byChar[face];
+          if (!c) return;
+          if (!t) t = csAll.byChar[root] = {};
+          if (c.proactive === false) t.proactive = false;
+          else if (t.proactive === undefined && c.proactive !== undefined) t.proactive = c.proactive;
+          if (c.autoLife && (!t.autoLife ||
+            (lifeRank[c.autoLife] || 0) < (lifeRank[t.autoLife] || 0))) t.autoLife = c.autoLife;
+          if (c.memory === false && island.byChar[root]) {
+            island.byChar[root].enabled = false;
+            report.memoryOffMerged++;
+          }
+          delete csAll.byChar[face];
+          report.movedSettings++;
+        });
+      });
+      store.set('memoryIsland', island);
+      store.set('charSettings', csAll);
+
+      /* diaryPeek：搬旗子（目标已有旗就不动，删源在 ⑥） */
+      peekSources.forEach(function (p) {
+        if (!store.get('diaryPeek:' + p.root)) {
+          store.set('diaryPeek:' + p.root, store.get(p.key));
+          report.movedPeek++;
+        }
+      });
+
+      /* ⑤ 校验：数量守恒 / id 唯一 / supersededBy 指向真实存在的胜者 / fromCharId 齐 */
+      var ok = true, totalAfter = 0;
+      Object.keys(byRoot).forEach(function (root) {
+        if (!ok) return;
+        var f = store.get('charMem:' + root) || {};
+        var seen = {};
+        ((f.memories || []).concat(f.understandings || [])).forEach(function (m) {
+          if (!m || !m.id || seen[m.id]) { ok = false; return; }
+          seen[m.id] = 1;
+          if (m.fromCharId === undefined) ok = false;
+          totalAfter++;
+        });
+        (f.memories || []).forEach(function (m) {
+          if (m && m.status === 'superseded' && m.supersededBy && !seen[m.supersededBy]) ok = false;
+        });
+      });
+      if (totalAfter !== totalBefore - c1Total) ok = false;   /* 守恒（C1 跳过是唯一减量） */
+      if (!ok) {
+        migRestore(backup);                              /* 整份恢复，不删任何源键 */
+        /* §2.5：迁移结束（含失败）必须清 charMemMigrationState ——
+           备份本身就是审计留痕；state 留着会让持久化写入锁卡死整段会话 */
+        store.remove(MIG_STATE_KEY);
+        return { ok: false, why: 'verify-failed', report: report };
+      }
+      state.phase = 'verified';
+      state.updatedAt = migNowIso0();
+      store.set(MIG_STATE_KEY, state);
+
+      /* ⑥ 删源键 → srcDeleted（删除前不算迁移完成） */
+      state.sources.forEach(function (key) { store.remove(key); });
+      state.phase = 'srcDeleted';
+      state.updatedAt = migNowIso0();
+      store.set(MIG_STATE_KEY, state);
+
+      /* ⑦ 落日志 → 清标记 → 清过期备份（保留 3） */
+      store.set(MIG_DONE_KEY, { at: Date.now(), txn: state.txn, report: report });
+      store.remove(MIG_STATE_KEY);
+      migPruneBackups();
+      return { ok: true, report: report, roots: state.affectedRoots.length };
+    } finally {
+      migLock = false;
+    }
+  }
+
+  function migNowIso0() { return new Date().toISOString(); }
+
+  /* 启动迁移的**真实调用链**（两条，不是"下次再跑"）：
+     ① 模块加载时直接喊（index.html 里 core.js:71 先于本文件 :174，正常都就绪）；
+     ② 万一 core 没就绪（脚本顺序被好心调整 / 加载异常）→ 挂 **DOMContentLoaded**
+        再喊一次 —— defer 脚本全部执行完的标准信号，那时 core 一定已挂上。
+     当前加载方式（全部 defer）下 init 必然早于 DOMContentLoaded，链②天然适用；
+     若未来改成动态注入且事件已发生过（readyState 不是 'loading'），事件永远
+     不来 —— 那就用有界的 setTimeout 兜底重试（6 次 × 100ms），仍然不猜不无限等。
+     不就绪就跳过且没有任何后续 = 整个存档的迁移被静默跳过，这是不许发生的。 */
+  function bootMigrate() {
+    var coreC = Sleepy.core;
+    if (!coreC || !coreC.rootIdOf) {
+      try {
+        var ready = (typeof document !== 'undefined' && document.readyState) || 'loading';
+        if (typeof document !== 'undefined' && ready !== 'loading') {
+          /* 事件已经错过：有界重试（给 core 一点异步补位的时间） */
+          var tries = 0;
+          var iv = setInterval(function () {
+            tries++;
+            if ((Sleepy.core && Sleepy.core.rootIdOf) || tries >= 6) {
+              clearInterval(iv);
+              try { migrateCharMemToRoot(); } catch (e) { /* 失败留 state 给下次恢复 */ }
+            }
+          }, 100);
+        } else if (typeof document !== 'undefined' && document.addEventListener) {
+          document.addEventListener('DOMContentLoaded', bootMigrate);
+        }
+      } catch (e) { /* 环境怪的设备：下次冷启动再补（概率趋零的兜底） */ }
+      return null;
+    }
+    return migrateCharMemToRoot();
+  }
+  var __migResult = null;
+  try { __migResult = bootMigrate(); } catch (e) { /* 迁移失败不挡加载；state 留给下次恢复 */ }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.memoryStore = {
     loadIsland: loadIsland,
     loadCharMemory: loadCharMemory,
+    /* 项目 5：外部写方（总结 ingest / 群记忆拆库）统一走这个入口 ——
+       它负责归 root 门牌、补 fromCharId、迁移期间短路 */
+    saveCharMemory: saveCharMemory,
     updateMemoryItem: updateMemoryItem,
     addMemoryItem: addMemoryItem,
     deleteMemoryItem: deleteMemoryItem,
@@ -471,6 +880,14 @@
     toggleAnchor: toggleAnchor,
     updateUnderstandingItem: updateUnderstandingItem,
     updateMemoryConfig: updateMemoryConfig,
+    /* 项目 5：开关归 root 后，设置页（charSettings.memory 下线）直接读写 memoryIsland */
+    charConfig: charConfig,
+    setCharConfig: setCharConfig,
+    /* 项目 5 S7：迁移写入锁 / 迁移入口（冒烟用）与启动结果 */
+    isMigrating: isMigrating,
+    migrateCharMemToRoot: migrateCharMemToRoot,
+    bootMigrate: bootMigrate,
+    migrationResult: function () { return __migResult; },
     getMemoryInjection: getMemoryInjection,
     writeMemoryItems: writeMemoryItems,
     filterByCategory: filterByCategory,

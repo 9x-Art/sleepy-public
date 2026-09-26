@@ -22,6 +22,12 @@
   var store = Sleepy.store;
   var core = Sleepy.core;
 
+  /* 项目 5 S6：候选 / 心绪 / 开关这些键都归 root —— 总结侧（page-summary）
+     已经按 root 落库，读取侧必须用同一把尺子，不然皮套永远读不到。 */
+  function rootIdOf(charId) {
+    return (core && core.rootIdOf) ? (core.rootIdOf(charId) || charId) : (charId || null);
+  }
+
   /* ---------------------------- 设置 ---------------------------- */
 
   var DEF = { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120, deferMin: 90 };
@@ -63,6 +69,7 @@
      来源优先级：attention（关注队列）> openLoops（悬而未决）> unspoken（想说没说）。
      id 用内容指纹 —— 队列刷新后已处理过的不会卷土重来。 */
   function candidatesFor(charId) {
+    var rid = rootIdOf(charId);   /* S6：键归 root，与 page-summary 的写侧对齐 */
     var out = [], seen = {};
     function push(src, it) {
       var text = typeof it === 'string' ? it : (it && (it.content || it.text || it.title)) || '';
@@ -73,11 +80,11 @@
       seen[id] = 1;
       out.push({ id: id, source: src, text: text.slice(0, 120) });
     }
-    var att = store.get('attentionInbox:' + charId);
+    var att = store.get('attentionInbox:' + rid);
     ((att && att.items) || []).forEach(function (x) { push('attention', x); });
-    var loops = store.get('openLoops:' + charId);
+    var loops = store.get('openLoops:' + rid);
     ((loops && loops.items) || []).forEach(function (x) { push('loop', x); });
-    var cs = store.get('charState:' + charId);
+    var cs = store.get('charState:' + rid);
     ((cs && cs.unspoken) || []).forEach(function (x) { push('unspoken', x); });
     return out;
   }
@@ -225,7 +232,7 @@
     user.push('[TRIGGER_CANDIDATES]\n' + g.cands.map(function (c) {
       return '- id=' + c.id + ' 来源=' + c.source + ' 内容：' + c.text;
     }).join('\n'));
-    var cst = store.get('charState:' + charId);
+    var cst = store.get('charState:' + rootIdOf(charId));   /* S6：键归 root */
     if (cst) {
       var bits = [];
       if ((cst.feelings || []).length) bits.push('当前感受：' + cst.feelings.join('；'));

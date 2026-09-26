@@ -59,12 +59,17 @@
      算出来的相似度是「看着像数字的噪音」（同维度不同模型完全静默）；
      ② 群聊要按「成员都在场之后」过滤，得知道块里**第一条**消息的时间。
      四次都是「老块留着会不对」，而**索引本来就可以重建**，
-     所以升级时直接丢掉重来，游标键也跟着换前缀（见 cursorKey）。 */
-  var DB_VER = 5;
+     所以升级时直接丢掉重来，游标键也跟着换前缀（见 cursorKey）。
+     V5 → V6（2026-09-23 项目 5）：块多了 **fromCharId**（哪张脸产生的）——
+     归一后 charId 记 root（同一个大脑），删皮套 / 移出岛要按脸精确清块，
+     没有这个字段就只能误删整个 root 池（方案 §2.6）。 */
+  var DB_VER = 6;
   var STORE = 'vec';
 
-  /* 切块（方案 §3 / v5 §8.2 照抄）：线上 4～6 轮。一轮 = 你我各一条，
-     所以 8～12 条，同时用字数兜底（很长的消息一条就够一块）。 */
+  /* 切块（方案 §3 / v5 §8.2）：线上 4～6 轮。一轮 = 你我各一条，所以 8～12 条。
+     字数是「或」不是「且」（方案原文就是「或」，2026-09-26 用户反馈
+     「600 字对实际聊天难度大」后改回）—— 满 8 条就切（短聊不卡字数），
+     或不满 8 条但合计满 600 字也切（长消息场景）。 */
   var MIN_MSGS = 8;
   var MAX_MSGS = 12;
   var MIN_CHARS = 600;
@@ -142,13 +147,27 @@
       var req;
       try { req = global.indexedDB.open(DB_NAME, DB_VER); }
       catch (e) { reject(e); return; }
-      req.onupgradeneeded = function () {
+      /* onupgradeneeded 收到的是 IDBVersionChangeEvent —— oldVersion 只在
+         **事件**上（IDBOpenDBRequest 本身没有这个字段，req.oldVersion 恒为
+         undefined，判据会永远为假）。必须从 event 取。 */
+      req.onupgradeneeded = function (event) {
         var db = req.result;
+        var oldVer = (event && event.oldVersion != null) ? event.oldVersion : 0;
         /* 升级即重建（理由见 DB_VER 那段）：索引可重建，串记忆不可接受 */
         if (db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE);
         var os = db.createObjectStore(STORE, { keyPath: 'id' });
         os.createIndex('ownerKey', 'ownerKey');
         os.createIndex('at', 'at');
+        /* 权威升级信号（2026-09-26 补证 5）：event.oldVersion 是「库里真有老版本的
+           数据」的铁证 —— localStorage 启发式（detectDbUpgrade）会漏判
+           「旧库里有向量、但 vecCursor/vecFail/vecEpoch 痕迹不存在」的场景
+           （比如浏览器清过 localStorage 而 IDB 还在），漏判 = 老块被升级行为
+           静默清掉且永远不提示重建。这里兜底：老版本升上来必须挂提示。 */
+        if (oldVer > 0 && oldVer < DB_VER && !store.get(REBUILD_KEY)) {
+          store.set(REBUILD_KEY, {
+            state: 'needed', fromVer: oldVer, at: Date.now(), via: 'idb'
+          });
+        }
       };
       req.onsuccess = function () { resolve(req.result); };
       req.onerror = function () { reject(req.error || new Error('打不开向量库')); };
@@ -244,9 +263,12 @@
     if (!barrier) return true;
     var iso = b.iso || 'both';
     if (iso === 'none') return true;
-    if (iso === 'char') return b.charId === charId;
+    /* 项目 5（2026-09-23）：charId 归 root —— 块上记的是「哪个大脑的」，
+       屏障下比较也按大脑比（皮套换了，脑子还是同一个）。
+       静态护栏：这里不许再出现「块的 charId 与入参直接比对」的裸写法（施工卡 §5）。 */
+    if (iso === 'char') return b.charId === rootOf(charId);
     if (iso === 'user') return b.userId === userId;
-    return b.charId === charId && b.userId === userId;
+    return b.charId === rootOf(charId) && b.userId === userId;
   }
 
   /* ------------------- 召回时回源复核（施工卡 §3.2 / §8.7） -------------------
@@ -496,7 +518,10 @@
        { status:'failed', why }    blocked（被别的标签页占着）/ open / clear / residual
      why 分开是刻意的：**不许把「本机没有向量库」和「清理失败」混成一类**
      （前者不是失败，后者必须报错），也**不许失败还提示「已清除」**。 */
-  function wipeAll() {
+  function wipeAll(opts) {
+    /* quiet（重建首轮内部清库用）：不挂重建提示 —— 提示本来就在手里流转
+       （running/成功删键），再挂一份会把状态机搅乱。 */
+    var quiet = !!(opts && opts.quiet);
     /* 清理期间把召回门关上：块正在被删的时候，任何一次召回都可能
        读到「删了一半」的库。调用方（数据与备份页）会把这个门一直关到 reload。 */
     pauseRecall();
@@ -507,6 +532,9 @@
 
     var out = { status: 'failed', why: 'open', total: null };
     return open().then(function () {
+      return total();                       /* 清之前数一下：真有块被清才值得挂重建提示 */
+    }).then(function (before) {
+      out.clearedBlocks = before;
       return withStore('readwrite', function (os) { os.clear(); });
     }).then(function () {
       return total();                       /* 清完必须复核，不能「发了 clear 就当成功」 */
@@ -520,6 +548,13 @@
       out.failsCleared = clearFailures();
       out.status = 'cleared';
       out.epoch = epochNow();
+      /* 清索引的恢复路径（2026-09-26 第四轮补）：真清掉过块就挂重建提示 ——
+         存档里的历史还在，但游标已作废、块已没了，「想找回历史索引」必须
+         用户点头（不静默重扫）。点击前基线挡住旧内容（只增量新消息），
+         点击后从头顶重扫。存档也被清空的情况，重建会扫不到东西、提示自动消。 */
+      if (!quiet && out.clearedBlocks > 0 && !rebuildRec()) {
+        store.set(REBUILD_KEY, { state: 'needed', fromVer: null, at: Date.now(), via: 'wipe' });
+      }
       return done(out);
     }, function (e) {
       var msg = (e && e.message) || String(e);
@@ -833,18 +868,35 @@
      filter: { ownerKey } 或 { charId } 或 { groupId }（必给一个；ownerKey 优先，
              岛级 / 账号级池没有 charId 可推，只能直接给 ownerKey）
              可选 ids       只失效「覆盖到这些消息/条目」的块（删除/编辑/撤回）
-             可选 sourceId  只清某一场会话 / 某个子源（删对话 / 删动态时用） */
+             可选 sourceId  只清某一场会话 / 某个子源（删对话 / 删动态时用）
+             可选 fromCharId / sandboxId（项目 5 §2.6）：三维过滤 ——
+               删皮套 / 移出岛 = forget({ charId: root, fromCharId: 脸, sandboxId: 岛 })。
+               三者给了就必须**全中**才删：同 root 别的脸、别岛的块**必须留下**
+               （没有 fromCharId 这维，删一张皮套就会误删整个 root 池）。 */
+  /* forget 的命中判据（纯函数，T12 冒烟打表）：filter 里**给了的维度必须全中**
+     —— 删皮套 = {charId: root, fromCharId: 脸, sandboxId: 岛}，同 root 的
+     别的脸、别的岛的块必须留下（差一个维度就误删 = 事故）。
+     维度语义：charId 是「哪个大脑」（过 rootOf 归一——老调用方传脸也命中），
+     fromCharId 是「哪张脸」（**精确**比对，不过归一），sandboxId 精确。 */
+  function forgetHit(b, filter) {
+    if (!b) return false;
+    filter = filter || {};
+    if (filter.charId !== undefined && (b.charId || null) !== rootOf(filter.charId)) return false;
+    if (filter.fromCharId !== undefined && (b.fromCharId || null) !== filter.fromCharId) return false;
+    if (filter.sandboxId !== undefined && b.sandboxId !== filter.sandboxId) return false;
+    if (filter.groupId !== undefined && (b.groupId || null) !== filter.groupId) return false;
+    if (filter.userId !== undefined && (b.userId || null) !== filter.userId) return false;
+    if (filter.sourceId && b.sourceId !== filter.sourceId) return false;
+    if (!filter.ids) return true;
+    return blockHitBy(b, filter.ids);   /* 没 msgIds 的块返回 false —— DB 升级即重建，不会有 */
+  }
+
   function forget(filter) {
     filter = filter || {};
     var key = ownerKeyFor(filter);
     if (!key) return Promise.resolve(0);
-    var ids = (filter.ids && filter.ids.length) ? filter.ids : null;
     return scanOwner(key, null).then(function (list) {
-      var hit = list.filter(function (b) {
-        if (filter.sourceId && b.sourceId !== filter.sourceId) return false;
-        if (!ids) return true;
-        return blockHitBy(b, ids);   /* 没 msgIds 的块返回 false —— DB 升级即重建，不会有 */
-      });
+      var hit = list.filter(function (b) { return forgetHit(b, filter); });
       return removeBlocks(hit.map(function (b) { return b.id; }));
     })['catch'](function () { return 0; });
   }
@@ -940,7 +992,8 @@
 
   /* 从 messages[from] 起切一块。返回 { msgs, text, at, end } 或 null
      （null = 剩下的还不够一块，等更多消息再来）。
-     两个上限同时管：条数（8～12）和字数（忙起来会写很长）。 */
+     条数（8～12）和字数（600～1000）是「或」：满 8 条就切，或满 600 字就切；
+     上限谁先到都拦（12 条 / 1000 字）。 */
   function nextBlock(messages, from, lineOf) {
     if (from >= messages.length) return null;   /* 已经到底 = 真没有 */
     var lines = [];
@@ -956,14 +1009,15 @@
       msgs.push(m);
       chars += line.length;
       if (lines.length >= MAX_MSGS || chars >= MAX_CHARS) break;
-      if (lines.length >= MIN_MSGS && chars >= MIN_CHARS) break;
+      if (lines.length >= MIN_MSGS || chars >= MIN_CHARS) break;
     }
     /* 一条有效行都没切到（整段都是该跳过的内容）：
        已经到末尾就**把游标推过去** —— 不然下次从同一位置重扫，永远不前进。
        （这不是假设问题：群聊里「整段都是撤回消息」就会走到这里。） */
     if (!lines.length) return { skipTo: i };   /* 跳过了若干空行到底 → 让游标推过去 */
     /* 走到末尾还不够一块 → 先不切（下次有更多消息再说）。
-       除非已经攒到 MAX_CHARS —— 那时候它是「一条就很长的消息」，值得单独成块。 */
+       「或」语义下字数满 600 早就在循环里切走了，走到这儿必然是条数不够；
+       MAX_CHARS 那半边留着是防御（万一 MIN/MAX 配置倒挂）。 */
     if (i >= messages.length && lines.length < MIN_MSGS && chars < MAX_CHARS) return null;
     return {
       text: lines.join('\n'),
@@ -1015,6 +1069,8 @@
         iso: (m && m.iso) || null,
         charId: (m && m.charId !== undefined) ? m.charId : undefined,
         userId: (m && m.userId !== undefined) ? m.userId : undefined,
+        /* 项目 5 §2.6：适配层在伪条目上放好「哪张脸产生的」，这里原样带出 */
+        fromCharId: (m && m.fromCharId !== undefined) ? m.fromCharId : undefined,
         end: i
       };
     }
@@ -1065,6 +1121,43 @@
     return false;
   }
 
+  /* 块记录的形状只在这里定**一次**（sweepSource / reindexItem 共用；
+     T12 抽样断言的靶子 —— 冒烟里没有 IDB 也能验每个源的归属字段）。
+     归属三字段的口径：
+       ownerKey   召回主键（rootOf / group: / island: / user:）
+       charId     这块属于**哪个大脑**（项目 5：一律 root；群/岛/账号池为 null）
+       fromCharId 这块由**哪张脸**产生（§2.6；群/岛池我的动态/我写的日记为 null）
+     块级（b.*）优先于源级（src.*）—— 动态一个源里两种归属（§8.3）。 */
+  function buildRecs(src, made, res, sid) {
+    return (made || []).map(function (b, i) {
+      return {
+        id: newId(),
+        ownerKey: src.ownerKey,
+        kind: src.kind || 'chat',
+        charId: (b.charId !== undefined ? b.charId : src.charId) || null,
+        fromCharId: (b.fromCharId !== undefined ? b.fromCharId : src.fromCharId) || null,
+        userId: (b.userId !== undefined ? b.userId : src.userId) || null,
+        groupId: src.groupId || null,
+        sourceId: src.sourceId || null,
+        sandboxId: sid,
+        at: b.at,
+        at0: b.at0 || b.at || 0,
+        model: modelNow(),
+        dim: (res.vectors[i] || []).length,
+        fromId: b.fromId,
+        toId: b.toId,
+        msgCount: b.msgCount,
+        msgIds: b.msgIds || [],
+        iso: b.iso || src.iso || 'both',
+        itemId: b.itemId || null,
+        seg: b.seg || 0,
+        segCount: b.segCount || 1,
+        text: b.text,
+        vec: res.vectors[i]
+      };
+    });
+  }
+
   /* 硬过滤：权限/岛/状态靠 blocksOf 那只取本岛本人的块完成；
      这里再排掉「本来就在近期原文窗口里的那些」——
      重复注入会让模型以为是两件事。 */
@@ -1080,8 +1173,9 @@
 
   /* 前缀的版本号**必须跟着 DB_VER 走**：DB 升级会清掉老块，
      而游标存在 localStorage 里活得好好的 —— 不作废它就会以为自己写过了，
-     新块永远不写，索引一直空着（这是最容易漏的一处配套）。 */
-  function cursorKey(chatId) { return 'vecCursor3:' + chatId; }
+     新块永远不写，索引一直空着（这是最容易漏的一处配套）。
+     项目 5：DB_VER 6，前缀 vecCursor4（冒烟有配套断言，见 W19）。 */
+  function cursorKey(chatId) { return 'vecCursor4:' + chatId; }
 
   /* ---- 连续失败就退避（2026-09-22 晚）----
      原来失败只是「游标不推进 ＝ 下轮重试」—— 接口挂了（key 写错、余额空、
@@ -1167,7 +1261,16 @@
       if (!ok) return { ok: false, why: 'noidb' };
       var msgs = src.messages || [];
       var ck = cursorKey(src.cursorId);
+      var rawCur = store.get(ck);
       var from = readCursor(ck, msgs);
+      /* 升级后的「基线」（项目 5 口径 A 第 6 条，2026-09-26 拍板）：
+         游标不存在 + 提示还没清掉 + 不在重建中 → 旧历史**不静默重扫**
+         （一个向量的钱都不花、也不承诺能召回），但**升级之后**新产生的内容
+         照常增量建块 —— 基线 = 升级时刻之后的第一条。 */
+      if (!rawCur && rebuildPending() && !rebuildRunning()) {
+        from = baselineIndex(msgs, rebuildAt());
+        writeCursor(ck, msgs, from);
+      }
       var made = [];
       for (var n = 0; n < SWEEP_MAX; n++) {
         /* blocker 默认是对话的 nextBlock（8～12 条合并成一块）；非对话源
@@ -1194,39 +1297,7 @@
           return { ok: false, why: 'embed', error: res.error };
         }
         var sid = scopeNow();
-        var recs = made.map(function (b, i) {
-          return {
-            id: newId(),
-            /* ownerKey 是召回主键；charId / userId 记「这条数据属于谁」。
-               照 core 记忆那套「四元组可溯源」的规矩，别省。 */
-            ownerKey: src.ownerKey,
-            kind: src.kind || 'chat',
-            /* 块级优先（施工卡 §8.3）：一个源里不同条目的归属可能不同
-               （动态有「角色发的」和「我发的」两种），blocker 带出来就用它。 */
-            charId: (b.charId !== undefined ? b.charId : src.charId) || null,
-            userId: (b.userId !== undefined ? b.userId : src.userId) || null,
-            groupId: src.groupId || null,
-            sourceId: src.sourceId || null,
-            sandboxId: sid,
-            at: b.at,
-            at0: b.at0 || b.at || 0,
-            /* 哪台模型的产物。换模型后这些块**不再参与召回**（见 sameModel）——
-               不同模型的向量空间不可比，比出来的相似度是噪音。 */
-            model: modelNow(),
-            dim: (res.vectors[i] || []).length,
-            fromId: b.fromId,
-            toId: b.toId,
-            msgCount: b.msgCount,
-            msgIds: b.msgIds || [],
-            /* 屏障下的隔离口径（缺省 both = 老块行为不变）+ 分片归属（§8.6） */
-            iso: b.iso || src.iso || 'both',
-            itemId: b.itemId || null,
-            seg: b.seg || 0,
-            segCount: b.segCount || 1,
-            text: b.text,
-            vec: res.vectors[i]
-          };
-        });
+        var recs = buildRecs(src, made, res, sid);
         return Promise.all(recs.map(putBlock)).then(function () {
           clearFail(src.cursorId);
           writeCursor(ck, msgs, from);
@@ -1241,13 +1312,16 @@
     });
   }
 
-  /* 线上私聊（签名不变 —— 调用方已经在用） */
+  /* 线上私聊（签名不变 —— 调用方已经在用）。
+     块的 charId 归 root（项目 5 S3）：屏障下 visibleTo 按大脑比对；
+     名字仍按**原来的脸**取（写进块文本的是这张脸说过的话）。 */
   function sweep(charId, userId, chat) {
     if (!chat || !charId) return Promise.resolve({ ok: false, why: 'off' });
     var name = nameOfChar(charId);
     return sweepSource({
       ownerKey: rootOf(charId), kind: 'chat', cursorId: chat.id,
-      messages: chat.messages, charId: charId, userId: userId, sourceId: chat.id,
+      messages: chat.messages, charId: rootOf(charId), userId: userId, sourceId: chat.id,
+      fromCharId: charId,   /* 块的大脑是 root，但产生它的是这张脸（§2.6） */
       lineOf: function (m) { return msgLine(m, name); }
     });
   }
@@ -1260,7 +1334,8 @@
     var O = Sleepy.offlineStore;
     return sweepSource({
       ownerKey: rootOf(charId), kind: 'offline', cursorId: 'off:' + session.id,
-      messages: session.messages, charId: charId, userId: userId, sourceId: session.id,
+      messages: session.messages, charId: rootOf(charId), userId: userId, sourceId: session.id,
+      fromCharId: charId,
       lineOf: function (m) {
         return (O && O.messageText) ? O.messageText(m, name) : String(m.text || '');
       }
@@ -1359,10 +1434,13 @@
           itemId: m.id, seg: i, segCount: arr.length,
           timestamp: m.at || 0, text: t,
           /* 归属（§8.3）：角色发的记角色（iso='char'），我发的记账号（iso='user'）——
-             屏障下「A 号发的动态」不该被 B 号身份关联到。 */
+             屏障下「A 号发的动态」不该被 B 号身份关联到。
+             项目 5 S3：charId 归 root（visibleTo 的 char 分支按大脑比），
+             哪张脸发的由 fromCharId 记（见 sweepSource 的 fromCharId）。 */
           iso: m.characterId ? 'char' : 'user',
-          charId: m.characterId || null,
-          userId: m.maskId || null
+          charId: m.characterId ? rootOf(m.characterId) : null,
+          userId: m.maskId || null,
+          fromCharId: m.characterId || null   /* 哪张脸发的（§2.6） */
         });
       });
     });
@@ -1412,7 +1490,8 @@
     Object.keys(byChar).forEach(function (cid) {
       jobs.push(sweepSource({
         ownerKey: rootOf(cid), kind: 'diary', cursorId: 'diary:char:' + cid,
-        sourceId: 'diary', charId: cid, iso: 'char', messages: byChar[cid],
+        sourceId: 'diary', charId: rootOf(cid), iso: 'char', messages: byChar[cid],
+        fromCharId: cid,
         lineOf: function (x) { return x.text; },
         blocker: blockerOne
       }));
@@ -1432,6 +1511,8 @@
   function sweepMem(charId) {
     var MS = Sleepy.memoryStore;
     if (!MS || !MS.loadCharMemory || !charId) return Promise.resolve({ ok: false, why: 'off' });
+    /* 迁移写入锁（项目 5 S7）：总结流程在迁移期间跳过本轮 */
+    if (MS.isMigrating && MS.isMigrating()) return Promise.resolve({ ok: false, why: 'migrating' });
     var file = MS.loadCharMemory(charId) || {};
     var items = (file.memories || [])
       .filter(function (m) {
@@ -1445,13 +1526,15 @@
           id: m.id, itemId: m.id,
           timestamp: Date.parse(m.createdAt) || 0,
           text: (m.isAnchor ? '（他记着的）' : '') + String(m.content || '').trim(),
-          iso: 'char', charId: charId, userId: null
+          iso: 'char', charId: rootOf(charId), userId: null,
+          fromCharId: m.fromCharId || null   /* 条目自己记的脸（§2.6） */
         };
       });
     if (!items.length) return Promise.resolve({ ok: true, added: 0 });
     return sweepSource({
-      ownerKey: rootOf(charId), kind: 'mem', cursorId: 'mem:' + charId,
-      sourceId: 'mem', charId: charId, iso: 'char', messages: items,
+      ownerKey: rootOf(charId), kind: 'mem', cursorId: 'mem:' + rootOf(charId),
+      /* 游标也归 root（项目 5）：文件归一后按脸记游标会重复索引同一份档案 */
+      sourceId: 'mem', charId: rootOf(charId), iso: 'char', messages: items,
       lineOf: function (x) { return x.text; },
       blocker: blockerOne
     });
@@ -1509,7 +1592,7 @@
           return (x && x.id && t) ? {
             id: x.id, itemId: x.id,
             timestamp: x.at || x.createdAt || 0, text: t,
-            iso: 'char', charId: charId, userId: null
+            iso: 'char', charId: rootOf(charId), userId: null
           } : null;
         }).filter(Boolean);
       if (!items.length) return Promise.resolve({ ok: true, added: 0 });
@@ -1518,7 +1601,8 @@
         /* ⚠️ sourceId 必须带子类型：phoneNotes 的 m1 和 phoneShop 的 m1 会串源（§8.4） */
         sourceId: 'phone:' + def.sub,
         cursorId: 'phone:' + def.sub + ':' + ph.id,
-        charId: charId, iso: 'char', messages: items,
+        charId: rootOf(charId), iso: 'char', messages: items,
+        fromCharId: charId,   /* 手机是这张脸的（phones.charId） */
         lineOf: function (x) { return x.text; },
         blocker: blockerOne
       });
@@ -1569,10 +1653,12 @@
     var iso = m.characterId ? 'char' : 'user';
     return reindexItem({
       kind: 'moment', sourceId: 'moment', iso: iso,
-      charId: m.characterId || null, userId: m.maskId || null,
+      charId: m.characterId ? rootOf(m.characterId) : null, userId: m.maskId || null,
+      fromCharId: m.characterId || null,
       item: {
         id: m.id, timestamp: m.at || 0, text: momentText(m),
-        iso: iso, charId: m.characterId || null, userId: m.maskId || null
+        iso: iso, charId: m.characterId ? rootOf(m.characterId) : null,
+        userId: m.maskId || null, fromCharId: m.characterId || null
       },
       lineOf: function (x) { return x.text; }
     });
@@ -1612,11 +1698,13 @@
       return forget({ kind: 'mem', charId: charId, sourceId: 'mem', ids: [memId] });
     }
     return reindexItem({
-      kind: 'mem', sourceId: 'mem', charId: charId, iso: 'char',
+      kind: 'mem', sourceId: 'mem', charId: rootOf(charId), iso: 'char',
+      fromCharId: m.fromCharId || null,
       item: {
         id: m.id, timestamp: Date.parse(m.createdAt) || 0,
         text: (m.isAnchor ? '（他记着的）' : '') + String(m.content || '').trim(),
-        iso: 'char', charId: charId, userId: null
+        iso: 'char', charId: rootOf(charId), userId: null,
+        fromCharId: m.fromCharId || null
       },
       lineOf: function (x) { return x.text; }
     });
@@ -1641,10 +1729,12 @@
     var t = phoneTextOf(sub, x).trim();
     if (!t) return gone();
     return reindexItem({
-      kind: 'phone', sourceId: 'phone:' + sub, charId: charId, iso: 'char',
+      kind: 'phone', sourceId: 'phone:' + sub, charId: rootOf(charId), iso: 'char',
+      fromCharId: charId,
       item: {
         id: x.id, timestamp: x.at || x.createdAt || 0, text: t,
-        iso: 'char', charId: charId, userId: null
+        iso: 'char', charId: rootOf(charId), userId: null,
+        fromCharId: charId
       },
       lineOf: function (v) { return v.text; }
     });
@@ -1746,26 +1836,19 @@
               msgIds: [itemId],
               itemId: itemId, seg: i, segCount: segs.length,
               iso: item.iso || opts.iso,
-              charId: item.charId, userId: item.userId
+              charId: item.charId, userId: item.userId,
+              fromCharId: item.fromCharId
             };
           });
           return embedTexts(blks.map(function (b) { return b.text; })).then(function (res) {
             if (!res.ok) return { ok: false, why: 'embed', error: res.error };
             var sid = scopeNow();
-            var recs = blks.map(function (b, i) {
-              return {
-                id: newId(), ownerKey: key, kind: opts.kind || 'chat',
-                charId: (b.charId !== undefined ? b.charId : opts.charId) || null,
-                userId: (b.userId !== undefined ? b.userId : opts.userId) || null,
-                groupId: opts.groupId || null,
-                sourceId: opts.sourceId || null, sandboxId: sid,
-                at: b.at, at0: b.at0 || b.at || 0,
-                model: modelNow(), dim: (res.vectors[i] || []).length,
-                fromId: b.fromId, toId: b.toId, msgCount: b.msgCount, msgIds: b.msgIds,
-                iso: b.iso || 'both', itemId: b.itemId, seg: b.seg, segCount: b.segCount,
-                text: b.text, vec: res.vectors[i]
-              };
-            });
+            /* 块形状与 sweepSource 同一份（buildRecs）—— 两处各写一份迟早漂 */
+            var recs = buildRecs({
+              ownerKey: key, kind: opts.kind || 'chat',
+              charId: opts.charId, userId: opts.userId, fromCharId: opts.fromCharId,
+              groupId: opts.groupId, sourceId: opts.sourceId, iso: opts.iso
+            }, blks, res, sid);
             return Promise.all(recs.map(putBlock)).then(function () {
               return trim(key).then(function () {
                 return { ok: true, added: recs.length };
@@ -1969,6 +2052,289 @@
   }
   function clearCache() { lastRecall = {}; }
 
+  /* ==================== DB 升级 → 重建提示（项目 5 口径 A，2026-09-26 拍板） ====================
+     DB_VER 5→6 会把旧块全删（open 的 onupgradeneeded），旧内容不会自动回到索引。
+     用户拍板走 A：**不静默全量重扫**（embedding 要花钱，得用户点头）、
+     **也不放弃旧内容** —— 三段式：
+       ① 升级后提示「记忆索引需要重建」（设置页），游标换 vecCursor4:；
+       ② 用户没点重建前：新消息照常增量建块（惰性基线，见 sweepSource），
+          旧历史不承诺召回 —— 基线 = 升级时刻，旧内容一个向量都不算；
+       ③ 点了「重建记忆索引」才开始从头顶全量扫，进度可见、防重复点击，
+          成功清提示，失败留状态和重试入口（不假装完成）。 */
+
+  var REBUILD_KEY = 'vecRebuild';
+  var DBVER_KEY = 'vecDbVer';
+
+  function rebuildRec() {
+    var r = store.get(REBUILD_KEY);
+    return (r && typeof r === 'object') ? r : null;
+  }
+  /* 提示还挂着吗（needed / running / failed 都算；成功后键被删 → false） */
+  function rebuildPending() {
+    var r = rebuildRec();
+    return !!(r && (r.state === 'needed' || r.state === 'running' || r.state === 'failed'));
+  }
+  function rebuildAt() {
+    var r = rebuildRec();
+    return (r && r.at) || 0;
+  }
+  /* 给设置页 / 冒烟看的快照（不暴露内部引用） */
+  function rebuildState() {
+    var r = rebuildRec();
+    return r ? {
+      state: r.state, fromVer: r.fromVer || null, at: r.at || 0,
+      added: r.added || 0, rounds: r.rounds || 0,
+      error: r.error || null, why: r.why || null,
+      via: r.via || null   /* 'idb' = onupgradeneeded 权威信号挂上的（启发式漏判的兜底） */
+    } : null;
+  }
+
+  /* localStorage 里有没有老版本的索引痕迹（区分「全新装机」和「老用户升级」）。
+     只认游标 / 退避 / 世代号 —— vecCfg 那种设置项不算（配置过但没索引过的
+     用户没有旧内容，不该看见重建提示）。 */
+  function hasOldVecData() {
+    try {
+      var ls = global.localStorage;
+      var ns = (store && store.NS) || 'sleepy.v1.';
+      for (var i = 0; i < ls.length; i++) {
+        var k = ls.key(i);
+        if (!k || k.indexOf(ns) !== 0) continue;
+        var top = k.slice(ns.length);
+        if (top.indexOf('vecCursor') === 0 || top.indexOf('vecFail:') === 0 ||
+          top === 'vecEpoch') return true;
+      }
+    } catch (e) { /* 读不到就当没有 */ }
+    return false;
+  }
+
+  /* 升级检测。幂等：标记已是当前版本就什么都不做（每次加载都会跑一遍）。
+     检出升级 → 挂重建提示 + 顺手清掉老前缀的游标键（vecCursor1/2/3，
+     新前缀不读它们，留着只会污染快照回滚）。 */
+  function detectDbUpgrade() {
+    var prev = store.get(DBVER_KEY);
+    if (prev === DB_VER) return null;
+    var isUpgrade = (prev != null) || hasOldVecData();
+    if (isUpgrade && !rebuildRec()) {
+      store.set(REBUILD_KEY, { state: 'needed', fromVer: prev || null, at: Date.now() });
+    }
+    /* 老前缀游标键清掉（不碰 vecFail —— 它没有版本前缀，退避还有用） */
+    try {
+      var ls = global.localStorage;
+      var ns = (store && store.NS) || 'sleepy.v1.';
+      var curStem = cursorKey('probe').split(':')[0] + ':';   /* 如 'vecCursor4:' */
+      var doomed = [];
+      for (var i = 0; i < ls.length; i++) {
+        var k = ls.key(i);
+        if (!k || k.indexOf(ns) !== 0) continue;
+        var top = k.slice(ns.length);
+        if (top.indexOf('vecCursor') === 0 && top.indexOf(curStem) !== 0) doomed.push(top);
+      }
+      doomed.forEach(function (t) { store.remove(t); });
+    } catch (e) { /* 清不掉就算了，反正新前缀不读它们 */ }
+    store.set(DBVER_KEY, DB_VER);
+    /* 顺手把库打开：一来看见升级就把提示挂上（别等用户第一次聊天），
+       二来让 onupgradeneeded 的权威信号尽早生效（老库 + 无痕迹的场景）。
+       打开失败就静默 —— sweep / 设置页自己还会再开。 */
+    if (supported) { try { open(); } catch (e) { /* 同上，静默 */ } }
+    return isUpgrade ? rebuildState() : null;
+  }
+
+  /* 基线（纯函数，冒烟打表）：升级时刻之后的第一条。
+     之后的新消息照常增量建块；之前的旧内容不重扫（口径 A 第 6 条）。 */
+  function baselineIndex(messages, at) {
+    var list = messages || [];
+    if (!at) return list.length;
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      var t = m && (m.timestamp !== undefined ? m.timestamp : (m.at !== undefined ? m.at : m.createdAt));
+      var tt = (typeof t === 'number') ? t : (t ? Date.parse(t) : 0);
+      if (tt > at) return i;
+    }
+    return list.length;
+  }
+
+  /* ---------------------------- 重建 ---------------------------- */
+
+  var rebuilding = false;
+  function rebuildRunning() { return rebuilding; }
+
+  /* 一轮重建 = 把所有源各推进一步。add 加起来 > 0 就再来一轮，
+     直到「整轮零新增」（游标推到底了）—— 不是按时间估，是按事实。 */
+  var REBUILD_BENIGN = { off: 1, noisland: 1, nochat: 1, nophone: 1 };
+  function oneRebuildRound() {
+    var added = 0;
+    var failed = [];
+    function job(tag, p) {
+      return p.then(function (r) {
+        if (r && r.ok) { added += (r.added || 0); return; }
+        var why = (r && r.why) || 'unknown';
+        if (REBUILD_BENIGN[why]) return;   /* 没岛 / 没聊天这类不是失败，别吓人 */
+        failed.push({ source: tag, why: why, error: (r && r.error) || '' });
+      }, function (e) {
+        failed.push({ source: tag, why: 'throw', error: (e && e.message) || String(e) });
+      });
+    }
+    var jobs = [
+      job('chats', sweepIsland()),
+      job('moments', sweepMoments()),
+      job('diary', sweepDiary())
+    ];
+    /* 档案 / 手机 / 线下会话：按本岛角色逐个来（群聊另行注册，见 registerRebuildJob） */
+    var C = Sleepy.core;
+    var sid = scopeNow();
+    var members = [];
+    if (C && sid) {
+      if (C.charsOfSandbox) members = members.concat(C.charsOfSandbox(sid) || []);
+      if (C.npcsOfRoom) members = members.concat(C.npcsOfRoom(sid) || []);
+    }
+    members.forEach(function (c) {
+      if (!c || !c.id) return;
+      jobs.push(job('mem:' + c.id, sweepMem(c.id)));
+      jobs.push(job('phone:' + c.id, sweepPhone(c.id)));
+    });
+    /* 线下私聊（本岛的） */
+    try {
+      var sessions = store.get('offlineSessions') || [];
+      (Array.isArray(sessions) ? sessions : []).forEach(function (s) {
+        if (!s || !s.id || !s.charId) return;
+        if (!sid || s.sandboxId !== sid) return;   /* 别把别岛的原文盖上本岛的章 */
+        jobs.push(job('offline:' + s.id, sweepOffline(s.charId, s.userId, s)));
+      });
+    } catch (e) { /* offlineSessions 读不到就跳过 */ }
+    /* 本岛的群（线上消息表）。没落岛时跳过 —— 群块要盖本岛的章，
+       没章可盖就宁可这轮不扫（否则别岛的原文会被盖上错的章） */
+    try {
+      var G = Sleepy.groupStore;
+      if (sid && G && G.listGroups) {
+        (G.listGroups() || []).forEach(function (g) {
+          if (!g || !g.id) return;
+          jobs.push(job('group:' + g.id,
+            sweepGroup(g.id, G.messagesOf ? G.messagesOf(g.id) : [])));
+        });
+      }
+    } catch (e) { /* 群读不到就跳过 */ }
+    /* 群线下等页面自有的源：谁有就注册进来（layering：memory-vec 不认识它们的行格式） */
+    rebuildJobs.forEach(function (j) {
+      if (typeof j === 'function') jobs.push(job('extra', j()));
+    });
+    return Promise.all(jobs).then(function () {
+      return { added: added, failed: failed };
+    });
+  }
+
+  /* 群线下这类「页面自有源」的重建作业登记处 */
+  var rebuildJobs = [];
+  function registerRebuildJob(fn) {
+    if (typeof fn === 'function' && rebuildJobs.indexOf(fn) < 0) rebuildJobs.push(fn);
+  }
+
+  /* 用户点了「重建记忆索引」。返回值给设置页说人话用：
+     { ok:true, added, rounds } | { ok:false, why: 'notneeded'|'running'|'off'|'noidb'|'failed'|'error' } */
+  function rebuildIndex(opts) {
+    opts = opts || {};
+    var rec = rebuildRec();
+    if (!rec || rec.state === 'done') return Promise.resolve({ ok: false, why: 'notneeded' });
+    if (rebuilding) return Promise.resolve({ ok: false, why: 'running' });   /* 防重复点击 */
+    if (!enabled()) return Promise.resolve({ ok: false, why: 'off' });
+    rebuilding = true;
+    function finish(r) { rebuilding = false; return r; }
+
+    var acc = { added: 0, rounds: 0, failed: [] };
+    function saveRunning() {
+      store.set(REBUILD_KEY, {
+        state: 'running', fromVer: rec.fromVer || null,
+        startedAt: rec.startedAt || rec.at || Date.now(), at: Date.now(),
+        added: acc.added, rounds: acc.rounds
+      });
+    }
+    saveRunning();
+    /* 只有**首轮**（needed）才从头顶重扫。failed 重试绝不能再推世代号：
+       第一轮已经写进库的块靠游标记住位置，再推一次 = 已完成的块重新算
+       一遍向量（双倍费用）。 */
+    var firstRound = (rec.state !== 'failed' && rec.state !== 'running');
+    clearFailures();       /* 手动重试不被上次的退避挡住 */
+    clearCache();          /* 旧召回缓存里的内容对应已删的块 */
+
+    /* available 从对象出口取（同一个函数；冒烟没有 IDB，临时替换这个出口
+       才能测「重建成功」的路径 —— 生产环境行为不变） */
+    var availFn = (Sleepy.memoryVec && Sleepy.memoryVec.available)
+      ? Sleepy.memoryVec.available : available;
+
+    /* 首轮 = **先清库、再从头顶扫**（2026-09-26 真机第 3 步前补口）：
+       升级 → 点重建之间**增量建过的块**（口径 A 第②段），游标被世代号
+       作废后重扫必然再生成一份，而块 id 是新随机数、旧块不会被覆盖 ——
+       不先清就是同一段内容落两块、白花一份 embedding 钱。先清掉：重扫
+       本来就要全量重算，钱一分不多花，内容一份不重。失败重试**不清**
+       （断点续扫，清了就把已完成的进度毁了）。无 IDB 的冒烟环境清不了
+       库 → 退回旧的「只推世代号」。 */
+    var pre = firstRound
+      ? wipeAll({ quiet: true }).then(function (w) {
+          if (!w || w.status === 'not-applicable') { resetCursors(); return; }
+          if (w && w.status === 'failed') {
+            var err = new Error(w.message || w.why || '重建清库失败');
+            err.why = 'wipe';
+            throw err;
+          }
+        })
+      : Promise.resolve();
+
+    return pre.then(function () {
+      return availFn().then(function (okAvail) {
+      if (!okAvail) {
+        store.set(REBUILD_KEY, { state: 'failed', why: 'noidb', at: Date.now() });
+        return finish({ ok: false, why: 'noidb' });
+      }
+      function round() {
+        return oneRebuildRound().then(function (r) {
+          acc.added += r.added;
+          acc.rounds++;
+          acc.failed = acc.failed.concat(r.failed);
+          saveRunning();
+          if (typeof opts.onProgress === 'function') {
+            try { opts.onProgress({ rounds: acc.rounds, added: acc.added }); } catch (e) { /* 别让进度回调打断重建 */ }
+          }
+          if (r.added > 0 && acc.rounds < 500) return round();
+          return null;
+        });
+      }
+      return round().then(function () {
+        if (acc.failed.length) {
+          /* 失败：状态和可重试入口都留着（键不删），已扫完的部分靠游标记住
+             —— 重试从断点继续，不会重复算已经算过的向量。 */
+          store.set(REBUILD_KEY, {
+            state: 'failed', why: acc.failed[0].why,
+            error: acc.failed[0].error || acc.failed[0].source || 'rebuild failed',
+            failed: acc.failed.slice(0, 20),
+            fromVer: rec.fromVer || null, startedAt: rec.startedAt || rec.at || Date.now(),
+            at: Date.now(), added: acc.added, rounds: acc.rounds
+          });
+          return finish({ ok: false, why: 'failed', added: acc.added, rounds: acc.rounds, failed: acc.failed });
+        }
+        /* 成功：提示清掉，恢复正常增量索引 */
+        store.remove(REBUILD_KEY);
+        return finish({ ok: true, added: acc.added, rounds: acc.rounds });
+      });
+      }, function (e) {
+        store.set(REBUILD_KEY, {
+          state: 'failed', why: e.why || 'error', error: (e && e.message) || String(e),
+          fromVer: rec.fromVer || null, startedAt: rec.startedAt || rec.at || Date.now(),
+          at: Date.now(), added: acc.added, rounds: acc.rounds
+        });
+        return finish({ ok: false, why: e.why || 'error', error: (e && e.message) || String(e) });
+      });
+    })['catch'](function (e) {
+      store.set(REBUILD_KEY, {
+        state: 'failed', why: e.why || 'error', error: (e && e.message) || String(e),
+        fromVer: rec.fromVer || null, startedAt: rec.startedAt || rec.at || Date.now(),
+        at: Date.now(), added: acc.added, rounds: acc.rounds
+      });
+      return finish({ ok: false, why: e.why || 'error', error: (e && e.message) || String(e) });
+    });
+  }
+
+  /* 启动检测：模块加载时跑一次（幂等，冒烟里可以再喊） */
+  try { detectDbUpgrade(); } catch (e) { /* 检测失败不挡加载 */ }
+
   Sleepy.memoryVec = {
     enabled: enabled,
     available: available,
@@ -2048,6 +2414,15 @@
     resetCursors: resetCursors,
     clearCache: clearCache,
     cursorKey: cursorKey,
+    /* ---- DB 升级后的重建（项目 5 口径 A，2026-09-26）----
+       detectDbUpgrade：升级检测（幂等，启动时已跑过一遍，冒烟可再喊）；
+       rebuildState：设置页读提示状态；rebuildIndex：点按钮全量重扫；
+       registerRebuildJob：页面自有源（群线下）登记自己的重建作业。 */
+    detectDbUpgrade: detectDbUpgrade,
+    rebuildState: rebuildState,
+    rebuildIndex: rebuildIndex,
+    rebuildRunning: rebuildRunning,
+    registerRebuildJob: registerRebuildJob,
     /* 纯函数出口 —— 冒烟直接打表，不用起 IDB */
     _pure: {
       nextBlock: nextBlock,
@@ -2066,6 +2441,8 @@
       poolOf: poolOf,
       ownerKeyFor: ownerKeyFor,
       msgLine: msgLine,
+      buildRecs: buildRecs,
+      forgetHit: forgetHit,
       groupKey: groupKey,
       rootOf: rootOf,
       islandKey: islandKey,
@@ -2073,7 +2450,8 @@
       sameModel: sameModel,
       bindOk: bindOk,
       readCursor: readCursor,
-      writeCursor: writeCursor
+      writeCursor: writeCursor,
+      baselineIndex: baselineIndex
     },
     MIN_MSGS: MIN_MSGS, MAX_MSGS: MAX_MSGS,
     MIN_CHARS: MIN_CHARS, MAX_CHARS: MAX_CHARS,

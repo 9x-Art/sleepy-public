@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>项目5 · 原生 IndexedDB 行为验收（隔离测试站点）</title>
+</head>
+<body>
+<!-- ============================================================
+     preview/idb-test/index.html — 原生 IndexedDB 行为验收入口
+     · 隔离测试站点：跑在本地 http（serve.js）+ playwright 一次性浏览器
+       profile 里，**不读写用户真实浏览器存档**；
+     · 被测对象是**生产源码原文**：/store.js 与 /memory-vec.js 经
+       <script src> 从应用同源加载（不加壳、不改字）；
+     · Sleepy.core / Sleepy.api（embedding mock，不产生真实费用）/
+       Sleepy.singleApi 是环境桩，测试不经过它们的项目不依赖桩；
+     · 场景由 ?case= 选择，pre 脚本负责布置 IDB / localStorage；
+     · 部署安全：preview/ 整目录在 deploy.sh 的 --exclude 清单里，不会上线。
+     ============================================================ -->
+<script>
+(function () {
+  'use strict';
+  var params = new URLSearchParams(location.search);
+  var c = params.get('case') || 'upgrade';
+  var NS = 'sleepy.v1.';
+
+  function lsClearVec() {
+    ['vecDbVer', 'vecRebuild', 'vecEpoch'].forEach(function (k) { localStorage.removeItem(NS + k); });
+    var doomed = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && (k.indexOf(NS + 'vecCursor') === 0 || k.indexOf(NS + 'vecFail:') === 0)) doomed.push(k);
+    }
+    doomed.forEach(function (k) { localStorage.removeItem(k); });
+  }
+  function openDB(name, version) {
+    return new Promise(function (res, rej) {
+      var r = indexedDB.open(name, version);
+      r.onupgradeneeded = function () {
+        var db = r.result;
+        if (db.objectStoreNames.contains('vec')) db.deleteObjectStore('vec');
+        var os = db.createObjectStore('vec', { keyPath: 'id' });
+        os.createIndex('ownerKey', 'ownerKey');
+        os.createIndex('at', 'at');
+      };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  function putBlocks(db, records) {
+    return new Promise(function (res, rej) {
+      var t = db.transaction('vec', 'readwrite');
+      var os = t.objectStore('vec');
+      records.forEach(function (r) { os.put(r); });
+      t.oncomplete = function () { res(true); };
+      t.onerror = function () { rej(t.error); };
+    });
+  }
+  function blk(id, from, sb, owner) {
+    return { id: id, ownerKey: owner || 'r1', charId: 'r1', fromCharId: from,
+      sandboxId: sb, kind: 'chat', msgIds: [id], text: 'x', vec: [0.1], model: 'emb-test' };
+  }
+
+  /* pre：按场景布置 IDB / localStorage。全部完成后才注入生产脚本。 */
+  window.__pre = (async function () {
+    if (c === 'upgrade') {
+      /* v5 旧库 + 两块；localStorage 无任何升级痕迹（漏判场景） */
+      var db = await openDB('sleepy-vec', 5);
+      await putBlocks(db, [blk('old1', 'fA', 'sb1'), blk('old2', 'fB', 'sb1')]);
+      db.close();
+      lsClearVec();
+    } else if (c === 'fresh') {
+      /* 全新：删库重造 */
+      await new Promise(function (res) { var r = indexedDB.deleteDatabase('sleepy-vec'); r.onsuccess = r.onerror = r.onblocked = res; });
+      lsClearVec();
+    } else if (c === 'resume' || c === 'wipe') {
+      await new Promise(function (res) { var r = indexedDB.deleteDatabase('sleepy-vec'); r.onsuccess = r.onerror = r.onblocked = res; });
+      lsClearVec();
+    } else if (c === 'forget') {
+      var db2 = await openDB('sleepy-vec', 6);
+      await putBlocks(db2, [
+        blk('b1', 'fA', 'sb1'), blk('b2', 'fB', 'sb1'),
+        blk('b3', 'fA', 'sb2'), blk('b4', 'fA', 'sb1', 'island:sb1')
+      ]);
+      db2.close();
+      lsClearVec();
+    } else if (c === 'hold') {
+      /* 两标签页阻塞：本页持有 v5 连接**不关** */
+      var db3 = await openDB('sleepy-vec', 5);
+      await putBlocks(db3, [blk('old1', 'fA', 'sb1'), blk('old2', 'fB', 'sb1')]);
+      window.__hold = db3;
+      lsClearVec();
+    } else if (c === 'upgrade2') {
+      /* 阻塞场景的第二页：库已由 hold 页造好，这里只清痕迹 */
+      lsClearVec();
+    } else if (c === 'plain') {
+      /* 不做任何布置：用于「升级完成后重载页面」的状态复查 */
+    }
+  })();
+
+  /* 生产脚本顺序注入（store.js → memory-vec.js），同源生产原文 */
+  window.__loadScript = function (src) {
+    return new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = res;
+      s.onerror = function () { rej(new Error('加载失败：' + src)); };
+      document.head.appendChild(s);
+    });
+  };
+
+  /* 环境桩：core（身份/岛）、singleApi、api（embedding mock —— 不产生真实费用） */
+  window.__embedCount = {};
+  window.__allowB = true;
+  window.__setupEnv = function () {
+    var Sleepy = window.Sleepy;
+    Sleepy.core = {
+      rootIdOf: function (id) { return id; },
+      scopeId: function () { return 'sb1'; },
+      scoped: function (x) { return x; },
+      charsOfSandbox: function () { return [{ id: 'c1' }]; },
+      npcsOfRoom: function () { return []; }
+    };
+    Sleepy.singleApi = { cfgOf: function () { return { baseUrl: 'http://stub', model: 'emb-test' }; } };
+    Sleepy.api = {
+      embed: function (cfg, texts) {
+        if (!window.__allowB && texts.some(function (t) { return t.indexOf('B话') >= 0; })) {
+          return Promise.resolve({ ok: false, error: '模拟注入失败' });
+        }
+        texts.forEach(function (t) { window.__embedCount[t] = (window.__embedCount[t] || 0) + 1; });
+        return Promise.resolve({ ok: true, vecs: texts.map(function () { return [0.1, 0.2]; }), dim: 2, ms: 1 });
+      }
+    };
+  };
+
+  window.__boot = (async function () {
+    await window.__pre;
+    await window.__loadScript('/store.js');
+    await window.__loadScript('/memory-vec.js');
+    window.__setupEnv();
+    window.__loaded = true;
+  })().catch(function (e) { window.__bootError = String(e && e.message || e); });
+})();
+</script>
+</body>
+</html>

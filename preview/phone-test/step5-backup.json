@@ -1,0 +1,441 @@
+{
+  "app": "sleepy",
+  "schema": 3,
+  "scope": "user",
+  "exportedAt": "2026-09-26T07:27:43.923Z",
+  "data": {
+    "meta": {
+      "schema": 3,
+      "installedAt": 1790407663591,
+      "lastOpenAt": 1790407663591
+    },
+    "sandboxes": [
+      {
+        "id": "sbmui2huzh70k9",
+        "kind": "archipelago",
+        "name": "验收群岛",
+        "cover": "",
+        "charIds": [
+          "chmui2huzigsmx"
+        ],
+        "maskIds": [
+          "ummui2huzitc8k"
+        ],
+        "createdAt": 1790407663901,
+        "updatedAt": 1790407663903
+      }
+    ],
+    "activeSandboxId": null,
+    "mainApi": {
+      "name": "主模型",
+      "baseUrl": "",
+      "apiKey": "",
+      "model": "",
+      "temperature": null,
+      "maxTokens": null,
+      "contextMessages": null,
+      "stream": true,
+      "timeoutSec": 60,
+      "enabled": true
+    },
+    "subApis": [],
+    "imgApis": [],
+    "imgApiId": null,
+    "promptLib": [],
+    "imggenEnabled": true,
+    "chatDefaults": {
+      "heartbeatAuto": true
+    },
+    "appearance": {
+      "theme": "grape",
+      "fontScale": 1
+    },
+    "chats": [],
+    "favorites": [],
+    "characters": [
+      {
+        "id": "chmui2huzigsmx",
+        "kind": "main",
+        "parentId": null,
+        "parentType": "char",
+        "boundUserId": null,
+        "name": "验收员",
+        "wechatName": "",
+        "content": "真机验收用角色（项目 5 第 5 步 · root）。",
+        "createdAt": 1790407663902,
+        "updatedAt": 1790407663902,
+        "sandboxId": "sbmui2huzh70k9"
+      },
+      {
+        "id": "chmui2huzijbgn",
+        "kind": "sub",
+        "parentId": "chmui2huzigsmx",
+        "parentType": "char",
+        "boundUserId": null,
+        "name": "皮套5号",
+        "wechatName": "",
+        "content": "真机验收用皮套（项目 5 第 5 步 · face）。",
+        "createdAt": 1790407663902,
+        "updatedAt": 1790407663902,
+        "sandboxId": "sbmui2huzh70k9"
+      }
+    ],
+    "userMasks": [
+      {
+        "id": "ummui2huzitc8k",
+        "name": "我",
+        "wechatName": "",
+        "avatar": "",
+        "avatarMedia": "",
+        "persona": "",
+        "note": "",
+        "city": "",
+        "region": "",
+        "timezone": "",
+        "isDefault": true,
+        "sandboxId": "sbmui2huzh70k9",
+        "createdAt": 1790407663902,
+        "updatedAt": 1790407663902
+      }
+    ],
+    "links": [],
+    "memories": [],
+    "desktop": {
+      "version": 16,
+      "pages": [
+        [
+          {
+            "i": "p0-wall",
+            "type": "wall",
+            "x": 1,
+            "y": 1,
+            "w": 4,
+            "h": 6,
+            "label": "照片墙"
+          }
+        ],
+        [
+          {
+            "i": "p1-head",
+            "type": "hdr",
+            "x": 1,
+            "y": 1,
+            "w": 4,
+            "h": 3,
+            "label": "日期"
+          },
+          {
+            "i": "p1-book",
+            "type": "app",
+            "app": "worldbook",
+            "x": 1,
+            "y": 4,
+            "w": 1,
+            "h": 1,
+            "label": "世界书"
+          },
+          {
+            "i": "p1-store",
+            "type": "app",
+            "app": "widgetstore",
+            "x": 2,
+            "y": 4,
+            "w": 1,
+            "h": 1,
+            "label": "组件商城"
+          },
+          {
+            "i": "p1-idcard",
+            "type": "app",
+            "app": "island",
+            "x": 3,
+            "y": 4,
+            "w": 1,
+            "h": 1,
+            "label": "浮岛"
+          },
+          {
+            "i": "p1-look",
+            "type": "app",
+            "app": "appearance",
+            "x": 4,
+            "y": 4,
+            "w": 1,
+            "h": 1,
+            "label": "外观"
+          },
+          {
+            "i": "p1-chat",
+            "type": "app",
+            "app": "chat-list",
+            "x": 1,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "聊天"
+          },
+          {
+            "i": "p1-settings",
+            "type": "app",
+            "app": "settings",
+            "x": 2,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "设置"
+          },
+          {
+            "i": "p1-mode",
+            "type": "mode",
+            "x": 3,
+            "y": 5,
+            "w": 2,
+            "h": 1,
+            "label": "夜间模式"
+          },
+          {
+            "i": "p1-weijing",
+            "type": "wj",
+            "x": 1,
+            "y": 6,
+            "w": 4,
+            "h": 1,
+            "label": "帷境"
+          }
+        ],
+        [
+          {
+            "i": "p2-lamp",
+            "type": "lamp",
+            "x": 1,
+            "y": 1,
+            "w": 4,
+            "h": 4,
+            "label": "挂件灯"
+          },
+          {
+            "i": "p2-settings",
+            "type": "app",
+            "app": "presets",
+            "x": 1,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "预设"
+          },
+          {
+            "i": "p2-me",
+            "type": "app",
+            "app": "workshop",
+            "x": 2,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "工坊"
+          },
+          {
+            "i": "p2-book",
+            "type": "app",
+            "app": "phonecheck",
+            "x": 3,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "查手机"
+          },
+          {
+            "i": "p2-memory",
+            "type": "app",
+            "app": "memory",
+            "x": 4,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "留痕"
+          }
+        ],
+        [
+          {
+            "i": "p3-music",
+            "type": "music",
+            "x": 1,
+            "y": 1,
+            "w": 4,
+            "h": 2,
+            "label": "音乐"
+          },
+          {
+            "i": "p3-todo",
+            "type": "todo",
+            "x": 1,
+            "y": 3,
+            "w": 2,
+            "h": 2,
+            "label": "待办"
+          },
+          {
+            "i": "p3-fav",
+            "type": "app",
+            "app": "favorites",
+            "x": 3,
+            "y": 3,
+            "w": 1,
+            "h": 1,
+            "label": "收藏夹"
+          },
+          {
+            "i": "p3-stickers",
+            "type": "app",
+            "app": "stickers",
+            "x": 4,
+            "y": 3,
+            "w": 1,
+            "h": 1,
+            "label": "贴纸"
+          },
+          {
+            "i": "p3-wallet",
+            "type": "app",
+            "app": "wallet",
+            "x": 3,
+            "y": 4,
+            "w": 1,
+            "h": 1,
+            "label": "钱包"
+          },
+          {
+            "i": "p3-settings",
+            "type": "app",
+            "app": "calendar",
+            "x": 4,
+            "y": 4,
+            "w": 1,
+            "h": 1,
+            "label": "日历"
+          },
+          {
+            "i": "p3-book",
+            "type": "app",
+            "app": "worldbook",
+            "x": 1,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "世界书"
+          },
+          {
+            "i": "p3-gallery",
+            "type": "app",
+            "app": "gallery",
+            "x": 2,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "相册"
+          },
+          {
+            "i": "p3-look",
+            "type": "app",
+            "app": "appearance",
+            "x": 3,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "外观"
+          },
+          {
+            "i": "p3-store",
+            "type": "app",
+            "app": "widgetstore",
+            "x": 4,
+            "y": 5,
+            "w": 1,
+            "h": 1,
+            "label": "组件商城"
+          }
+        ]
+      ]
+    },
+    "dropEvents": [],
+    "diaries": [],
+    "worldbooks": [],
+    "worldbook": [],
+    "mainApis": [],
+    "mainApiId": null,
+    "summaryApis": [],
+    "summaryApiId": null,
+    "subRetry": 2,
+    "activeCharId": null,
+    "activeUserId": null,
+    "vecDbVer": 6,
+    "charSettings": {
+      "byChar": {}
+    },
+    "charMem:chmui2huzigsmx": {
+      "version": "1",
+      "charId": "chmui2huzigsmx",
+      "updatedAt": "2026-09-26T07:27:43.903Z",
+      "understandings": [],
+      "memories": [
+        {
+          "id": "r1",
+          "charId": "chmui2huzigsmx",
+          "kind": "habit",
+          "content": "root 独有条目",
+          "status": "active",
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    "todos": [
+      {
+        "id": "td1",
+        "text": "去超市买草莓",
+        "done": true
+      },
+      {
+        "id": "td2",
+        "text": "给猫猫洗澡",
+        "done": false
+      },
+      {
+        "id": "td3",
+        "text": "晚上和他连麦",
+        "done": false
+      }
+    ],
+    "diaryPeek:chmui2huzijbgn": {
+      "on": true,
+      "updatedAt": "2026-09-26T07:27:43.903Z"
+    },
+    "memoryIsland": {
+      "name": "星屿",
+      "type": "solo",
+      "byChar": {}
+    },
+    "charMem:chmui2huzijbgn": {
+      "version": "1",
+      "charId": "chmui2huzijbgn",
+      "updatedAt": "2026-09-26T07:27:43.903Z",
+      "understandings": [],
+      "memories": [
+        {
+          "id": "a1",
+          "charId": "chmui2huzijbgn",
+          "kind": "user_fact",
+          "content": "皮套条目甲",
+          "status": "active",
+          "updatedAt": "2026-01-02T00:00:00Z"
+        },
+        {
+          "id": "a2",
+          "charId": "chmui2huzijbgn",
+          "kind": "promise",
+          "content": "皮套条目乙",
+          "status": "active",
+          "updatedAt": "2026-01-03T00:00:00Z"
+        }
+      ]
+    }
+  }
+}

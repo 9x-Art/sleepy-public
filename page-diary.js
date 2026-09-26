@@ -616,7 +616,12 @@
              可以选择偷看 / 尊重隐私 / 直接问你能不能看（见 page-chat diaryPeekMsg）。
              卫兵：字条只递给本岛的人 —— 指针残留时宁可不递。 */
           var ch = core.activeCharOnIsland ? core.activeCharOnIsland() : null;
-          if (ch) store.set('diaryPeek:' + ch.id, { entryId: item.id, at: Date.now() });
+          /* 项目 5 S6：字条按 root 递（page-chat 的读取侧也归 root）——
+             用皮套聊着天，字条也得能被同一个大脑读到。 */
+          if (ch) {
+            var peekTo = (core.rootIdOf ? core.rootIdOf(ch.id) : ch.id) || ch.id;
+            store.set('diaryPeek:' + peekTo, { entryId: item.id, at: Date.now() });
+          }
         }
         ctx.toast('收进本子里了', 'ok');
         ctx.back();

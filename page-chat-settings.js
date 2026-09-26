@@ -211,17 +211,22 @@
      （旧实现存放在 git 历史里，commit 5c5f484 之前都能翻到。）
      注意：这个文件还暴露着 Sleepy.chatSettings.openPicker —— 
      世界书的「挂角色」浮层在用它，不能删。 */
-  /* 角色级小设置（主动消息 / 角色记忆开关）。默认都开。 */
+  /* 角色级小设置（主动消息 / 自主生活）。默认都开。
+     项目 5 S6：proactive / autoLife 键归 root —— 存取都过 rootIdOf，
+     皮套和大号是同一个开关（读取侧 page-proactive / 写侧本页 / phone.js
+     的 autoLife 各自归一，别再按脸存）。记忆开关**不再走这里**：
+     旧 byChar[*].memory 字段由 S7 迁移并入 memoryIsland 后废弃。 */
   function charSettings(charId) {
+    var root = (Sleepy.core && Sleepy.core.rootIdOf)
+      ? (Sleepy.core.rootIdOf(charId) || charId) : (charId || null);
     var all = store.get('charSettings') || { byChar: {} };
-    var mine = (charId && all.byChar && all.byChar[charId]) || {};
+    var mine = (root && all.byChar && all.byChar[root]) || {};
     return {
       get proactive() { return mine.proactive !== false; },
-      get memory() { return mine.memory !== false; },
       set: function (k, v) {
         all.byChar = all.byChar || {};
-        all.byChar[charId] = all.byChar[charId] || {};
-        all.byChar[charId][k] = v;
+        all.byChar[root] = all.byChar[root] || {};
+        all.byChar[root][k] = v;
         store.set('charSettings', all);
       }
     };
@@ -717,10 +722,20 @@
       }));
 
       var secMem = sectionOf(body, '记忆');
+      /* 项目 5 S6：记忆开关只认 memoryIsland.byChar[root].enabled ——
+         旧 charSettings.byChar[*].memory 由 S7 迁移并入并废弃（写入方下线）。 */
+      var memRoot = (coreRef && coreRef.rootIdOf)
+        ? (coreRef.rootIdOf(chat.characterId) || chat.characterId) : chat.characterId;
+      var memRowCfg = (Sleepy.memoryStore && Sleepy.memoryStore.charConfig)
+        ? Sleepy.memoryStore.charConfig(memRoot) : { enabled: true };
       secMem.appendChild(demoRow({
         label: '角色记忆', note: '自动整理聊天中值得留下的内容',
-        switched: csRow.memory,
-        onSwitch: function (v) { csRow.set('memory', v); }
+        switched: memRowCfg.enabled,
+        onSwitch: function (v) {
+          if (Sleepy.memoryStore && Sleepy.memoryStore.setCharConfig) {
+            Sleepy.memoryStore.setCharConfig(memRoot, { enabled: v });
+          }
+        }
       }));
       /* 记忆模型（v5 12.1 / 2026-09-22 改默认）：
          记忆整理**默认跟着「总结 API」**跑 —— 用户原话

@@ -28,6 +28,9 @@ var ROOT = __dirname;
 
 var argv = process.argv.slice(2);
 var wantOpen = argv.indexOf('--open') >= 0;
+/* --lan：绑 0.0.0.0，让同一 Wi-Fi 里的手机能访问（真机验收用）。
+   默认仍只绑 127.0.0.1 —— 不开 --lan 时行为与原来完全一致。 */
+var wantLan = argv.indexOf('--lan') >= 0;
 var portArg = null;
 argv.forEach(function (a) {
   var m = /^--port=(\d+)$/.exec(a);
@@ -216,10 +219,24 @@ function listen(port, left) {
     throw err;
   });
 
-  server.listen(port, '127.0.0.1', function () {
+  server.listen(port, wantLan ? '0.0.0.0' : '127.0.0.1', function () {
     var url = 'http://127.0.0.1:' + port + '/';
     process.stdout.write('\n  小手机 · 开发服务器\n');
     process.stdout.write('  ' + url + '\n');
+    if (wantLan) {
+      /* 手机访问入口：把每块网卡的非内网回环 IPv4 都列出来 */
+      var seen = {};
+      var ifs = require('os').networkInterfaces();
+      Object.keys(ifs).forEach(function (name) {
+        (ifs[name] || []).forEach(function (it) {
+          if (it.family !== 'IPv4' || it.internal) return;
+          if (seen[it.address]) return;
+          seen[it.address] = true;
+          process.stdout.write('  局域网  http://' + it.address + ':' + port + '/   (' + name + ')\n');
+        });
+      });
+      process.stdout.write('  （手机打不开时：看电脑有没有弹防火墙放行提示，选「允许」）\n');
+    }
     process.stdout.write('  根目录 ' + ROOT + '\n');
     process.stdout.write('  Ctrl+C 停止\n\n');
     if (wantOpen) openBrowser(url);

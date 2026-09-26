@@ -374,6 +374,54 @@
   var PARA_TYPES = { prose: 1, dialogue: 1, aside: 1, silent: 1 };
   var SPOKEN_TYPES = { dialogue: 1, aside: 1 };
 
+  /* 一条群线下消息 → 索引里的一行。口径和 gmOfflineTranscript 一致
+     （台词带说话人、动作与沉默进段落），只是那条整场拼一段、
+     这里是**逐条** —— 切块按条数算。
+     （原先是渲染闭包里的私有函数；项目 5 重建要按同一套口径扫历史，
+     提到模块级 —— kickGroupOfflineSweep 和重建作业共用这一份。） */
+  function groupOfflineLine(s, m) {
+    var um = userMetaOf(s);
+    if (m.role === 'user') return um.name + '：' + (m.text || '');
+    if (m.role === 'scene') return '【场景】' + parasText(m.paras);
+    if (m.role === 'turn') return parasToLines(m.paras);
+    if (m.role === 'event') return '（' + (m.title || '') + '）';
+    if (m.role === 'photo') return '（一张现场照片）';
+    return '';
+  }
+
+  /* 项目 5 重建作业：本岛的群线下会话各推进一步（游标 goff:<sessionId>，
+     与增量写入完全同一条路）。memory-vec 不认识这里的行格式，
+     所以由本文件登记 —— 见 memoryVec.registerRebuildJob。 */
+  if (Sleepy.memoryVec && Sleepy.memoryVec.registerRebuildJob) {
+    Sleepy.memoryVec.registerRebuildJob(function () {
+      var mv = Sleepy.memoryVec;
+      var sid = (Sleepy.core && Sleepy.core.scopeId) ? Sleepy.core.scopeId() : null;
+      /* 没落岛就跳过：群线下块要盖本岛的章，没章可盖宁可这轮不扫 */
+      if (!sid) return Promise.resolve({ ok: true, added: 0 });
+      var list = (all() || []).filter(function (s) {
+        if (!s || !s.id || !s.groupId) return false;
+        var g = Sleepy.groupStore && Sleepy.groupStore.findGroup(s.groupId);
+        return !!(g && g.sandboxId === sid);   /* 别把别岛的原文盖上本岛的章 */
+      });
+      if (!list.length) return Promise.resolve({ ok: true, added: 0 });
+      return Promise.all(list.map(function (s) {
+        return mv.sweepGroup(s.groupId, s.messages || [], {
+          cursorId: 'goff:' + s.id,
+          sourceId: s.id,
+          lineOf: function (m) { return groupOfflineLine(s, m); }
+        });
+      })).then(function (rs) {
+        var out = { ok: true, added: 0 };
+        (rs || []).forEach(function (r) {
+          if (r && r.ok) out.added += (r.added || 0);
+        });
+        return out;
+      }, function (e) {
+        return { ok: false, why: 'throw', error: (e && e.message) || String(e) };
+      });
+    });
+  }
+
   /* 段落 → 纯文本。回给模型的上下文（historyMessages）、群记忆的 transcript、
      门弹窗的预览都用它，**只拼 text**：译文永远不进这里（它是给读的人看的那一层）。 */
   function parasToLines(paras) {
@@ -976,18 +1024,7 @@
       }, 0);
     }
 
-    /* 一条群线下消息 → 索引里的一行。口径和 gmOfflineTranscript 一致
-       （台词带说话人、动作与沉默进段落），只是那条整场拼一段、
-       这里是**逐条** —— 切块按条数算。 */
-    function groupOfflineLine(s, m) {
-      var um = userMetaOf(s);
-      if (m.role === 'user') return um.name + '：' + (m.text || '');
-      if (m.role === 'scene') return '【场景】' + parasText(m.paras);
-      if (m.role === 'turn') return parasToLines(m.paras);
-      if (m.role === 'event') return '（' + (m.title || '') + '）';
-      if (m.role === 'photo') return '（一张现场照片）';
-      return '';
-    }
+    /* groupOfflineLine 提到模块级了（项目 5：重建作业要共用同一套行格式） */
 
     function requestTurn(userInput, opts) {
       opts = opts || {};

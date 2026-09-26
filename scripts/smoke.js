@@ -6255,13 +6255,12 @@ t('P0-1 回复里的 [手机] 痕迹落进查手机（真实数据链路）', ()
 
 console.log('\n--- 第二批证据探针（只读断言，不改任何行为）---');
 
-/* 项目 5 的现状证据：charMem 的归属**不一致** ——
-   私聊总结传「皮套」（page-summary.js:253 chat.characterId）、
-   群线下传 root（page-group-offline.js:1946 oid=ownerId）、
-   留痕只列大号（page-memory.js:170 charsOfSandbox）。
-   这里把现状钉成可观测事实，免得后面「以为是一套库」。
-   ⚠️ 本探针只写 charMem 两个键并在 finally 里删掉，不改生产行为。 */
-t('探针：charMem 归属 —— 皮套与 root 落在两个不同的键上', () => {
+/* 项目 5 施工后的新口径（2026-09-26）：charMem 归 root ——
+   皮套和大号是**同一个大脑**：同一个键、同一份注入；条目用 fromCharId
+   记「哪张脸产生的」。本探针的前身钉的是归一前的旧现状（分键分裂），
+   项目 5 落地后旧断言已随旧口径一起作废。
+   ⚠️ 本探针只写 charMem 一个键并在 finally 里删掉，不改生产行为。 */
+t('探针：charMem 归 root —— 皮套与 root 同键共脑，条目记 fromCharId', () => {
   const prev = S.core.activeSandbox();
   const root = S.core.upsertChar({ name: '探针大号', kind: 'main' }).id;
   const sub = S.core.upsertChar({ name: '探针皮套', kind: 'sub', parentId: root }).id;
@@ -6274,28 +6273,35 @@ t('探针：charMem 归属 —— 皮套与 root 落在两个不同的键上', (
     S.memoryStore.addMemoryItem(sub, { kind: 'shared_event', content: '皮套这条' });
     S.memoryStore.addMemoryItem(root, { kind: 'shared_event', content: '大号这条' });
 
-    const subFile = S.store.get('charMem:' + sub) || { memories: [] };
+    /* 键只有一个：皮套不再另立门牌 */
     const rootFile = S.store.get('charMem:' + root) || { memories: [] };
-    const twoSeparateKeys = subFile.memories.length === 1 && rootFile.memories.length === 1;
+    const subFile = S.store.get('charMem:' + sub);
+    const oneKeyOnly = !subFile && rootFile.memories.length === 2;
+
+    /* 条目记「哪张脸产生的」 */
+    const subEntry = rootFile.memories.filter((m) => m.content === '皮套这条')[0] || {};
+    const rootEntry = rootFile.memories.filter((m) => m.content === '大号这条')[0] || {};
+    const fromCharIdOk = subEntry.fromCharId === sub && rootEntry.fromCharId === root;
 
     /* 留痕列出来的人里没有皮套（只有大号 + 岛内 NPC） */
     const listed = (S.memoryStore.loadIsland().chars || []).map((c) => c.id);
     const subHiddenFromUI = listed.indexOf(sub) < 0 && listed.indexOf(root) >= 0;
 
-    /* L0 注入也按 charId 走：各自只看得到自己那一套 */
+    /* L0 注入共脑：皮套和大号看的是同一份 */
     const injSub = S.memoryStore.getMemoryInjection(sub) || '';
     const injRoot = S.memoryStore.getMemoryInjection(root) || '';
-    const injectSplit = injSub.indexOf('皮套这条') >= 0 &&
-      injSub.indexOf('大号这条') < 0 && injRoot.indexOf('大号这条') >= 0;
+    const sharedBrain = injSub.indexOf('皮套这条') >= 0 &&
+      injSub.indexOf('大号这条') >= 0 && injRoot.indexOf('皮套这条') >= 0;
 
-    if (!twoSeparateKeys) throw new Error('两个 charId 没落在两个键上（前提变了，先看清代码）');
+    if (!oneKeyOnly) throw new Error('charMem 没归成一个键（归一失效或回退了）');
+    if (!fromCharIdOk) throw new Error('条目没记 fromCharId（删皮套没法精确清向量）');
     if (!subHiddenFromUI) throw new Error('留痕列表居然列了皮套（前提变了）');
-    if (!injectSplit) throw new Error('L0 注入没按 charId 分裂（前提变了）');
+    if (!sharedBrain) throw new Error('L0 注入没共脑（皮套看不到大号的记忆，或反之）');
 
-    return { 两键独立: true, 皮套留痕不可见: true, 注入按皮套分裂: true };
+    return { 同键: true, fromCharId: true, 皮套留痕不可见: true, 注入共脑: true };
   } finally {
-    S.store.remove('charMem:' + sub);
     S.store.remove('charMem:' + root);
+    S.store.remove('charMem:' + sub);
     S.core.removeSandbox(sb.id);
     S.core.setActiveSandbox(prev ? prev.id : null);
   }
@@ -6496,6 +6502,16 @@ t('L4 向量记忆：切块 / 余弦 / 重排 / 窗口去重（纯函数打表�
   /* ① 切块：8 条起一块，不够就等更多消息 */
   const short = [mk('user', '在吗', 1), mk('assistant', '在', 2)];
   if (P.nextBlock(short, 0, '林渡') !== null) throw new Error('两条就切了一块 —— 应该等更多消息');
+  /* 「或」语义（2026-09-26）：满 8 条就切，字数不再拦 —— 短聊不卡 600 字 */
+  const chatty = [];
+  for (let i = 0; i < 12; i++) chatty.push(mk(i % 2 ? 'user' : 'assistant', '第' + i + '句好呀', 10 + i));
+  const bc = P.nextBlock(chatty, 0, '林渡');
+  if (!bc || bc.msgCount !== 8) throw new Error('满 8 条短消息没切（还卡着 600 字？）：' + (bc && bc.msgCount));
+  /* 反向：不满 8 条但合计满 600 字也切（方案原文是「或」，长消息场景） */
+  const fewLong = [];
+  for (let i = 0; i < 3; i++) fewLong.push(mk(i % 2 ? 'user' : 'assistant', '长话第' + i + '句' + '嗯'.repeat(250), 200 + i));
+  const bl = P.nextBlock(fewLong.concat([mk('user', '还没完', 300)]), 0, '林渡');
+  if (!bl || bl.msgCount !== 3) throw new Error('3 条长消息满 600 字没提前切：' + (bl && bl.msgCount));
   const many = [];
   for (let i = 0; i < 20; i++) many.push(mk(i % 2 ? 'user' : 'assistant', '第' + i + '句' + '啊'.repeat(80), 100 + i));
   const b1 = P.nextBlock(many, 0, '林渡');
@@ -7389,9 +7405,445 @@ t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一�
     chk('W11 召回门没排在 embedTexts 之前（关了门还是花了一次 embedding）',
       pfi >= 0 && mv.indexOf('if (recallPaused())', pfi) > pfi &&
       mv.indexOf('if (recallPaused())', pfi) < mv.indexOf('return embedTexts([q])', pfi));
+    /* 项目 5 静态护栏（施工卡 §5） */
+    const pm19 = fs.readFileSync(path.join(ROOT, 'page-memory.js'), 'utf8');
+    chk('W11 charMemKey 没过 rootIdOf（皮套会另立门牌，归一失效）',
+      pm19.indexOf("return 'charMem:' + rootIdOf(charId);") >= 0);
+    chk('W11 visibleTo 又出现了「块 charId 与入参直接比对」的裸写法（屏障下皮套永远匹配不上）',
+      mv.indexOf('b.charId === charId') < 0);
+    chk('W11 游标前缀没跟 DB_VER 配套（升版本忘换前缀 = 索引永远空）',
+      /var DB_VER = 6;/.test(mv) && mv.indexOf("'vecCursor4:'") >= 0);
     out.W11 = '护栏 ok';
   }
 
+  /* ============ W18 项目 5：DB 升级 → 重建提示（口径 A，2026-09-26） ============ */
+  {
+    /* -- a) 升级检测：有旧索引痕迹 + 没有版本标记 → needed（提示存在） -- */
+    S.store.remove('vecDbVer');
+    S.store.remove('vecRebuild');
+    S.store.set('vecCursor3:legacy', { index: 3, lastId: 'm3', epoch: 0 });
+    const up = MV.detectDbUpgrade();
+    chk('W18 升级没检出重建提示', !!up && up.state === 'needed');
+    chk('W18 版本标记没写（下次加载会重复提示/漏基线）', S.store.get('vecDbVer') === 6);
+    chk('W18 老前缀游标没清（快照回滚会捞回死进度）', S.store.get('vecCursor3:legacy') == null);
+    chk('W18 全新装机不该看见提示', (() => {
+      /* 全新装机 = 没有任何索引痕迹：把前面用例留下的游标/退避/世代号都清掉 */
+      const doomed = [];
+      for (let i = 0; i < localStorageStub.length; i++) {
+        const k = localStorageStub.key(i);
+        if (k) {
+          const top = k.indexOf(NS) === 0 ? k.slice(NS.length) : null;
+          if (top && (top.indexOf('vecCursor') === 0 || top.indexOf('vecFail:') === 0 || top === 'vecEpoch')) {
+            doomed.push(top);
+          }
+        }
+      }
+      doomed.forEach((t) => S.store.remove(t));
+      S.store.remove('vecDbVer'); S.store.remove('vecRebuild');
+      MV.detectDbUpgrade();
+      const st0 = MV.rebuildState();
+      S.store.set('vecDbVer', 6);
+      return st0 === null;
+    })());
+
+    /* -- b) 基线（口径 A 第 6 条）：旧历史不承诺召回、升级后的新消息照常增量 -- */
+    const BL = MV._pure.baselineIndex;
+    const msgs18 = [
+      { id: 'm1', timestamp: 1000 }, { id: 'm2', timestamp: 2000 },
+      { id: 'm3', timestamp: 3000 }, { id: 'm4', timestamp: 5000 }
+    ];
+    chk('W18 基线没落在「升级后第一条」上', BL(msgs18, 2500) === 2);
+    chk('W18 全是旧内容时基线应为末尾（不重扫）', BL(msgs18, 9000) === 4);
+    chk('W18 全是旧内容且无时间戳时基线应为末尾', BL([{ id: 'x' }], 2500) === 1);
+    chk('W18 没有 at（不该发生）时基线为末尾', BL(msgs18, 0) === 4);
+    const mvSrc = fs.readFileSync(path.join(ROOT, 'memory-vec.js'), 'utf8');
+    chk('W18 sweepSource 没接基线（升级后第一条增量消息会被整段跳过）',
+      mvSrc.indexOf('baselineIndex(msgs, rebuildAt())') >= 0);
+
+    /* -- c) 游标前缀必须跟 DB_VER 配套（§5 静态护栏） -- */
+    chk('W18 cursorKey 没换 vecCursor4（升了版本忘换前缀 = 索引永远空）',
+      MV.cursorKey('x') === 'vecCursor4:x');
+    chk('W18 DB_VER 不是 6', /var DB_VER = 6;/.test(mvSrc));
+    chk('W18 重建首轮没接「先清库」（增量建过的块会被重扫复制一份，同段内容双份）',
+      mvSrc.indexOf('wipeAll({ quiet: true })') >= 0);
+
+    /* -- d) 没有提示时点重建 → notneeded（不白跑） -- */
+    S.store.remove('vecRebuild');
+    const nn = await MV.rebuildIndex();
+    chk('W18 无提示时重建不该执行', nn.why === 'notneeded');
+
+    /* -- e) 成功路径：提示存在 → 点了 → 成功清提示；重复点击被阻止 -- */
+    S.store.set('vectorApi', { baseUrl: 'https://v.test/v1', model: 'emb-1', apiKey: '' });
+    S.store.set('vecCfg', {});
+    S.store.set('vecRebuild', { state: 'needed', at: Date.now() - 1000 });
+    const realAvail = MV.available;
+    MV.available = () => Promise.resolve(true);      /* 冒烟没有 IDB：临时顶上 */
+    try {
+      const p1 = MV.rebuildIndex();
+      const r2 = await MV.rebuildIndex();   /* 第一次还在跑 → 同一时刻再点 */
+      chk('W18 重复点击没被阻止（会并发扫两遍、花两份钱）', r2 && r2.why === 'running');
+      const r1 = await p1;
+      chk('W18 空场景重建没成功：' + (r1.error || r1.why), r1.ok === true);
+      chk('W18 成功后提示没清掉（会一直挂着「需要重建」）', MV.rebuildState() === null);
+      chk('W18 重建没把世代号推进一步（旧游标还活着 = 没从头扫）',
+        typeof S.store.get('vecEpoch') === 'number' && S.store.get('vecEpoch') > 0);
+    } finally {
+      MV.available = realAvail;
+    }
+
+    /* -- f) 失败路径：状态保留 + 可重试；成功才清提示（不许假装完成） -- */
+    const sb18 = S.core.createSandbox('isle18', 'W18岛');
+    S.core.setActiveSandbox(sb18.id);
+    S.core.upsertChar({ id: 'm18', kind: 'main', name: 'W18大号' });
+    S.store.set('chats', [{
+      id: 'chat18', characterId: 'm18', userId: 'u18', name: 'W18',
+      messages: Array.from({ length: 10 }, (_, i) => ({
+        id: 'm18_' + i, role: i % 2 ? 'user' : 'char', content: '话' + i, timestamp: 1000 + i
+      }))
+    }]);
+    S.store.set('vecRebuild', { state: 'needed', at: Date.now() - 1000 });
+    const realAvail2 = MV.available;
+    MV.available = () => Promise.resolve(true);      /* available 过了、IDB 没过 → 真失败 */
+    try {
+      const rf = await MV.rebuildIndex();
+      chk('W18 有数据却报成功（假完成）', rf.ok !== true);
+      const stf = MV.rebuildState();
+      chk('W18 失败状态没保留', !!stf && stf.state === 'failed');
+      chk('W18 失败原因没记下来', !!(stf && (stf.error || stf.why)));
+      /* 重试：把数据清掉再点一次 —— 应能走完并清提示
+         （日记是全局源，冒烟里会去撞不存在的 IDB，一并清掉；
+           岛也要删 —— activeSandbox() 会回落到第一间房，删了才是真的没岛） */
+      S.store.set('chats', []);
+      S.store.set('diaries', []);
+      S.core.removeSandbox(sb18.id);
+      S.core.setActiveSandbox(null);
+      const rr = await MV.rebuildIndex();            /* 重试入口 = 同一个按钮 */
+      chk('W18 重试没走通：' + (rr.error || rr.why) +
+        (rr.failed ? ' / ' + JSON.stringify(rr.failed) : ''), rr.ok === true);
+      chk('W18 重试成功后提示没清掉', MV.rebuildState() === null);
+    } finally {
+      MV.available = realAvail2;
+      S.core.removeSandbox(sb18.id);   /* 重试前已删，这里兜底 */
+    }
+    chk('W18 设置页没有挂重建提示（用户看不见「需要重建」）', (() => {
+      const apiSrc = fs.readFileSync(path.join(ROOT, 'page-singleapi.js'), 'utf8');
+      return apiSrc.indexOf('记忆索引需要重建') >= 0 &&
+        apiSrc.indexOf('rebuildIndex') >= 0 &&
+        apiSrc.indexOf('function renderRebuild') >= 0;
+    })());
+    out.W18 = '升级提示 / 基线 / 防重复 / 成功清 / 失败重试 / vecCursor4 全过';
+  }
+
+  /* ============ W19 项目 5：charMem 归 root 迁移（S7/S8，测试矩阵 T1–T14 核心） ============ */
+  {
+    const MS = S.memoryStore;
+    const MIG_KEYS = ['charMemMigrationState', 'charMemMigrated', 'memoryIsland', 'charSettings',
+      'charMem:m19', 'charMem:f19', 'charMem:m23', 'charMem:f23',
+      'charMem:m20', 'charMem:f20', 'charMem:m21', 'charMem:f21', 'charMem:ghost21'];
+    const clean = () => MIG_KEYS.forEach((k) => S.store.remove(k));
+
+    /* -- 场景一（T1/T2b/T3/T6/T3b）：纯数据归并，开关全默认（注入断言不被开关挡住） -- */
+    S.core.upsertChar({ id: 'm19', kind: 'main', name: 'W19大号' });
+    S.core.upsertChar({ id: 'f19', kind: 'sub', parentId: 'm19', name: 'W19皮套' });
+    S.store.set('charMem:m19', {
+      version: '1', charId: 'm19', understandings: [],
+      memories: [
+        { id: 'a1', charId: 'm19', kind: 'user_fact', content: 'root 版旧内容', status: 'active', updatedAt: '2026-01-01T00:00:00Z' },
+        { id: 'r1', charId: 'm19', kind: 'habit', content: 'root 独有', status: 'active', updatedAt: '2026-01-01T00:00:00Z' },
+        { id: 'c9', charId: 'm19', kind: 'custom', content: '两边全同', status: 'active', updatedAt: '2026-01-03T00:00:00Z' },
+        { id: 'c10', charId: 'm19', kind: 'custom', content: 'root 较新', status: 'active', updatedAt: '2026-01-05T00:00:00Z' }
+      ]
+    });
+    S.store.set('charMem:f19', {
+      version: '1', charId: 'f19', understandings: [],
+      memories: [
+        { id: 'a1', charId: 'f19', kind: 'user_fact', content: '皮套版新内容', status: 'active', isAnchor: true, updatedAt: '2026-01-02T00:00:00Z' },
+        { id: 'n1', charId: 'f19', kind: 'promise', content: '皮套新增', status: 'active', updatedAt: '2026-01-02T00:00:00Z' },
+        { id: 'c9', charId: 'm19', kind: 'custom', content: '两边全同', status: 'active', updatedAt: '2026-01-03T00:00:00Z' },
+        { id: 'c10', charId: 'f19', kind: 'custom', content: '皮套较旧', status: 'active', updatedAt: '2026-01-04T00:00:00Z' }
+      ]
+    });
+    const res19 = MS.migrateCharMemToRoot();
+    chk('W19 迁移没跑成：' + JSON.stringify(res19 && res19.report), !!res19 && res19.ok === true);
+    chk('W19 皮套源键没删（旧源键删除前不算迁移完成）', S.store.get('charMem:f19') == null);
+    const root19 = S.store.get('charMem:m19');
+    chk('W19 root 档案没生成', !!root19 && Array.isArray(root19.memories));
+    const a1 = (root19.memories || []).filter((m) => m.id === 'a1')[0];
+    chk('W19 C2 胜者不是较新的那条（皮套版应赢）', !!a1 && a1.content === '皮套版新内容');
+    const loser = (root19.memories || []).filter((m) => m.status === 'superseded' && m.supersededBy === 'a1')[0];
+    chk('W19 败者没标 superseded + supersededBy 没指向真实胜者', !!loser);
+    chk('W19 败者没记 migrationOriginalStatus（原状态应 active）',
+      !!loser && loser.migrationOriginalStatus === 'active');
+    chk('W19 败者 id 没换（会和胜者撞 id）', !!loser && loser.id !== 'a1');
+    chk('W19 isAnchor 没合并到胜者（锚只参与字段合并）', !!a1 && a1.isAnchor === true);
+    const c10w = (root19.memories || []).filter((m) => m.content === 'root 较新')[0];
+    chk('W19 C2 反向（root 侧较新）没让 root 赢', !!c10w);
+    chk('W19 C1 全同没走跳过（会多出一条副本）', res19.report.c1Skipped === 1);
+    chk('W19 冲突数不对（C2 应命中 2 起：a1 与 c10）', res19.report.conflicts === 2);
+    chk('W19 条目数不守恒（丢/多了条目）', root19.memories.length === 7);   /* a1×2 + r1 + n1 + c9 + c10×2 */
+    chk('W19 root 独有条目 fromCharId 没记自身 id（§2.4）',
+      root19.memories.filter((m) => m.id === 'r1')[0].fromCharId === 'm19');
+    chk('W19 皮套条目 fromCharId 没记那张脸', (root19.memories || []).filter((m) => m.id === 'n1')[0].fromCharId === 'f19');
+    chk('W19 幂等：跑第二次应直接返回 null 且条数不变', (() => {
+      const again = MS.migrateCharMemToRoot();
+      return again === null && S.store.get('charMem:m19').memories.length === 7;
+    })());
+
+    /* T3b：败者（superseded）不进注入，胜者要进 */
+    const inject19 = MS.getMemoryInjection('f19') || '';
+    chk('W19 败者内容进了注入（会当成有效记忆喂给模型）', inject19.indexOf('root 版旧内容') < 0);
+    chk('W19 胜者内容没进注入（归并丢了活记忆）', inject19.indexOf('皮套版新内容') >= 0);
+
+    /* -- 场景二（T2 开关 / C8 false 优先 / charSettings.memory 并入 memoryIsland） -- */
+    clean();
+    S.core.upsertChar({ id: 'm23', kind: 'main', name: 'W23大号' });
+    S.core.upsertChar({ id: 'f23', kind: 'sub', parentId: 'm23', name: 'W23皮套' });
+    S.store.set('charMem:f23', { version: '1', charId: 'f23', understandings: [], memories: [{ id: 'w1', content: 'x', status: 'active' }] });
+    S.store.set('memoryIsland', { name: '星屿', type: 'solo', byChar: {
+      f23: { enabled: false },
+      m23: { enabled: true, level: 'simple', updatedAt: '2026-01-01T00:00:00Z' }
+    } });
+    S.store.set('charSettings', { byChar: {
+      f23: { proactive: false, memory: false, autoLife: 'high' },
+      m23: { memory: true, autoLife: 'low' }
+    } });
+    const res23 = MS.migrateCharMemToRoot();
+    chk('W23 场景二迁移没跑成', !!res23 && res23.ok === true);
+    const byChar23 = (S.store.get('memoryIsland') || {}).byChar || {};
+    chk('W23 memoryIsland 没归成一个键', Object.keys(byChar23).length === 1 && !!byChar23.m23);
+    chk('W23 C8：enabled 的 false 没优先（皮套关了不该被大号的 true 复活）',
+      byChar23.m23 && byChar23.m23.enabled === false);
+    const cfg23 = MS.charConfig('f23');
+    chk('W23 皮套的开关没归 root（按脸读应该读到 root 的开关）', cfg23.enabled === false);
+    const cs23 = (S.store.get('charSettings') || {}).byChar || {};
+    chk('W23 charSettings 脸字段没摘掉 / 没归 root', Object.keys(cs23).length === 1 &&
+      cs23.m23 && cs23.m23.proactive === false && cs23.m23.autoLife === 'low');
+    chk('W23 旧 charSettings.memory=false 没并入 memoryIsland.enabled（§2.2）',
+      !!res23 && (res23.report.memoryOffMerged >= 1) && byChar23.m23.enabled === false);
+
+    /* -- 场景三（T10 崩溃恢复三分支） -- */
+    clean();
+    S.core.upsertChar({ id: 'm20', kind: 'main', name: 'W20大号' });
+    S.core.upsertChar({ id: 'f20', kind: 'sub', parentId: 'm20', name: 'W20皮套' });
+    const bakMerged = { at: 1, data: {
+      'charMem:m20': { version: '1', charId: 'm20', memories: [] },
+      'charMem:f20': { version: '1', charId: 'f20', memories: [{ id: 'z1', content: '恢复源', status: 'active' }] }
+    } };
+    S.store.set('charMemBackup:rec20', bakMerged);
+    /* 分支 1：未校验（merged）→ 整份恢复 → 清标记 → 下次重跑 */
+    S.store.set('charMemMigrationState', { txn: 'tx20', phase: 'merged', backupKey: 'charMemBackup:rec20', sources: ['charMem:f20'] });
+    S.store.set('charMem:m20', { version: '1', charId: 'm20', memories: [{ id: '被写脏的', content: 'x', status: 'active' }] });
+    const rec1 = MS.migrateCharMemToRoot();
+    chk('W20 merged 分支没走整份恢复', !!rec1 && rec1.ok === false && rec1.recovered === 'merged' && rec1.restored === true);
+    chk('W20 恢复后目标键没还原（脏数据还在）', (S.store.get('charMem:m20').memories || []).length === 0);
+    chk('W20 恢复后事务标记没清（会卡在恢复态）', S.store.get('charMemMigrationState') == null);
+    /* 分支 2：已校验未删源（verified）→ 续完 */
+    S.store.remove('charMemMigrated');
+    S.store.set('charMemMigrationState', { txn: 'tx20b', phase: 'verified', backupKey: 'charMemBackup:rec20', sources: ['charMem:f20'] });
+    const rec2 = MS.migrateCharMemToRoot();
+    chk('W20 verified 分支没续完', !!rec2 && rec2.ok === true && rec2.recovered === 'verified');
+    chk('W20 续完没删源键', S.store.get('charMem:f20') == null);
+    chk('W20 续完没落 done 标记', !!S.store.get('charMemMigrated'));
+    /* 分支 3：srcDeleted / done → 只清标记 */
+    S.store.remove('charMemMigrated');
+    S.store.set('charMemMigrationState', { txn: 'tx20c', phase: 'srcDeleted', backupKey: 'charMemBackup:rec20', sources: [] });
+    const rec3 = MS.migrateCharMemToRoot();
+    chk('W20 srcDeleted 分支没收尾', !!rec3 && rec3.ok === true);
+    chk('W20 收尾没清事务标记', S.store.get('charMemMigrationState') == null);
+    S.store.remove('charMemBackup:rec20');
+
+    /* -- 场景四（T7 understandings 隔离 / T8 孤儿键 / T11 备份保留期） -- */
+    clean();
+    ['charMemBackup:b1', 'charMemBackup:b2', 'charMemBackup:b3', 'charMemBackup:b4']
+      .forEach((k) => S.store.set(k, { at: 1 }));
+    S.core.upsertChar({ id: 'm21', kind: 'main', name: 'W21大号' });
+    S.core.upsertChar({ id: 'f21', kind: 'sub', parentId: 'm21', name: 'W21皮套' });
+    S.store.set('charMem:m21', { version: '1', charId: 'm21', understandings: [], memories: [] });
+    /* C6：understandings 无写入方、schema 无法核实 → 整键不迁不删，隔离计数 */
+    S.store.set('charMem:f21', {
+      version: '1', charId: 'f21', understandings: [{ id: 'u1', content: 'schema 未核实' }],
+      memories: [{ id: 'q1', content: 'x', status: 'active' }]
+    });
+    /* 孤儿键：char 不存在 → 不猜归属，隔离计数 */
+    S.store.set('charMem:ghost21', { version: '1', charId: 'ghost21', understandings: [], memories: [{ id: 'g1', content: '孤儿', status: 'active' }] });
+    const res21 = MS.migrateCharMemToRoot();
+    chk('W21 有隔离/孤儿时迁移没照常完成', !!res21 && res21.ok === true);
+    chk('W21 understandings 非空的源键被迁走了（C6 违约）', S.store.get('charMem:f21') != null);
+    chk('W21 understandings 没计入隔离', res21.report.quarantined === 1);
+    chk('W21 孤儿键被删了（不许猜）', S.store.get('charMem:ghost21') != null);
+    chk('W21 孤儿键没计数', res21.report.orphans === 1);
+    chk('W21 备份没按保留 3 份修剪（§2.7）', (() => {
+      const ks = [];
+      for (let i = 0; i < localStorageStub.length; i++) {
+        const k = localStorageStub.key(i);
+        if (k && k.indexOf(NS + 'charMemBackup:') === 0) ks.push(k);
+      }
+      return ks.length === 3;
+    })());
+    clean();
+    /* T9 写入锁：静态护栏 + sweepMem 短路真的接上了 */
+    chk('W19 写入锁静态护栏（saveCharMemory 短路 + sweepMem 短路）', (() => {
+      const pm = fs.readFileSync(path.join(ROOT, 'page-memory.js'), 'utf8');
+      const mv = fs.readFileSync(path.join(ROOT, 'memory-vec.js'), 'utf8');
+      return pm.indexOf("if (isMigrating()) return { ok: false, why: 'migrating' };") >= 0 &&
+        mv.indexOf('MS.isMigrating && MS.isMigrating()') >= 0;
+    })());
+    chk('W19 sweepMem 的迁移短路真的接上了', await (() => {
+      const oldIsMig = MS.isMigrating;
+      MS.isMigrating = () => true;
+      return MV.sweepMem('f19').then((r) => {
+        MS.isMigrating = oldIsMig;
+        return r.why === 'migrating';
+      });
+    })());
+    out.W19 = '归并 / C1 / C2 / 锚 / 败者隔离 / 开关 / 恢复三分支 / C6 / 孤儿 / 备份保留 / 写入锁 全过';
+  }
+
+  /* ============ W20 项目 5 补证（2026-09-26 五条，验收前补测） ============ */
+  {
+    const MS = S.memoryStore;
+    S.store.set('vectorApi', { baseUrl: 'https://v.test/v1', model: 'emb-1', apiKey: '' });
+    S.store.set('vecCfg', {});
+    const realAvail = MV.available;
+    MV.available = () => Promise.resolve(true);
+    try {
+      /* -- 补证 1：needed 首轮必须推世代号；failed 重试不得推（= 断点续扫） -- */
+      S.store.set('vecEpoch', 5);
+      S.store.set('vecRebuild', { state: 'needed', at: Date.now() });
+      const rN = await MV.rebuildIndex();
+      chk('补证1 首轮重建没推世代号（旧游标还活着 = 没从头扫）',
+        rN.ok === true && S.store.get('vecEpoch') === 6);
+      /* 失败重试：第一轮已写入的块靠游标记住 —— 重试不得作废它 */
+      S.store.set('vecEpoch', 9);
+      S.store.set('vecCursor4:chatX', { index: 9, lastId: 'm9', model: 'emb-1', epoch: 9 });
+      S.store.set('vecRebuild', { state: 'failed', why: 'embed', error: 'x', at: Date.now() });
+      const rR = await MV.rebuildIndex();
+      chk('补证1 失败重试把世代号又推了（= 从头重扫，已完成块会重算）',
+        rR.ok === true && S.store.get('vecEpoch') === 9);
+      chk('补证1 重试弄丢了第一轮的断点游标', !!S.store.get('vecCursor4:chatX'));
+      const msgsX = Array.from({ length: 9 }, (_, i) => ({ id: 'm' + (i + 1) }));
+      chk('补证1 断点游标不再有效（readCursor 应回到 9，从 m9 之后续扫）',
+        MV._pure.readCursor('vecCursor4:chatX', msgsX) === 9);
+
+      /* -- 补证 2：迁移调用链 —— core 未就绪跳过后，同一启动周期内补跑完成 -- */
+      const W2_KEYS = ['charMemMigrationState', 'charMemMigrated', 'charMem:m25', 'charMem:f25'];
+      W2_KEYS.forEach((k) => S.store.remove(k));
+      S.core.upsertChar({ id: 'm25', kind: 'main', name: '补证25大号' });
+      S.core.upsertChar({ id: 'f25', kind: 'sub', parentId: 'm25', name: '补证25皮套' });
+      S.store.set('charMem:f25', { version: '1', charId: 'f25', understandings: [], memories: [{ id: 'p1', content: '待迁', status: 'active' }] });
+      const realRootOf25 = S.core.rootIdOf;
+      S.core.rootIdOf = undefined;                 /* 模拟 core 未就绪 */
+      const rSkipped = MS.bootMigrate();
+      S.core.rootIdOf = realRootOf25;
+      chk('补证2 core 未就绪时没跳过成功假象（迁移不能算完成）',
+        rSkipped === null && S.store.get('charMem:f25') != null && !S.store.get('charMemMigrated'));
+      const rDone = MS.bootMigrate();              /* ② DOMContentLoaded 链上的补跑 */
+      chk('补证2 core 就绪后同一启动周期没迁完',
+        !!rDone && rDone.ok === true && S.store.get('charMem:f25') == null &&
+        !!S.store.get('charMemMigrated') &&
+        (S.store.get('charMem:m25').memories || []).length === 1);
+      W2_KEYS.forEach((k) => S.store.remove(k));
+
+      /* -- 补证 3：崩溃残留 state → 启动窗口即 migrating，恢复完成才放行写入 -- */
+      S.core.upsertChar({ id: 'm26', kind: 'main', name: '补证26大号' });
+      S.core.upsertChar({ id: 'f26', kind: 'sub', parentId: 'm26', name: '补证26皮套' });
+      const bak26 = { at: 1, data: {
+        'charMem:m26': { version: '1', charId: 'm26', memories: [] },
+        'charMem:f26': { version: '1', charId: 'f26', memories: [{ id: 'z1', content: '恢复源', status: 'active' }] }
+      } };
+      S.store.set('charMemBackup:rec26', bak26);
+      S.store.set('charMemMigrationState', { txn: 'tx26', phase: 'merged', backupKey: 'charMemBackup:rec26', sources: ['charMem:f26'] });
+      S.store.set('charMem:m26', { version: '1', charId: 'm26', memories: [{ id: '脏', content: 'x', status: 'active' }] });
+      chk('补证3 崩溃残留 state 时 isMigrating 没立即为真（恢复前写入不被挡）', MS.isMigrating() === true);
+      const wBlocked = MS.saveCharMemory({ version: '1', charId: 'm26', understandings: [], memories: [{ id: '并发写', content: 'y', status: 'active' }] });
+      chk('补证3 恢复期间 saveCharMemory 没被挡住', !!wBlocked && wBlocked.ok === false && wBlocked.why === 'migrating');
+      const sBlocked = await MV.sweepMem('f26');
+      chk('补证3 恢复期间 sweepMem 没被挡住', sBlocked.why === 'migrating');
+      const rec26 = MS.migrateCharMemToRoot();
+      chk('补证3 恢复分支没走通', !!rec26 && rec26.ok === false && rec26.recovered === 'merged' && rec26.restored === true);
+      chk('补证3 恢复完成后 isMigrating 没放行', MS.isMigrating() === false);
+      const wOpen = MS.saveCharMemory({ version: '1', charId: 'm26', understandings: [], memories: [{ id: '放行探针', content: 'z', status: 'active' }] });
+      /* saveCharMemory 成功时无返回值（只有被挡才回 {ok:false, why}）—— 看落库结果 */
+      chk('补证3 恢复完成后写入还是被挡着', (wOpen === undefined || wOpen.ok !== false) &&
+        (S.store.get('charMem:m26').memories || []).length === 1 &&
+        S.store.get('charMem:m26').memories[0].id === '放行探针');
+      ['charMemMigrationState', 'charMemMigrated', 'charMemBackup:rec26', 'charMem:m26', 'charMem:f26']
+        .forEach((k) => S.store.remove(k));
+
+      /* -- 补证 4（T12）：七类源抽样断言归属字段 + forget 三维全中才删 -- */
+      const P = MV._pure;
+      S.core.upsertChar({ id: 'm27', kind: 'main', name: '补证27大号' });
+      S.core.upsertChar({ id: 'f27', kind: 'sub', parentId: 'm27', name: '补证27皮套A' });
+      S.core.upsertChar({ id: 'f27b', kind: 'sub', parentId: 'm27', name: '补证27皮套B' });
+      const R = 'm27', FA = 'f27', FB = 'f27b';
+      const resV = { vectors: [[0.1]] };
+      const blk = (o) => ({ at: 1, at0: 1, fromId: 'm1', toId: 'm1', msgCount: 1, msgIds: ['m1'], text: 'x', ...o });
+      const rec0 = (src, made) => P.buildRecs(src, made, resV, 's1')[0];
+      const msgSrc = { ownerKey: R, kind: 'chat', charId: R, fromCharId: FA, userId: 'u1', sourceId: 'c1' };
+      let q = rec0(msgSrc, [blk({})]);
+      chk('T12 chats 块归属不对', q.charId === R && q.fromCharId === FA && q.ownerKey === R && q.sandboxId === 's1');
+      q = rec0({ ...msgSrc, kind: 'offline', sourceId: 'off1' }, [blk({})]);
+      chk('T12 offline 块归属不对', q.charId === R && q.fromCharId === FA);
+      q = rec0({ ownerKey: 'island:s1', kind: 'moment', sourceId: 'moment' },
+        [blk({ iso: 'char', charId: R, fromCharId: FA, itemId: 'mm1' })]);
+      chk('T12 朋友圈（角色发）归属不对', q.charId === R && q.fromCharId === FA && q.userId === null);
+      q = rec0({ ownerKey: 'island:s1', kind: 'moment', sourceId: 'moment' },
+        [blk({ iso: 'user', charId: null, fromCharId: null, userId: 'u1', itemId: 'mm2' })]);
+      chk('T12 朋友圈（我发）归属不对', q.charId === null && q.fromCharId === null && q.userId === 'u1');
+      q = rec0({ ownerKey: R, kind: 'diary', sourceId: 'diary', charId: R, fromCharId: FA, iso: 'char' }, [blk({})]);
+      chk('T12 角色日记归属不对', q.charId === R && q.fromCharId === FA);
+      q = rec0({ ownerKey: 'user:u1', kind: 'diary', sourceId: 'diary', iso: 'user' }, [blk({})]);
+      chk('T12 我写的日记归属不对', q.charId === null && q.fromCharId === null && q.ownerKey === 'user:u1');
+      q = rec0({ ownerKey: R, kind: 'mem', sourceId: 'mem', charId: R, iso: 'char' },
+        [blk({ fromCharId: FB, itemId: 'e1' })]);
+      chk('T12 档案块没按条目自身的 fromCharId 盖章', q.charId === R && q.fromCharId === FB);
+      q = rec0({ ownerKey: R, kind: 'mem', sourceId: 'mem', charId: R, iso: 'char' },
+        [blk({ fromCharId: null, itemId: 'e2' })]);
+      chk('T12 无来源脸的档案块 fromCharId 应为 null（不许猜）', q.fromCharId === null);
+      q = rec0({ ownerKey: R, kind: 'phone', sourceId: 'phone:note', charId: R, fromCharId: FA, iso: 'char' }, [blk({})]);
+      chk('T12 查手机归属不对', q.charId === R && q.fromCharId === FA);
+      q = rec0({ ownerKey: 'group:g1', kind: 'group', groupId: 'g1' }, [blk({})]);
+      chk('T12 群块归属不对（群池没有脸）', q.charId === null && q.fromCharId === null && q.groupId === 'g1');
+      /* forget 三维：全中才删，别脸 / 别岛保留 */
+      const B1 = { id: 'b1', ownerKey: R, charId: R, fromCharId: FA, sandboxId: 's1' };
+      const B2 = { id: 'b2', ownerKey: R, charId: R, fromCharId: FB, sandboxId: 's1' };
+      const B3 = { id: 'b3', ownerKey: R, charId: R, fromCharId: FA, sandboxId: 's2' };
+      const B4 = { id: 'b4', ownerKey: R, charId: R, fromCharId: FA, sandboxId: 's1', msgIds: ['m5'] };
+      chk('T12 全中却没删', P.forgetHit(B1, { charId: R, fromCharId: FA, sandboxId: 's1' }) === true);
+      chk('T12 别的脸的块被误删（B 脸必须留下）', P.forgetHit(B2, { charId: R, fromCharId: FA, sandboxId: 's1' }) === false);
+      chk('T12 别岛的块被误删（必须留下）', P.forgetHit(B3, { charId: R, fromCharId: FA, sandboxId: 's1' }) === false);
+      chk('T12 charId 维度传脸没归一（老调用方会静默清 0 条）', P.forgetHit(B1, { charId: FA }) === true);
+      chk('T12 只按 fromCharId 过滤没命中 B 脸', P.forgetHit(B2, { charId: R, fromCharId: FB, sandboxId: 's1' }) === true);
+      chk('T12 ids 维度没参与全中（给了 ids 却不看 msgIds）',
+        P.forgetHit(B4, { charId: R, fromCharId: FA, sandboxId: 's1', ids: ['mX'] }) === false &&
+        P.forgetHit(B4, { charId: R, fromCharId: FA, sandboxId: 's1', ids: ['m5'] }) === true);
+
+      /* -- 补证 5：旧库有向量但 localStorage 无痕迹 —— 权威信号兜底 -- */
+      const mvSrc = fs.readFileSync(path.join(ROOT, 'memory-vec.js'), 'utf8');
+      chk('补证5 onupgradeneeded 没接 req.oldVersion 权威信号（旧库+无痕迹会漏判，老块静默清空且永不提示）',
+        mvSrc.indexOf('oldVer > 0 && oldVer < DB_VER') >= 0 &&
+        mvSrc.indexOf("state: 'needed', fromVer: oldVer, at: Date.now(), via: 'idb'") >= 0);
+      chk('补证5 detectDbUpgrade 没顺手开库（权威信号要等第一次聊天才生效）',
+        mvSrc.indexOf('if (supported) { try { open(); }') >= 0);
+      /* 行为级 IDB 测试：真实开库路径上验升级信号 / 重建断点 / DOMContentLoaded
+         链 / 生产 forget 三维。隔离内存桩库（见 idb-upgrade-test.js 头注），
+         不触碰任何真实存档。 */
+      const { spawnSync } = require('child_process');
+      const idbRun = spawnSync(process.execPath,
+        [path.join(ROOT, 'scripts', 'idb-upgrade-test.js')],
+        { encoding: 'utf8', timeout: 60000 });
+      const idbTail = String(idbRun.stdout || '').trim().split('\n').pop();
+      chk('补证6 IDB 行为级测试没通过（exit ' + idbRun.status + '）：' +
+        idbTail.slice(0, 200) + (idbRun.stderr || '').slice(0, 200),
+        idbRun.status === 0 && (() => { try { return JSON.parse(idbTail).fail === 0; } catch (e) { return false; } })());
+      out.W20 = '重试断点 / 调用链 / 恢复期写入锁 / T12 七源抽样 / 升级漏判兜底 / IDB 行为级全过';
+    } finally {
+      MV.available = realAvail;
+    }
+  }
+
+  return out;
+  return out;
   return out;
 });
 

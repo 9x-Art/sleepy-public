@@ -562,7 +562,10 @@
     if (ms && ms.loadCharMemory) {
       try { return ms.loadCharMemory(charId) || { memories: [] }; } catch (e) { /* 落到下面兜底 */ }
     }
-    var raw = store.get('charMem:' + charId);
+    /* 项目 5：键归 root —— 兜底读取也要过 rootIdOf，别读皮套键 */
+    var rid = (Sleepy.core && Sleepy.core.rootIdOf)
+      ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
+    var raw = store.get('charMem:' + rid);
     return raw && Array.isArray(raw.memories) ? raw : { memories: [] };
   }
 
