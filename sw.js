@@ -13,6 +13,11 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v119（2026-09-27）：项目4 删除边界（forgetCharSet 按 fromCharId 集合精确命中）
+   部署配套跳版本 —— 本次改动了运行时脚本 core.js / memory-vec.js /
+   page-idcard.js / page-island.js / page-chat-settings.js，老用户 PWA 缓存里仍是
+   旧删除语义，必须清掉整壳强制拉新。本版**未动任何 SW 业务逻辑**。
+   → 必须跳版本：多个运行时脚本改了。
    v118（2026-09-26）：**部署入口修复** —— Cloudflare Pages 平台把 `/index.html`
    自动 308 → `/`，Android Edge 在 SW 控制下处理该 308 会 ERR_FAILED，导致 PWA
    桌面图标（manifest.start_url 原为 ./index.html）打不开。修：manifest.start_url/
@@ -181,7 +186,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v118';
+var CACHE = 'sleepy-v119';
 var CORE = [
   './',
   './index.html',
