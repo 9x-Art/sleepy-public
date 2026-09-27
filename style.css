@@ -12831,6 +12831,16 @@ button.cal-ev:active{background:var(--g-glass-2);}
   display:inline-block;margin-top:9px;
   font-size:11px;color:var(--g-accent-deep, var(--g-accent));
 }
+/* 分类/来源两枚小标签（We 首页共同记录卡） */
+.we-entry-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.we-entry-tag{
+  display:inline-block;padding:1px 7px;font-size:10.5px;line-height:1.7;
+  color:var(--g-accent-deep, var(--g-accent));
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+  border:1px solid rgba(176,138,94,.28);
+  letter-spacing:.06em;
+}
+.we-entry-tags .we-entry-src{margin-top:0}
 
 /* ---- 空态（We 语境，保留编辑式结构） ---- */
 .we-none{
@@ -12872,3 +12882,85 @@ button.cal-ev:active{background:var(--g-glass-2);}
   appearance:none;
 }
 
+
+/* ============================================================
+   We 收藏馆（page-collection.js：门厅 + 藏品详情）
+   —— 视觉语言沿用 We 首页（米白纸面 / 衬线标题 / 焦糖主色 /
+      硬边小卡 / 负 margin 通屏缘），只追加 collection 专属结构。
+   分类 chip 与来源 chip 复用 we-entry-tag。
+   ============================================================ */
+
+/* ---- 门厅封面（在 we-cover 基础上去掉过高，馆名更收敛） ---- */
+.co-hall .co-cover{height:196px}
+
+/* ---- 分类网格：硬边小卡（可点击进详情） ---- */
+.co-grid{display:flex;flex-direction:column;gap:9px}
+.co-card{
+  display:block;width:100%;text-align:left;
+  background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.22);
+  border-radius:0;padding:12px 13px 11px;
+  box-shadow:2px 2px 0 rgba(27,25,23,.05);
+  font-family:inherit;cursor:pointer;color:inherit;
+}
+.co-card:active{transform:translateY(1px);box-shadow:1px 1px 0 rgba(27,25,23,.05)}
+.co-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.co-card-title{
+  font-size:14px;font-weight:500;color:var(--text);
+  font-family:var(--ff-serif);
+}
+.co-card-day{flex:none;font-size:11px;color:var(--text-faint, var(--text-dim));}
+.co-card-note{
+  margin:7px 0 0;font-size:12.5px;line-height:1.55;color:var(--text-dim);
+  white-space:pre-wrap;word-break:break-word;
+}
+.co-card-src{
+  display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;
+  font-size:10.5px;color:var(--g-accent-deep, var(--g-accent));
+  letter-spacing:.06em;
+}
+.co-card-src.is-gone{color:#a05a2c}
+.co-card-src span{
+  display:inline-block;padding:1px 7px;line-height:1.7;
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+  border:1px solid rgba(176,138,94,.28);
+}
+
+/* ---- 空态 ---- */
+.co-empty{margin-top:26px}
+
+/* ---- 藏品详情 ---- */
+.co-detail-head{border-bottom:1px solid rgba(27,25,23,.85);padding-bottom:14px;margin-top:22px}
+.co-detail-kind{
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.2em;
+  color:var(--g-accent-deep, var(--g-accent));margin-bottom:10px;
+}
+.co-detail-title{
+  font-family:var(--ff-serif);font-size:22px;line-height:1.3;
+  font-weight:400;color:var(--text);margin:0 0 9px;letter-spacing:.02em;
+}
+.co-detail-date{font-size:11px;letter-spacing:.12em;color:var(--text-faint, var(--text-dim));margin:0}
+.co-detail-note{
+  margin-top:16px;padding:14px 15px;
+  background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.22);
+  box-shadow:2px 2px 0 rgba(27,25,23,.05);
+}
+.co-detail-note p{margin:0;font-size:14px;line-height:1.75;color:var(--text);white-space:pre-wrap;word-break:break-word}
+
+/* ---- 来源状态条 ---- */
+.co-src-box{margin-top:14px;padding:12px 14px;border:1px solid rgba(27,25,23,.22)}
+.co-src-line{font-size:12.5px;line-height:1.6;color:var(--text-dim)}
+.co-src-line.co-src-live{color:var(--g-accent-deep, var(--g-accent))}
+.co-src-line.co-src-gone{color:#a05a2c}
+
+/* ---- 档案卡：字段明细 ---- */
+.co-meta{margin-top:18px}
+.co-meta-row{
+  display:flex;align-items:baseline;gap:12px;
+  padding:10px 0;border-bottom:1px solid rgba(27,25,23,.12);
+  font-size:12.5px;
+}
+.co-meta-row:last-child{border-bottom:0}
+.co-meta-k{flex:none;min-width:48px;color:var(--text-faint, var(--text-dim));letter-spacing:.08em}
+.co-meta-v{color:var(--text);word-break:break-all}

@@ -65,6 +65,22 @@
 
   var WE_KEY = 'weEntries';
 
+  /* 收藏馆藏品分类（kind）。首轮七类，'other' 兜底：
+     —— 老记录没有 kind 字段时，详情/门厅一律按 'other' 兼容（见 kindOf）。 */
+  var WE_KINDS = ['ticket', 'photo', 'letter', 'music', 'gift', 'place', 'other'];
+
+  /* 归一化 kind：白名单外的（含 undefined / 历史遗留）一律落 'other'。 */
+  function kindOf(rec) {
+    var k = rec && rec.kind;
+    return WE_KINDS.indexOf(k) >= 0 ? k : 'other';
+  }
+
+  /* 分类中文名（门厅分组标题用）。 */
+  var WE_KIND_LABEL = {
+    ticket: '票根', photo: '照片', letter: '信件', music: '音乐',
+    gift: '礼物', place: '地方', other: '其他'
+  };
+
   function weList() {
     /* 读：按当前房过滤（scoped）。无房时返回全部 —— 与项目其余表同口径。 */
     return core.scoped(arr(store.get(WE_KEY)));
@@ -79,6 +95,7 @@
       title: String(rec.title || '').trim(),
       note: String(rec.note || '').trim(),
       at: rec.at || null,
+      kind: kindOf(rec),           /* 白名单外一律 'other'（老记录兼容） */
       sourceType: rec.sourceType || 'manual',
       sourceId: rec.sourceId || null,
       sourceRef: rec.sourceRef || null,
@@ -218,6 +235,19 @@
     bodyEl.appendChild(note.el);
     bodyEl.appendChild(date.el);
 
+    /* 藏品分类（kind）：七选一，默认 other。首轮不做智能猜测。 */
+    var kindWrap = h('div', 'we-drawer-srcwrap');
+    kindWrap.appendChild(h('p', 'we-drawer-label', '把它归进哪一类（可选）'));
+    var kindSel = h('select', 'we-drawer-src');
+    WE_KINDS.forEach(function (k) {
+      var o = h('option', '', WE_KIND_LABEL[k]);
+      o.value = k;
+      if (k === 'other') o.selected = true;
+      kindSel.appendChild(o);
+    });
+    kindWrap.appendChild(kindSel);
+    bodyEl.appendChild(kindWrap);
+
     /* 来源候选：只在用户主动选择后作为 sourceType/sourceId 落表 */
     var cands = sourceCandidates();
     if (cands.length) {
@@ -277,6 +307,7 @@
 
       var rec = {
         title: t, note: n, at: at,
+        kind: kindSel.value,
         sourceType: src ? src.sourceType : 'manual',
         sourceId: src ? src.sourceId : null,
         sourceRef: src ? src.sourceRef : null,
@@ -464,7 +495,7 @@
     var openBtn = h('button', 'we-fav-btn', '去收藏馆 →');
     openBtn.type = 'button';
     openBtn.addEventListener('click', function () {
-      if (Sleepy.nav) Sleepy.nav.open('favorites');
+      if (Sleepy.nav) Sleepy.nav.open('collection');
     });
     favRow.appendChild(openBtn);
     eSec.appendChild(favRow);
@@ -482,9 +513,13 @@
         head.appendChild(h('span', 'we-entry-day', fmtDay(en.at)));
         card.appendChild(head);
         if (en.note) card.appendChild(h('p', 'we-entry-note', en.note));
+        /* 分类 + 来源两枚小标签（kind 老记录按 other 兼容） */
+        var tags = h('div', 'we-entry-tags');
+        tags.appendChild(h('span', 'we-entry-tag', WE_KIND_LABEL[kindOf(en)] || '其他'));
         if (en.sourceType && en.sourceType !== 'manual') {
-          card.appendChild(h('span', 'we-entry-src', '来自 ' + srcLabel(en.sourceType)));
+          tags.appendChild(h('span', 'we-entry-tag we-entry-src', '来自 ' + srcLabel(en.sourceType)));
         }
+        if (tags.childNodes.length) card.appendChild(tags);
         eg.appendChild(card);
       });
       eSec.appendChild(eg);
@@ -693,11 +728,14 @@
     }
   });
 
-  /* 导出 weStore，供冒烟核对「落盘 / 带 sandboxId / 隔离」。 */
+  /* 导出 weStore，供冒烟核对「落盘 / 带 sandboxId / 隔离 / kind 兼容」。 */
   Sleepy.weStore = {
     list: weList,
     add: weAdd,
-    KEY: WE_KEY
+    KEY: WE_KEY,
+    KINDS: WE_KINDS,
+    kindOf: kindOf,
+    KIND_LABEL: WE_KIND_LABEL
   };
 
 })(window);

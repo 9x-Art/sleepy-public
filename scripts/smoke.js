@@ -8544,6 +8544,104 @@ t('We：weEntries 进了删房清空名单，拆岛不会留孤儿记录', () =>
   return { 名单收录: true, 拆岛后清空: true };
 });
 
+/* ======================== We 收藏馆（page-collection） ========================
+   首轮纵向闭环的数据层证据：kind 兼容 / 来源复核 / 隔离（findInScope 只读当前房）
+   / 页面注册 / We 首页入口指向 collection（不再开 favorites）。 */
+
+t('收藏馆：注册了 collection 页，collectionStore 已导出', () => {
+  const reg = S.registered();
+  if (!reg.collection) throw new Error('collection 页未注册（page-collection.js 没挂上）');
+  if (!S.collectionStore) throw new Error('collectionStore 未导出');
+  if (typeof S.collectionStore.findInScope !== 'function') throw new Error('collectionStore.findInScope 缺失');
+  return { 注册: true, 导出: true };
+});
+
+t('收藏馆：weEntries 老记录无 kind 按 other 兼容，新记录保留 kind', () => {
+  const A = S.core.createSandbox('isle', '藏甲岛');
+  const m = S.core.upsertChar({ name: '藏大号', kind: 'main' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+
+  /* 老记录：直接往 store 塞一条没有 kind 的（模拟历史数据） */
+  const oldRec = { id: 'old-no-kind', title: '老藏品', sandboxId: A.id, sourceType: 'manual' };
+  const all = S.store.get('weEntries'); all.push(oldRec); S.store.set('weEntries', all);
+
+  /* 新记录：带 kind 写入 */
+  const e = S.weStore.add({ title: '两张电影票', kind: 'ticket', note: '一起看的', at: 2000 }, A.id);
+  if (e.kind !== 'ticket') throw new Error('kind=ticket 没落表：' + e.kind);
+
+  if (S.collectionStore.kindOf(oldRec) !== 'other') throw new Error('老记录应兼容为 other，实际=' + S.collectionStore.kindOf(oldRec));
+  if (S.collectionStore.kindOf({ kind: 'garbage' }) !== 'other') throw new Error('白名单外应落 other');
+  if (S.collectionStore.kindOf(e) !== 'ticket') throw new Error('kind=ticket 应原样保留');
+
+  /* 非法 kind 写入也自动归一为 other */
+  const bad = S.weStore.add({ title: '坏分类', kind: 'nope' }, A.id);
+  if (bad.kind !== 'other') throw new Error('非法 kind 应归 other，实际=' + bad.kind);
+
+  /* 隔离：findInScope 只在当前 scoped 列表里找 */
+  if (!S.collectionStore.findInScope('old-no-kind')) throw new Error('当前房应能读到老记录');
+  if (S.collectionStore.findInScope('totally-missing')) throw new Error('不存在的 id 不应命中');
+
+  return { 老记录other: true, 新记录保kind: true, 非法归other: true, findInScope隔离: true };
+});
+
+t('收藏馆：来源复核 manual/live/completed/cancelled/deleted + ticket 口径', () => {
+  /* manual：空 sourceType → 手动记录，不报错 */
+  const man = S.collectionStore.checkSource({ sourceType: '', sourceId: null });
+  if (man.status !== 'manual' || man.text !== '手动记录') throw new Error('manual 态错误：' + JSON.stringify(man));
+
+  /* calendar live：建一个未取消未完成的事件，checkSource 应 live */
+  const A = S.core.createSandbox('isle', '藏复核岛');
+  const m = S.core.upsertChar({ name: '复核大号', kind: 'main' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '吃火锅' });
+  const live = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: ev.id });
+  if (live.status !== 'live') throw new Error('calendar live 态错误：' + JSON.stringify(live));
+
+  /* calendar completed：已完成的事件是**有效历史来源**，不能显示「原物不在」 */
+  const evDone = S.calendar.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '看完那场展', status: 'completed' });
+  const done = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: evDone.id });
+  if (done.status !== 'done') throw new Error('calendar completed 应为 done（有效历史来源）：' + JSON.stringify(done));
+  if (done.text.indexOf('看完那场展') < 0) throw new Error('done 态应带原标题：' + JSON.stringify(done));
+
+  /* calendar cancelled：事件还在但已取消 → 该约定已取消 */
+  S.calendar.cancelEvent(ev.id);
+  const gone = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: ev.id });
+  if (gone.status !== 'gone' || gone.text !== '该约定已取消') throw new Error('calendar cancelled 态错误：' + JSON.stringify(gone));
+
+  /* calendar deleted：事件真正不存在 → 原日历记录已删除（区别于取消） */
+  const evDel = S.calendar.addEvent({ ownerCharId: m, title: '写错的草稿' });
+  const rm = S.calendar.removeEvent(evDel.id);
+  if (!rm || rm.ok !== true) throw new Error('草稿事件应可删除：' + JSON.stringify(rm));
+  const del = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: evDel.id });
+  if (del.status !== 'gone' || del.text !== '原日历记录已删除') throw new Error('calendar deleted 态错误：' + JSON.stringify(del));
+
+  /* ticket 口径：sourceId 引用票根实体自身 ticket.id → live；
+     引用 workId（作品 id）**不许**命中票根实体 → gone（禁止混用）。 */
+  S.store.set('wjTickets', [{ id: 'tk-smoke-1', workId: 'w-smoke-1', title: '一场剧', at: '2026-09-27T00:00:00' }]);
+  const tkLive = S.collectionStore.checkSource({ sourceType: 'ticket', sourceId: 'tk-smoke-1' });
+  if (tkLive.status !== 'live') throw new Error('ticket 按 ticket.id 查应 live：' + JSON.stringify(tkLive));
+  const tkWork = S.collectionStore.checkSource({ sourceType: 'ticket', sourceId: 'w-smoke-1' });
+  if (tkWork.status !== 'gone') throw new Error('ticket 引用 workId 不应命中票根实体（口径混用）：' + JSON.stringify(tkWork));
+
+  /* 未知来源：不报错，给 gone 兜底文案 */
+  const unk = S.collectionStore.checkSource({ sourceType: 'weird', sourceId: 'x' });
+  if (unk.status !== 'gone') throw new Error('未知来源应 gone 兜底：' + JSON.stringify(unk));
+
+  return { manual: true, calLive: true, calDone: true, calCancelled: true, calDeleted: true,
+    ticketById: true, ticketWorkId拒绝: true, unknown: true };
+});
+
+t('收藏馆：We 首页入口指向 collection，不再开 favorites', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'page-we.js'), 'utf8');
+  if (src.indexOf("nav.open('collection')") < 0) throw new Error('We 首页未改为打开 collection');
+  if (src.indexOf("nav.open('favorites')") >= 0) throw new Error('We 首页仍打开 favorites（应改为 collection）');
+  /* 旧 favorites 页面保持注册（原语义不动） */
+  if (!S.registered().favorites) throw new Error('旧 favorites 页没了');
+  return { 入口改collection: true, favorites原样: true };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

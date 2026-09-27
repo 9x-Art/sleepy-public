@@ -226,6 +226,9 @@
      life-feed（recent）、favorites（收藏数量）。日历排在它之前已加载，所以这里
      排在 page-wj-create 之后即可；它注册 'we' 入口，桌面那格才点得开。 -->
 <script src="page-we.js" defer></script>
+<!-- We 收藏馆（门厅 + 藏品详情）：依赖 page-we.js 导出的 weStore（kind 兼容）。
+     注册 'collection' 页，We 首页「去收藏馆 →」打开它。不占桌面格。 -->
+<script src="page-collection.js" defer></script>
 <!-- 开屏（冷启动遮罩）。**必须排最后**：page-chat-settings.js 末尾的
      Sleepy.bootHome() 已经跑过，桌面渲染完成，遮罩下面是有内容的，
      摘掉遮罩那一下才不会白屏。 -->
