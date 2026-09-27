@@ -226,11 +226,107 @@
     return { ok: false, message: '找不到这间房' };
   }
 
+  /* 项目4（2026-09-27）：删房从「同步裸删」升级为**异步 purge 门禁**。
+     · 跨岛引用守卫（见 purgeGuardReferenced）：被删身份仍被别岛引用 → 拒绝。
+     · 判向量能力 → 向量先清（forgetSandbox）拿硬信号 → 才删主表。
+     · 失败可见可重试；只有真正清干净才落主表。
+     removeSandbox 的 cleanup 逻辑保留为内部 raw 函数（purge 门禁通过后调用），
+     不再对外导出（UI 一律走 purgeSandbox，见施工-项目4）。 */
+
+  /* 跨岛引用守卫：目标岛将被连坐清掉的 characters/userMasks，
+     扫描其他 sandbox 的 charIds/maskIds 是否仍引用它们。
+     命中 → 返回 refs；干净 → 返回 null。任何向量/主表清理之前必须跑。 */
+  function purgeGuardReferenced(sbId) {
+    var doomedChars = {}, doomedUsers = {};
+    var chars = arr(store.get('characters'));
+    chars.forEach(function (c) {
+      if (c && c.sandboxId === sbId) doomedChars[c.id] = 1;
+    });
+    var users = arr(store.get('userMasks'));
+    users.forEach(function (u) {
+      if (u && u.sandboxId === sbId) doomedUsers[u.id] = 1;
+    });
+    var refs = [];
+    listSandboxes().forEach(function (other) {
+      if (!other || other.id === sbId) return;
+      var names = [];
+      arr(other.charIds).forEach(function (cid) {
+        if (doomedChars[cid] && names.indexOf(cid) < 0) names.push(cid);
+      });
+      names.forEach(function (cid) {
+        refs.push({ type: 'char', id: cid, sandboxId: other.id, name: other.name || '' });
+      });
+      var unames = [];
+      arr(other.maskIds).forEach(function (uid) {
+        if (doomedUsers[uid] && unames.indexOf(uid) < 0) unames.push(uid);
+      });
+      unames.forEach(function (uid) {
+        refs.push({ type: 'user', id: uid, sandboxId: other.id, name: other.name || '' });
+      });
+    });
+    return refs.length ? refs : null;
+  }
+
+  /* 向量能力门禁：是否允许走「向量先清再删主表」的 purge。
+     返回 { ok:true } 或 { ok:false, why }。无向量环境（!indexedDB）视为可用（直接清主表）。 */
+  function purgeVecGate() {
+    if (!global.indexedDB) return { ok: true, nodb: true };
+    var MV = global.Sleepy && global.Sleepy.memoryVec;
+    if (!MV || typeof MV.forgetSandbox !== 'function') {
+      return { ok: false, why: 'memory-vector-unavailable/api-missing' };
+    }
+    return { ok: true, nodb: false };
+  }
+
+  function purgeSandbox(sbId) {
+    if (!sbId) return Promise.resolve({ ok: false, message: '缺少沙盒 id' });
+    var hit = findSandbox(sbId);
+    if (!hit) return Promise.resolve({ ok: false, message: '找不到这间房' });
+
+    /* ① 跨岛引用守卫（任何清理之前） */
+    var refs = purgeGuardReferenced(sbId);
+    if (refs) {
+      return Promise.resolve({ ok: false, why: 'still-referenced', by: refs });
+    }
+
+    /* ② 向量能力判定 */
+    var gate = purgeVecGate();
+    if (!gate.ok) return Promise.resolve({ ok: false, why: gate.why });
+
+    /* ③ 向量先清（不吞错），拿硬信号才继续 */
+    var doCleanup = function () { return cleanupSandbox(sbId); };
+    if (gate.nodb) return Promise.resolve(doCleanup());
+
+    var MV = global.Sleepy.memoryVec;
+    return MV.forgetSandbox({ sandboxId: sbId }).then(function (n) {
+      return doCleanup();            /* 空岛 resolve 0 也是合法成功，照常清主表 */
+    }, function (err) {
+      return { ok: false, why: 'memory-vector-failed', error: (err && err.message) || String(err) };
+    });
+  }
+
+  /* ⚠️ 测试专用同步清理（smoke 存量清理用，2026-09-27 项目4）：
+     只做主表/派生 cleanup，**不做跨岛守卫、不做向量门禁**。
+     生产 UI 一律走异步 purgeSandbox/purgeChar/purgeFace/purgeUser（带门禁），
+     绝不允许产品代码调这些 sync 出口。smoke 默认无 indexedDB（nodb），
+     它们与 purge 在无向量环境下的行为一致（直接清主表）。 */
+  function _purgeSyncSandbox(id) { return cleanupSandbox(id); }
+  function _purgeSyncChar(id) {
+    return cleanupChar(id);
+  }
+  function _purgeSyncFace(subId) {
+    return cleanupChar(subId);
+  }
+  function _purgeSyncUser(uid, sbId) {
+    return cleanupUser(uid, sbId);
+  }
+
   /* 删一间房，连带清掉**明确属于它**的数据。
      纪律：只删 sandboxId === id 的记录。
      没有 sandboxId 的那些是 S3 迁移之前的老全局数据，不属于任何房，
-     一律不碰 —— 否则第一次删房就会顺手把用户的老存档抹掉。 */
-  function removeSandbox(id) {
+     一律不碰 —— 否则第一次删房就会顺手把用户的老存档抹掉。
+     ⚠️ 仅供 purgeSandbox 门禁通过后调用，不再对外导出。 */
+  function cleanupSandbox(id) {
     if (!id) return { ok: false, message: '缺少沙盒 id' };
     var hit = findSandbox(id);
     if (!hit) return { ok: false, message: '找不到这间房' };
@@ -552,14 +648,31 @@
     return hit;
   }
 
+  /* 一个角色的「整个家谱」：它自己 + 挂在它名下的全部后代（递归 char 树）。
+     只收 char-口径（parentId === 上一级 id，parentType='char'）——
+     sandbox 口径 NPC（parentId=岛id）不在此树里，user 口径 NPC（parentId=马甲id）也不在。
+     ⚠️ 项目4（2026-09-27）：删除语义的铁律是「主表 doomed = 向量命中集合」，
+     所以主表删除（cleanupChar）和向量删除（purgeChar/purgeFace → forgetCharSet）
+     **必须共用同一个 doomed 集合**，不能各自算一遍。 */
+  function doomedCharIds(id) {
+    var out = [], seen = {};
+    (function walk(x) {
+      if (!x || seen[x]) return;
+      seen[x] = true;
+      out.push(x);
+      allChars().forEach(function (c) { if (c.parentId === x) walk(c.id); });
+    })(id);
+    return out;
+  }
+
   /* 删除一个大号时，挂在它名下的皮套和 NPC 不能变成孤儿
-     （孤儿在「谁挂在谁名下」的视图里会直接消失）。一起删掉。 */
-  function removeChar(id) {
+     （孤儿在「谁挂在谁名下」的视图里会直接消失）。一起删掉。
+     ⚠️ 项目4（2026-09-27）：从「同步裸删」升级为异步 purge 门禁，
+     UI 一律走 purgeChar / purgeFace。本函数保留为门禁通过后的 cleanup，
+     不再对外导出。doomed 用 doomedCharIds（递归），与向量侧一致。 */
+  function cleanupChar(id) {
     var doomed = {};
-    doomed[id] = true;
-    allChars().forEach(function (c) {
-      if (c.parentId === id) doomed[c.id] = true;
-    });
+    doomedCharIds(id).forEach(function (cid) { doomed[cid] = true; });
     var next = allChars().filter(function (c) { return !doomed[c.id]; });
     saveChars(next);
 
@@ -573,7 +686,68 @@
     store.set('memories', arr(store.get('memories')).filter(function (m) {
       return !doomed[m.rootId] && !doomed[m.fromCharId];
     }));
-    return true;
+    return { ok: true, removed: Object.keys(doomed).length };
+  }
+
+  /* 删大号 / NPC：按「doomed 角色树」+ 岛清主表和向量。
+     doomed = doomedCharIds(该 id)（递归：皮套 + char口径子 NPC 全带）。
+     sandbox 口径 NPC（parentId=岛id）不在此树里 —— 它们是岛的成员，删大号不动它们。
+     向量侧 forgetCharSet(fromCharIds=同款 doomed + sandboxId) —— 主表 doomed 与向量命中
+     **严格一致**，不再按 charId=rootOf 一刀切（那张删法会误清同 root 整池，见实现注释）。 */
+  function purgeChar(charId, sbId) {
+    if (!charId) return Promise.resolve({ ok: false, message: '缺少角色 id' });
+    var c = findChar(charId);
+    if (!c) return Promise.resolve({ ok: false, message: '找不到这个角色' });
+    if (!sbId) {
+      sbId = c.sandboxId || (global.Sleepy.core && global.Sleepy.core.scopeId ? global.Sleepy.core.scopeId() : null);
+    }
+    if (!sbId) return Promise.resolve({ ok: false, message: '缺少沙盒 id' });
+
+    var gate = purgeVecGate();
+    if (!gate.ok) return Promise.resolve({ ok: false, why: gate.why });
+    var doCleanup = function () { return cleanupChar(charId); };
+    if (gate.nodb) return Promise.resolve(doCleanup());
+
+    var MV = global.Sleepy.memoryVec;
+    /* 按 doomedCharIds（递归家谱）删向量 —— 与主表 doomed 完全一致。
+       单 NPC 只删 {NPC}，大号连坐 {大号+全部皮套+全部子NPC}，别岛由 sandboxId 隔离保留。 */
+    return MV.forgetCharSet({ charIds: doomedCharIds(charId), sandboxId: sbId }).then(function (n) {
+      return doCleanup();
+    }, function (err) {
+      return { ok: false, why: 'memory-vector-failed', error: (err && err.message) || String(err) };
+    });
+  }
+
+  /* 删单个皮套：按「皮套 + 其下 char口径子 NPC」的 doomed 集合同 root + 岛清。
+     ⚠️ 铁律：同 root 别的皮套、别岛同 root 的块**必须保留**。
+     早期实现按 charId=rootOf 一刀切 → 会把大号整池一起清；后改成三维
+     {charId=root, fromCharId=sub, sandboxId} → 又漏删子 NPC（其块 fromCharId=NPC 而非皮套）。
+     现统一走 forgetCharSet(fromCharIds=doomedCharIds(subId)) + sandboxId：
+       主表 doomed（cleanupChar 同款递归） = 向量命中集合，一一对应。 */
+  function purgeFace(subId, sbId) {
+    if (!subId) return Promise.resolve({ ok: false, message: '缺少皮套 id' });
+    var sub = findChar(subId);
+    if (!sub) return Promise.resolve({ ok: false, message: '找不到这个皮套' });
+    if ((sub.kind || 'main') === 'main') {
+      return Promise.resolve({ ok: false, message: '这是大号，不是皮套' });
+    }
+    if (!sbId) {
+      sbId = sub.sandboxId || (global.Sleepy.core && global.Sleepy.core.scopeId ? global.Sleepy.core.scopeId() : null);
+    }
+    if (!sbId) return Promise.resolve({ ok: false, message: '缺少沙盒 id' });
+
+    var gate = purgeVecGate();
+    if (!gate.ok) return Promise.resolve({ ok: false, why: gate.why });
+    var doCleanup = function () { return cleanupChar(subId); };
+    if (gate.nodb) return Promise.resolve(doCleanup());
+
+    var MV = global.Sleepy.memoryVec;
+    return MV.forgetCharSet({ charIds: doomedCharIds(subId), sandboxId: sbId })
+      .then(function (n) {
+        return doCleanup();
+      }, function (err) {
+        return { ok: false, why: 'memory-vector-failed', error: (err && err.message) || String(err) };
+      });
   }
 
   /* ---------------------------- User 马甲 ---------------------------- */
@@ -670,19 +844,96 @@
     return hit;
   }
 
-  function removeUser(id) {
+  /* 项目4（2026-09-27）：删马甲从「同步裸删」升级为异步 purge 门禁。
+     purgeUser 显式保护跨岛共享默认「我」（ensureDefaultUser 产生、无 sandboxId 章），
+     不调用向量、不改主表派生；只有真正的岛内 userMask 才进跨岛守卫 + 向量门禁。
+     cleanupUser 保留为门禁通过后的 cleanup，不再对外导出。 */
+  function cleanupUser(id, sbId) {
     var list = userMasks();
-    if (list.length <= 1) return { ok: false, message: '至少要留一件马甲' };
+    /* 至少留一件（全删光了就连兜底都没了） */
+    if (list.filter(function (u) { return u.id !== id; }).length < 1) {
+      return { ok: false, message: '至少要留一件马甲' };
+    }
     var gone = findUser(id);
-    var left = list.filter(function (u) { return u.id !== id; });
+    /* 只删「本岛这件」：同 uid 跨岛有两件时，别岛那件保留（马甲按岛隔离） */
+    var left = list.filter(function (u) { return !(u.id === id && (u.sandboxId || '') === (sbId || '')); });
     /* 删掉的正是本岛大号 → 本岛剩下第一件顶上（守住「每岛至少一件大号」） */
     if (gone && gone.isDefault) {
-      var sid = gone.sandboxId || '';
+      var sid = sbId || '';
       var heir = left.filter(function (u) { return (u.sandboxId || '') === sid; })[0];
       if (heir) heir.isDefault = true;
     }
     saveUsers(left);
+
+    /* 补齐历史遗留：把「这个马甲建的、本岛的」派生数据一并清掉，
+       否则删了马甲对话/关系/朋友圈/线下会话留在库里但找不到主人。 */
+    if (id && sbId) {
+      var ukey = function (r) { return !!(r && r.userId === id && r.sandboxId === sbId); };
+      var mkey = function (r) { return !!(r && r.maskId === id && r.sandboxId === sbId); };
+      ['chats'].forEach(function (k) {
+        var all = arr(store.get(k));
+        var keep = all.filter(function (r) { return !ukey(r); });
+        if (keep.length !== all.length) store.set(k, keep);
+      });
+      var links = arr(store.get('links')).filter(function (r) {
+        return !(r && (r.userId === id || r.maskId === id) && r.sandboxId === sbId);
+      });
+      store.set('links', links);
+      var moments = arr(store.get('moments')).filter(function (r) {
+        return !(r && r.maskId === id && r.sandboxId === sbId);
+      });
+      store.set('moments', moments);
+      var off = arr(store.get('offlineSessions')).filter(function (r) {
+        return !(r && r.userId === id && r.sandboxId === sbId);
+      });
+      store.set('offlineSessions', off);
+    }
     return { ok: true };
+  }
+
+  function purgeUser(uid, sbId) {
+    if (!uid) return Promise.resolve({ ok: false, message: '缺少马甲 id' });
+    var u = findUser(uid);
+    if (!u) return Promise.resolve({ ok: false, message: '找不到这件马甲' });
+
+    /* ① 默认「我」保护：ensureDefaultUser 产生的跨岛共享默认用户没有 sandboxId 章
+       （core.js 注释明确「故意不打章、跨岛共享」）。它是最后兜底，不能删。 */
+    if (!u.sandboxId) {
+      return Promise.resolve({ ok: false, why: 'default-user-protected' });
+    }
+    if (!sbId) {
+      sbId = u.sandboxId || (global.Sleepy.core && global.Sleepy.core.scopeId ? global.Sleepy.core.scopeId() : null);
+    }
+    if (!sbId || sbId !== u.sandboxId) {
+      /* 目标岛必须就是这件马甲所属的岛（马甲按岛隔离，不能跨岛删） */
+      return Promise.resolve({ ok: false, message: '沙盒与马甲所属岛不一致' });
+    }
+
+    /* ② 跨岛引用守卫：本岛这件马甲是否仍被别岛引用 */
+    var refs = null;
+    listSandboxes().forEach(function (other) {
+      if (!other || other.id === sbId) return;
+      if (arr(other.maskIds).indexOf(uid) >= 0) {
+        refs = refs || [];
+        refs.push({ type: 'user', id: uid, sandboxId: other.id, name: other.name || '' });
+      }
+    });
+    if (refs) {
+      return Promise.resolve({ ok: false, why: 'still-referenced', by: refs });
+    }
+
+    /* ③ 向量能力判定 + 向量先清（forgetUser 按 userId+sandboxId），才删主表 */
+    var gate = purgeVecGate();
+    if (!gate.ok) return Promise.resolve({ ok: false, why: gate.why });
+    var doCleanup = function () { return cleanupUser(uid, sbId); };
+    if (gate.nodb) return Promise.resolve(doCleanup());
+
+    var MV = global.Sleepy.memoryVec;
+    return MV.forgetUser({ userId: uid, sandboxId: sbId }).then(function (n) {
+      return doCleanup();
+    }, function (err) {
+      return { ok: false, why: 'memory-vector-failed', error: (err && err.message) || String(err) };
+    });
   }
 
   /* 把某件马甲设成「我的大号」。大号在一座岛里唯一 ——
@@ -1298,7 +1549,9 @@
     saveSandboxes: saveSandboxes,
     sandboxesOfKind: sandboxesOfKind,
     createSandbox: createSandbox,
-    removeSandbox: removeSandbox,
+    /* 项目4：拆岛改异步 purge 门禁（跨岛守卫 + 向量先清 + 失败可见可重试）。
+       removeSandbox 已移除（不再对外导出）。 */
+    purgeSandbox: purgeSandbox,
     renameSandbox: renameSandbox,
     setSandboxCover: setSandboxCover,
     setSandboxChars: setSandboxChars,
@@ -1330,9 +1583,15 @@
     switchableOf: switchableOf,
     rootOf: rootOf,
     rootIdOf: rootIdOf,
+    /* 项目4：doomedCharIds 暴露出来供冒烟直接断言「主表 doomed 集合」，
+       验证它与向量命中一一对应。 */
+    doomedCharIds: doomedCharIds,
     saveChars: saveChars,
     upsertChar: upsertChar,
-    removeChar: removeChar,
+    /* 项目4：删大号/NPC 走 purgeChar、删皮套走 purgeFace（异步门禁）。
+       removeChar 已移除（不再对外导出）。 */
+    purgeChar: purgeChar,
+    purgeFace: purgeFace,
     kindLabel: kindLabel,
 
     userMasks: userMasks,
@@ -1340,7 +1599,17 @@
     saveUsers: saveUsers,
     ensureDefaultUser: ensureDefaultUser,
     upsertUser: upsertUser,
-    removeUser: removeUser,
+    /* 项目4：删马甲走 purgeUser（默认「我」保护 + 跨岛守卫 + 向量门禁）。
+       removeUser 已移除（不再对外导出）。 */
+    purgeUser: purgeUser,
+    /* ⚠️ 测试专用同步清理（smoke 存量清理用）。**非生产删除 API**，生产一律走
+       异步 purge 门禁。名字带 `_` 前缀表明内部/测试用途，产品代码不得调用。 */
+    _purgeSync: {
+      sandbox: _purgeSyncSandbox,
+      char: _purgeSyncChar,
+      face: _purgeSyncFace,
+      user: _purgeSyncUser
+    },
     activeUser: activeUser,
     activeChar: activeChar,
     switchTo: switchTo,

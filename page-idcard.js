@@ -1102,9 +1102,20 @@
           return;
         }
         resetArm();
-        core.removeChar(existing.id);
-        ctx.toast('已删除', 'ok');
-        ctx.back();
+        /* 项目4：删角色改异步 purgeChar（向量先清拿硬信号才删主表）。
+           sandboxId 是角色所属岛（733 行取的 existing.sandboxId 或配置台带入）。
+           失败不 toast 成功。 */
+        core.purgeChar(existing.id, sandboxId).then(function (r) {
+          if (!r || !r.ok) {
+            var msg = r && r.message ? r.message : (r && r.why ? r.why : '删除失败');
+            ctx.toast(msg, 'err');
+            return;
+          }
+          ctx.toast('已删除', 'ok');
+          ctx.back();
+        }, function () {
+          ctx.toast('删除失败：向量清理异常', 'err');
+        });
       });
 
       function doSave() {
@@ -1632,15 +1643,25 @@
         if (!existing) return;
         var yes = await ui.confirm({
           title: '删掉「' + existing.name + '」？',
-          note: '用它建的对话会留下来，但会找不到对应的马甲。',
+          note: '项目4 起：用它建的对话/关系/朋友圈/线下会话会一并清掉（只清这座岛的）。',
           ok: '删除',
           danger: true
         });
         if (!yes) return;
-        var r = core.removeUser(existing.id);
-        if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-        ctx.toast('已删除', 'ok');
-        ctx.back();
+        var sbId = String(ctx.params.sandboxId || (existing && existing.sandboxId) || '');
+        /* 项目4：删马甲改异步 purgeUser（含默认「我」保护 + 跨岛守卫 + 向量门禁）。
+           失败不 toast 成功。 */
+        core.purgeUser(existing.id, sbId).then(function (r) {
+          if (!r || !r.ok) {
+            var msg = r && r.message ? r.message : (r && r.why ? r.why : '删除失败');
+            ctx.toast(msg, 'err');
+            return;
+          }
+          ctx.toast('已删除', 'ok');
+          ctx.back();
+        }, function () {
+          ctx.toast('删除失败：向量清理异常', 'err');
+        });
       });
 
       function doSave() {

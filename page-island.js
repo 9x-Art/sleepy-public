@@ -548,15 +548,24 @@
     cancel.addEventListener('click', close);
     save.addEventListener('click', function () {
       close();
-      var r = core.removeSandbox(sb.id);
-      if (!r.ok) { ctx.toast(r.message, 'err'); return; }
-      ctx.toast('已拆掉', 'ok');
+      /* 项目4：拆岛改异步 purge 门禁（向量先清拿硬信号才删主表）。
+         失败（含跨岛引用 still-referenced / 向量失败）不显示成功 toast。 */
+      core.purgeSandbox(sb.id).then(function (r) {
+        if (!r || !r.ok) {
+          var msg = r && r.message ? r.message : (r && r.why ? r.why : '拆岛失败');
+          ctx.toast(msg, 'err');
+          return;
+        }
+        ctx.toast('已拆掉', 'ok');
 
-      /* 拆掉之后停在哪：能原地重画的就重画（浮岛存档列表 / 岛屿总览，
-         两个页面都挂着 ctx.rebuild）——
-         配置台已经删了（2026-09-22），只剩这个分支。 */
-      if (ctx.rebuild) ctx.rebuild();
-      else { Sleepy.nav.closeAll(); Sleepy.nav.open('island'); }
+        /* 拆掉之后停在哪：能原地重画的就重画（浮岛存档列表 / 岛屿总览，
+           两个页面都挂着 ctx.rebuild）——
+           配置台已经删了（2026-09-22），只剩这个分支。 */
+        if (ctx.rebuild) ctx.rebuild();
+        else { Sleepy.nav.closeAll(); Sleepy.nav.open('island'); }
+      }, function () {
+        ctx.toast('拆岛失败：向量清理异常', 'err');
+      });
     });
 
     wrap.appendChild(panel);
@@ -1297,9 +1306,22 @@
               danger: true
             }).then(function (yes) {
               if (!yes) return;
-              core.removeChar(c.id);
-              ctx.toast('已删除', 'ok');
-              ctx.back();
+              /* 项目4：皮套走独立 purgeFace（三维精确），NPC 走 purgeChar。
+                 sb.id 是这张脸/NPC 所属的岛。异步门禁，失败不 toast 成功。 */
+              var done = isSubC
+                ? core.purgeFace(c.id, sb.id)
+                : core.purgeChar(c.id, sb.id);
+              done.then(function (r) {
+                if (!r || !r.ok) {
+                  var msg = r && r.message ? r.message : (r && r.why ? r.why : '删除失败');
+                  ctx.toast(msg, 'err');
+                  return;
+                }
+                ctx.toast('已删除', 'ok');
+                ctx.back();
+              }, function () {
+                ctx.toast('删除失败：向量清理异常', 'err');
+              });
             });
           });
           dz.appendChild(delOne);

@@ -902,6 +902,13 @@
     filter = filter || {};
     if (filter.charId !== undefined && (b.charId || null) !== rootOf(filter.charId)) return false;
     if (filter.fromCharId !== undefined && (b.fromCharId || null) !== filter.fromCharId) return false;
+    /* fromCharIds（数组，项目4）：精确比对「这块由哪张脸产生」∈ 集合。
+       char 删除必须按 fromCharId（产出方）删，不能按 charId（大脑 root）——
+       一张 NPC 挂在大号名下时 rootOf(NPC)=大号，按 root 删会误清大号整池。 */
+    if (filter.fromCharIds) {
+      var fc = b.fromCharId || null;
+      if (!fc || filter.fromCharIds.indexOf(fc) < 0) return false;
+    }
     if (filter.sandboxId !== undefined && b.sandboxId !== filter.sandboxId) return false;
     if (filter.groupId !== undefined && (b.groupId || null) !== filter.groupId) return false;
     if (filter.userId !== undefined && (b.userId || null) !== filter.userId) return false;
@@ -933,6 +940,77 @@
     return scanOwner(key, null).then(function (list) {
       return removeBlocks(list.map(function (b) { return b.id; }));
     });
+  }
+
+  /* ------------------- 项目4：四类删除的向量出口（2026-09-27） -------------------
+     为什么新增这一组而不改 forget：
+       · forget 单池（ownerKeyFor）+ 吞错 + scanOwner 的 scopeNow 岛过滤 ——
+         删岛/删别岛角色/删别岛皮套时，当前岛往往已切走，
+         scanOwner 会把目标岛的块全滤掉（漏扫），且失败吞成 0。
+       · 四类删除（岛/角色/皮套/马甲）是**不可逆物理删**，必须见错即停 + 跨池精确命中。
+     铁律（用户 2026-09-27 审阅硬约束）：
+       · scanAll 是**内部私有**底层，不导出，不成为生产删除 API；
+       · 生产只暴露下面四个**语义明确**的出口；
+       · 每个出口**强制校验必要字段**，缺失直接 reject，不依赖调用方自觉；
+       · 每个出口**不依赖当前岛**（不读 scopeNow 过滤）、**不吞错**；
+       · 成功 resolve 删除数；空结果 resolve 0；IndexedDB 失败 reject。 */
+
+  /* 全库遍历 + forgetHit 过滤（唯一底层实现）。filter 缺维度就不判那维 ——
+     所以**每个出口必须自己在前面校验必传字段**，不能指望 scanAll 兜底。 */
+  function scanAll(filter) {
+    var ids = [];
+    return withStore('readonly', function (os) {
+      var req = os.openCursor();
+      req.onsuccess = function () {
+        var cur = req.result;
+        if (!cur) return;
+        var b = cur.value || {};
+        if (forgetHit(b, filter)) ids.push(b.id);
+        cur.continue();
+      };
+    }).then(function () {
+      return removeBlocks(ids);
+    });
+  }
+
+  function need(cond, what) {
+    if (!cond) return Promise.reject(new Error('forget 缺必要字段：' + what));
+    return null;
+  }
+
+  /* 拆岛：按岛章清**全库**（跨 island:/rootOf/user:/group: 四类池）。 */
+  function forgetSandbox(o) {
+    o = o || {};
+    var r = need(o.sandboxId, 'sandboxId');
+    if (r) return r;
+    return scanAll({ sandboxId: o.sandboxId });
+  }
+
+  /* 删角色集合（大号 / 皮套 / NPC 共用）：按「产出方脸集合」+ 岛清。
+     为什么用 fromCharId（产出方）而不是 charId（大脑 root）——
+       · 块上 charId=rootOf(产出方)，fromCharId=产出方（chat/offline/角色日记/档案/手机
+         一律如此，见 sweep 系列 1482/1498/1654/1690/1765 与 page-chat 847-854）。
+       · 一张 NPC 挂在大号名下时 rootOf(NPC)=大号：若按 charId=rootOf 删，删一个 NPC
+         会把同 root 大号 + 全部皮套 + 全部 NPC 的目标岛块**一锅端**（用户 2026-09-27 红线）。
+       · 按 fromCharId ∈ 集合删，才能让「主表 doomed = 向量命中」一一对应：
+         删单 NPC → {NPC}；删皮套 → {皮套 + 其子 NPC}；删大号 → {大号 + 全部皮套 + 全部子 NPC}。
+       · sandboxId 仍精确 —— 别岛同 root 的块**必须保留**。
+     charIds 由 core 的 doomedCharIds（递归角色树）算好传进来，这里只做物理精确命中。
+     空集合 / 无匹配块 = 合法成功，resolve 0（主表照常删，见 smoke M9 / 原生 P4）。 */
+  function forgetCharSet(o) {
+    o = o || {};
+    var ids = o.charIds;
+    var r = need(Array.isArray(ids) && ids.length && o.sandboxId, 'charIds(非空数组) & sandboxId');
+    if (r) return r;
+    return scanAll({ fromCharIds: ids, sandboxId: o.sandboxId });
+  }
+
+  /* 删马甲：按 userId + 岛清（马甲按岛隔离，同 uid 别岛的块保留）。 */
+  function forgetUser(o) {
+    o = o || {};
+    var r = need(o.userId && o.sandboxId, 'userId & sandboxId');
+    if (r) return r;
+    return scanAll({ userId: o.userId, sandboxId: o.sandboxId });
   }
 
   /* 全库概览（设置页用）：按 ownerKey 聚合成一行一行。
@@ -2525,6 +2603,14 @@
     forget: forget,
     /* 解散群专用：按群清整池、失败拒绝（见 forgetGroup 注释）—— 只有它需要硬信号 */
     forgetGroup: forgetGroup,
+    /* 项目4：四类删除的向量出口（岛/角色/皮套/马甲）——
+       语义明确、强制带岛章、不依赖当前岛、不吞错（见上面实现注释）。
+       scanAll 是内部私有，不在这里导出。 */
+    forgetSandbox: forgetSandbox,
+    /* 删角色（大号/皮套/NPC）唯一出口：按「产出方脸集合」+ 岛清（见实现注释）。
+       ⚠️ 不再有按 charId=rootOf 一刀切的 forgetChar —— 那是清整池的事故源。 */
+    forgetCharSet: forgetCharSet,
+    forgetUser: forgetUser,
     /* 设置页：看清索引里有什么、能清、能自己试一次召回 */
     overview: overview,
     probe: probe,

@@ -64,6 +64,15 @@
     return { id: id, ownerKey: 'group:' + gid, charId: null, fromCharId: null,
       groupId: gid, sandboxId: sb, kind: 'chat', msgIds: [id], text: 'x', vec: [0.1], model: 'emb-test' };
   }
+  /* 项目4 全字段块：forgetHit 按 charId(root 归一)/fromCharId/userId/sandboxId 多维精确匹配。
+     charId=null 表示「共享池/账号池」块（朋友圈 / user 日记），不带 char 维度。 */
+  function p4blk(o) {
+    return { id: o.id, ownerKey: o.ownerKey, charId: o.charId != null ? o.charId : null,
+      fromCharId: o.fromCharId != null ? o.fromCharId : null,
+      userId: o.userId != null ? o.userId : null,
+      sandboxId: o.sandboxId, kind: o.kind || 'chat', msgIds: [o.id],
+      text: 'x', vec: [0.1], model: 'emb-test' };
+  }
 
   /* pre：按场景布置 IDB / localStorage。全部完成后才注入生产脚本。 */
   window.__pre = (async function () {
@@ -124,6 +133,41 @@
         { groupId: 'gid1', status: 'pending', sandboxId: 'sb1' },
         { groupId: 'gid2', status: 'pending', sandboxId: 'sb1' }
       ]));
+    } else if (c === 'p4') {
+      /* 项目4：四类删除的**向量出口**端到端（真块 + 隔离 + 跨岛保留）。
+         只测 memoryVec 的 forgetSandbox / forgetCharSet / forgetUser ——
+         core 的 purge 门禁/跨岛守卫/默认我保护已在 smoke 覆盖，这里不重复。
+         两座岛（块忠实建模真实写入：charId=大脑 root、fromCharId=产出方，见 sweep 系列）：
+           · sbA：大号 rA（皮套 fA1/fA2、NPC nA1/nA2 挂 rA、子NPC snA1 挂 fA1）+ 马甲 uA；
+           · sbB：参照岛，含 **rA 系跨岛块** b1(fA1)/b2(rA)/b3(nA1)。
+         断言要点（主表 doomed = 向量命中集合）：
+           · forgetSandbox(sbA) 清 a1..a7、b1..b4 全留；
+           · forgetCharSet({charIds:[nA1]},sbA) 只清 a4（nA1）：大号 rA(a1)、皮套(a2/a3)、
+             别的 NPC(nA5)、子NPC(snA6)、跨岛 nA1 块(b3) 全留 —— **不再按 rootOf 一锅端**；
+           · forgetCharSet({charIds:[fA1,snA1]},sbA) 清 a2(a6)：皮套+子NPC 一起，同 root
+             别的皮套 fA2(a3)、跨岛 fA1 块(b1) 留；
+           · forgetCharSet({charIds:[rA,fA1,fA2,nA1,nA2,snA1]},sbA) 清 a1..a6：大号+全部皮套+
+             全部子NPC 按岛清，a7(uA)与跨岛 b1/b2/b3 留；
+           · forgetUser(uA,sbA) 清 a7，b4 留（同 uid 别岛保留）；
+           · 空集合 / 无命中 resolve 0。 */
+      var dbP = await openDB('sleepy-vec', 6);
+      await putBlocks(dbP, [
+        /* sbA：目标岛 —— charId=rootOf(产出方)，fromCharId=产出方 */
+        p4blk({ id: 'a1', ownerKey: 'rA', charId: 'rA', fromCharId: 'rA', sandboxId: 'sbA' }),   /* 大号自己 */
+        p4blk({ id: 'a2', ownerKey: 'rA', charId: 'rA', fromCharId: 'fA1', sandboxId: 'sbA' }),  /* 皮套 fA1 */
+        p4blk({ id: 'a3', ownerKey: 'rA', charId: 'rA', fromCharId: 'fA2', sandboxId: 'sbA' }),  /* 皮套 fA2 */
+        p4blk({ id: 'a4', ownerKey: 'rA', charId: 'rA', fromCharId: 'nA1', sandboxId: 'sbA' }),  /* NPC nA1 */
+        p4blk({ id: 'a5', ownerKey: 'rA', charId: 'rA', fromCharId: 'nA2', sandboxId: 'sbA' }),  /* NPC nA2 */
+        p4blk({ id: 'a6', ownerKey: 'fA1', charId: 'fA1', fromCharId: 'snA1', sandboxId: 'sbA' }), /* 皮套 fA1 下的子NPC snA1 */
+        p4blk({ id: 'a7', ownerKey: 'user:uA', charId: null, userId: 'uA', sandboxId: 'sbA' }),  /* 马甲 uA 日记 */
+        /* sbB：参照岛 —— 含 rA 系的跨岛块 */
+        p4blk({ id: 'b1', ownerKey: 'rA', charId: 'rA', fromCharId: 'fA1', sandboxId: 'sbB' }),  /* fA1 在 B */
+        p4blk({ id: 'b2', ownerKey: 'rA', charId: 'rA', fromCharId: 'rA', sandboxId: 'sbB' }),   /* rA 在 B */
+        p4blk({ id: 'b3', ownerKey: 'rA', charId: 'rA', fromCharId: 'nA1', sandboxId: 'sbB' }),  /* nA1 在 B */
+        p4blk({ id: 'b4', ownerKey: 'user:uB', charId: null, userId: 'uB', sandboxId: 'sbB' })   /* uB 日记 */
+      ]);
+      dbP.close();
+      lsClearVec();
     } else if (c === 'hold') {
       /* 两标签页阻塞：本页持有 v5 连接**不关** */
       var db3 = await openDB('sleepy-vec', 5);

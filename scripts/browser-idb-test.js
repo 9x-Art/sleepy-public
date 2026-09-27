@@ -288,6 +288,121 @@ async function main() {
         await ctx.close();
       }
 
+      /* ---- 项目4｜向量删除出口（原生 IDB）
+         forgetSandbox / forgetCharSet / forgetUser —— 真块 + 隔离 + 跨岛保留。
+         core 的 purge 门禁 / 跨岛守卫 / 默认我保护已在 smoke 的 P4-M1~M11 全覆盖，
+         这里只验**向量块的精确命中**（smoke 无 IDB 验不了）。
+         ?case=p4 种子见 preview/idb-test/index.html（含大号 rA、皮套 fA1/fA2、
+         NPC nA1/nA2、皮套子NPC snA1、马甲 uA，跨岛块 b1/b2/b3）。
+         注意：每个出口都对着**全新种子**各跑一次（重载 ?case=p4 会重布置 IDB）。 ---- */
+      {
+        /* 取当前 IDB 里的块 id 集合 */
+        const collect = (page) => page.evaluate(() => new Promise((res) => {
+          const rq = indexedDB.open('sleepy-vec');
+          rq.onsuccess = () => {
+            const db = rq.result;
+            const t = db.transaction('vec', 'readonly');
+            const out = [];
+            const cur = t.objectStore('vec').openCursor();
+            cur.onsuccess = () => { const c = cur.result; if (!c) { db.close(); res(out); } else { out.push(c.value.id); c.continue(); } };
+          };
+        }));
+        const MV = () => 'window.Sleepy.memoryVec';
+        const ALL = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'b1', 'b2', 'b3', 'b4'].join(',');
+        const has = (ids, id) => ids.indexOf(id) >= 0;
+        const inA = (ids) => ids.split(',').filter((x) => /^a\d$/.test(x));
+        const fresh = async (browser, page) => { await page.goto(PAGE + '?case=p4'); await waitLoaded(page); };
+
+        /* 1) forgetSandbox(sbA)：整岛清（四类池一起），sbB 全留 */
+        {
+          const ctx = await browser.newContext();
+          const page = await ctx.newPage();
+          await fresh(browser, page);
+          const base = (await collect(page)).sort().join(',');
+          const n0 = await page.evaluate(() => window.Sleepy.memoryVec.forgetSandbox({ sandboxId: 'sbA' }));
+          const afterSb = (await collect(page)).sort().join(',');
+          chk('原生P4 基线：11 块全部入库', base === ALL);
+          chk('原生P4 拆岛：forgetSandbox 清 7 块', n0 === 7);
+          chk('原生P4 拆岛：sbA 全清（a1..a7 无）', inA(afterSb).length === 0);
+          chk('原生P4 拆岛：sbB 完整（b1..b4 都在）', afterSb === 'b1,b2,b3,b4');
+          await ctx.close();
+        }
+        /* 2) forgetCharSet({charIds:[nA1]},sbA)：删单 NPC —— 只清 nA1，同 root 全留 */
+        {
+          const ctx = await browser.newContext();
+          const page = await ctx.newPage();
+          await fresh(browser, page);
+          const n = await page.evaluate(() => window.Sleepy.memoryVec.forgetCharSet({ charIds: ['nA1'], sandboxId: 'sbA' }));
+          const after = (await collect(page)).sort().join(',');
+          chk('原生P4 删NPC：forgetCharSet 清 1 块（nA1）', n === 1);
+          chk('原生P4 删NPC：nA1 的块清（a4 无）', !has(after, 'a4'));
+          chk('原生P4 删NPC：同root大号块留（a1 在）', has(after, 'a1'));
+          chk('原生P4 删NPC：同root皮套块留（a2/a3 在）', has(after, 'a2') && has(after, 'a3'));
+          chk('原生P4 删NPC：同root别的NPC留（a5 在）', has(after, 'a5'));
+          chk('原生P4 删NPC：皮套子NPC留（a6 在）', has(after, 'a6'));
+          chk('原生P4 删NPC：nA1 的跨岛块留（b3 在）', has(after, 'b3'));
+          chk('原生P4 删NPC：仅 a4 被删', after === 'a1,a2,a3,a5,a6,a7,b1,b2,b3,b4');
+          await ctx.close();
+        }
+        /* 3) forgetCharSet({charIds:[fA1,snA1]},sbA)：删皮套 + 其子NPC —— 一起清，同 root 别的留 */
+        {
+          const ctx = await browser.newContext();
+          const page = await ctx.newPage();
+          await fresh(browser, page);
+          const n = await page.evaluate(() => window.Sleepy.memoryVec.forgetCharSet({ charIds: ['fA1', 'snA1'], sandboxId: 'sbA' }));
+          const after = (await collect(page)).sort().join(',');
+          chk('原生P4 删皮套+子NPC：forgetCharSet 清 2 块（fA1+snA1）', n === 2);
+          chk('原生P4 删皮套+子NPC：皮套块清（a2 无）', !has(after, 'a2'));
+          chk('原生P4 删皮套+子NPC：子NPC块清（a6 无）', !has(after, 'a6'));
+          chk('原生P4 删皮套+子NPC：大号块留（a1 在）', has(after, 'a1'));
+          chk('原生P4 删皮套+子NPC：同root别的皮套留（a3 在）', has(after, 'a3'));
+          chk('原生P4 删皮套+子NPC：别的NPC留（a4/a5 在）', has(after, 'a4') && has(after, 'a5'));
+          chk('原生P4 删皮套+子NPC：fA1 跨岛块留（b1 在）', has(after, 'b1'));
+          chk('原生P4 删皮套+子NPC：仅 a2/a6 被删', after === 'a1,a3,a4,a5,a7,b1,b2,b3,b4');
+          await ctx.close();
+        }
+        /* 4) forgetCharSet({charIds:[rA,fA1,fA2,nA1,nA2,snA1]},sbA)：删大号+全部皮套+全部子NPC */
+        {
+          const ctx = await browser.newContext();
+          const page = await ctx.newPage();
+          await fresh(browser, page);
+          const n = await page.evaluate(() => window.Sleepy.memoryVec.forgetCharSet({ charIds: ['rA', 'fA1', 'fA2', 'nA1', 'nA2', 'snA1'], sandboxId: 'sbA' }));
+          const after = (await collect(page)).sort().join(',');
+          chk('原生P4 删大号：forgetCharSet 清 6 块（大号+皮套+子NPC）', n === 6);
+          chk('原生P4 删大号：大号/皮套/子NPC 在 A 全清（a1..a6 无）',
+            !has(after, 'a1') && !has(after, 'a2') && !has(after, 'a3') &&
+            !has(after, 'a4') && !has(after, 'a5') && !has(after, 'a6'));
+          chk('原生P4 删大号：马甲日记留（a7 在）', has(after, 'a7'));
+          chk('原生P4 删大号：别岛同root块全留（b1/b2/b3 在）', has(after, 'b1') && has(after, 'b2') && has(after, 'b3'));
+          chk('原生P4 删大号：仅 a1..a6 被删', after === 'a7,b1,b2,b3,b4');
+          await ctx.close();
+        }
+        /* 5) forgetCharSet({charIds:['ghostNpc']},sbA)：空 NPC / 无命中 → resolve 0 */
+        {
+          const ctx = await browser.newContext();
+          const page = await ctx.newPage();
+          await fresh(browser, page);
+          const n = await page.evaluate(() => window.Sleepy.memoryVec.forgetCharSet({ charIds: ['ghostNpc'], sandboxId: 'sbA' }));
+          const after = (await collect(page)).sort().join(',');
+          chk('原生P4 空NPC：forgetCharSet resolve 0', n === 0);
+          chk('原生P4 空NPC：11 块全留', after === ALL);
+          await ctx.close();
+        }
+        /* 6) forgetUser(uA,sbA)：清 uA 在 sbA 的日记，别岛同 uid 保留 */
+        {
+          const ctx = await browser.newContext();
+          const page = await ctx.newPage();
+          await fresh(browser, page);
+          const n = await page.evaluate(() => window.Sleepy.memoryVec.forgetUser({ userId: 'uA', sandboxId: 'sbA' }));
+          const after = (await collect(page)).sort().join(',');
+          chk('原生P4 删马甲：forgetUser 只清 uA 在 A 的 1 块', n === 1);
+          chk('原生P4 删马甲：uA 日记清（a7 无）', !has(after, 'a7'));
+          chk('原生P4 删马甲：别岛 uB 留（b4 在）', has(after, 'b4'));
+          chk('原生P4 删马甲：仅 a7 被删', after === 'a1,a2,a3,a4,a5,a6,b1,b2,b3,b4');
+          await ctx.close();
+        }
+      }
+
       /* ---- 4｜两标签页升级阻塞：旧连接关闭后继续升级、状态可恢复 ----
          ⚠️ 原生实测（Edge）：被阻塞时 onblocked 并未在 8s 内触发 ——
          生产 open() 表现为**挂起**（不报「占着」也不放行），旧连接一关，

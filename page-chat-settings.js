@@ -1021,9 +1021,19 @@
             danger: true, ok: '删除'
           }).then(function (v) {
             if (!v) return;   /* confirm 取消 = false */
-            Sleepy.core.removeChar(ch.id);
-            ctx.toast('已删除', 'ok');
-            ctx.back();
+            /* 项目4：删角色改异步 purgeChar（向量先清拿硬信号才删主表）。
+               ch.sandboxId 是这段对话所在岛。失败不 toast 成功。 */
+            Sleepy.core.purgeChar(ch.id, ch.sandboxId).then(function (r) {
+              if (!r || !r.ok) {
+                var msg = r && r.message ? r.message : (r && r.why ? r.why : '删除失败');
+                ctx.toast(msg, 'err');
+                return;
+              }
+              ctx.toast('已删除', 'ok');
+              ctx.back();
+            }, function () {
+              ctx.toast('删除失败：向量清理异常', 'err');
+            });
           });
         }
       }));

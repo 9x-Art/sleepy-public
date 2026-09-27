@@ -292,6 +292,18 @@ let bad = 0;
 
 let asyncPending = 0;
 
+/* 共享异步互斥（只服务门禁类测试）：P3-M2~M5 与 P4-M4~M9 都要**改全局 win.indexedDB**，
+   smoke 的 t() 对 async 是并发的（不 await 就返回），两个 async 测试若交错跑，
+   P4 在 M5 前置断言「win 不该有 indexedDB」会撞上 P3 还挂着的 win.indexedDB={}，
+   重试段的 gate 也会误判「有 IDB → 打开 mock 失败 → vector-failed」。
+   → 用一把共享锁让改 IDB 的测试**严格按声明顺序串行**：先声明的先拿锁。 */
+let idbLock = Promise.resolve();
+function withIdbLock(fn) {
+  const run = idbLock.then(fn, fn);   /* 等前一个拿锁者把 win.indexedDB 恢复原样 */
+  idbLock = run.catch(() => {});      /* 出错也要放锁，别让后续测试饿死 */
+  return run;
+}
+
 function t(label, fn) {
   let r;
   try {
@@ -509,7 +521,7 @@ t('removeSandbox 只清明确属于它的数据', () => {
   ]);
   S.core.setActiveSandbox(sbArch);
 
-  const r = S.core.removeSandbox(sbArch);
+  const r = S.core._purgeSync.sandbox(sbArch);
   if (!r.ok) throw new Error(r.message);
   const left = (S.store.get('chats') || []).map((c) => c.id);
   if (left.indexOf('c_scoped') >= 0) throw new Error('属于这间房的对话没被清掉');
@@ -536,7 +548,7 @@ t('setRelation / relationOf 往返一致', () => {
   if (!lk || lk.relation !== '青梅竹马') throw new Error('没落到 links 上');
   S.core.setRelation(c, u, '');
   if (S.core.relationOf(c, u) !== '') throw new Error('清空失败');
-  S.core.removeChar(c);
+  S.core._purgeSync.char(c);
   return { 写上: '青梅竹马', 落在: 'links.relation', 清空: 'ok' };
 });
 
@@ -558,8 +570,8 @@ t('NPC 可以挂在「我」名下（parentType=user）', () => {
   if (npcList.indexOf(his) < 0) throw new Error('角色名下的人没被认出来');
   if (npcList.indexOf(mine) >= 0) throw new Error('「我」名下的人混进角色那边了');
 
-  S.core.removeChar(main);
-  S.core.removeChar(mine);
+  S.core._purgeSync.char(main);
+  S.core._purgeSync.char(mine);
   return { 我这边: mineList.length, 角色那边: npcList.length };
 });
 
@@ -595,9 +607,9 @@ t('同一对关系在两间房里互不串（linkSlot 的关键约束）', () =>
   }
 
   S.core.setActiveSandbox(ra.id);
-  S.core.removeChar(c);
-  S.core.removeSandbox(ra.id);
-  S.core.removeSandbox(rb.id);
+  S.core._purgeSync.char(c);
+  S.core._purgeSync.sandbox(ra.id);
+  S.core._purgeSync.sandbox(rb.id);
   return { A房: readA2, B房: readB, 各持一条: raw.length };
 });
 
@@ -718,7 +730,7 @@ t('roomTitle 由房里的人推出来（不用起名）', () => {
   const r = S.core.setSandboxChars(sb.id, [m.id]);
   if (!r.ok) throw new Error(r.message);
   const one = S.island.roomTitle(r.sandbox);
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   if (one !== '顾清和') throw new Error('有角色时标题该是角色名，实际：' + one);
   return { 空房: empty, 一个人: one };
 });
@@ -737,13 +749,13 @@ t('孤岛住满之后不能再加人（canAddChar 是那道闸）', () => {
   const put = S.core.setSandboxChars(isle.id, [m.id]);
   const room = S.core.findSandbox(isle.id);
   const full = S.island.canAddChar(room);
-  S.core.removeSandbox(isle.id);
+  S.core._purgeSync.sandbox(isle.id);
   if (!put.ok) throw new Error(put.message);
   if (full !== false) throw new Error('孤岛已经住了人，却还允许再加');
   if (S.island.canAddChar(null) !== true) throw new Error('没有房时不该拦');
   const archi = S.core.createSandbox('archipelago');
   const okArchi = S.island.canAddChar(archi);
-  S.core.removeSandbox(archi.id);
+  S.core._purgeSync.sandbox(archi.id);
   if (okArchi !== true) throw new Error('群岛不该有人数上限');
   return { 孤岛住满还放得进人吗: full, 群岛: okArchi };
 });
@@ -758,7 +770,7 @@ t('大号进房之后 charsOfSandbox 才认它（加人设必须补这一步）'
   const before = S.core.charsOfSandbox(sb.id).length;
   const r = S.core.setSandboxChars(sb.id, [m.id]);
   const names = S.core.charsOfSandbox(sb.id).map((c) => c.name);
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   if (!r.ok) throw new Error(r.message);
   if (before !== 0) throw new Error('新房不该已经有成员');
   if (names.indexOf('沈聿') < 0) throw new Error('进房之后还是查不到他');
@@ -772,7 +784,7 @@ t('大号按岛：新建即打章 + 拆岛连人一起清', () => {
   S.core.setActiveSandbox(sb.id);
   const m = S.core.upsertChar({ name: '打章测试', kind: 'main' });
   if (m.sandboxId !== sb.id) throw new Error('新建大号没打上岛的章');
-  const r = S.core.removeSandbox(sb.id);
+  const r = S.core._purgeSync.sandbox(sb.id);
   if (!r.ok) throw new Error(r.message);
   if (S.core.findChar(m.id)) throw new Error('拆岛后岛上的大号还留着');
   return { 新建打章: m.sandboxId === sb.id, 拆岛清人: true };
@@ -795,12 +807,12 @@ t('移出岛：本体保留、章摘掉（universeOf 一起摘）', () => {
   if (S.core.findChar(m.id).sandboxId) throw new Error('移出后大号的章没摘掉');
   if (S.core.findChar(sub.id).sandboxId) throw new Error('移出后皮套的章没摘掉');
 
-  const r = S.core.removeSandbox(sb.id);
+  const r = S.core._purgeSync.sandbox(sb.id);
   if (!r.ok) throw new Error(r.message);
   if (!S.core.findChar(m.id)) throw new Error('拆岛把已移出的角色连带删了');
   if (!S.core.findChar(sub.id)) throw new Error('拆岛把已移出角色的皮套连带删了');
 
-  S.core.removeChar(m.id);
+  S.core._purgeSync.char(m.id);
   return { 本体保留: true, 章已摘: true, 拆岛不误删: true };
 });
 
@@ -822,11 +834,11 @@ t('马甲按岛：新建即打章 + 复制是新记录 + 拆岛连马甲清', ()
   if (uc.id === u1.id) throw new Error('复制不该是同一条记录');
   if (uc.sandboxId !== sbB.id) throw new Error('复制出的马甲没打本岛的章');
 
-  const r = S.core.removeSandbox(sbB.id);
+  const r = S.core._purgeSync.sandbox(sbB.id);
   if (!r.ok) throw new Error(r.message);
   if (S.core.findUser(u2.id) || S.core.findUser(uc.id)) throw new Error('拆岛后马甲还留着');
   if (!S.core.findUser(u1.id)) throw new Error('拆 B 岛不该动 A 岛的马甲');
-  S.core.removeSandbox(sbA.id);
+  S.core._purgeSync.sandbox(sbA.id);
   return { 新建打章: true, 复制是新记录: true, 拆岛清马甲: true };
 });
 
@@ -857,8 +869,8 @@ t('「我的大号」：本岛第一件自动是大号，设大号同岛互斥�
   const got = S.core.defaultUserOfSandbox(sbX.id);
   if (!got || got.id !== b.id) throw new Error('defaultUserOfSandbox 没认出新大号');
 
-  S.core.removeSandbox(sbX.id);
-  S.core.removeSandbox(sbY.id);
+  S.core._purgeSync.sandbox(sbX.id);
+  S.core._purgeSync.sandbox(sbY.id);
   return { 同岛大号: mine.length, 别岛大号还在: true, 认得出: got.name };
 });
 
@@ -878,8 +890,8 @@ t('activeUserOnIsland：别座岛的「我」一律挡掉，本岛的放行', ()
   const got = S.core.activeUserOnIsland();
   if (!got || got.id !== mine.id) throw new Error('本岛的马甲被误挡');
 
-  S.core.removeSandbox(sbX.id);
-  S.core.removeSandbox(sbY.id);
+  S.core._purgeSync.sandbox(sbX.id);
+  S.core._purgeSync.sandbox(sbY.id);
   return { 别岛: 'null', 本岛: got.name };
 });
 
@@ -913,14 +925,14 @@ t('岛覆盖：deskCfg 岛覆盖叠全局 + 拆岛清覆盖层', () => {
     { type: 'app', app: 'wallet', sandboxId: sbB.id }
   ]);
 
-  const r = S.core.removeSandbox(sbA.id);
+  const r = S.core._purgeSync.sandbox(sbA.id);
   if (!r.ok) throw new Error(r.message);
   if (S.store.get('appearance').desktop.islands[sbA.id]) throw new Error('拆岛没清外观覆盖');
   if (S.store.get('desktop').islands[sbA.id]) throw new Error('拆岛没清户型覆盖');
   if (S.store.get('desktopRemoved').some((x) => x.sandboxId === sbA.id)) {
     throw new Error('拆岛没清该岛的组件删除记录');
   }
-  S.core.removeSandbox(sbB.id);
+  S.core._purgeSync.sandbox(sbB.id);
   S.store.set('desktopRemoved', []);
   return { 岛覆盖生效: true, 回落全局: true, 拆岛清覆盖: true };
 });
@@ -937,7 +949,7 @@ t('拆岛清扫补漏：charRel:<sbId> 整键清 + charAppearance.byChar 悬空�
     byChar: { [m]: { mode: 'photo' }, '从没存在过的幽灵': { mode: 'classic' } }
   });
 
-  const r = S.core.removeSandbox(sb.id);
+  const r = S.core._purgeSync.sandbox(sb.id);
   if (!r.ok) throw new Error(r.message);
   if (S.store.get('charRel:' + sb.id) !== null) throw new Error('charRel:<sbId> 没被整键清掉');
   const after = S.store.get('charAppearance');
@@ -979,7 +991,7 @@ t('导出 v2：皮套/NPC 头解析 + 导入层级还原 + NPC 归岛', () => {
   }
   if (!npcIsle || npcIsle.parentType !== 'sandbox') throw new Error('岛级 NPC 导入后没归岛');
   if (res.ids.length !== 1 || res.ids[0] !== main.id) throw new Error('名册只该收大号');
-  S.core.removeSandbox(isle);
+  S.core._purgeSync.sandbox(isle);
   return { 解析: 4, 层级还原: true, NPC归岛: true, 名册只收大号: true };
 });
 
@@ -1007,8 +1019,8 @@ t('指针卫兵：本岛有效、别岛指针拦下、switchTo 恢复', () => {
   const g2 = S.core.activeCharOnIsland();
   if (!g2 || g2.id !== b1.id) throw new Error('switchTo 之后卫兵没放行');
   /* 皮套也不行：桌面跟大号走，但得是本岛大号 */
-  S.core.removeSandbox(sbA.id);
-  S.core.removeSandbox(sbB.id);
+  S.core._purgeSync.sandbox(sbA.id);
+  S.core._purgeSync.sandbox(sbB.id);
   return { 本岛放行: true, 别岛拦截: true, 选人恢复: true };
 });
 
@@ -1023,8 +1035,8 @@ t('小号挂在大号名下、按房建，但不占房成员名额', () => {
   });
   const members = S.core.charsOfSandbox(sb.id).map((c) => c.id);
   const kids = S.island.childrenOf(sb.id, m.id, 'sub', 'char').map((c) => c.name);
-  S.core.removeSandbox(sb.id);
-  S.core.removeChar(m.id);
+  S.core._purgeSync.sandbox(sb.id);
+  S.core._purgeSync.char(m.id);
   if (members.indexOf(sub.id) >= 0) throw new Error('小号不该算房成员');
   if (kids.indexOf('小和') < 0) throw new Error('小号没挂到大号名下');
   return { 房成员数: members.length, 大号名下: kids.join('、') };
@@ -1142,8 +1154,8 @@ t('朋友圈：写进 A 房的动态，B 房看不见', () => {
   const inB = S.core.scoped(S.momentsTab.all()).length;
 
   /* 删房要把它一起带走 —— 漏了的话 localStorage 里会积幽灵数据 */
-  S.core.removeSandbox(A.id);
-  S.core.removeSandbox(B.id);
+  S.core._purgeSync.sandbox(A.id);
+  S.core._purgeSync.sandbox(B.id);
   const after = S.momentsTab.all().length;
 
   if (!made) throw new Error('写入失败');
@@ -1250,7 +1262,7 @@ t('钱包余额按房隔离', () => {
   S.wallet.setBalance(8);
   S.core.setActiveSandbox(A.id);
   const aAfter = S.wallet.balance();
-  S.core.removeSandbox(A.id); S.core.removeSandbox(B.id);
+  S.core._purgeSync.sandbox(A.id); S.core._purgeSync.sandbox(B.id);
   if (bBefore !== 0) throw new Error('B 房不该看到 A 的余额：' + bBefore);
   if (aAfter !== 5200) throw new Error('A 房余额被动了：' + aAfter);
   return { A房: aAfter, B房: bBefore + ' → 8' };
@@ -1276,7 +1288,7 @@ t('表情包：默认按房，开全局跨房可见，删房只带走本房的',
 
   S.stickers.remove(r.item.id);
   const left = S.stickers.all().length;
-  S.core.removeSandbox(A.id); S.core.removeSandbox(B.id);
+  S.core._purgeSync.sandbox(A.id); S.core._purgeSync.sandbox(B.id);
   if (local !== 1) throw new Error('本房该看到 1 个，实际 ' + local);
   if (inB !== 1) throw new Error('开全局后 B 房该看见，实际 ' + inB);
   if (!isGlobal) throw new Error('开全局没清掉 sandboxId：' + JSON.stringify(rec));
@@ -1304,7 +1316,7 @@ t('朋友圈：替角色发、赞可取消、评论可删', () => {
   const rec = S.momentsTab.all().filter((m) => m.id === hers.id)[0];
   S.momentsTab.remove(hers.id);
   S.momentsTab.remove(mine.id);
-  S.core.removeSandbox(A.id);
+  S.core._purgeSync.sandbox(A.id);
   const after = S.momentsTab.all().length;
 
   if (!mine || !hers) throw new Error('发布失败');
@@ -1334,7 +1346,7 @@ t('朋友圈壁纸按房隔离', () => {
   const cleared = S.momentsTab.wall();
   S.core.setActiveSandbox(A.id);
   const aAfterClear = S.momentsTab.wall();
-  S.core.removeSandbox(A.id); S.core.removeSandbox(B.id);
+  S.core._purgeSync.sandbox(A.id); S.core._purgeSync.sandbox(B.id);
   if (!inA || inA.mediaId !== 'md-1') throw new Error('A 房壁纸没存上：' + JSON.stringify(inA));
   if (inB) throw new Error('B 房不该看到 A 的壁纸：' + JSON.stringify(inB));
   if (cleared) throw new Error('B 房清壁纸没生效');
@@ -1673,7 +1685,7 @@ t('我发评论后会排一个「过一会儿回」，不是秒回', () => {
   const p = S.momentsAI.pending();
   const waited = p.length ? Math.round((p[0].dueAt - Date.now()) / 1000) : -1;
   S.momentsAI.clearPending();
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   S.core.setActiveSandbox(prev ? prev.id : null);
   return {
     排了几个: queued.length,
@@ -2358,7 +2370,7 @@ t('点名必接：回复角色评论 / @ 的人带 must 标记', () => {
   const r1 = S.momentsAI.pickResponders(fresh, { replyTo: cc.item.id }, sb);
   const mo2 = S.momentsTab.add({ name: '我', text: '看这个', mentions: [ch] });
   const r2 = S.momentsAI.pickResponders(mo2, null, sb);
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   if (!r1.length || !r1[0].must) throw new Error('回复角色评论却不是必接：' + JSON.stringify(r1));
   if (!r2.length || !r2[0].must) throw new Error('@ 了却不是必接：' + JSON.stringify(r2));
   return { 回复点名: r1.map((x) => x.name + '!'), 艾特点名: r2.map((x) => x.name + '!') };
@@ -2755,7 +2767,7 @@ t('换房看不见 + removeSandbox 连带清两张日历表', () => {
   S.core.setActiveSandbox(calSb.sb);
   const before = CAL.eventsOf(calSb.a).length;
   if (!before) throw new Error('回到原房该能看见');
-  S.core.removeSandbox(calSb.sb);
+  S.core._purgeSync.sandbox(calSb.sb);
   const left = (S.store.get('calEvents') || []).filter((e) => e.sandboxId === calSb.sb).length;
   const leftCfg = (S.store.get('calConfigs') || []).filter((e) => e.sandboxId === calSb.sb).length;
   if (left || leftCfg) throw new Error('删房没清干净：events=' + left + ' configs=' + leftCfg);
@@ -3460,9 +3472,9 @@ t('compileIslandKB：关系/归属/NPC 资料按规则进注入', () => {
   const full = S.switcher.compileSystemContext(a1, u, 8);
   if (full.indexOf('这座岛里的人际') < 0) throw new Error('compileSystemContext 没带 K03 块');
 
-  S.core.removeSandbox(arch);
-  S.core.removeChar(a1);
-  S.core.removeChar(a2);
+  S.core._purgeSync.sandbox(arch);
+  S.core._purgeSync.char(a1);
+  S.core._purgeSync.char(a2);
   return { 林澈注入: forM1.split('\n').length + ' 行', 沈聿拿不到NPC: true, 总装: true };
 });
 
@@ -3506,9 +3518,9 @@ t('NPC 唯一口径：core.npcsOfRoom 收齐岛级 + 老数据（char/user 名�
   if (S.island.npcsOfRoom(isle).length !== 3) throw new Error('island.npcsOfRoom 与 core 口径不一致');
   if (S.island.offspringOf) throw new Error('offspringOf 应已删除（两套口径不许并存）');
 
-  S.core.removeSandbox(isle);
-  S.core.removeSandbox(other);
-  S.core.removeChar(m);
+  S.core._purgeSync.sandbox(isle);
+  S.core._purgeSync.sandbox(other);
+  S.core._purgeSync.char(m);
   return { 收齐: ids.length, 别岛隔离: true, 出口唯一: true };
 });
 
@@ -3528,9 +3540,9 @@ t('留痕首页按岛过滤（sandbox 归属的 NPC 也要收进来）', () => {
   const ids = chars.map((c) => c.id);
   if (ids.indexOf(m) < 0) throw new Error('主角色没进留痕');
   if (ids.indexOf(npc.id) < 0) throw new Error('sandbox 归属的 NPC 没进留痕');
-  S.core.removeChar(npc.id);
-  S.core.removeChar(m);
-  S.core.removeSandbox(isle);
+  S.core._purgeSync.char(npc.id);
+  S.core._purgeSync.char(m);
+  S.core._purgeSync.sandbox(isle);
   return { 收录: ids.length };
 });
 
@@ -3542,7 +3554,7 @@ t('候选队列：attention > loop > unspoken，内容指纹去重', () => {
   const list = S.proactiveEngine.candidatesFor(c);
   if (list.length !== 2) throw new Error('候选数量不对：' + list.length);
   if (list[0].source !== 'attention') throw new Error('优先级不对：' + list[0].source);
-  S.core.removeChar(c);
+  S.core._purgeSync.char(c);
   return { 候选: list.length, 去重: true };
 });
 t('闸门：过闸 / 未回复不追问 / 每日上限 / 开关关闭', () => {
@@ -3597,8 +3609,8 @@ t('闸门：过闸 / 未回复不追问 / 每日上限 / 开关关闭', () => {
   S.chatSettings.charSettings(c).set('proactive', true);
 
   S.store.set('chats', []);
-  S.core.removeChar(c);
-  S.core.removeSandbox(isle);
+  S.core._purgeSync.char(c);
+  S.core._purgeSync.sandbox(isle);
   S.proactiveEngine.saveSettings({ quietStart: savedSt.quietStart, quietEnd: savedSt.quietEnd });
   return { 过闸: true, 未回复拦: true, 上限拦: true, 开关拦: true };
 });
@@ -3645,8 +3657,8 @@ t('gateWhyText：实时文案（暂缓/冷却带分钟）+ deferMin 可配', () 
     deferMin: saved.deferMin !== undefined ? saved.deferMin : 90
   });
   S.store.set('chats', []);
-  S.core.removeChar(c);
-  S.core.removeSandbox(isle);
+  S.core._purgeSync.char(c);
+  S.core._purgeSync.sandbox(isle);
   return { 暂缓: w1, 冷却: w2, 过闸: true };
 });
 
@@ -3773,7 +3785,7 @@ t('群按房隔离：换房看不见 + removeSandbox 连带清三张表', () => 
   const seen = S.groupStore.listGroups();
   if (seen.length !== 0) throw new Error('别的房不该看见这个群，实 ' + seen.length);
   S.core.setActiveSandbox(gFix.arch);
-  S.core.removeSandbox(other.id);
+  S.core._purgeSync.sandbox(other.id);
   /* 删群测试群岛：三张表都应该清掉 */
   const before = {
     groups: S.store.get('groups').length,
@@ -3781,7 +3793,7 @@ t('群按房隔离：换房看不见 + removeSandbox 连带清三张表', () => 
     msgs: S.store.get('groupMessages').length
   };
   if (!before.groups) throw new Error('测试前置不对：群里没数据');
-  S.core.removeSandbox(gFix.arch);
+  S.core._purgeSync.sandbox(gFix.arch);
   const after = {
     groups: S.store.get('groups').length,
     members: S.store.get('groupMembers').length,
@@ -3844,9 +3856,15 @@ t('项目3 P3-M1b 静态护栏：UI 成功 toast 只在 ok:true 时出现，失�
 
 /* ⚠️ smoke 的 t() 对 async 是**并发**的（不 await 就返回）。项目3 的门禁测试要
    串行改 win.indexedDB / 建删群，**必须合成一个 async 测试**，否则并发互相踩。 */
-t('项目3 P3-M2~M5 门禁三分支 + 无副作用 + 重试补完（串行）', async () => {
+t('项目3 P3-M2~M5 门禁三分支 + 无副作用 + 重试补完（串行）', () => withIdbLock(async () => {
   const savedIDB = win.indexedDB;          /* smoke 默认无 IDB */
+  const hadIDB = 'indexedDB' in win;
   const savedFG = S.memoryVec.forgetGroup;
+  /* 恢复 IDB：原环境**没有**这键时（node）必须 delete 整键，只赋回 undefined
+     会留下 own property，导致后续串行测试的 `'indexedDB' in win` 误判 true。 */
+  const restoreIDB = () => {
+    if (hadIDB) { win.indexedDB = savedIDB; } else { delete win.indexedDB; }
+  };
 
   /* -- M2 不存在的群：无副作用（只验目标 id 不出现，不断言总表长度——
      smoke 后续同步 IIFE 可能并发建群，长度会变） -- */
@@ -3889,7 +3907,7 @@ t('项目3 P3-M2~M5 门禁三分支 + 无副作用 + 重试补完（串行）', 
   delete S.memoryVec.forgetGroup;           /* 但 API 缺失 */
   r = await S.groupStore.purgeGroup(g4);
   S.memoryVec.forgetGroup = savedFG;
-  win.indexedDB = savedIDB;
+  restoreIDB();
   if (!r || r.ok !== false) throw new Error('该失败，实 ' + JSON.stringify(r));
   if (r.why !== 'memory-vector-unavailable/api-missing') throw new Error('why 该是 api-missing，实 ' + r.why);
   if (!S.groupStore.findGroup(g4)) throw new Error('主表不该被删（api-missing 必须保留）');
@@ -3899,7 +3917,7 @@ t('项目3 P3-M2~M5 门禁三分支 + 无副作用 + 重试补完（串行）', 
   const g5 = p3Fix.mk('P3C-向量失败群');
   win.indexedDB = {};                       /* 有 IDB（gate 判 hasIDB=true）*/
   r = await S.groupStore.purgeGroup(g5);
-  win.indexedDB = savedIDB;
+  restoreIDB();
   if (!r || r.ok !== false) throw new Error('该失败，实 ' + JSON.stringify(r));
   if (r.why !== 'memory-vector-failed') throw new Error('why 该 vector-failed，实 ' + r.why);
   if (S.groupStore.findGroup(g5) === null) throw new Error('主表不该被删（vector-failed 必须保留）');
@@ -3912,6 +3930,296 @@ t('项目3 P3-M2~M5 门禁三分支 + 无副作用 + 重试补完（串行）', 
   if (S.groupStore.findGroup(g5)) throw new Error('g5 重试后主表没清干净');
 
   return 'M2无副作用 / M3无IDB全清 / M4 api缺失保留 / M5 vector失败保留 / 重试补完';
+}));
+
+/* ==================== 项目4：岛/角色/皮套/马甲 purge（门禁 + 护栏）====================
+   三层测试策略（与项目3 一致）：
+     · smoke（node 无 IDB）：反向护栏 + 参数校验 + 门禁三分支 + 默认「我」保护 +
+       主表隔离（跨岛/同 root/同 uid）。
+     · 完整端到端（真块 / 失败注入 / 隔离向量）在 browser-idb-test。
+   门禁判据（与 purgeVecGate 同源）：
+     · `!global.indexedDB` = 合法「无向量环境」→ not-applicable → 允许删主表；
+     · 有 IDB 但出口缺失 / 打开失败 → **必须失败保留主表**（绝不静默物理删却留向量块）。 */
+
+/* 项目4 反向护栏 + 参数校验（同步，不打 IDB） */
+t('项目4 P4-M1 反向护栏：removeXxx 不再导出，purge/forget 新出口都在，scanAll 不导出', () => {
+  const c = S.core;
+  if ('removeSandbox' in c || 'removeChar' in c || 'removeUser' in c) {
+    throw new Error('旧同步删除导出不该再存在');
+  }
+  if (typeof c.purgeSandbox !== 'function' || typeof c.purgeChar !== 'function' ||
+      typeof c.purgeFace !== 'function' || typeof c.purgeUser !== 'function') {
+    throw new Error('四 purge 出口该存在');
+  }
+  const mv = S.memoryVec;
+  if (typeof mv.forgetSandbox !== 'function' || typeof mv.forgetCharSet !== 'function' ||
+      typeof mv.forgetUser !== 'function') {
+    throw new Error('forgetSandbox/forgetCharSet/forgetUser 该存在');
+  }
+  /* 早期按 rootOf 一刀切的 forgetChar / 三维 forgetFace 已退役 ——
+     那是清整池 / 漏删子 NPC 的事故源，不许再出现在导出面 */
+  if (typeof mv.forgetChar === 'function' || typeof mv.forgetFace === 'function') {
+    throw new Error('forgetChar/forgetFace 不该再导出（已由 forgetCharSet 取代）');
+  }
+  if ('scanAll' in mv || ((mv._pure || {}).scanAll !== undefined)) {
+    throw new Error('scanAll 是内部私有，不该导出');
+  }
+  /* _purgeSync 是测试专用（非生产删除 API），名字带 _ 前缀 */
+  if (!c._purgeSync || typeof c._purgeSync.sandbox !== 'function') {
+    throw new Error('_purgeSync 测试清理出口该存在');
+  }
+  return '护栏齐 + scanAll 私有';
+});
+
+/* 项目4 四出口参数校验：缺必要字段必须 reject，不能依赖调用方自觉 */
+t('项目4 P4-M2 四 forget 出口缺字段必 reject', async () => {
+  const mv = S.memoryVec;
+  const cases = [
+    [mv.forgetSandbox, {}, 'sandboxId'],
+    [mv.forgetSandbox, { sandboxId: '' }, 'sandboxId'],
+    [mv.forgetCharSet, {}, 'charIds(非空数组) & sandboxId'],
+    [mv.forgetCharSet, { charIds: ['x'] }, 'charIds(非空数组) & sandboxId'],
+    [mv.forgetCharSet, { charIds: [], sandboxId: 'sb' }, 'charIds(非空数组) & sandboxId'],
+    [mv.forgetUser, {}, 'userId & sandboxId'],
+    [mv.forgetUser, { userId: 'u' }, 'userId & sandboxId']
+  ];
+  for (const [fn, arg, want] of cases) {
+    let threw = false;
+    try { await fn(arg); } catch (e) { threw = true; if (String(e.message).indexOf('缺必要字段') < 0) throw new Error('该报缺字段，实 ' + e.message); }
+    if (!threw) throw new Error('缺字段该 reject：' + want);
+  }
+  /* 字段齐 → 不该因「字段校验」reject。无 IDB 环境 forget 无法真删块（open 失败），
+     但那不是字段校验的错 —— 断言 reject 原因不含「缺必要字段」。 */
+  let msg = '';
+  try { await mv.forgetUser({ userId: 'u', sandboxId: 'sb' }); }
+  catch (e) { msg = String(e.message); }
+  if (msg.indexOf('缺必要字段') >= 0) throw new Error('字段齐不该报缺字段：' + msg);
+  return '四出口缺字段全 reject，字段齐不误报缺字段';
+});
+
+/* 项目4 默认「我」保护 + 主表隔离（同步部分） */
+t('项目4 P4-M3 默认「我」保护：无章共享兜底不可删', async () => {
+  /* 清空 userMasks，让 ensureDefaultUser 造出无章兜底「我」 */
+  S.store.set('userMasks', []);
+  const fallback = S.core.ensureDefaultUser();
+  if (fallback.sandboxId) throw new Error('兜底「我」不该有岛章');
+  const r = await S.core.purgeUser(fallback.id, '');
+  if (!r || r.ok !== false) throw new Error('该拒绝删兜底「我」，实 ' + JSON.stringify(r));
+  if (r.why !== 'default-user-protected') throw new Error('why 该 default-user-protected，实 ' + r.why);
+  /* 保护分支不该动主表：兜底「我」还在 */
+  if (!S.core.findUser(fallback.id)) throw new Error('保护分支不该删主表');
+  return '无章「我」被 default-user-protected 挡住且主表未动';
+});
+
+/* 项目4 NPC 向量归属核查：doomedCharIds 递归角色树，主表 doomed = 向量命中集合。
+   铁律（用户 2026-09-27）：
+     删单 NPC → doomed={NPC}（大号/别的皮套/别的 NPC 的向量必须留）；
+     删皮套 → doomed={皮套+其子 NPC}；
+     删大号 → doomed={大号+全部皮套+全部子 NPC}；
+     sandbox 口径 NPC（parentId=岛id）与 user 口径 NPC（parentId=马甲id）不在大号树里。 */
+t('项目4 P4-M11 doomedCharIds 递归角色树：单NPC/皮套/大号集合各自正确', async () => {
+  const sb = S.core.createSandbox('archipelago', 'P4树岛');
+  S.core.setActiveSandbox(sb.id);
+  const d = S.core.upsertChar({ name: '大号', kind: 'main', sandboxId: sb.id }).id;
+  const f = S.core.upsertChar({ name: '皮套', kind: 'sub', parentId: d, sandboxId: sb.id }).id;
+  const sn = S.core.upsertChar({ name: '子NPC', kind: 'npc', parentId: f, sandboxId: sb.id }).id;      /* 皮套下的 NPC */
+  const n1 = S.core.upsertChar({ name: 'NPC1', kind: 'npc', parentId: d, sandboxId: sb.id }).id;      /* 大号下的 NPC */
+  const n2 = S.core.upsertChar({ name: 'NPC2', kind: 'npc', parentId: d, sandboxId: sb.id }).id;
+  const isl = S.core.upsertChar({ name: '岛NPC', kind: 'npc', parentId: sb.id, parentType: 'sandbox', sandboxId: sb.id }).id; /* sandbox 口径 */
+  const u = S.core.upsertUser({ name: '马甲', sandboxId: sb.id }).id;
+  const un = S.core.upsertChar({ name: '用户NPC', kind: 'npc', parentId: u, parentType: 'user', sandboxId: sb.id }).id;       /* user 口径 */
+
+  const setEq = (a, b) => { a = a.slice().sort().join(','); b = b.slice().sort().join(','); return a === b; };
+
+  /* 删单 NPC：doomed 只有它自己（大号/别的皮套/别的 NPC 都不进集合） */
+  if (!setEq(S.core.doomedCharIds(n1), [n1])) throw new Error('单 NPC doomed 该只有自己：' + JSON.stringify(S.core.doomedCharIds(n1)));
+  /* 删皮套：皮套 + 它下面的子 NPC，不含同 root 别的 NPC */
+  if (!setEq(S.core.doomedCharIds(f), [f, sn])) throw new Error('皮套 doomed 该={皮套,子NPC}：' + JSON.stringify(S.core.doomedCharIds(f)));
+  /* 删大号：大号 + 全部皮套 + 全部子 NPC（递归，含皮套下的子 NPC），不含马甲/岛NPC/用户NPC */
+  const wantD = [d, f, sn, n1, n2];
+  if (!setEq(S.core.doomedCharIds(d), wantD)) throw new Error('大号 doomed 该={大号,皮套,子NPC,NPC1,NPC2}：' + JSON.stringify(S.core.doomedCharIds(d)));
+  if (S.core.doomedCharIds(d).indexOf(isl) >= 0) throw new Error('sandbox 口径 NPC 不该进大号 doomed');
+  if (S.core.doomedCharIds(d).indexOf(un) >= 0) throw new Error('user 口径 NPC 不该进大号 doomed');
+
+  /* 主表隔离：删单 NPC 只删它自己，大号/皮套/别的 NPC 的 char 记录都在 */
+  await S.core.purgeChar(n1, sb.id);
+  if (!S.core.findChar(d)) throw new Error('删 NPC 后大号不该被删');
+  if (!S.core.findChar(f)) throw new Error('删 NPC 后皮套不该被删');
+  if (!S.core.findChar(sn)) throw new Error('删 NPC 后子 NPC 不该被删');
+  if (!S.core.findChar(n2)) throw new Error('删 NPC 后别的 NPC 不该被删');
+  if (S.core.findChar(n1)) throw new Error('删 NPC 后它自己该没');
+  if (!S.core.findChar(isl)) throw new Error('sandbox 口径 NPC 不该被连带删');
+  if (!S.core.findChar(un)) throw new Error('user 口径 NPC 不该被连带删');
+  S.core._purgeSync.sandbox(sb.id);
+  return 'doomedCharIds 递归正确，主表删单 NPC 只删自己';
+});
+
+/* 项目4 门禁三分支 + 跨岛守卫 + 隔离（串行 async，避免并发踩 win.indexedDB） */
+t('项目4 P4-M4~M9 门禁三分支 + 跨岛守卫 + 主表隔离 + 重试补完（串行）', () => withIdbLock(async () => {
+  const savedIDB = win.indexedDB;
+  const hadIDB = 'indexedDB' in win;
+  const savedFS = S.memoryVec.forgetSandbox;
+  const savedFCS = S.memoryVec.forgetCharSet;
+  const savedFU = S.memoryVec.forgetUser;
+  /* 恢复 IDB：原环境没这键时（node）必须 delete 整键，只赋回 undefined
+     会留下 own property，让 `'indexedDB' in win` 误判 true。 */
+  const restoreIDB = () => {
+    if (hadIDB) { win.indexedDB = savedIDB; } else { delete win.indexedDB; }
+  };
+
+  const mkIsland = (name) => {
+    const sb = S.core.createSandbox('archipelago', name);
+    S.core.setActiveSandbox(sb.id);
+    return sb.id;
+  };
+  /* 显式带岛建角色/马甲 —— 否则 mkIsland(B) 之后建的全盖 B 章 */
+  const mkChar = (name, kind, parentId, sbId) => {
+    return S.core.upsertChar({ name, kind: kind || 'main', parentId: parentId || null, sandboxId: sbId }).id;
+  };
+  const mkUser = (name, sbId) => S.core.upsertUser({ name, sandboxId: sbId }).id;
+
+  /* -- M4 不存在的岛：无副作用 -- */
+  const ghost = 'noSuchSb' + Date.now();
+  let r = await S.core.purgeSandbox(ghost);
+  if (!r || r.ok !== false || r.message !== '找不到这间房') throw new Error('不存在岛该 ok:false');
+
+  /* -- M5 not-applicable：无 IDB → 直接清主表 + 别岛保留 -- */
+  if ('indexedDB' in win) throw new Error('smoke 前置不对：win 不该有 indexedDB');
+  const A = mkIsland('P4A岛');
+  const B = mkIsland('P4B岛');
+  const rA = mkChar('P4大号A', 'main', null, A);   /* 盖 A 的章 */
+  const subA = mkChar('P4脸A', 'sub', rA, A);      /* 挂 rA 下，盖 A 的章 */
+  const rB = mkChar('P4大号B', 'main', null, B);   /* 盖 B 的章 */
+  const uA = mkUser('P4马甲A', A);                  /* 盖 A 的章 */
+  S.core.setSandboxChars(A, [rA]);
+  S.core.setSandboxChars(B, [rB]);
+  S.core.setSandboxMasks(A, [uA]);
+  /* 别岛数据做参照 */
+  S.store.set('chats', [{ id: 'chatA', characterId: rA, userId: uA, sandboxId: A },
+                        { id: 'chatB', characterId: rB, userId: uA, sandboxId: B }]);
+  S.store.set('moments', [{ id: 'momA', maskId: uA, sandboxId: A },
+                          { id: 'momB', maskId: uA, sandboxId: B }]);
+
+  r = await S.core.purgeSandbox(A);
+  if (!r || r.ok !== true) throw new Error('无IDB拆岛该 ok:true，实 ' + JSON.stringify(r));
+  if (S.core.findSandbox(A)) throw new Error('主表 sandboxes 没删 A');
+  if (!S.core.findSandbox(B)) throw new Error('别岛 B 不该被删');
+  if (S.core.findChar(rA)) throw new Error('A 岛大号没删');
+  if (S.core.findChar(subA)) throw new Error('A 岛皮套没删（连坐）');
+  if (!S.core.findChar(rB)) throw new Error('别岛 B 大号不该被删');
+  if (S.core.findUser(uA)) throw new Error('A 岛马甲没删');
+  const chats = S.store.get('chats') || [];
+  if (chats.some((x) => x.id === 'chatA')) throw new Error('A 岛对话没删');
+  if (!chats.some((x) => x.id === 'chatB')) throw new Error('别岛 B 对话被误删');
+  const moms = S.store.get('moments') || [];
+  if (moms.some((x) => x.id === 'momA')) throw new Error('A 岛朋友圈没删');
+  if (!moms.some((x) => x.id === 'momB')) throw new Error('别岛 B 朋友圈被误删');
+
+  /* -- M6 跨岛引用守卫：B 岛还引用 A 岛的角色 → still-referenced 拒绝，全不动 -- */
+  const C = mkIsland('P4C岛');
+  const rC = mkChar('P4大号C', 'main', null, C);
+  S.core.setSandboxChars(C, [rC]);
+  S.core.setSandboxChars(B, [rB, rC]);   /* B 岛也引用 rC */
+  r = await S.core.purgeSandbox(C);
+  if (!r || r.ok !== false) throw new Error('跨岛引用该拒绝，实 ' + JSON.stringify(r));
+  if (r.why !== 'still-referenced') throw new Error('why 该 still-referenced，实 ' + r.why);
+  if (!r.by || !r.by.some((x) => x.type === 'char' && x.id === rC)) throw new Error('by 该带出引用者');
+  if (!S.core.findSandbox(C)) throw new Error('跨岛守卫不该删主表');
+  if (!S.core.findChar(rC)) throw new Error('跨岛守卫不该删角色');
+  if (S.core.findSandbox(B)) {}            /* B 还在 */
+  /* 修正 B 的引用后重试 → 成功 */
+  S.core.setSandboxChars(B, [rB]);
+  r = await S.core.purgeSandbox(C);
+  if (!r || r.ok !== true) throw new Error('解除引用后该能拆，实 ' + JSON.stringify(r));
+  if (S.core.findSandbox(C)) throw new Error('重试后主表没删');
+
+  /* -- M7 api-missing 门禁：有 IDB 但 forgetSandbox 缺失 → 失败保留主表 -- */
+  const D = mkIsland('P4D岛');
+  const rD = mkChar('P4大号D', 'main', null, D);
+  S.core.setSandboxChars(D, [rD]);
+  win.indexedDB = {};
+  delete S.memoryVec.forgetSandbox;
+  r = await S.core.purgeSandbox(D);
+  S.memoryVec.forgetSandbox = savedFS;
+  restoreIDB();
+  if (!r || r.ok !== false) throw new Error('该失败，实 ' + JSON.stringify(r));
+  if (r.why !== 'memory-vector-unavailable/api-missing') throw new Error('why 该 api-missing，实 ' + r.why);
+  if (!S.core.findSandbox(D)) throw new Error('主表不该被删（api-missing 必须保留）');
+  if (!S.core.findChar(rD)) throw new Error('角色不该被删');
+
+  /* -- M8 vector-failed 门禁：有 IDB 但 forgetCharSet 打开失败 → 失败保留主表 -- */
+  const E = mkIsland('P4E岛');
+  const rE = mkChar('P4大号E', 'main', null, E);
+  S.core.setSandboxChars(E, [rE]);
+  win.indexedDB = {};
+  r = await S.core.purgeChar(rE, E);        /* forgetChar 在但 mock IDB 打开失败 → reject */
+  restoreIDB();
+  if (!r || r.ok !== false) throw new Error('该失败，实 ' + JSON.stringify(r));
+  if (r.why !== 'memory-vector-failed') throw new Error('why 该 vector-failed，实 ' + r.why);
+  if (S.core.findChar(rE) === null) throw new Error('主表不该被删（vector-failed 必须保留）');
+  if (S.core.findSandbox(E) === null) throw new Error('岛不该被删');
+
+  /* -- M9 重试补完：失败保留的岛/角色在环境恢复后重试 → 全清 -- */
+  await S.core.purgeSandbox(D);            /* 重试拆岛 → D 全清 */
+  await S.core.purgeChar(rE, E);           /* 重试删角色 → rE 清；purgeChar 不删沙盒本身 */
+  if (S.core.findSandbox(D)) throw new Error('D 重试后主表没清');
+  if (S.core.findChar(rE)) throw new Error('rE 重试后没清');
+  if (!S.core.findSandbox(E)) throw new Error('purgeChar 不该连带删沙盒 E');
+  await S.core.purgeSandbox(E);            /* 空房用拆岛清掉，收尾 */
+  if (S.core.findSandbox(E)) throw new Error('E 拆岛重试后没清');
+
+  /* -- purgeUser 马甲隔离 + 补齐派生 -- */
+  const F = mkIsland('P4F岛');
+  const uF = mkUser('P4马甲F', F);
+  S.core.setSandboxMasks(F, [uF]);
+  S.store.set('chats', [{ id: 'chatF', characterId: 'c', userId: uF, sandboxId: F },
+                        { id: 'chatG', characterId: 'c', userId: uF, sandboxId: 'otherSb' }]);
+  S.store.set('offlineSessions', [{ id: 'offF', userId: uF, sandboxId: F },
+                                  { id: 'offG', userId: uF, sandboxId: 'otherSb' }]);
+  r = await S.core.purgeUser(uF, F);
+  if (!r || r.ok !== true) throw new Error('删岛内马甲该 ok:true，实 ' + JSON.stringify(r));
+  if (S.core.findUser(uF)) throw new Error('F 岛马甲没删');
+  const chatsF = S.store.get('chats') || [];
+  if (chatsF.some((x) => x.id === 'chatF')) throw new Error('F 岛马甲对话没删');
+  if (!chatsF.some((x) => x.id === 'chatG')) throw new Error('同 uid 别岛对话被误删');
+  const offF = S.store.get('offlineSessions') || [];
+  if (offF.some((x) => x.id === 'offF')) throw new Error('F 岛马甲线下会话没删');
+  if (!offF.some((x) => x.id === 'offG')) throw new Error('同 uid 别岛线下会话被误删');
+
+  /* -- purgeFace 同 root 别的皮套主表保留 -- */
+  const G = mkIsland('P4G岛');
+  const rG = mkChar('P4大号G', 'main', null, G);
+  const face1 = mkChar('P4脸G1', 'sub', rG, G);
+  const face2 = mkChar('P4脸G2', 'sub', rG, G);
+  S.core.setSandboxChars(G, [rG]);
+  r = await S.core.purgeFace(face1, G);
+  if (!r || r.ok !== true) throw new Error('删皮套该 ok:true，实 ' + JSON.stringify(r));
+  if (S.core.findChar(face1)) throw new Error('脸1 没删');
+  if (!S.core.findChar(face2)) throw new Error('同 root 别的皮套被误删（主表）');
+  if (!S.core.findChar(rG)) throw new Error('大号不该被删');
+
+  return 'M4无副作用 / M5无IDB全清+别岛保留 / M6跨岛守卫 / M7 api缺失保留 / M8 vector失败保留 / M9重试补完 / 马甲隔离 / 皮套保留';
+}));
+
+/* 项目4 静态护栏：UI 删除入口走异步 purge，成功 toast 只在 ok:true 时出现 */
+t('项目4 P4-M10 静态护栏：UI 用异步 purge，失败不 toast 成功', () => {
+  const fs = require('fs');
+  const files = ['page-island.js', 'page-idcard.js', 'page-chat-settings.js'];
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    if (/\.removeSandbox\(|\.removeChar\(|\.removeUser\(/.test(src)) throw new Error(f + ' 不该再同步调旧删除导出');
+    if (!/\.purge(Sandbox|Char|Face|User)\(/.test(src)) throw new Error(f + ' 该用异步 purge');
+    /* 成功 toast 必须被 r.ok 门禁包住：定位成功 toast 前最近的 if (!r || !r.ok) */
+    const m = src.match(/ctx\.toast\('(?:已拆掉|已删除|已删除)', 'ok'\)/);
+    if (!m) continue;
+    const okToast = src.indexOf(m[0]);
+    const gate = src.lastIndexOf('if (!r || !r.ok)', okToast);
+    if (gate < 0 || gate > okToast) throw new Error(f + ' 成功 toast 该在 r.ok 门禁之后');
+    if (src.indexOf("'err')", okToast) < 0 && src.indexOf("'err');", okToast) < 0) {
+      /* 失败分支要有 err toast */
+    }
+  }
+  return 'UI 全走异步 purge + 成功门禁';
 });
 
 console.log('\n--- page-group-ai：群调度 ---');
@@ -4181,8 +4489,8 @@ t('ingest：autoAnchor 开 → priority=high 入库即锚定；批量确认 pend
 
   S.store.set('charMem:' + ch, null);
   S.store.set('charMem:' + ch2, null);
-  S.core.removeChar(ch);
-  S.core.removeChar(ch2);
+  S.core._purgeSync.char(ch);
+  S.core._purgeSync.char(ch2);
   return { 锚定: true, 关不锚: true, 批量确认: n };
 });
 
@@ -4350,7 +4658,7 @@ t('查手机页面注册 + 删房清理（十条表进 removeSandbox 名单）',
   const keys = S.phone.PHONE_KEYS;
   /* 每张表里塞一条脏数据，删房后必须全没 */
   keys.forEach((k, i) => S.store.set(k, [{ id: 'dirty' + i, sandboxId: sb.id }]));
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   const left = keys.filter((k) => (S.store.get(k) || []).some((r) => r.sandboxId === sb.id));
   if (left.length) throw new Error('删房残留：' + left.join(','));
   S.phone.setApiCfg(null);
@@ -4459,7 +4767,7 @@ t('applySettlement：注入合法/非法混合 → 合法落库、非法丢弃�
   const dm = S.store.get('phoneMsgs').filter((x) => x.phoneId === ph.id);
   if (!dm.length || dm[0].status !== 'confirmed') throw new Error('幕后交流没落 confirmed');
   if (dm.length !== 1 || dm[0].withName !== '阿岩') throw new Error('未登记 NPC 的幕后交流该被丢弃');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { applied: stat.applied, dropped: stat.dropped };
 });
 
@@ -4526,7 +4834,7 @@ t('demo 对齐轮 · 权限「暂时隐藏」→ 桌面锁；健康 delta 扩展
   if (day.workoutName !== '上肢力量训练' || !day.workoutWhy) throw new Error('运动卡的名称/说明没落库');
   if (!day.comments.length) throw new Error('随手记没落库');
   if (day.at > Date.now() + 1000) throw new Error('未来时间不该被采信（该用落库时间）');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { 隐藏: hid.apps.join('/'), 餐: day.meals.length, 随手记: day.comments.length };
 });
 
@@ -4549,7 +4857,7 @@ t('gateFor：自主生活档位决定结算间隔，off 拦住', () => {
   /* 刚结算过 → 闸门关上 */
   S.phone.getPhone(ph.id) && S.phone.savePhone(Object.assign({}, S.phone.getPhone(ph.id), { settledUntil: Date.now() }));
   if (S.phone.gateFor(c).allowed) throw new Error('间隔内不该再放行');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { ok: true };
 });
 
@@ -4566,7 +4874,7 @@ t('痕迹消费端：markDetected → detectedUnaddressed → markAddressed 只�
   if (un.length !== 1) throw new Error('detected 后该可消费');
   S.phone.markAddressed(ph.id);
   if (S.phone.detectedUnaddressed(ph.id).length) throw new Error('addressed 后不该再提醒');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { ok: true };
 });
 
@@ -4605,7 +4913,7 @@ t('查手机第 3 批：permission/grant 落权限表 → longPermFor 生效；�
   if (S.phone.listHealth(ph.id).length !== 1) throw new Error('health 读口不对');
   const shop = S.phone.listShop(ph.id);
   if (shop.length !== 1 || shop[0].status !== 'ordered') throw new Error('shop 读口不对');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { 权限: true, 四App: true };
 });
 
@@ -4656,7 +4964,7 @@ t('硬翻：三档概率可调 + 情境加成 + 掷骰两路记账', () => {
   const heavy = traces.find((t) => t.type === 'read' && t.detectedAt);
   if (!heavy) throw new Error('被抓没留当场察觉的重痕迹');
   S.phone.setFlipTier('standard');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { 三档: true, 加成: 0.55, 得手留轻痕: true, 被抓收束: true };
 });
 
@@ -4720,7 +5028,7 @@ t('工坊页面注册 + 删房清理（wsInstalls/wsRecords 按岛清，wsTempla
   /* 塞脏数据 + 删房 */
   S.store.set('wsInstalls', [{ id: 'd1', sandboxId: sb.id }]);
   S.store.set('wsRecords', [{ id: 'd2', sandboxId: sb.id }]);
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   if ((S.store.get('wsInstalls') || []).some((r) => r.sandboxId === sb.id)) throw new Error('wsInstalls 残留');
   if ((S.store.get('wsRecords') || []).some((r) => r.sandboxId === sb.id)) throw new Error('wsRecords 残留');
   return { ok: true };
@@ -4744,7 +5052,7 @@ t('锁屏分流补全：新壳密码=岛落成日（候选可命中）；候选�
   const before = S.phone.ensurePhone(sb.id, c).lock.pin;
   S.phone.savePhone(Object.assign({}, S.phone.getPhone(ph.id), { settledUntil: Date.now() }));
   if (S.phone.ensurePhone(sb.id, c).lock.pin !== before) throw new Error('已有壳密码被重派了');
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   return { pin: mmdd, 候选数: cands.length };
 });
 
@@ -4947,7 +5255,7 @@ t('审计修复：角色删了之后，定史不再往幽灵名下写记忆', ()
   S.wjCanon.setStep(w.id, 3);
 
   const before = S.memoryStore.loadCharMemory(a.id).memories.length;
-  S.core.removeChar(a.id);                    /* 人没了，cast 里还留着他的 id */
+  S.core._purgeSync.char(a.id);                    /* 人没了，cast 里还留着他的 id */
   const r = S.wjCanon.write(w.id);
   const after = S.memoryStore.loadCharMemory(a.id).memories.length;
   S.wj.remove(w.id);
@@ -6225,8 +6533,8 @@ t('P0-2 待回复队列跨岛不互相抹掉（schedule + tick 都按全量写�
   } finally {
     /* 断言失败也要收拾干净，别污染后面的全页渲染冒烟 */
     S.momentsAI.clearAllPending();
-    S.core.removeSandbox(sbA.id);
-    S.core.removeSandbox(sbB.id);
+    S.core._purgeSync.sandbox(sbA.id);
+    S.core._purgeSync.sandbox(sbB.id);
     S.core.setActiveSandbox(prev ? prev.id : null);
   }
 });
@@ -6269,8 +6577,8 @@ t('flush 只处理当前岛：别的岛条目一条不动、内容逐字段不�
     return { flush动了: n, 别岛条目未变: true, 本岛已到期: true };
   } finally {
     S.momentsAI.clearAllPending();
-    S.core.removeSandbox(sbA.id);
-    S.core.removeSandbox(sbB.id);
+    S.core._purgeSync.sandbox(sbA.id);
+    S.core._purgeSync.sandbox(sbB.id);
     S.core.setActiveSandbox(prev ? prev.id : null);
   }
 });
@@ -6307,8 +6615,8 @@ t('clearPending 只清本岛；clearAllPending 才清全部', () => {
     return { 本岛清掉: gone, 别岛仍在: true, 全清后剩: 0 };
   } finally {
     S.momentsAI.clearAllPending();
-    S.core.removeSandbox(sbA.id);
-    S.core.removeSandbox(sbB.id);
+    S.core._purgeSync.sandbox(sbA.id);
+    S.core._purgeSync.sandbox(sbB.id);
     S.core.setActiveSandbox(prev ? prev.id : null);
   }
 });
@@ -6336,7 +6644,7 @@ t('P0-1 回复里的 [手机] 痕迹落进查手机（真实数据链路）', ()
   const notes = S.phone.listNotes(ph.id);
   const landed = notes.some((n) => n.title === '训练');
 
-  S.core.removeSandbox(sb.id);
+  S.core._purgeSync.sandbox(sb.id);
   S.core.setActiveSandbox(prev ? prev.id : null);
 
   if (!landed) throw new Error('手机痕迹没落库（备忘条数 ' + before + '→' + notes.length + '）');
@@ -6419,7 +6727,7 @@ t('探针：charMem 归 root —— 皮套与 root 同键共脑，条目记 from
   } finally {
     S.store.remove('charMem:' + root);
     S.store.remove('charMem:' + sub);
-    S.core.removeSandbox(sb.id);
+    S.core._purgeSync.sandbox(sb.id);
     S.core.setActiveSandbox(prev ? prev.id : null);
   }
 });
@@ -7588,7 +7896,7 @@ t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一�
     const noIdb = await MV.sweepIsland();
     chk('W16 有岛但本机没有 IDB 时 why 不是 noidb', noIdb.why === 'noidb');
 
-    S.core.removeSandbox(sb16.id);
+    S.core._purgeSync.sandbox(sb16.id);
     S.core.setActiveSandbox(prevSb ? prevSb.id : null);
 
     const apiSrc = fs.readFileSync(path.join(ROOT, 'page-singleapi.js'), 'utf8');
@@ -7773,7 +8081,7 @@ t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一�
            岛也要删 —— activeSandbox() 会回落到第一间房，删了才是真的没岛） */
       S.store.set('chats', []);
       S.store.set('diaries', []);
-      S.core.removeSandbox(sb18.id);
+      S.core._purgeSync.sandbox(sb18.id);
       S.core.setActiveSandbox(null);
       const rr = await MV.rebuildIndex();            /* 重试入口 = 同一个按钮 */
       chk('W18 重试没走通：' + (rr.error || rr.why) +
@@ -7781,7 +8089,7 @@ t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一�
       chk('W18 重试成功后提示没清掉', MV.rebuildState() === null);
     } finally {
       MV.available = realAvail2;
-      S.core.removeSandbox(sb18.id);   /* 重试前已删，这里兜底 */
+      S.core._purgeSync.sandbox(sb18.id);   /* 重试前已删，这里兜底 */
     }
     chk('W18 设置页没有挂重建提示（用户看不见「需要重建」）', (() => {
       const apiSrc = fs.readFileSync(path.join(ROOT, 'page-singleapi.js'), 'utf8');
