@@ -44,10 +44,12 @@
   <button id="seedMigMerged" class="ghost">⑧ 布置迁移中断·merged（第 5 步 A）</button>
   <button id="seedMigVerified" class="ghost">⑨ 布置迁移中断·verified（第 5 步 B）</button>
   <button id="report">⑥ 刷新报告（只读，不改任何数据）</button>
+  <button id="reportP2" class="ghost">⑩ 项目2 · 记忆开关报告（只读，不改任何数据）</button>
 </div>
 
 <pre id="log">（操作日志）</pre>
 <pre id="out">（报告会出现在这里，进页面自动跑一次）</pre>
+<pre id="out2">（项目2 · 记忆开关报告会出现在这里，点「⑩」）</pre>
 
 <script>
 (function () {
@@ -416,6 +418,96 @@
   $('seedMigVerified').onclick = function () {
     try { migScene('verified'); } catch (e) { say('❌ ' + (e && e.message || e), 'bad'); }
   };
+
+  /* ---------- 项目2 · 记忆开关报告（纯只读） ----------
+     数据来源（与生产 memory-vec.js / page-memory.js 同一套键）：
+       · 开关态   = store 'memoryIsland' 的 byChar[*].enabled（false=关）
+                   isNpc 判定 = rootId 以 'npc' 开头；无记录时主角默认开、NPC 默认关
+       · 定向世代 = localStorage 'vecEpoch4:<root>'（setCharConfig false→true 时 +1）
+       · 全局世代 = localStorage 'vecEpoch'
+       · 向量块   = IDB 'sleepy-vec' 的 'vec' store，按 ownerKey 前缀分类：
+                    裸 rootId → 角色私有池(rootOf)；'island:' → 岛池；
+                    'user:' → 账号池；'group:' → 群池
+       · 失败退避 = localStorage 'vecFail:*'（embedding 失败；空 = 没有失败）
+    用途：真机第 2/3/5/6/7 步的硬数字截图回交。
+    只读：不删库、不改块、不动任何键。 */
+  function poolClass(ownerKey) {
+    var s = String(ownerKey || '');
+    if (s.indexOf('island:') === 0) return '岛池';
+    if (s.indexOf('user:') === 0) return '账号池';
+    if (s.indexOf('group:') === 0) return '群池';
+    if (s) return '角色私有池';
+    return '(空)';
+  }
+  async function reportP2() {
+    meta();
+    var idb = await inspectIDB();
+    var L = [];
+    L.push('—— 项目2 · 记忆开关报告 · ' + new Date().toLocaleTimeString() + ' ——');
+    L.push('来源 ' + location.origin);
+    L.push('');
+
+    /* 1) 开关态：memoryIsland.byChar（含名册全部角色 → 无记录也按默认态显示）
+       名册角色未必在 byChar 里（无记录 = 走默认：主角开 / NPC 关）——
+       恰好第 1 步要验的就是「默认态」，所以必须把无记录的也列出来。 */
+    L.push('【开关态 memoryIsland.byChar[*].enabled · 含默认态】');
+    var island = lsBare('memoryIsland');
+    var byChar = (island && island.byChar) || {};
+    var roster = [];
+    try { roster = lsBare('characters') || []; } catch (e) { roster = []; }
+    if (!Array.isArray(roster)) roster = [];
+    var map = {};
+    roster.forEach(function (c) { if (c && c.id) map[c.id] = c.name || ''; });
+    Object.keys(byChar).forEach(function (r) { if (!map[r]) map[r] = ''; });  /* byChar 里的额外键也列出 */
+    var keys = Object.keys(map);
+    if (!keys.length) L.push('  (名册为空且无记录 —— 开关会走默认：主角开、NPC 关)');
+    else keys.sort().forEach(function (root) {
+      var c = byChar[root] || {};
+      var isNpc = String(root).indexOf('npc') === 0;
+      /* 生效态 = 与生产 charConfig 一致：有记录 → enabled!==false；无记录 → 主角开 / NPC 关 */
+      var en = c.enabled !== undefined ? (c.enabled !== false) : (!isNpc);
+      L.push('  ' + (map[root] ? map[root] + ' ' : '') + root.slice(0, 24) +
+        ' · ' + (en ? '开' : '关') + (c.enabled === undefined ? '（无记录→' + (isNpc ? 'NPC默认关' : '主角默认开') + '）' : '') +
+        '  level=' + (c.level || (isNpc ? 'off' : 'full')));
+    });
+    L.push('');
+
+    /* 2) 定向世代 vecEpoch4:<root> + 全局 vecEpoch */
+    var e4 = lsScan(function (k) { return k.indexOf('vecEpoch4:') === 0; });
+    L.push('【定向世代 vecEpoch4:<root>】' + (e4.length ? '' : '0 个（默认 = 无定向世代，即未重开过）'));
+    e4.forEach(function (k) { L.push('  ' + k + ' = ' + JSON.stringify(lsBare(k))); });
+    L.push('【全局世代 vecEpoch】' + JSON.stringify(lsBare('vecEpoch')));
+    L.push('');
+
+    /* 3) 向量库 ownerKey 分块 */
+    L.push('【向量库 sleepy-vec 分块（按池）】');
+    if (!idb.exists) L.push('  库不存在（全新状态 —— 关闭时一库未建就是对的）');
+    else if (idb.noStore) L.push('  没有 vec store');
+    else if (idb.blocked) L.push('  ⚠ 被别的标签页挡住，读不到');
+    else {
+      L.push('  版本 = ' + idb.ver + ' · 块总数 = ' + idb.total);
+      var owners = Object.keys(idb.byOwner || {});
+      if (!owners.length) L.push('  (0 块 —— 关闭停建/清空后应为 0)');
+      owners.sort().forEach(function (o) {
+        L.push('  ' + poolClass(o) + ' ' + o + ' = ' + idb.byOwner[o]);
+      });
+    }
+    L.push('');
+
+    /* 4) 失败退避 + 游标 */
+    var fails = lsScan(function (k) { return k.indexOf('vecFail:') === 0; });
+    L.push('【失败退避 vecFail:*】' + fails.length + ' 个' +
+      (fails.length ? '  ← 关闭停建期间应为 0（一个 embedding 都不该调）' : ''));
+    var cursors = lsScan(function (k) { return k.indexOf('vecCursor') === 0; });
+    L.push('【游标 vecCursor*】' + cursors.length + ' 个' +
+      (cursors.length ? '：' + cursors.join('、') : ''));
+    L.push('');
+    L.push('判读速记：');
+    L.push('  关 → 聊新消息：角色私有池块数应 0 增、vecFail 应 0；共享池照常增；');
+    L.push('  重开(false→true)：目标 root 的 vecEpoch4 应 +1（其它 root/共享池不动）。');
+    $('out2').textContent = L.join('\n');
+  }
+  $('reportP2').onclick = function () { $('log').textContent = ''; reportP2(); };
 
   meta();
   report();

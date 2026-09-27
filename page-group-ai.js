@@ -217,19 +217,17 @@
         if (t && on) rels.push('对「' + on.name + '」：' + t);
       });
       if (rels.length) k += '\n' + rels.join('\n');
+      /* 项目 2：群池 L4 **逐成员注入**（α 方案）—— 每个实体的 `[ENTITY]` 块里
+         只放它自己的群池摘要（groupTextFor 按它的记忆开关隔离，关了的为空）。
+         不再是共享 system 一份（共享路径已删，M5c 反向锁死）。 */
+      if (Sleepy.memoryVec && typeof Sleepy.memoryVec.groupTextFor === 'function') {
+        var grp = Sleepy.memoryVec.groupTextFor(groupId, e.ownerId);
+        if (grp) k += '\n' + grp;
+      }
       return '[ENTITY id=' + e.ownerId + ']\n' + k + '\n[/ENTITY]';
     });
     sys.push('[ENTITY_KNOWLEDGE]\n' + entLines.join('\n\n'));
     sys.push('注意：[ENTITY id=…] 是调度用的内部编号，**绝不**出现在消息正文里；群里的人只用账号名相称。');
-
-    /* L4 召回（2026-09-22）：这个群以前聊过的相关内容。
-       群里是**共享 system**，所以一份就够 —— 而且群消息对成员本来就是公开的，
-       不需要按角色分（和私聊那条线不一样，那边要过身份隔离）。
-       缓存由调用方（onUserMessage / onOpening）在开一轮之前先预取好。 */
-    var pastGroup = opts.recallText != null
-      ? opts.recallText
-      : (Sleepy.memoryVec && Sleepy.memoryVec.groupText ? Sleepy.memoryVec.groupText(groupId) : '');
-    if (pastGroup) sys.push(pastGroup);
 
     /* ---- user：可见历史 + 触发 + 预算 ---- */
     var user = [];

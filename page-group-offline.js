@@ -220,17 +220,15 @@
       var bits = [String((rec && rec.content) || '（暂无人设，按名字与场合自然扮演）').slice(0, 900)];
       var meta = (E.charMetaLines && rec) ? E.charMetaLines(rec) : [];
       meta.forEach(function (t) { bits.push(t); });
+      /* 项目 2：群池 L4 **逐参与者内联**（α 方案）—— 每个参与者的行内只放它自己的群池摘要，
+         groupTextFor 按它的记忆开关隔离（关了的为空）；不再是共享一份（共享路径已删，M5c 反向锁死）。 */
+      if (Sleepy.memoryVec && typeof Sleepy.memoryVec.groupTextFor === 'function') {
+        var grp = Sleepy.memoryVec.groupTextFor(s.groupId, p.ownerId);
+        if (grp) bits.push(grp);
+      }
       ppl.push(m.name + (m.npc ? '（NPC）' : '') + '：' + bits.join('；'));
     });
     parts.push(ppl.join('\n'));
-
-    /* L4 召回（2026-09-22）：这个群以前聊过的相关内容。
-       和线上群聊**同一个 ownerKey**（都是「这个群的事」）——
-       在群里说过的话，线下见面时也该记得。缓存由 requestTurn 预取。 */
-    if (Sleepy.memoryVec && Sleepy.memoryVec.groupText) {
-      var pastG = Sleepy.memoryVec.groupText(s.groupId);
-      if (pastG) parts.push(pastG);
-    }
 
     /* 语言（[LANGUAGES]）：只有「在场且常驻在国外」的角色才进这块 ——
        跟线上 I03 同一个出处（promptEngine.langOfChar / transAsked），

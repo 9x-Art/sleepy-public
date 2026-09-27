@@ -94,14 +94,20 @@
       lsClearVec();
     } else if (c === 'plain') {
       /* 不做任何布置：用于「升级完成后重载页面」的状态复查 */
+    } else if (c === 'p2') {
+      /* 项目 2：干净库 —— 删库重造 v6，localStorage 清干净。 */
+      await new Promise(function (res) { var r = indexedDB.deleteDatabase('sleepy-vec'); r.onsuccess = r.onerror = r.onblocked = res; });
+      lsClearVec();
     }
   })();
 
-  /* 生产脚本顺序注入（store.js → memory-vec.js），同源生产原文 */
+  /* 生产脚本顺序注入（store.js → memory-vec.js），同源生产原文。
+     带 cache-bust：system Edge 有时会缓存旧版 <script>（即使 no-store），
+     导致加载的 memory-vec.js 不是最新（缺 charMemOff 等挂载）。加时间戳强制拿最新。 */
   window.__loadScript = function (src) {
     return new Promise(function (res, rej) {
       var s = document.createElement('script');
-      s.src = src;
+      s.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + '_cb=' + Date.now();
       s.onload = res;
       s.onerror = function () { rej(new Error('加载失败：' + src)); };
       document.head.appendChild(s);
@@ -113,13 +119,41 @@
   window.__allowB = true;
   window.__setupEnv = function () {
     var Sleepy = window.Sleepy;
-    Sleepy.core = {
-      rootIdOf: function (id) { return id; },
-      scopeId: function () { return 'sb1'; },
-      scoped: function (x) { return x; },
-      charsOfSandbox: function () { return [{ id: 'c1' }]; },
-      npcsOfRoom: function () { return []; }
+    /* 名册里放「主角 + 一个生产形态真实 NPC」：
+       NPC 用 upsertChar({kind:'npc', parentType:'sandbox'}) 会生成 `chxxx` id（不是 npc 前缀）——
+       这正是项目 2 修复要覆盖的形态。桩的 core 提供 findChar（按 id 查 kind），
+       与生产 charConfig 用 kind 判 isNpc 完全同源。 */
+    var roster = [
+      { id: 'c1', kind: 'main', name: '主角甲', parentId: null, parentType: 'char' },
+      { id: 'r1', kind: 'main', name: '主角R1', parentId: null, parentType: 'char' },
+      { id: 'r2', kind: 'main', name: '主角R2', parentId: null, parentType: 'char' },
+      { id: 'A', kind: 'main', name: '成员A', parentId: null, parentType: 'char' },
+      { id: 'B', kind: 'main', name: '成员B', parentId: null, parentType: 'char' },
+      { id: 'mA', kind: 'main', name: '马甲A', parentId: null, parentType: 'char' },
+      { id: 'mB', kind: 'main', name: '马甲B', parentId: null, parentType: 'char' },
+      { id: 'chNPC0001', kind: 'npc', name: '真实NPC', parentId: 'sb1', parentType: 'sandbox' }
+    ];
+    /* 供测试模拟「core 未就绪」：__dropCore() 摘掉 Sleepy.core 上的 findChar/rootIdOf，
+       让 isNpcRoot 走「core 未就绪」分支；__restoreCore() 装回来。 */
+    function installCore() {
+      Sleepy.core = {
+        rootIdOf: function (id) { return id; },
+        scopeId: function () { return 'sb1'; },
+        scoped: function (x) { return x; },
+        charsOfSandbox: function () { return [{ id: 'c1' }]; },
+        npcsOfRoom: function () { return [{ id: 'chNPC0001', kind: 'npc' }]; },
+        findChar: function (id) {
+          for (var i = 0; i < roster.length; i++) if (roster[i].id === id) return roster[i];
+          return null;
+        }
+      };
+    }
+    installCore();
+    window.__dropCore = function () {
+      /* 仅保留无关字段，去掉 rootIdOf / findChar / scopeId —— 模拟核心未挂上 */
+      Sleepy.core = { scopeId: function () { return 'sb1'; } };
     };
+    window.__restoreCore = function () { installCore(); };
     Sleepy.singleApi = { cfgOf: function () { return { baseUrl: 'http://stub', model: 'emb-test' }; } };
     Sleepy.api = {
       embed: function (cfg, texts) {
@@ -128,6 +162,33 @@
         }
         texts.forEach(function (t) { window.__embedCount[t] = (window.__embedCount[t] || 0) + 1; });
         return Promise.resolve({ ok: true, vecs: texts.map(function () { return [0.1, 0.2]; }), dim: 2, ms: 1 });
+      }
+    };
+    /* 项目 2：memoryStore 桩 —— charConfig 是记忆开关判据的唯一出口。
+       __setCharConfig 由测试脚本驱动，模拟「对话设置页/记忆岛页」写开关。
+       isNpc 判定**查名册 kind**（findChar），不猜 id 前缀 —— 与生产 page-memory.js
+       修复同源，保证 `ch` 前缀的真实 NPC 也默认关。
+       isNpcRoot 与生产**逐字同步**：共享池前缀永远 false、core 未就绪/查不到不默认关。 */
+    var byChar = window.__memCharConfig || {};
+    window.__setCharConfig = function (root, enabled) { byChar[root] = enabled; };
+    window.__clearCharConfig = function () { byChar = {}; };
+    function isNpcRoot(root) {
+      if (/^(island:|user:|group:)/.test(root || '')) return false;  /* 共享池永远非 NPC */
+      if (!Sleepy.core || !Sleepy.core.findChar) return false;        /* 未知不默认关 */
+      var c = Sleepy.core.findChar(root);
+      return !!(c && c.kind === 'npc');                              /* 名册为准 */
+    }
+    Sleepy.memoryStore = {
+      charConfig: function (charId) {
+        var root = (Sleepy.core && Sleepy.core.rootIdOf)
+          ? (Sleepy.core.rootIdOf(charId) || charId) : charId;
+        var v = byChar[root];
+        /* 显式配置**优先**（用户拍板：已有 enabled:true / enabled:false 不被默认覆盖）：
+           只有「无 byChar[root] 记录」的真实 NPC 才默认关。 */
+        if (v === false) return { enabled: false };
+        if (v === true) return { enabled: true };
+        var isNpc = isNpcRoot(root);
+        return { enabled: isNpc ? false : true };   /* 无显式 → NPC 默认关、主角默认开 */
       }
     };
   };

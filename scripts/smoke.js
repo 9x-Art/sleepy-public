@@ -6615,9 +6615,11 @@ t('L4 接线：线下私聊 / 群聊线上线下 入口齐（三条新链路）'
   ['sweep', 'sweepOffline', 'sweepGroup', 'prefetch', 'prefetchGroup'].forEach((k) => {
     if (typeof V[k] !== 'function') throw new Error('缺接口：' + k);
   });
-  ['text', 'groupText', 'stats', 'statsGroup'].forEach((k) => {
+  /* 项目 2：群池注入出口已从共享 groupText 换成逐成员 groupTextFor（M5c 契约） */
+  ['text', 'groupTextFor', 'stats', 'statsGroup'].forEach((k) => {
     if (typeof V[k] !== 'function') throw new Error('缺接口：' + k);
   });
+  if (typeof V.groupText === 'function') throw new Error('共享 groupText 路径还在 —— 必须删');
   /* 群聊的 ownerKey 要有前缀区分，别和私聊的 rootId 撞上 */
   const P = V._pure;
   if (P.groupKey('g1') !== 'group:g1') throw new Error('群聊主键前缀不对');
@@ -6675,6 +6677,145 @@ t('L4 游标：记消息 id 不记下标 —— 删掉中间一条不会让后�
   const cut2 = msgs.filter((m) => m.id !== 'c4');
   if (P.readCursor(key, cut2) !== 5) throw new Error('lastId 没了该用下标兜底');
   return { 正常: 5, 删前面一条: from, 兜底: 5 };
+});
+
+/* ==================== 项目 2：记忆开关（charMemOff）====================
+   M1 三态判据 / M3b 池类型契约 / M5c 契约护栏 / M6 rootEpoch 全链路 /
+   M9 setCharConfig 边沿 / M7 反向（全开与现状一致）。
+   node 无 indexedDB → sweep 的 embedding 调用链不可跑；
+   覆盖策略：判据（charMemOff）+ 纯函数链路（rootEpoch）+ 契约护栏 + 静态护栏。 */
+t('P2-M1 记忆开关三态判据（主角开 / NPC 关 / 显式关）', () => {
+  const P = S.memoryVec._pure;
+  const root = 'p2m1';
+  S.store.remove('memoryIsland');
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: {} });
+  /* 主角默认开（无配置） */
+  if (P.charMemOff(root) !== false) throw new Error('主角无配置该是开（off=false）');
+  /* 主角显式关 */
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: { [root]: { enabled: false } } });
+  if (P.charMemOff(root) !== true) throw new Error('主角显式关该 off=true');
+  /* NPC 默认关 —— 用**生产形态真实归岛 NPC**（upsertChar kind='npc' parentType='sandbox'，
+     不是 npc 前缀假 id）。id 由 core.newId('ch') 生成 = chxxx，charConfig 靠查名册 kind
+     判 NPC（不再猜 id 前缀），归岛 NPC 的 rootIdOf 归到自己（不并到大号），才判得出默认关。 */
+  const p2sb = S.core.createSandbox('archipelago', 'P2 岛');
+  const realNpc = S.core.upsertChar({
+    name: '岛NPC', kind: 'npc', content: 'x',
+    parentId: p2sb.id, parentType: 'sandbox', sandboxId: p2sb.id
+  }).id;
+  S.store.remove('memoryIsland');
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: {} });
+  const npcRoot = S.core.rootIdOf(realNpc);
+  if (npcRoot !== realNpc) throw new Error('归岛 NPC 的 root 应归自己（不该并到大号）');
+  if (P.charMemOff(realNpc) !== true) throw new Error('NPC 默认该 off=true');
+  /* 真实 NPC 显式开启 → off=false（显式配置优先，不被默认关覆盖） */
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: { [realNpc]: { enabled: true } } });
+  if (P.charMemOff(realNpc) !== false) throw new Error('NPC 显式开该 off=false');
+  S.store.remove('memoryIsland');
+  /* 边界分离：共享池前缀永不被关（core 就绪查不到 / 判据变化都不影响） */
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: { ['group:g1']: { enabled: false } } });
+  if (P.charMemOff('group:g1') !== false) throw new Error('共享池 group: 该永不被关（前缀短路）');
+  if (P.charMemOff('island:sbX') !== false) throw new Error('共享池 island: 该永不被关（前缀短路）');
+  if (P.charMemOff('user:uX') !== false) throw new Error('共享池 user: 该永不被关（前缀短路）');
+  /* 未知 root（名册查不到）不默认关 —— 未知≠NPC */
+  if (P.charMemOff('noSuchRootX') !== false) throw new Error('查不到 root 该默认开（未知≠NPC，不误关）');
+  S.store.remove('memoryIsland');
+  return { 主角默认开: false, 主角显式关: true, NPC默认关: true, NPC显式开: false,
+    共享池永不被关: true, 未知root默认开: true };
+});
+
+t('P2-M3b 池类型契约：角色私有=裸键，共享池带前缀，不重叠', () => {
+  const P = S.memoryVec._pure;
+  const root = P.rootOf('p2m3b');
+  if (String(root).indexOf('group:') === 0) throw new Error('私有键不该带 group: 前缀');
+  if (String(root).indexOf('island:') === 0) throw new Error('私有键不该带 island: 前缀');
+  if (String(root).indexOf('user:') === 0) throw new Error('私有键不该带 user: 前缀');
+  if (P.groupKey('g') !== 'group:g') throw new Error('群池键该带 group: 前缀');
+  if (String(P.rootOf('x')).indexOf('group:') === 0) throw new Error('私聊键和群聊键撞了');
+  return { 私有: '裸 root', 群: 'group:', 岛: 'island:', 账号: 'user:' };
+});
+
+t('P2-M5c 契约护栏：groupText 不存在 / groupTextFor 存在（共享路径已删）', () => {
+  const V = S.memoryVec;
+  if (typeof V.groupTextFor !== 'function') throw new Error('groupTextFor 不存在（要逐成员注入）');
+  if (typeof V.groupText === 'function') throw new Error('groupText 共享路径还在 —— 必须删（M5c 反向锁死）');
+  /* 关闭成员 → groupTextFor 返回空（消费隔离；无缓存时开启也空，这里验证判据分支） */
+  const root = 'p2m5c';
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: { [root]: { enabled: false } } });
+  const P = S.memoryVec._pure;
+  if (P.groupTextFor('g1', root) !== '') throw new Error('关闭成员的群池摘要该为空');
+  S.store.remove('memoryIsland');
+  return { 共享路径: '已删', 逐成员: true, 关闭成员为空: true };
+});
+
+t('P2-M6 rootEpoch 定向：失配即从头重扫该 root，共享池/其他 root 不动', () => {
+  const P = S.memoryVec._pure;
+  const root = 'p2m6';
+  const key = 'vecEpochTest_' + root;
+  const msgs = [];
+  for (let i = 0; i < 10; i++) msgs.push({ id: 'r' + i, role: 'user', content: 'x' });
+  S.store.remove(key);
+  /* ① rootEpochNow 初始 0 */
+  if (P.rootEpochNow(root) !== 0) throw new Error('rootEpoch 初始该是 0');
+  /* ② 私有池游标：写 rootEpoch=0，读校验匹配 → 正常续切 */
+  P.writeCursor(key, msgs, 5, P.rootEpochNow(root));
+  if (P.readCursor(key, msgs, P.rootEpochNow(root)) !== 5) throw new Error('rootEpoch 匹配该续切到 5');
+  /* ③ invalidateCursorsFor → rootEpoch +1 → readCursor 失配 → 0（从头重扫） */
+  P.invalidateCursorsFor(root);
+  if (P.rootEpochNow(root) !== 1) throw new Error('invalidate 该把 rootEpoch 推到 1');
+  if (P.readCursor(key, msgs, P.rootEpochNow(root)) !== 0) throw new Error('rootEpoch 失配该返回 0（从头重扫）');
+  /* ④ 重扫后再写、再读 → 匹配恢复 */
+  P.writeCursor(key, msgs, 7, P.rootEpochNow(root));
+  if (P.readCursor(key, msgs, P.rootEpochNow(root)) !== 7) throw new Error('重扫后匹配该续切到 7');
+  /* ⑤ 其他 root 不受影响：rootEpochNow 仍 0 */
+  if (P.rootEpochNow('otherRoot') !== 0) throw new Error('别的 root 的 epoch 不该被碰');
+  /* ⑥ 共享池：rootEpoch=null → 不校验、不记字段 */
+  const gkey = 'vecEpochGrp_' + root;
+  S.store.remove(gkey);
+  P.writeCursor(gkey, msgs, 3, null);
+  const stored = S.store.get(gkey);
+  if (stored.rootEpoch !== undefined) throw new Error('共享池游标不该记 rootEpoch 字段');
+  if (P.readCursor(gkey, msgs, null) !== 3) throw new Error('共享池 rootEpoch=null 该不校验');
+  return { 初始: 0, 失配: '从头重扫', 其他root: '不动', 共享池: '不校验不记' };
+});
+
+t('P2-M9 setCharConfig 边沿：false→true 触发 invalidate，true→true/true→false 不触发', () => {
+  const MS = S.memoryStore, P = S.memoryVec._pure;
+  const root = 'p2m9';
+  S.core.upsertChar({ id: root, kind: 'main', name: 'P2M9' });
+  S.store.remove('memoryIsland');
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: {} });
+  /* false→true：enabled 从 false 切到 true → rootEpoch +1 */
+  MS.setCharConfig(root, { enabled: false });
+  const e0 = P.rootEpochNow(root);
+  MS.setCharConfig(root, { enabled: true });
+  if (P.rootEpochNow(root) !== e0 + 1) throw new Error('false→true 该触发 invalidate（rootEpoch +1）');
+  /* true→true：不再触发 */
+  const e1 = P.rootEpochNow(root);
+  MS.setCharConfig(root, { enabled: true });
+  if (P.rootEpochNow(root) !== e1) throw new Error('true→true 不该触发（rootEpoch 不变）');
+  /* true→false：不触发、不清游标不删块 */
+  const e2 = P.rootEpochNow(root);
+  MS.setCharConfig(root, { enabled: false });
+  if (P.rootEpochNow(root) !== e2) throw new Error('true→false 不该触发（rootEpoch 不变）');
+  S.store.remove('memoryIsland');
+  return { 'false→true': '+1', 'true→true': '不变', 'true→false': '不变' };
+});
+
+t('P2-M7 反向验证：全开（无配置）时 charMemOff 全 false，与现状一致', () => {
+  const P = S.memoryVec._pure;
+  S.store.remove('memoryIsland');
+  S.store.set('memoryIsland', { name: '岛', type: 'solo', byChar: {} });
+  const main = P.rootOf('p2m7main');
+  if (P.charMemOff(main) !== false) throw new Error('全开时主角该是开');
+  /* 静态护栏：blocksOf 私有池跳过 + sweepSource 私有池停建（锁定判据接线） */
+  const mv = fs.readFileSync(path.join(ROOT, 'memory-vec.js'), 'utf8');
+  if (!/if \(memOff && k === rootOf\(charId\)\) return Promise\.resolve\(\[\]\)/.test(mv)) {
+    throw new Error('blocksOf 私有池跳过逻辑丢了');
+  }
+  if (!/if \(src\.charId && charMemOff\(src\.charId\)\)/.test(mv)) {
+    throw new Error('sweepSource 私有池停建逻辑丢了');
+  }
+  return { 全开: '与现状一致', blocksOf: '私有池跳过', sweepSource: '私有池停建' };
 });
 
 t('L4 空条目：跳过空行、且游标必须越过去（不然原地重扫）', () => {

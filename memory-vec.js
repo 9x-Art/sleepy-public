@@ -116,6 +116,21 @@
     return !!(v && v.baseUrl && v.model);
   }
 
+  /* 项目 2：某个角色（归 root）的记忆开关是否关闭。
+     判据唯一出口 = memoryStore.charConfig（项目 5 归 root 后的开关，见 page-memory）：
+       主角显式关 → off；NPC 默认关 → off；主角默认开。
+     传 face 也行 —— charConfig 内部 rootIdOf 会归到 root。
+     环境没有记忆模块时默认**开**（不误关 —— 老行为一字不变）。 */
+  function charMemOff(ownerId) {
+    var MS = Sleepy.memoryStore;
+    if (!MS || !MS.charConfig) return false;
+    /* 最小前缀短路：共享池（island: / user: / group:）不属于任何角色大脑，
+       永远不受「角色/NPC 记忆开关」影响 —— 即便 charConfig 判据再变也不误关。 */
+    if (/^(island:|user:|group:)/.test(ownerId || '')) return false;
+    var c = MS.charConfig(ownerId);
+    return !!(c && c.enabled === false);
+  }
+
   /* 上限（默认 500 / 大脑）—— 但**分两池**淘汰，不一刀切：
      一刀切的话素材（档案 / 日记 / 朋友圈 / 查手机）会被近期对话块挤光，
      而档案恰恰是最该长期留的。用户 2026-09-23 拍板 **对话 300 / 素材 200**（3:2）。
@@ -379,11 +394,15 @@
     if (Sleepy.core && Sleepy.core.cognitionOf) {
       barrier = !!Sleepy.core.cognitionOf(charId, userId).barrier;
     }
+    /* 项目 2：角色关了记忆 → **角色私有池（rootOf）消费空**；
+       岛池 / 账号池是共享内容，照常召回（方案 §3.1 口径）。 */
+    var memOff = charMemOff(charId);
     function keep(b) {
       return visibleTo(b, charId, userId, barrier) && sameModel(b) &&
         stillVisible(b, charId, userId, snap);
     }
     return Promise.all(poolsFor(charId, userId).map(function (k) {
+      if (memOff && k === rootOf(charId)) return Promise.resolve([]);
       return scanOwner(k, keep);
     })).then(function (lists) {
       var out = [];
@@ -1205,7 +1224,7 @@
     for (var i = 0; i < msgs.length; i++) if (msgs[i] && msgs[i].id === id) return i;
     return -1;
   }
-  function readCursor(ck, msgs) {
+  function readCursor(ck, msgs, rootEpoch) {
     var cur = store.get(ck);
     if (cur && typeof cur === 'object') {
       /* 换了 embedding 模型 → 游标作废，从头重建：
@@ -1213,6 +1232,9 @@
          不这么做的话，那些内容会永远停在「旧模型」状态。 */
       if ((cur.model || '') !== modelNow()) return 0;
       if ((cur.epoch || 0) !== epochNow()) return 0;   /* 被「清掉索引」作废过 */
+      /* 项目 2：定向 rootEpoch 失配 → 游标作废，从头重扫该 root 私有池（重开记忆）。
+         rootEpoch 传 null（共享池）不校验；私有池传 rootEpochNow(root)。 */
+      if (rootEpoch != null && (cur.rootEpoch || 0) !== rootEpoch) return 0;
       var i = cur.lastId ? indexOfId(msgs, cur.lastId) : -1;
       if (i >= 0) return i + 1;
       if (typeof cur.index === 'number' && cur.index >= 0 && cur.index <= msgs.length) {
@@ -1223,14 +1245,17 @@
     if (typeof cur === 'number' && cur >= 0 && cur <= msgs.length) return cur;
     return 0;
   }
-  function writeCursor(ck, msgs, end) {
+  function writeCursor(ck, msgs, end, rootEpoch) {
     var last = msgs[end - 1];
-    store.set(ck, {
+    var rec = {
       index: end,
       lastId: (last && last.id) || null,
       model: modelNow(),         /* 哪台模型切的（换模型就作废，见 readCursor） */
       epoch: epochNow()          /* 哪个世代（用户清过索引就作废） */
-    });
+    };
+    /* 项目 2：私有池记 rootEpoch（rootEpoch 传 null 的共享池不记该字段） */
+    if (rootEpoch != null) rec.rootEpoch = rootEpoch;
+    store.set(ck, rec);
   }
 
   /* 让**所有**游标作废 → 下次 sweep 从头重建（用户点了「清掉索引」时用）。
@@ -1246,8 +1271,42 @@
     return n;
   }
 
+  /* ---- 项目 2：定向 rootEpoch（重开记忆 → 只作废该 root 的私有池游标） ----
+     游标键不含 root（chat.id / off:<sid> / phone:<sub>:<pid>），删键又有 store 内存缓存陷阱，
+     所以用一个「定向世代号」`vecEpoch4:<root>` 作废单个 root 的私有池游标：
+       · writeCursor 给该 root 的私有池游标记 rootEpoch = rootEpochNow(root)
+       · readCursor  私有池读游标时校验 (cur.rootEpoch||0) === rootEpochNow(root)，失配返回 0 → 从头重扫
+       · 共享池（群/岛/账号）root 传 null → 不校验、不记，行为不变
+     与全局 vecEpoch（resetCursors）是两套维度，天然叠加互不干扰。
+     注意：rootEpoch 失配 → readCursor 返回 0 → 实际是**从头重扫该 root 私有池**（含关闭前内容，
+     不承诺只算关闭期间新增）；只影响该 root，不影响其他 root 和共享池，不做全局重扫。 */
+  function rootEpochKey(root) { return 'vecEpoch4:' + root; }
+  function rootEpochNow(root) {
+    var k = rootEpochKey(root);
+    var v = store.get(k);
+    return (typeof v === 'number' && v >= 0) ? v : 0;
+  }
+  function invalidateCursorsFor(root) {
+    store.set(rootEpochKey(root), rootEpochNow(root) + 1);
+  }
+
   /* 把这个对话里「还没进向量库的」消息块补上。异步、失败不影响聊天。
      幂等靠 `vecCursor:<chatId>` 记「已经切到第几条」—— 不靠内容比对。 */
+  /* ---- 项目 2（去重，2026-09-26）：该 ownerKey 已入库块的指纹集合 ----
+     key = `sourceId|fromId|toId`（同一源、同一段消息，nextBlock 确定性）。
+     重开记忆的定向重扫会 from=0 从头切块，靠它判「这段已经在库里了」→ 跳过。
+     素材源（blockerOne）没有 fromId/toId → 指纹为空串 → 不参与判重（它们不走
+     私有池重扫，见 sweepSource 去重注释）。 */
+  function buildFingerprint(ownerKey) {
+    return scanOwner(ownerKey, null).then(function (list) {
+      var s = {};
+      list.forEach(function (b) {
+        if (!b.sourceId || !b.fromId || !b.toId) return;
+        s[b.sourceId + '|' + b.fromId + '|' + b.toId] = 1;
+      });
+      return s;
+    });
+  }
   /* ---- 通用写法：一个「源」→ 若干块 ----
      线上私聊 / 线下私聊 / 群聊（线上线下）都走这里。三个源只差：
        ownerKey  召回主键（私聊 = rootId，群聊 = group:<id>）
@@ -1255,54 +1314,72 @@
        cursorId  游标挂在谁身上 */
   function sweepSource(src) {
     if (!enabled() || !src || !src.ownerKey) return Promise.resolve({ ok: false, why: 'off' });
+    /* 项目 2：角色私有池在关闭记忆时**停建块**（一个 embedding 都不调）。
+       共享池（群 / 岛 / 账号）的 src 没有 charId，不判 —— 它们照常建块。
+       注意：sweep / sweepOffline / sweepMem / sweepPhone 传的 charId 已是 rootOf。 */
+    if (src.charId && charMemOff(src.charId)) {
+      return Promise.resolve({ ok: false, why: 'memoff' });
+    }
     var waiting = backoffOf(src.cursorId);
     if (waiting) return Promise.resolve({ ok: false, why: 'backoff', wait: waiting });
+    /* 项目 2：定向 rootEpoch。私有池源都带 charId（已是 rootOf）→ 记/校验该 root 的世代号；
+       共享池源无 charId → rootEpoch = null（不校验、不记，行为不变）。 */
+    var rootEpoch = src.charId ? rootEpochNow(src.charId) : null;
     return available().then(function (ok) {
       if (!ok) return { ok: false, why: 'noidb' };
       var msgs = src.messages || [];
       var ck = cursorKey(src.cursorId);
       var rawCur = store.get(ck);
-      var from = readCursor(ck, msgs);
+      var from = readCursor(ck, msgs, rootEpoch);
       /* 升级后的「基线」（项目 5 口径 A 第 6 条，2026-09-26 拍板）：
          游标不存在 + 提示还没清掉 + 不在重建中 → 旧历史**不静默重扫**
          （一个向量的钱都不花、也不承诺能召回），但**升级之后**新产生的内容
          照常增量建块 —— 基线 = 升级时刻之后的第一条。 */
       if (!rawCur && rebuildPending() && !rebuildRunning()) {
         from = baselineIndex(msgs, rebuildAt());
-        writeCursor(ck, msgs, from);
+        writeCursor(ck, msgs, from, rootEpoch);
       }
-      var made = [];
-      for (var n = 0; n < SWEEP_MAX; n++) {
-        /* blocker 默认是对话的 nextBlock（8～12 条合并成一块）；非对话源
-           （朋友圈 / 日记 / 档案 / 查手机）传 blockerOne —— 素材一条一块。 */
-        var blk = (src.blocker || nextBlock)(msgs, from, src.lineOf);
-        if (!blk) break;
-        /* 纯跳过：blocker 说「from..skipTo 这些都不进库」。
-           没这条协议的话，整段都是空行时游标会**停在原地**、下次重扫同一段
-           （群聊里「整段都是撤回消息」就会走到这儿）。 */
-        if (blk.skipTo != null) { from = blk.skipTo; continue; }
-        made.push(blk);
-        from = blk.end;
-      }
-      if (!made.length) {
-        /* 一条都没切出来也可能是「游标落后了」—— 把游标推到已经覆盖的位置，
-           不然每次都要从老地方重算。 */
-        writeCursor(ck, msgs, from);
-        clearFail(src.cursorId);       /* 接口是通的，只是没新内容 */
-        return { ok: true, added: 0 };
-      }
-      return embedTexts(made.map(function (b) { return b.text; })).then(function (res) {
-        if (!res.ok) {
-          bumpFail(src.cursorId);
-          return { ok: false, why: 'embed', error: res.error };
+      /* 项目 2 修复（去重，2026-09-26）：重开记忆会**定向重扫**该 root 私有池
+         （readCursor 失配返回 0 → from=0 从头切块）。从头切出的段与已入库的
+         旧块**完全同指纹**（同一源、同一段消息，nextBlock 确定性），若不判重
+         会被当成新内容重新 embedTexts + putBlock → 相同源内容随开关次数线性
+         增加副本（原生 Edge 实测：每重开一次块数 +2、embedding +2）。
+         修复：入库前按「sourceId|fromId|toId」指纹去重 —— 已存在的段跳过，
+         不建块、不 embedding；**跳过的旧段不占 SWEEP_MAX 配额**（否则重扫会被
+         一堆旧段占满、新增消息永远切不到，见原生实测第二版）。游标仍推进。 */
+      return buildFingerprint(src.ownerKey).then(function (done) {
+        var fresh = [];
+        var fromNow = from;
+        var attempts = 0;
+        while (fresh.length < SWEEP_MAX) {
+          var blk = (src.blocker || nextBlock)(msgs, fromNow, src.lineOf);
+          if (!blk) break;
+          if (blk.skipTo != null) { fromNow = blk.skipTo; continue; }
+          var fp = (src.sourceId || '') + '|' + (blk.fromId || '') + '|' + (blk.toId || '');
+          fromNow = blk.end;
+          if (done[fp]) continue;   /* 这段已在库里 → 跳过，不占配额 */
+          done[fp] = 1;
+          fresh.push(blk);
+          attempts++;
         }
-        var sid = scopeNow();
-        var recs = buildRecs(src, made, res, sid);
-        return Promise.all(recs.map(putBlock)).then(function () {
+        if (!fresh.length) {
+          writeCursor(ck, msgs, fromNow, rootEpoch);
           clearFail(src.cursorId);
-          writeCursor(ck, msgs, from);
-          return trim(src.ownerKey).then(function () {
-            return { ok: true, added: recs.length };
+          return { ok: true, added: 0 };
+        }
+        return embedTexts(fresh.map(function (b) { return b.text; })).then(function (res) {
+          if (!res.ok) {
+            bumpFail(src.cursorId);
+            return { ok: false, why: 'embed', error: res.error };
+          }
+          var sid = scopeNow();
+          var recs = buildRecs(src, fresh, res, sid);
+          return Promise.all(recs.map(putBlock)).then(function () {
+            clearFail(src.cursorId);
+            writeCursor(ck, msgs, fromNow, rootEpoch);
+            return trim(src.ownerKey).then(function () {
+              return { ok: true, added: recs.length };
+            });
           });
         });
       });
@@ -1817,6 +1894,13 @@
     var item = opts.item;
     var key = ownerKeyFor(opts);
     if (!enabled() || !key || !item) return Promise.resolve({ ok: false, why: 'off' });
+    /* 项目 2：定向重建也受记忆开关约束。refreshMem / refreshPhone /
+       refreshMoment / refreshDiary 都汇聚到 reindexItem —— 角色关闭时
+       **私有池（裸键 rootOf）不得重建**：不删旧块、不调 embedding、不写新块。
+       共享池（island: / user: / group: 带前缀）不受角色开关影响，照常。
+       charMemOff(key)：私有池 key 是裸 rootId，正好查得到配置；带前缀的
+       共享 key 查不到 → false，不误伤。 */
+    if (charMemOff(key)) return Promise.resolve({ ok: false, why: 'memoff' });
     var itemId = item.itemId || item.id;
     if (!itemId) return Promise.resolve({ ok: false, why: 'noid' });
     return available().then(function (ok) {
@@ -1966,7 +2050,11 @@
         var scored = rank(blocks, res.vectors[0]);
         scored = dropOverlapping(scored, opts.sinceAt);
         return scored.slice(0, INJECT_MAX).map(function (s) {
-          return { text: s.block.text, at: s.block.at, score: s.score, sim: s.sim };
+          /* ownerKey 是块归属池的钥匙（rootOf / island: / user: / group:）。
+             项目 2：lastOf 在角色关闭记忆时靠它**只滤当前 root 私有块**、
+             保留岛池/账号池 —— 否则误杀共享内容（原生 Edge 行为验证点出）。 */
+          return { text: s.block.text, at: s.block.at, score: s.score, sim: s.sim,
+            ownerKey: s.block.ownerKey || null };
         });
       });
     })['catch'](function () { return []; });
@@ -2007,6 +2095,17 @@
     if (recallPaused()) return [];
     var r = lastRecall[rootOf(charId)];
     if (!r || !r.items || !r.items.length) return [];
+    /* 项目 2：角色关了记忆 → **只滤掉当前 root 的私有块**，共享池照常。
+       私聊召回池是 [rootOf, island:*, user:*]（poolsFor），缓存 items 现在带
+       ownerKey —— 关闭时把 root 私有块摘掉，岛池/账号池那些**共享内容仍可消费**。
+       不能整体 return []：旧缓存里混着岛/账号块，一刀切会把它们一起毙掉
+       （原生 Edge 行为验证点出「过滤范围过宽」）。
+       而 blocksOf 在关闭时已不召 root 私有块（新 prefetch 层），这里只兜
+       「关闭前热的旧缓存」这一层 —— 两层都保共享池。 */
+    if (charMemOff(charId)) {
+      var root = rootOf(charId);
+      return r.items.filter(function (it) { return it.ownerKey !== root; });
+    }
     if (!freshEnough(r)) return [];
     /* 校验绑定：世界 / 角色 / 身份有一个对不上就当没有 ——
        「宁可这轮想不起来，也不能想起来的是别人的事」。 */
@@ -2036,10 +2135,14 @@
     ]);
   }
 
-  /* 群聊那份。装配时群里是**共享 system**，所以一份就够 ——
-     但口径要写成「群里的人都经历过」，不能写成「你和某个人聊过」：
+  /* 群聊那份。项目 2 后**逐成员注入**（α 方案）：每个实体/参与者单独调，按各自的记忆开关隔离。
+     召回仍是**整群召一次**（候选集与成员无关，省 embedding），只在这里按 ownerId 判「给不给他」。
+     口径要写成「群里的人都经历过」，不能写成「你和某个人聊过」：
      群里说话的是账号，不是一对一的那个身份。 */
-  function groupText(groupId) {
+  function groupTextFor(groupId, ownerId) {
+    /* 项目 2：该成员关了记忆 → 他的群池摘要为空（消费隔离）。
+       只作用于「注入/消费」侧；群池本体（sweepGroup）仍照常建块。 */
+    if (charMemOff(ownerId)) return '';
     var r = lastRecall[groupKey(groupId)];
     var items = (r && r.items && freshEnough(r) &&
       bindOk(r, { sandboxId: scopeNow() })) ? r.items : [];
@@ -2366,7 +2469,7 @@
     prefetchGroup: prefetchGroup,
     lastOf: lastOf,
     text: text,
-    groupText: groupText,
+    groupTextFor: groupTextFor,   /* 项目 2：逐成员群池注入（α 方案）；groupText 共享路径已删 */
     stats: function (charId) {
       return allOfRoot(charId).then(function (l) {
         var pools = { chat: [], memo: [] };
@@ -2414,6 +2517,10 @@
     resetCursors: resetCursors,
     clearCache: clearCache,
     cursorKey: cursorKey,
+    /* 项目 2：定向 rootEpoch —— setCharConfig 的 false→true 调 invalidateCursorsFor；
+       rootEpochNow 供冒烟直接断言世代号。 */
+    invalidateCursorsFor: invalidateCursorsFor,
+    rootEpochNow: rootEpochNow,
     /* ---- DB 升级后的重建（项目 5 口径 A，2026-09-26）----
        detectDbUpgrade：升级检测（幂等，启动时已跑过一遍，冒烟可再喊）；
        rebuildState：设置页读提示状态；rebuildIndex：点按钮全量重扫；
@@ -2451,7 +2558,12 @@
       bindOk: bindOk,
       readCursor: readCursor,
       writeCursor: writeCursor,
-      baselineIndex: baselineIndex
+      baselineIndex: baselineIndex,
+      /* 项目 2：记忆开关纯函数出口（冒烟打表用） */
+      charMemOff: charMemOff,
+      rootEpochNow: rootEpochNow,
+      invalidateCursorsFor: invalidateCursorsFor,
+      groupTextFor: groupTextFor
     },
     MIN_MSGS: MIN_MSGS, MAX_MSGS: MAX_MSGS,
     MIN_CHARS: MIN_CHARS, MAX_CHARS: MAX_CHARS,

@@ -95,13 +95,33 @@
   function islandRaw() {
     return store.get('memoryIsland') || { name: '星屿', type: 'solo', byChar: {} };
   }
+  /* 判 root 是不是 NPC（项目 2 修复）：**不再猜 id 前缀**。
+     真实 NPC 的 id 是 core.newId('ch') 生成的 `chxxx`（不是 `npc` 前缀），
+     旧判据 `indexOf('npc')` 对它们永远判成主角 → 默认记忆「开」，与方案「NPC 默认关」矛盾。
+     改为查名册事实 `findChar(root).kind === 'npc'`（全站 NPC 唯一口径 = kind，npcsOfRoom 同源）。
+     判据把**四类 root 彻底分离**，未知状态绝不直接等于 NPC：
+       ① 带池前缀的共享 key（`island:` / `user:` / `group:`）→ **永远 false**
+         —— 共享池不属于任何角色大脑，不受「角色/NPC 记忆开关」影响。**先短路**，
+           谁都不能因 NPC 判据把它误关（memory-vec 的 charMemOff 对带前缀 key 必须返回 false）。
+       ② 名册查得到且 kind==='npc'（真实 NPC root，chxxx）→ **true**
+       ③ 名册查得到且 kind 非 npc（主角 / 马甲）→ **false**
+       ④ core 未就绪（findChar 缺失）或名册查不到 root（假 root / 未知 id）→ **false 而非 true**
+         —— 未知状态不默认关：只有名册里**确凿**的 kind==='npc' 才算 NPC。
+           查不到就默认**开**（不误关，与 memory-vec 老行为「环境无记忆模块默认开」一致）。 */
+  function isNpcRoot(root) {
+    var C = Sleepy.core;
+    if (/^(island:|user:|group:)/.test(root || '')) return false;  /* ① 共享池永远非 NPC */
+    if (!C || !C.findChar) return false;                            /* ④ 未知不默认关 */
+    var c = C.findChar(root);
+    return !!(c && c.kind === 'npc');                              /* ②③ 名册为准 */
+  }
   /* 开关归 root（项目 5 S2）：皮套里关的开关就是大号关的 ——
-     `memoryIsland.byChar` 只有一个键。isNpc 也用 root 判前缀（入参可能是脸）。 */
+     `memoryIsland.byChar` 只有一个键。 */
   function charConfig(charId) {
     var root = rootIdOf(charId);
     var raw = islandRaw();
     var c = raw.byChar && raw.byChar[root];
-    var isNpc = String(root || '').indexOf('npc') === 0;
+    var isNpc = isNpcRoot(root);
     return {
       charId: root,
       enabled: c ? c.enabled !== false : !isNpc,   /* 主角默认开，NPC 默认关 */
@@ -114,9 +134,22 @@
     var raw = islandRaw();
     raw.byChar = raw.byChar || {};
     raw.byChar[root] = raw.byChar[root] || {};
+    /* 项目 2：false→true 边沿。before 用 charConfig（含 NPC 默认关语义），
+       仅当 patch 含 enabled 且 before===false 且 after===true 才定向作废该 root 私有池游标
+       （重开记忆 → rootEpoch +1 → readCursor 失配 → 私有池从头定向重扫）。
+       true→true / true→false 不调用（不清游标、不删块）。 */
+    var before = charConfig(charId).enabled;
+    var has = patch && Object.prototype.hasOwnProperty.call(patch, 'enabled');
+    var after = has ? (patch.enabled !== false) : before;
     Object.keys(patch).forEach(function (k) { raw.byChar[root][k] = patch[k]; });
     raw.byChar[root].updatedAt = nowIso();
     store.set('memoryIsland', raw);
+    if (has && before === false && after === true) {
+      var mv = Sleepy.memoryVec;
+      if (mv && typeof mv.invalidateCursorsFor === 'function') {
+        mv.invalidateCursorsFor(root);
+      }
+    }
   }
 
   /* 键归 root（项目 5 S1）：同一个大脑一个键，皮套传进来也落到 root 门牌 */
