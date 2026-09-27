@@ -8483,6 +8483,67 @@ t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一�
     splash.indexOf('CFG.logoLead') >= 0);
 }
 
+/* ======================== We（关系沉淀空间）数据闭环 ========================
+   验证 weStore 落盘 / scoped 隔离 / 切岛不串线 / 回岛恢复 / 不碰 favorites。
+   这是 we 的「写一条记录 → 刷新仍在 → 切岛不见 → 回岛恢复」数据层证据。 */
+t('We：weStore 落盘带 sandboxId，按当前房隔离，切岛不串线', () => {
+  if (!S.weStore) throw new Error('S.weStore 未导出（page-we.js 没挂上）');
+  if (S.weStore.KEY !== 'weEntries') throw new Error('weStore.KEY 不是 weEntries');
+
+  const D = S.store.defaults();
+  if (!Array.isArray(D.weEntries)) throw new Error('weEntries 不在 store DEFAULTS 里');
+
+  const A = S.core.createSandbox('isle', '甲岛');
+  const B = S.core.createSandbox('isle', '乙岛');
+  const m = S.core.upsertChar({ name: '大号', kind: 'main' }).id;
+  S.core.upsertUser({ name: '我' });
+  S.core.setSandboxChars(A.id, [m]);
+
+  S.core.setActiveSandbox(A.id);
+  const e = S.weStore.add({ title: '一起看过海', note: '在码头吹了整晚风', at: 1000 }, A.id);
+  if (!e || e.sandboxId !== A.id) throw new Error('weEntry 没盖 sandboxId（当前=' + A.id + '，实际=' + (e && e.sandboxId));
+  if (e.createdBy !== 'user') throw new Error('createdBy 不是 user：' + e.createdBy);
+  if (!e.id || !e.createdAt) throw new Error('weEntry 缺 id / createdAt');
+
+  if (!S.weStore.list().some((x) => x.id === e.id)) throw new Error('甲岛读不到刚写的记录');
+
+  /* 切到乙岛：甲岛记录必须不可见（scoped 隔离） */
+  S.core.setActiveSandbox(B.id);
+  if (S.weStore.list().some((x) => x.id === e.id)) throw new Error('切到乙岛后甲岛记录漏过来了（串线）');
+
+  /* 回甲岛：记录恢复 */
+  S.core.setActiveSandbox(A.id);
+  if (!S.weStore.list().some((x) => x.id === e.id)) throw new Error('回甲岛后记录没恢复');
+
+  /* favorites 原语义不被 we 污染 */
+  const fav = S.store.get('favorites');
+  if (!Array.isArray(fav) || fav.length !== 0) throw new Error('favorites 被 we 污染了：' + JSON.stringify(fav));
+  if (!Array.isArray(S.store.get('weEntries'))) throw new Error('weEntries 不是数组');
+
+  return { 落盘: true, 带房章: e.sandboxId, 切岛隔离: true, 回岛恢复: true, favorites未动: true, createdBy: e.createdBy };
+});
+
+/* weEntries 必须在删房清空名单里（core.js cleanupSandbox 的 scoped 名单） */
+t('We：weEntries 进了删房清空名单，拆岛不会留孤儿记录', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'core.js'), 'utf8');
+  if (src.indexOf("'weEntries'") < 0) throw new Error("core.js cleanupSandbox 名单里没有 'weEntries'");
+
+  /* 真跑一遍拆岛清理（smoke 用 _purgeSync 等价于生产无向量环境的 cleanupSandbox）：
+     在岛 A 写一条，拆岛，weEntries 里应清干净 */
+  const A = S.core.createSandbox('isle', '清空甲岛');
+  const m = S.core.upsertChar({ name: '清空大号', kind: 'main' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+  const e = S.weStore.add({ title: '要被拆掉' }, A.id);
+  if (!S.weStore.list().some((x) => x.id === e.id)) throw new Error('写入失败');
+
+  const r = S.core._purgeSync.sandbox(A.id);
+  if (!r || r.ok !== true) throw new Error('拆岛清理失败：' + JSON.stringify(r));
+  if (S.weStore.list().some((x) => x.id === e.id)) throw new Error('拆岛后记录还在（孤儿）');
+
+  return { 名单收录: true, 拆岛后清空: true };
+});
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。

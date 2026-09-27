@@ -340,7 +340,7 @@
        拆岛 = 岛上的人跟着没。没有章的记录（迁移前的老全局数据）不会被动。 */
     var removed = {};
     var scoped = ['chats', 'memories', 'links', 'photos', 'diaries',
-                  'todos', 'favorites', 'userMasks', 'characters', 'moments',
+                  'todos', 'favorites', 'weEntries', 'userMasks', 'characters', 'moments',
                   'wallet', 'stickers', 'offlineSessions',
                   'groups', 'groupMembers', 'groupMessages', 'offlineHandoffs',
                   'groupOfflineSessions',

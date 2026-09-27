@@ -12574,3 +12574,301 @@ button.cal-ev:active{background:var(--g-glass-2);}
   font-family:'Cormorant Garamond',Georgia,serif;
   font-size:2.4em;letter-spacing:.06em;text-indent:.06em;
 }
+
+/* ============================================================
+   We（关系沉淀空间，page-we.js）— 编辑式排版（对齐 We 首页 Demo v1）
+   只做表现层。结构语言对齐 Demo：
+     · 纸张米白底（--we-paper 暖浅纸） + 纸纹细横线
+     · 封面整幅渐变色块 + 叠字（kicker / title / sub + 竖排 OUR SPACE）
+     · 三格 facts：衬线大数字 + 竖线分割，无框
+     · 编号区块：we-sec-no + 衬线标题 + 底部实线
+     · 此刻：左砖红竖线引文（--we-brick）
+     · 接下来：票根（直角 + 日期戳 + 斜纹 + 操作行）+ 倒计时
+     · 最近时光：错位拍立得横向滚动（旋转 + 阴影 + 渐变色块照片位）
+     · 当前陈列：展台（exhibit 格 + 底部 2px 台面线）
+  色板：从项目 --g-accent 系派生（焦糖），纸底用浅暖米白，不蓝不绿要亮。
+   横向滚动只在 .we-polaroid 局部；整页 .app-body 内自然滚动。
+   ============================================================ */
+.we-page-paper{
+  /* 整页纸张氛围：暖浅米白 + 纸纹 */
+  background:
+    repeating-linear-gradient(0deg, rgba(27,25,23,.022) 0 1px, transparent 1px 3px),
+    var(--we-paper, var(--g-accent-pale));
+  margin:0 -22px;               /* 通到屏缘（工作记忆：想贴边用负 margin） */
+  padding:0 22px calc(env(safe-area-inset-bottom) + 30px);
+  min-height:100%;
+}
+
+/* ---- 封面：整幅渐变色块 + 叠字 ---- */
+.we-cover{
+  position:relative;
+  height:236px;
+  overflow:hidden;
+  margin:0 -22px;
+  background:
+    radial-gradient(120% 90% at 20% 15%, #d8c3a5 0%, transparent 55%),
+    radial-gradient(100% 100% at 85% 80%, #7d8b86 0%, transparent 60%),
+    linear-gradient(200deg,#b9a488 0%,#8a8378 45%,#4f524c 100%);
+  filter:saturate(.85);
+}
+.we-cover::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(20,18,16,.05) 0%,rgba(20,18,16,.62) 78%);
+}
+.we-cover-vert{
+  position:absolute;right:20px;top:20px;z-index:2;
+  writing-mode:vertical-rl;
+  font-family:var(--ff-serif);
+  font-size:10px;letter-spacing:.32em;
+  color:rgba(246,243,236,.72);
+}
+.we-cover-txt{
+  position:absolute;left:22px;right:22px;bottom:18px;z-index:2;color:#f6f3ec;
+}
+.we-cover-kicker{
+  font-family:var(--ff-serif);
+  font-size:10px;letter-spacing:.3em;text-indent:.3em;
+  opacity:.82;margin-bottom:9px;
+}
+.we-cover-title{
+  font-family:var(--ff-serif);
+  font-size:24px;line-height:1.24;font-weight:400;
+  margin:0 0 9px;letter-spacing:.02em;
+}
+.we-cover-sub{
+  font-size:11.5px;letter-spacing:.04em;opacity:.8;margin:0;line-height:1.7;
+}
+
+/* ---- 三格 facts 计数条 ---- */
+.we-facts{
+  display:grid;grid-template-columns:1fr 1fr 1fr;
+  border-bottom:1px solid rgba(27,25,23,.22);
+  margin:0 -22px;padding:0 22px;
+}
+.we-fact{padding:15px 10px 16px;text-align:center}
+.we-fact + .we-fact{border-left:1px solid rgba(27,25,23,.12)}
+.we-fact b{
+  display:block;font-family:var(--ff-serif);font-weight:400;
+  font-size:21px;line-height:1;margin-bottom:7px;
+  color:var(--g-accent-deep, var(--text));
+}
+.we-fact span{
+  font-size:9.5px;letter-spacing:.14em;color:var(--text-faint, var(--text-dim));
+}
+
+/* ---- 区块 ---- */
+.we-sec{padding:0;margin-top:26px;}
+.we-sec-head{
+  display:flex;align-items:baseline;gap:10px;
+  border-bottom:1px solid rgba(27,25,23,.85);
+  padding-bottom:6px;margin-bottom:14px;
+}
+.we-sec-no{
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.2em;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+.we-sec-title{
+  font-family:var(--ff-serif);font-size:15px;letter-spacing:.06em;flex:1;
+  color:var(--text);
+}
+
+/* ---- 此刻：左砖红竖线引文 ---- */
+.we-quote{
+  border-left:2px solid var(--g-accent-deep, var(--g-accent));
+  padding:2px 0 2px 13px;margin-bottom:6px;
+}
+.we-quote p{
+  margin:0 0 6px;font-family:var(--ff-serif);
+  font-size:14.5px;line-height:1.62;color:var(--text);
+}
+.we-quote small{
+  display:block;font-size:10px;letter-spacing:.12em;
+  color:var(--text-faint, var(--text-dim));
+  margin-bottom:4px;
+}
+
+/* ---- 倒计时行 ---- */
+.we-countdown{
+  display:flex;align-items:baseline;justify-content:space-between;
+  padding:11px 0 2px;border-top:1px solid rgba(27,25,23,.12);
+}
+.we-countdown span{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
+.we-countdown b{
+  font-family:var(--ff-serif);font-size:16px;font-weight:400;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+
+/* ---- 接下来：票根（直角 + 锯齿日期戳 + 斜纹） ---- */
+.we-stub{
+  display:flex;align-items:stretch;
+  background:var(--g-accent-pale);
+  border:1px solid rgba(27,25,23,.85);
+  margin-bottom:8px;
+}
+.we-stub-date{
+  width:66px;flex:none;
+  border-right:1px dashed rgba(27,25,23,.85);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:12px 0;
+  background:
+    repeating-linear-gradient(45deg,rgba(176,138,94,.10) 0 6px,transparent 6px 12px);
+}
+.we-stub-date b{
+  font-family:var(--ff-serif);font-size:23px;line-height:1;font-weight:400;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+.we-stub-date span{
+  font-size:9px;letter-spacing:.14em;color:var(--text-dim);margin-top:5px;
+}
+.we-stub-body{flex:1;padding:12px 14px;min-width:0}
+.we-stub-body h4{
+  margin:0 0 5px;font-family:var(--ff-serif);
+  font-size:14.5px;font-weight:400;color:var(--text);
+}
+.we-stub-body p{
+  margin:0;font-size:11px;color:var(--text-dim);line-height:1.6;
+}
+
+/* 次要安排小行 */
+.we-line{
+  display:flex;align-items:baseline;gap:10px;
+  padding:9px 0;border-bottom:1px solid rgba(27,25,23,.12);
+}
+.we-line-no{
+  font-family:var(--ff-serif);font-size:10px;color:var(--text-faint, var(--text-dim));
+  flex:none;min-width:52px;
+}
+.we-line-main{flex:1}
+.we-line-main b{display:block;font-weight:500;font-size:12.5px;color:var(--text)}
+
+/* ---- 最近时光：错位拍立得横向滚动 ---- */
+.we-polaroid{
+  display:flex;gap:14px;
+  padding:4px 0 8px;overflow-x:auto;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch;
+}
+.we-polaroid::-webkit-scrollbar{display:none}
+.we-polaroid-card{
+  flex:none;width:118px;background:#fbf9f4;
+  padding:7px 7px 24px;
+  border:1px solid rgba(27,25,23,.22);
+  box-shadow:2px 3px 0 rgba(27,25,23,.1);
+  margin:0;
+}
+.we-polaroid-card:nth-child(odd){transform:rotate(-1.4deg)}
+.we-polaroid-card:nth-child(even){transform:rotate(1.1deg) translateY(6px)}
+.we-polaroid-photo{
+  display:block;height:92px;
+  background:linear-gradient(160deg,#c2a98c,#6f7a72);
+  filter:saturate(.8);
+}
+.we-polaroid-card.we-ph1 .we-polaroid-photo{background:linear-gradient(160deg,#9aa7b3,#5b5f68)}
+.we-polaroid-card.we-ph2 .we-polaroid-photo{background:linear-gradient(160deg,#cdb0a4,#7c6155)}
+.we-polaroid-card em{
+  display:block;margin-top:8px;font-style:normal;
+  font-family:var(--ff-serif);font-size:10.5px;color:var(--text-dim);
+  letter-spacing:.04em;line-height:1.6;
+}
+
+/* ---- 当前陈列：展台（exhibit 格 + 台面线） ---- */
+.we-shelf{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:12px;
+  padding-bottom:10px;border-bottom:2px solid rgba(27,25,23,.85);
+  align-items:end;
+}
+.we-exhibit{text-align:center}
+.we-exhibit i{
+  display:block;height:58px;margin-bottom:7px;
+  border:1px solid rgba(27,25,23,.85);
+  background:
+    repeating-linear-gradient(135deg,rgba(27,25,23,.05) 0 4px,transparent 4px 8px),
+    var(--g-accent-pale);
+}
+.we-exhibit-tall i{height:74px}
+.we-exhibit b{
+  display:block;font-family:var(--ff-serif);font-weight:400;
+  font-size:11px;letter-spacing:.06em;margin-bottom:2px;color:var(--text);
+}
+.we-exhibit span{font-size:9px;letter-spacing:.1em;color:var(--text-faint, var(--text-dim))}
+.we-shelf-note{
+  margin:8px 0 0;font-size:10px;color:var(--text-faint, var(--text-dim));
+  letter-spacing:.06em;
+}
+
+/* 收藏馆入口行 */
+.we-fav-row{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-top:14px;padding-top:11px;border-top:1px solid rgba(27,25,23,.12);
+}
+.we-fav-txt{font-size:12px;color:var(--text-dim)}
+.we-fav-btn{
+  flex:none;border:0;background:none;
+  font-family:var(--ff-serif);font-size:11px;letter-spacing:.1em;
+  color:var(--g-accent-deep, var(--g-accent));
+  cursor:pointer;padding:4px 0;
+}
+.we-fav-btn:active{opacity:.6}
+
+/* ---- 共同记录：展台小卡 ---- */
+.we-entry-grid{display:flex;flex-direction:column;gap:9px;margin-top:14px}
+.we-entry{
+  background:#fbf9f4;
+  border:1px solid rgba(27,25,23,.22);
+  border-radius:0;
+  padding:12px 13px 11px;
+  box-shadow:2px 2px 0 rgba(27,25,23,.05);
+}
+.we-entry-head{
+  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+}
+.we-entry-title{font-size:14px;font-weight:600;color:var(--text);font-family:var(--ff-serif);font-weight:500}
+.we-entry-day{flex:none;font-size:11px;color:var(--text-faint, var(--text-dim));}
+.we-entry-note{
+  margin:7px 0 0;font-size:12.5px;line-height:1.55;color:var(--text-dim);
+  white-space:pre-wrap;word-break:break-word;
+}
+.we-entry-src{
+  display:inline-block;margin-top:9px;
+  font-size:11px;color:var(--g-accent-deep, var(--g-accent));
+}
+
+/* ---- 空态（We 语境，保留编辑式结构） ---- */
+.we-none{
+  font-size:12.5px;line-height:1.7;color:var(--text-dim);margin:0;
+  padding:2px 0 2px 13px;border-left:2px solid rgba(176,138,94,.4);
+}
+.we-diy-hint{margin-top:12px}
+
+/* ---- 新增记录抽屉：浮层挂 #phone（.page 有 transform，fixed 会退化，用 absolute）。
+   整段抄 openProactiveDrawer 范式。 ---- */
+.we-drawer{position:absolute;inset:0;z-index:60;}
+.we-drawer-scrim{position:absolute;inset:0;background:rgba(0,0,0,.28);}
+.we-drawer-sheet{
+  position:absolute;left:0;right:0;bottom:0;
+  background:var(--surface-solid);
+  border-radius:16px 16px 0 0;
+  padding:20px 22px calc(env(safe-area-inset-bottom) + 18px);
+  box-shadow:0 -8px 30px rgba(0,0,0,.12);
+  max-height:80%;
+  overflow-y:auto;
+}
+.we-drawer-head{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:18px;
+}
+.we-drawer-title{font-size:16px;font-weight:600;color:var(--text);}
+.we-drawer-close{
+  border:0;background:var(--bg-2);color:var(--text-dim);
+  width:30px;height:30px;border-radius:50%;font-size:13px;line-height:1;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-family:inherit;
+}
+.we-drawer-label{font-size:12px;color:var(--text-dim);margin:0 0 8px;}
+.we-drawer-srcwrap{margin-top:16px;}
+.we-drawer-src{
+  width:100%;padding:10px 12px;border:1px solid var(--bg-3);
+  border-radius:8px;background:var(--surface-solid);
+  font-family:inherit;font-size:13px;color:var(--text);
+  appearance:none;
+}
+

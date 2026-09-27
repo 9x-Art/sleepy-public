@@ -157,6 +157,16 @@
     /* D2 收藏：被收藏的单条消息快照 */
     favorites: [],
 
+    /* We（关系沉淀空间，2026-09-27）：共同记录表。
+       每条 = 一条「共同记录」的引用，不复制聊天全文 / 图片本体：
+       { id, sandboxId, title, note, at,
+         sourceType: 'manual'|'chat'|'calendar'|'moments'|'photo'|'offline',
+         sourceId, sourceRef, refCharId, refUserId,
+         createdBy: 'user', createdAt, updatedAt }
+       写入带 sandboxId（tagScope 盖章），读取按当前房 scoped 过滤。
+       core.js cleanupSandbox 的 scoped 名单已收录，拆岛跟着清。 */
+    weEntries: [],
+
     /* 名片夹（树状）：见文件头 1) */
     characters: [],
 
