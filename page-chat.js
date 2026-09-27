@@ -1106,9 +1106,16 @@
               danger: true
             }).then(function (yes) {
               if (!yes) return;
-              Sleepy.groupStore.removeGroup(g.id);
-              rebuild();
-              ctx.toast('已解散', 'ok');
+              /* purgeGroup 是异步不可逆物理删：只有向量明确清空后才动主表；
+                 失败 → {ok:false}，主表保留可重试，且**不 toast「已解散」**。 */
+              Sleepy.groupStore.purgeGroup(g.id).then(function (res) {
+                if (res && res.ok) {
+                  rebuild();
+                  ctx.toast('已解散', 'ok');
+                } else {
+                  ctx.toast((res && res.message) || (res && res.why) || '解散失败', 'err');
+                }
+              });
             });
           });
 

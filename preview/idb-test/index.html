@@ -59,6 +59,11 @@
     return { id: id, ownerKey: owner || 'r1', charId: 'r1', fromCharId: from,
       sandboxId: sb, kind: 'chat', msgIds: [id], text: 'x', vec: [0.1], model: 'emb-test' };
   }
+  /* 群块：ownerKey='group:<gid>'，块上带 groupId —— 项目3 purgeGroup 按它整池清 */
+  function gblk(id, gid, sb) {
+    return { id: id, ownerKey: 'group:' + gid, charId: null, fromCharId: null,
+      groupId: gid, sandboxId: sb, kind: 'chat', msgIds: [id], text: 'x', vec: [0.1], model: 'emb-test' };
+  }
 
   /* pre：按场景布置 IDB / localStorage。全部完成后才注入生产脚本。 */
   window.__pre = (async function () {
@@ -83,6 +88,42 @@
       ]);
       db2.close();
       lsClearVec();
+    } else if (c === 'purge') {
+      /* 项目3：解散群端到端。
+         IDB：目标群 gid1 两块、参照群 gid2 一块、岛池/角色池/账号池各一块（全保留对照）。
+         localStorage：三张主表（gid1 + gid2）、派生键、线下两数组。 */
+      var db4 = await openDB('sleepy-vec', 6);
+      await putBlocks(db4, [
+        gblk('ga1', 'gid1', 'sb1'), gblk('ga2', 'gid1', 'sb1'),
+        gblk('gb1', 'gid2', 'sb1'),
+        blk('isl1', 'fA', 'sb1', 'island:sb1'),
+        blk('rblk', 'fA', 'sb1', 'r1'),
+        blk('ublk', 'fA', 'sb1', 'user:u1')
+      ]);
+      db4.close();
+      lsClearVec();
+      var ns = NS;
+      var mk = function (id, extra) { var o = { id: id, sandboxId: 'sb1', name: '群' + id }; return extra ? Object.assign(o, extra) : o; };
+      localStorage.setItem(ns + 'groups', JSON.stringify([mk('gid1'), mk('gid2')]));
+      localStorage.setItem(ns + 'groupMembers', JSON.stringify([
+        { groupId: 'gid1', accountId: 'A', kind: 'char', ownerId: 'A', role: 'owner', sandboxId: 'sb1' },
+        { groupId: 'gid2', accountId: 'B', kind: 'char', ownerId: 'B', role: 'owner', sandboxId: 'sb1' }
+      ]));
+      localStorage.setItem(ns + 'groupMessages', JSON.stringify([
+        { id: 'm1', groupId: 'gid1', senderAccountId: 'A', content: 'hi', sandboxId: 'sb1' },
+        { id: 'm2', groupId: 'gid2', senderAccountId: 'B', content: 'yo', sandboxId: 'sb1' }
+      ]));
+      localStorage.setItem(ns + 'groupPending:gid1', JSON.stringify([1, 2]));
+      localStorage.setItem(ns + 'groupInner:gid1', JSON.stringify({ x: 1 }));
+      localStorage.setItem(ns + 'sumCursor:g:gid1', JSON.stringify({ at: 1 }));
+      localStorage.setItem(ns + 'groupOfflineSessions', JSON.stringify([
+        { groupId: 'gid1', status: 'active', sandboxId: 'sb1', location: '咖啡店' },
+        { groupId: 'gid2', status: 'active', sandboxId: 'sb1', location: '公园' }
+      ]));
+      localStorage.setItem(ns + 'offlineHandoffs', JSON.stringify([
+        { groupId: 'gid1', status: 'pending', sandboxId: 'sb1' },
+        { groupId: 'gid2', status: 'pending', sandboxId: 'sb1' }
+      ]));
     } else if (c === 'hold') {
       /* 两标签页阻塞：本页持有 v5 连接**不关** */
       var db3 = await openDB('sleepy-vec', 5);
@@ -136,10 +177,17 @@
     /* 供测试模拟「core 未就绪」：__dropCore() 摘掉 Sleepy.core 上的 findChar/rootIdOf，
        让 isNpcRoot 走「core 未就绪」分支；__restoreCore() 装回来。 */
     function installCore() {
+      var sidSeq = 0;
       Sleepy.core = {
         rootIdOf: function (id) { return id; },
         scopeId: function () { return 'sb1'; },
         scoped: function (x) { return x; },
+        newId: function (p) { return (p || 'id') + (Date.now().toString(36)) + (++sidSeq).toString(36); },
+        /* 与生产 core.tagScope 同义：盖 sandboxId 章（清空/解散群按章过滤） */
+        tagScope: function (o) { if (o && typeof o === 'object') o.sandboxId = 'sb1'; return o; },
+        findUser: function () { return { id: 'u1', name: '梦梦' }; },
+        initialOf: function (name) { return String(name || '?').slice(0, 1); },
+        initialOfUser: function (name) { return String(name || '?').slice(0, 1); },
         charsOfSandbox: function () { return [{ id: 'c1' }]; },
         npcsOfRoom: function () { return [{ id: 'chNPC0001', kind: 'npc' }]; },
         findChar: function (id) {
@@ -197,6 +245,7 @@
     await window.__pre;
     await window.__loadScript('/store.js');
     await window.__loadScript('/memory-vec.js');
+    await window.__loadScript('/core-group.js');
     window.__setupEnv();
     window.__loaded = true;
   })().catch(function (e) { window.__bootError = String(e && e.message || e); });

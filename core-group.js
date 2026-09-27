@@ -200,14 +200,63 @@
     return { ok: true, group: hit };
   }
 
-  /* 解散群：群 + 成员 + 消息三张表一起清。
-     只清 groupId 匹配的，别的群的记录动都不能动。 */
-  function removeGroup(id) {
-    if (!findGroup(id)) return { ok: false, message: '找不到这个群' };
-    saveGroups(allGroups().filter(function (g) { return g.id !== id; }));
-    store.set('groupMembers', allMembers().filter(function (m) { return m.groupId !== id; }));
-    store.set('groupMessages', allMessages().filter(function (m) { return m.groupId !== id; }));
-    return { ok: true };
+  /* 解散群：唯一公开入口（异步）。**不可逆物理删**，所以事务顺序是硬约定：
+     ① 先确认群存在（findGroup）
+     ② 判定「无向量环境」—— 只有明确证明本机没有 IndexedDB 才放行
+        （判据同 wipeAll：supported = !!global.indexedDB → 'not-applicable/noidb'，
+        见 memory-vec.js:155/550）。这是**唯一合法**的「没有向量对象可清」情形。
+     ③ 向量模块缺失 / forgetGroup 缺失 / 未初始化，但本机本应有向量能力
+        （有 IndexedDB）→ **必须失败** `{ok:false, why:'memory-vector-unavailable/api-missing'}`，
+        主表一行不删 —— 绝不静默物理删群却留下它的向量块（= 隐私残留 + 幻觉源）。
+     ④ 向量可用 → await forgetGroup(groupId)，失败即拒（见下）。
+     ⑤ 只有向量明确清空（或本无向量环境）后，才清派生键 + 线下行 + 主表。
+     失败路径：主表未动、findGroup 仍命中 → 用户可重试。 */
+  function purgeGroup(id) {
+    var g = findGroup(id);
+    if (!g) return Promise.resolve({ ok: false, message: '找不到这个群' });
+
+    var MV = Sleepy.memoryVec;
+    var hasIDB = !!global.indexedDB;
+
+    function cleanup() {
+      /* 派生裸键（不在 scoped 名单，删房清不到，必须自己 remove；store.remove 同步） */
+      store.remove('groupPending:' + id);
+      store.remove('groupInner:' + id);
+      store.remove('sumCursor:g:' + id);
+      /* 两张线下数组按行 groupId 过滤（不整键删，只动这个群的）：
+         - groupOfflineSessions：active → ended（收尾给 UI 看）后立刻从数组滤掉，无观察期
+         - offlineHandoffs：直接滤掉 */
+      store.set('groupOfflineSessions', arr(store.get('groupOfflineSessions'))
+        .map(function (s) {
+          if (s && s.groupId === id && (s.status || 'active') === 'active') s.status = 'ended';
+          return s;
+        })
+        .filter(function (s) { return !(s && s.groupId === id); }));
+      store.set('offlineHandoffs', arr(store.get('offlineHandoffs'))
+        .filter(function (x) { return !(x && x.groupId === id); }));
+      /* 主表最后删（三张） */
+      saveGroups(allGroups().filter(function (g) { return g.id !== id; }));
+      store.set('groupMembers', allMembers().filter(function (m) { return m.groupId !== id; }));
+      store.set('groupMessages', allMessages().filter(function (m) { return m.groupId !== id; }));
+      return { ok: true };
+    }
+
+    /* ② 明确无向量环境（本机无 IndexedDB）= not-applicable，可继续删主表 */
+    if (!hasIDB) return Promise.resolve(cleanup());
+
+    /* ③ 本应有向量能力，但模块/API 缺失或未就绪 → 必须失败，保留主表 */
+    if (!MV || typeof MV.forgetGroup !== 'function') {
+      return Promise.resolve({ ok: false, why: 'memory-vector-unavailable/api-missing' });
+    }
+
+    /* ④ 向量可用 → 先清向量，明确成功后才动主表 */
+    return MV.forgetGroup(id).then(function () {
+      return cleanup();
+    })['catch'](function (err) {
+      /* ⑤ 向量失败（IndexedDB 打开失败 / 事务中止）：主表未动，返回失败可重试 */
+      return { ok: false, why: 'memory-vector-failed',
+        error: (err && err.message) ? err.message : String(err) };
+    });
   }
 
   /* ---------------------------- 群成员 ---------------------------- */
@@ -460,7 +509,7 @@
     findGroup: findGroup,
     createGroup: createGroup,
     updateGroup: updateGroup,
-    removeGroup: removeGroup,
+    purgeGroup: purgeGroup,
     membersOf: membersOf,
     findMember: findMember,
     accountsOfEntity: accountsOfEntity,

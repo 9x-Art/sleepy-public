@@ -191,6 +191,103 @@ async function main() {
         await ctx.close();
       }
 
+      /* ---- 项目3｜解散群 purgeGroup（原生 IDB）
+         失败注入 → 保留主表可重试；重试成功 → 全清 + 隔离对照 + tombstone；api-missing 门禁。 ---- */
+      {
+        const ctx = await browser.newContext();
+        const page = await ctx.newPage();
+        await page.goto(PAGE + '?case=purge');
+        await waitLoaded(page);
+        const r = await page.evaluate(async () => {
+          const MV = window.Sleepy.memoryVec, GS = window.Sleepy.groupStore, S = window.Sleepy.store;
+          const ids = () => new Promise((res) => {
+            const rq = indexedDB.open('sleepy-vec');
+            rq.onsuccess = () => {
+              const db = rq.result;
+              const t = db.transaction('vec', 'readonly');
+              const out = [];
+              const cur = t.objectStore('vec').openCursor();
+              cur.onsuccess = () => { const c = cur.result; if (!c) { db.close(); res(out); } else { out.push(c.value.id); c.continue(); } };
+            };
+          });
+          const has = (arr, id) => arr.indexOf(id) >= 0;
+          const g1blocks = async () => (await ids()).filter((x) => /^ga\d$/.test(x)).length;
+          const base = {
+            g1: await g1blocks(),
+            g2: (await ids()).filter((x) => x === 'gb1').length,
+            isl: (await ids()).filter((x) => x === 'isl1').length,
+            role: (await ids()).filter((x) => x === 'rblk').length,
+            acc: (await ids()).filter((x) => x === 'ublk').length
+          };
+          /* 1) 失败注入：forgetGroup 改为 reject → purgeGroup 必须保留主表 */
+          const savedFG = MV.forgetGroup;
+          MV.forgetGroup = () => Promise.reject(new Error('injected-vector-down'));
+          const fail = await GS.purgeGroup('gid1');
+          MV.forgetGroup = savedFG;
+          const afterFail = {
+            ok: fail && fail.ok === false, why: fail && fail.why,
+            gid1exists: !!GS.findGroup('gid1'),
+            g1: await g1blocks(),
+            pending: S.get('groupPending:gid1') != null,
+            inner: S.get('groupInner:gid1') != null,
+            cursor: S.get('sumCursor:g:gid1') != null,
+            offline: (S.get('groupOfflineSessions') || []).some((x) => x.groupId === 'gid1')
+          };
+          /* 2) 修复后重试成功：真 forgetGroup → 全清 + 隔离 */
+          const okr = await GS.purgeGroup('gid1');
+          const idsOk = await ids();
+          const afterOk = {
+            ok: okr && okr.ok === true,
+            gid1exists: !!GS.findGroup('gid1'),
+            g1: (await ids()).filter((x) => /^ga\d$/.test(x)).length,
+            g2: idsOk.filter((x) => x === 'gb1').length,
+            isl: idsOk.filter((x) => x === 'isl1').length,
+            role: idsOk.filter((x) => x === 'rblk').length,
+            acc: idsOk.filter((x) => x === 'ublk').length,
+            pending: S.get('groupPending:gid1') == null,
+            inner: S.get('groupInner:gid1') == null,
+            cursor: S.get('sumCursor:g:gid1') == null,
+            gid1offline: (S.get('groupOfflineSessions') || []).some((x) => x.groupId === 'gid1'),
+            gid1handoff: (S.get('offlineHandoffs') || []).some((x) => x.groupId === 'gid1'),
+            gid1members: (S.get('groupMembers') || []).some((x) => x.groupId === 'gid1'),
+            gid1msgs: (S.get('groupMessages') || []).some((x) => x.groupId === 'gid1'),
+            gid2group: !!GS.findGroup('gid2'),
+            gid2members: (S.get('groupMembers') || []).some((x) => x.groupId === 'gid2'),
+            gid2msgs: (S.get('groupMessages') || []).some((x) => x.groupId === 'gid2'),
+            gid2offline: (S.get('groupOfflineSessions') || []).some((x) => x.groupId === 'gid2'),
+            gid2handoff: (S.get('offlineHandoffs') || []).some((x) => x.groupId === 'gid2')
+          };
+          /* 3) api-missing 门禁：删 forgetGroup → 必须失败保留主表 */
+          delete MV.forgetGroup;
+          const miss = await GS.purgeGroup('gid2');
+          MV.forgetGroup = savedFG;
+          const afterMiss = { ok: miss && miss.ok === false, why: miss && miss.why, gid2exists: !!GS.findGroup('gid2') };
+          return { base, afterFail, afterOk, afterMiss };
+        });
+        chk('原生P3 基线：目标群2块 / 参照群1块 / 岛角色账号各1块',
+          r.base.g1 === 2 && r.base.g2 === 1 && r.base.isl === 1 && r.base.role === 1 && r.base.acc === 1);
+        chk('原生P3 失败注入：purgeGroup 返回 ok:false', r.afterFail.ok);
+        chk('原生P3 失败注入：why = memory-vector-failed', r.afterFail.why === 'memory-vector-failed');
+        chk('原生P3 失败注入：主表保留（gid1 仍在）', r.afterFail.gid1exists === true);
+        chk('原生P3 失败注入：向量块未删', r.afterFail.g1 === 2);
+        chk('原生P3 失败注入：派生键仍在（可重试）', r.afterFail.pending && r.afterFail.inner && r.afterFail.cursor);
+        chk('原生P3 失败注入：线下行仍在', r.afterFail.offline === true);
+        chk('原生P3 重试成功：返回 ok:true', r.afterOk.ok);
+        chk('原生P3 重试成功：gid1 主表清', !r.afterOk.gid1exists);
+        chk('原生P3 重试成功：gid1 向量块清空', r.afterOk.g1 === 0);
+        chk('原生P3 重试成功：gid1 派生三键清', r.afterOk.pending && r.afterOk.inner && r.afterOk.cursor);
+        chk('原生P3 重试成功：gid1 线下两数组清（tombstone→ended→删）', !r.afterOk.gid1offline && !r.afterOk.gid1handoff);
+        chk('原生P3 重试成功：gid1 成员/消息清', !r.afterOk.gid1members && !r.afterOk.gid1msgs);
+        chk('原生P3 隔离：参照群 gid2 主表保留', r.afterOk.gid2group && r.afterOk.gid2members && r.afterOk.gid2msgs);
+        chk('原生P3 隔离：参照群 gid2 向量块保留', r.afterOk.g2 === 1);
+        chk('原生P3 隔离：参照群 gid2 线下保留', r.afterOk.gid2offline && r.afterOk.gid2handoff);
+        chk('原生P3 隔离：岛/角色/账号池全保留', r.afterOk.isl === 1 && r.afterOk.role === 1 && r.afterOk.acc === 1);
+        chk('原生P3 api缺失：gid2 返回 ok:false', r.afterMiss.ok);
+        chk('原生P3 api缺失：why = api-missing', r.afterMiss.why === 'memory-vector-unavailable/api-missing');
+        chk('原生P3 api缺失：主表保留', r.afterMiss.gid2exists === true);
+        await ctx.close();
+      }
+
       /* ---- 4｜两标签页升级阻塞：旧连接关闭后继续升级、状态可恢复 ----
          ⚠️ 原生实测（Edge）：被阻塞时 onblocked 并未在 8s 内触发 ——
          生产 open() 表现为**挂起**（不报「占着」也不放行），旧连接一关，

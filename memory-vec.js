@@ -920,6 +920,21 @@
     })['catch'](function () { return 0; });
   }
 
+  /* 解散群专用：按 groupId 清空 `group:<id>` 整池，**失败拒绝**（不像 forget 吞成 0）。
+     语义：空群（0 块）也是合法成功 —— resolve(删掉的块数)。
+     调用方只有 core-group.purgeGroup —— 它需要「向量是否真清干净」的**硬信号**
+     来决定能不能继续删主表（见 purgeGroup 的异步事务门禁）。
+     为什么不改 forget：现有 6 个 forget 调用方全是幂等清理（删消息 / 删对话 /
+     撤皮套），失败吞 0 是它们该有的行为；解散群是**不可逆物理删**，必须见错即停。 */
+  function forgetGroup(groupId) {
+    var key = groupKey(groupId);
+    /* 无 .catch：open() 失败 / 事务 onerror / onabort → reject，失败信号透传给 purgeGroup。
+       这样 purgeGroup 能在主表一行没动的情况下拿到 { ok:false, why }。 */
+    return scanOwner(key, null).then(function (list) {
+      return removeBlocks(list.map(function (b) { return b.id; }));
+    });
+  }
+
   /* 全库概览（设置页用）：按 ownerKey 聚合成一行一行。
      名字不在这里解析 —— 向量层不认识 core 的角色和群。 */
   function overview() {
@@ -2508,6 +2523,8 @@
     clearCursors: clearCursors,
     /* 原文变了 → 索引失效（删除 / 编辑 / 撤回 / 删对话，见 forget 的注释） */
     forget: forget,
+    /* 解散群专用：按群清整池、失败拒绝（见 forgetGroup 注释）—— 只有它需要硬信号 */
+    forgetGroup: forgetGroup,
     /* 设置页：看清索引里有什么、能清、能自己试一次召回 */
     overview: overview,
     probe: probe,

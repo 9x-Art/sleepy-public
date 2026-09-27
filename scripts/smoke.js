@@ -3793,9 +3793,126 @@ t('群按房隔离：换房看不见 + removeSandbox 连带清三张表', () => 
   return '三表全清';
 });
 
-/* ---------------- page-group-ai：群聊调度引擎（纯函数部分） ----------------
-   装配、本体归并、输出校验是程序正确性的核心 —— 串脑的账不能记一半。
-   runRound 的网络路径打不了桩，这里只测程序裁决的部分。 */
+/* ==================== 项目3：解散群 purgeGroup（门禁 + 护栏）====================
+   三层测试策略（与向量三层一致）：
+     · smoke（node 无 IDB）：门禁三分支 + 反向护栏。完整端到端（真块/失败注入/
+       tombstone）在 browser-idb-test。
+   门禁判据（与 wipeAll 同源，memory-vec.js:155/550）：
+     · `!global.indexedDB` = 合法「无向量环境」→ not-applicable → 允许删主表；
+     · 有 IDB 但 memoryVec 缺失 / forgetGroup 缺失 / 打开失败 → **必须失败保留主表**
+       （绝不静默物理删群却留下它的向量块 = 隐私残留 + 幻觉源）。 */
+
+const p3Fix = (() => {
+  const m = S.core.upsertChar({ name: '清屿', kind: 'main', content: '项目3解散群测试大号' }).id;
+  const u = S.core.upsertUser({ name: '梦梦' }).id;
+  const sb = S.core.createSandbox('archipelago', '项目3解散群测试岛');
+  S.core.setActiveSandbox(sb.id);
+  const mk = (name, extra) => {
+    const r = S.groupStore.createGroup({
+      name, ownerAccountId: u,
+      members: [{ kind: 'char', ownerId: m, accountId: m }, { kind: 'user', ownerId: 'user', accountId: u }],
+      ...extra
+    });
+    if (!r.ok) throw new Error('项目3 造群失败: ' + r.message);
+    return r.group.id;
+  };
+  return { m, u, sb: sb.id, mk };
+})();
+
+t('项目3 P3-M1 反向护栏：removeGroup 不再导出，purgeGroup/forgetGroup 存在', () => {
+  if ('removeGroup' in S.groupStore) throw new Error('removeGroup 不该再导出');
+  if (typeof S.groupStore.purgeGroup !== 'function') throw new Error('purgeGroup 该存在');
+  if (typeof S.memoryVec.forgetGroup !== 'function') throw new Error('forgetGroup 该存在');
+  return '护栏齐';
+});
+
+t('项目3 P3-M1b 静态护栏：UI 成功 toast 只在 ok:true 时出现，失败不 toast「已解散」', () => {
+  const chatSrc = require('fs').readFileSync('page-chat.js', 'utf8');
+  /* 调用改异步：不再同步 removeGroup */
+  if (/removeGroup\(/.test(chatSrc)) throw new Error('page-chat 不该再同步调 removeGroup');
+  if (chatSrc.indexOf('purgeGroup(g.id).then') < 0) throw new Error('page-chat 该用异步 purgeGroup().then');
+  if (chatSrc.indexOf('if (res && res.ok)') < 0) throw new Error('成功分支该按 res.ok 门禁');
+  if (chatSrc.indexOf("ctx.toast('已解散', 'ok')") < 0) throw new Error('成功 toast 该在');
+  /* 成功 toast 必须被 res.ok 门禁包住：定位到 success toast 前最近的 if(res&&res.ok) */
+  const okToast = chatSrc.indexOf("ctx.toast('已解散', 'ok')");
+  const gate = chatSrc.lastIndexOf('if (res && res.ok)', okToast);
+  if (gate < 0 || gate > okToast) throw new Error('「已解散」不该出现在 res.ok 门禁之外');
+  /* 失败分支要有 err toast（用户要求 5：失败不显示成功 toast） */
+  if (chatSrc.indexOf("|| '解散失败', 'err'") < 0) throw new Error('失败该 toast 成 err，不能静默假装成功');
+  return '成功门禁 + 失败err + 不静默';
+});
+
+/* ⚠️ smoke 的 t() 对 async 是**并发**的（不 await 就返回）。项目3 的门禁测试要
+   串行改 win.indexedDB / 建删群，**必须合成一个 async 测试**，否则并发互相踩。 */
+t('项目3 P3-M2~M5 门禁三分支 + 无副作用 + 重试补完（串行）', async () => {
+  const savedIDB = win.indexedDB;          /* smoke 默认无 IDB */
+  const savedFG = S.memoryVec.forgetGroup;
+
+  /* -- M2 不存在的群：无副作用（只验目标 id 不出现，不断言总表长度——
+     smoke 后续同步 IIFE 可能并发建群，长度会变） -- */
+  const ghost = 'noSuchGroup' + Date.now();
+  let r = await S.groupStore.purgeGroup(ghost);
+  if (!r || r.ok !== false || r.message !== '找不到这个群') throw new Error('不存在群该 ok:false');
+  if (S.groupStore.findGroup(ghost)) throw new Error('不该出现这个群');
+  if ((S.store.get('groupMembers') || []).some((x) => x.groupId === ghost)) throw new Error('不该出现该群成员');
+  if ((S.store.get('groupMessages') || []).some((x) => x.groupId === ghost)) throw new Error('不该出现该群消息');
+
+  /* -- M3 not-applicable 门禁：无 IDB → 允许删主表 + 别群保留 -- */
+  if ('indexedDB' in win) throw new Error('smoke 前置不对：win 不该有 indexedDB');
+  const g3 = p3Fix.mk('P3A-无IDB群');
+  S.store.set('groupPending:' + g3, [1]);
+  S.store.set('groupInner:' + g3, { x: 1 });
+  S.store.set('sumCursor:g:' + g3, { at: 1 });
+  S.store.set('groupOfflineSessions', [{ groupId: g3, status: 'active' }, { groupId: 'keep', status: 'active' }]);
+  S.store.set('offlineHandoffs', [{ groupId: g3 }, { groupId: 'keep2' }]);
+  r = await S.groupStore.purgeGroup(g3);
+  if (!r || r.ok !== true) throw new Error('无IDB环境该 ok:true，实 ' + JSON.stringify(r));
+  if (S.groupStore.findGroup(g3)) throw new Error('主表 groups 没删');
+  if ((S.store.get('groupMembers') || []).some((x) => x.groupId === g3)) throw new Error('主表 groupMembers 没删');
+  if ((S.store.get('groupMessages') || []).some((x) => x.groupId === g3)) throw new Error('主表 groupMessages 没删');
+  if (S.store.get('groupPending:' + g3) != null) throw new Error('groupPending 没删');
+  if (S.store.get('groupInner:' + g3) != null) throw new Error('groupInner 没删');
+  if (S.store.get('sumCursor:g:' + g3) != null) throw new Error('sumCursor 没删');
+  let off = S.store.get('groupOfflineSessions');
+  if (!off || off.some((x) => x.groupId === g3)) throw new Error('groupOfflineSessions 该群行没滤');
+  if (!off.some((x) => x.groupId === 'keep')) throw new Error('别群线下行被误删');
+  let ho = S.store.get('offlineHandoffs');
+  if (!ho || ho.some((x) => x.groupId === g3)) throw new Error('offlineHandoffs 该群行没滤');
+  if (!ho.some((x) => x.groupId === 'keep2')) throw new Error('别群交接单被误删');
+  /* tombstone：active 行在过滤前先 ended（这里 g3 行已滤掉，只验别群行仍在） */
+  off = S.store.get('groupOfflineSessions');
+  if (!off.some((x) => x.groupId === 'keep' && x.status === 'active')) throw new Error('别群 active 行不该被动');
+
+  /* -- M4 api-missing 门禁：有 IDB 但 forgetGroup 缺失 → 失败保留主表 -- */
+  const g4 = p3Fix.mk('P3B-api缺失群');
+  win.indexedDB = {};                       /* 有 IDB = 本应有向量能力 */
+  delete S.memoryVec.forgetGroup;           /* 但 API 缺失 */
+  r = await S.groupStore.purgeGroup(g4);
+  S.memoryVec.forgetGroup = savedFG;
+  win.indexedDB = savedIDB;
+  if (!r || r.ok !== false) throw new Error('该失败，实 ' + JSON.stringify(r));
+  if (r.why !== 'memory-vector-unavailable/api-missing') throw new Error('why 该是 api-missing，实 ' + r.why);
+  if (!S.groupStore.findGroup(g4)) throw new Error('主表不该被删（api-missing 必须保留）');
+  if (!(S.store.get('groupMembers') || []).some((x) => x.groupId === g4)) throw new Error('成员不该被删');
+
+  /* -- M5 vector-failed 门禁：有 IDB 但向量打开失败 → 失败保留主表 -- */
+  const g5 = p3Fix.mk('P3C-向量失败群');
+  win.indexedDB = {};                       /* 有 IDB（gate 判 hasIDB=true）*/
+  r = await S.groupStore.purgeGroup(g5);
+  win.indexedDB = savedIDB;
+  if (!r || r.ok !== false) throw new Error('该失败，实 ' + JSON.stringify(r));
+  if (r.why !== 'memory-vector-failed') throw new Error('why 该 vector-failed，实 ' + r.why);
+  if (S.groupStore.findGroup(g5) === null) throw new Error('主表不该被删（vector-failed 必须保留）');
+  if (S.store.get('groupPending:' + g5) != null) throw new Error('派生键也不该动');
+
+  /* -- 重试补完：失败保留的群，在环境恢复（无 IDB = not-applicable）后重试 → 全清 -- */
+  await S.groupStore.purgeGroup(g4);
+  await S.groupStore.purgeGroup(g5);
+  if (S.groupStore.findGroup(g4)) throw new Error('g4 重试后主表没清干净');
+  if (S.groupStore.findGroup(g5)) throw new Error('g5 重试后主表没清干净');
+
+  return 'M2无副作用 / M3无IDB全清 / M4 api缺失保留 / M5 vector失败保留 / 重试补完';
+});
 
 console.log('\n--- page-group-ai：群调度 ---');
 
