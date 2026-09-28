@@ -713,6 +713,7 @@
 
   Sleepy.register('contact-edit', {
     title: '角色骨架',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同参短路会端回旧 DOM + 旧闭包） */
     render: function (ctx) {
       var body = ctx.body;
       var id = ctx.params.id || '';
@@ -1555,6 +1556,7 @@
 
   Sleepy.register('mask-edit', {
     title: '编辑马甲',
+    freshOnOpen: true,   /* 同 contact-edit：重开新建表单必须重画 */
     render: function (ctx) {
       var body = ctx.body;
       var id = ctx.params.id || '';

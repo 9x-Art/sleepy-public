@@ -1296,6 +1296,37 @@ t('表情包：默认按房，开全局跨房可见，删房只带走本房的',
   return { 本房: local, 换房后: inB, 全局: isGlobal };
 });
 
+/* 整组同步（2026-09-28 用户补的批量口）：组头「同步到全局」一键翻转整组。 */
+t('表情包：整组同步到全局 —— 批量开/收，口径与单张开关一致', () => {
+  const A = S.core.createSandbox('isle');
+  S.core.setActiveSandbox(A.id);
+  const g = '小熊组';
+  const r1 = S.stickers.add({ url: 'https://x.test/a.png', name: 'a', group: g });
+  const r2 = S.stickers.add({ url: 'https://x.test/b.png', name: 'b', group: g });
+  if (!r1.ok || !r2.ok) throw new Error('种表情失败');
+  const other = S.stickers.add({ url: 'https://x.test/c.png', name: 'c', group: '别的组' });
+  if (!other.ok) throw new Error('种对照组失败');
+
+  const n = S.stickers.setGroupGlobal(g, true);
+  if (n !== 2) throw new Error('应整组 2 张翻转，实际 ' + n);
+  const all = S.stickers.all();
+  const grp = all.filter((s) => s.group === g);
+  if (!grp.every((s) => s.global === true && s.sandboxId === undefined)) {
+    throw new Error('开全局没整组生效/没摘房章：' + JSON.stringify(grp));
+  }
+  const ctrl = all.filter((s) => s.id === other.item.id)[0];
+  if (ctrl.global) throw new Error('别的组被误伤');
+
+  const n2 = S.stickers.setGroupGlobal(g, false);
+  if (n2 !== 2) throw new Error('收回应 2 张，实际 ' + n2);
+  const grp2 = S.stickers.all().filter((s) => s.group === g);
+  if (!grp2.every((s) => s.global === false)) throw new Error('收回没生效');
+
+  S.stickers.remove(r1.item.id); S.stickers.remove(r2.item.id); S.stickers.remove(other.item.id);
+  S.core._purgeSync.sandbox(A.id);
+  return { 整组开: true, 摘房章: true, 别组不误伤: true, 整组收: true };
+});
+
 /* 朋友圈是活的：谁都能发（含替角色发）、赞能加能取消、评论能删。
    「每个关系下的都可以互动」这条钉在数据层上。 */
 t('朋友圈：替角色发、赞可取消、评论可删', () => {
@@ -8640,6 +8671,226 @@ t('收藏馆：We 首页入口指向 collection，不再开 favorites', () => {
   /* 旧 favorites 页面保持注册（原语义不动） */
   if (!S.registered().favorites) throw new Error('旧 favorites 页没了');
   return { 入口改collection: true, favorites原样: true };
+});
+
+t('新建表单页重开必须重画（freshOnOpen 静态护栏）', () => {
+  const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  if (appSrc.indexOf('freshOnOpen') < 0) throw new Error('app.js 没有 freshOnOpen 重开重画机制');
+  for (const f of ['page-idcard.js']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    /* contact-edit 与 mask-edit 两处注册都必须声明 */
+    let n = 0, i = 0;
+    while ((i = src.indexOf('freshOnOpen: true', i)) >= 0) { n++; i += 1; }
+    if (n < 2) throw new Error(f + ' 只声明了 ' + n + ' 处 freshOnOpen（应 contact-edit + mask-edit 各一）');
+  }
+  return { app机制: true, contactedit: true, maskedit: true };
+});
+
+/* ======================== We 收藏馆 P2（char 提议 → user 确认入馆） ========================
+   数据层证据：store 默认值 / 标签抽取 / 岛隔离 / 来源 fail-closed /
+   accept 幂等 / declined 冷却 / 老 weAdd 兼容 / 删房名单 / 页面注册。 */
+
+t('收藏馆P2：weProposals 默认存在；标签抽取纯函数（剥干净 / 非法丢弃）', () => {
+  if (!Array.isArray(S.store.get('weProposals'))) throw new Error('weProposals 不在 store DEFAULTS 里');
+  if (S.weProposals.KEY !== 'weProposals') throw new Error('weProposals.KEY 不对');
+  if (typeof S.weProposals.createFromReply !== 'function' ||
+      typeof S.weProposals.accept !== 'function' ||
+      typeof S.weProposals.decline !== 'function' ||
+      typeof S.weProposals.validateSource !== 'function') {
+    throw new Error('weProposals 出口不齐（createFromReply/accept/decline/validateSource）');
+  }
+
+  /* 半角冒号：剥干净 + 字段齐 */
+  const r1 = S.weProposals.extractTag('那天真难忘。[收藏提议:ev123|ticket|想把那天留在馆里] 后来就到家了');
+  if (r1.text.indexOf('收藏提议') >= 0 || r1.text.indexOf('ev123') >= 0) {
+    throw new Error('标签没剥干净：' + r1.text);
+  }
+  if (r1.text.indexOf('那天真难忘') < 0 || r1.text.indexOf('后来就到家了') < 0) throw new Error('正文被误伤');
+  if (!r1.hit || r1.hit.sourceId !== 'ev123' || r1.hit.kind !== 'ticket' ||
+      r1.hit.reason !== '想把那天留在馆里') throw new Error('hit 字段错：' + JSON.stringify(r1.hit));
+
+  /* 全角冒号也认；一条回复只认第一个 */
+  const r2 = S.weProposals.extractTag('[收藏提议：evA|letter|理由一][收藏提议:evB|gift|理由二]');
+  if (!r2.hit || r2.hit.sourceId !== 'evA') throw new Error('全角冒号/首条命中错：' + JSON.stringify(r2.hit));
+  if (r2.text.indexOf('evB') >= 0) throw new Error('第二个标签没剥掉');
+
+  /* 无标签 / 字段缺失 → hit 为空，不影响正文 */
+  const r3 = S.weProposals.extractTag('普通一句话');
+  if (r3.hit) throw new Error('无标签不该有 hit');
+  const r4 = S.weProposals.extractTag('[收藏提议:|ticket|理由]');
+  if (r4.hit) throw new Error('字段缺失应丢弃');
+  if (r4.text !== '') throw new Error('字段缺失的标签也应从正文剥掉：' + r4.text);
+
+  return { 默认存在: true, 半角: true, 全角: true, 单条: true, 缺字段丢弃: true };
+});
+
+t('收藏馆P2：创建提议带正确 sandboxId/身份（不用全局指针），pending 不进 weStore.list，跨岛不可见', () => {
+  const A = S.core.createSandbox('isle', '提议甲岛');
+  const m = S.core.upsertChar({ name: '提议大号', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '我' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule',
+    title: '旧书店的黄昏', startAt: '2026-10-03 16:00' });
+
+  const chat = { id: 'chat-a', characterId: m, userId: u, sandboxId: A.id };
+  const r = S.weProposals.createFromReply(chat, 'msg-1',
+    { sourceId: ev.id, kind: 'ticket', reason: '想把那天一起留在馆里' });
+  if (!r.ok) throw new Error('合法提议被拒：' + JSON.stringify(r));
+  const p = r.proposal;
+  if (p.sandboxId !== A.id) throw new Error('sandboxId 不是 chat 自带的岛：' + p.sandboxId);
+  if (p.refCharId !== m || p.refUserId !== u) throw new Error('refCharId/refUserId 错');
+  if (p.status !== 'pending' || p.proposedBy !== 'char') throw new Error('status/proposedBy 错');
+  if (p.title !== '旧书店的黄昏') throw new Error('title 必须来自真实事件：' + p.title);
+  if (p.sourceRef !== '2026-10-03') throw new Error('sourceRef 应取事件 startAt：' + p.sourceRef);
+  if (p.dedupeKey !== [A.id, m, 'calendar', ev.id].join('|')) throw new Error('dedupeKey 口径错');
+  if (p.originMessageId !== 'msg-1' || p.originChatId !== 'chat-a') throw new Error('origin 记录错');
+  if (p.acceptedEntryId !== null || p.resolvedBy !== null) throw new Error('初始 resolved 字段应空');
+
+  /* pending 绝不进正式馆藏 */
+  if (S.weStore.list().some((e) => e.title === '旧书店的黄昏')) {
+    throw new Error('pending 漏进了 weEntries！');
+  }
+
+  /* 跨岛不可见 */
+  const B = S.core.createSandbox('isle', '提议乙岛');
+  S.core.setActiveSandbox(B.id);
+  if (S.weProposals.countPending() !== 0) throw new Error('乙岛看到了甲岛的提议（串岛）');
+  if (S.weProposals.findInScope(p.id)) throw new Error('findInScope 跨岛命中');
+  S.core.setActiveSandbox(A.id);
+  if (S.weProposals.countPending() !== 1) throw new Error('回甲岛后提议丢了');
+
+  /* 同一 originMessageId 重复创建被拦 */
+  const ev2 = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '第二件事' });
+  const dup = S.weProposals.createFromReply(chat, 'msg-1', { sourceId: ev2.id, kind: 'gift', reason: '又想留' });
+  if (dup.ok || dup.why !== 'dup-message') throw new Error('同 originMessageId 应拦：' + JSON.stringify(dup));
+
+  return { sandboxId正确: true, 身份正确: true, pending不进正式表: true, 跨岛不可见: true, 同msg防重: true };
+});
+
+t('收藏馆P2：来源 fail-closed —— 非法kind/不存在/跨角色/跨岛/取消/类型错全拒，completed 可创建', () => {
+  const A = S.core.createSandbox('isle', '复核甲岛');
+  const m = S.core.upsertChar({ name: '复核甲大号', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '我' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+  const chat = { id: 'chat-fc', characterId: m, userId: u, sandboxId: A.id };
+
+  const evOK = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '傍晚散步' });
+  const evDone = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '看完那场展', status: 'completed' });
+  const evCancel = S.calendar.cancelEvent(
+    S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '黄了的约定' }).id
+  );
+  const m2 = S.core.upsertChar({ name: '别人家大号', kind: 'main' }).id;
+  const evOther = S.calendar.addEvent({ ownerCharId: m2, eventType: 'char_schedule', title: '别人的事' });
+  const evShared = S.calendar.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '共同安排' });
+
+  function why(tag) {
+    return S.weProposals.createFromReply(chat, 'msg-fc-' + Math.random(), tag).why;
+  }
+  if (why({ sourceId: evOK.id, kind: 'jewelry', reason: '合理' }) !== 'kind') throw new Error('非法 kind 应拒');
+  if (why({ sourceId: 'ev-nope', kind: 'ticket', reason: '合理' }) !== 'deleted') throw new Error('不存在的事件应 deleted');
+  if (why({ sourceId: evOther.id, kind: 'ticket', reason: '合理' }) !== 'char') throw new Error('跨角色事件应拒');
+  if (why({ sourceId: evCancel.id, kind: 'ticket', reason: '合理' }) !== 'cancelled') throw new Error('已取消应拒');
+  if (why({ sourceId: evShared.id, kind: 'ticket', reason: '合理' }) !== 'type') throw new Error('非 char_schedule 应拒');
+
+  /* 跨岛：事件属于同一 char 但盖的是乙岛的章 */
+  const B = S.core.createSandbox('isle', '复核乙岛');
+  S.core.setActiveSandbox(B.id);
+  const evB = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '乙岛的事' });
+  S.core.setActiveSandbox(A.id);
+  if (why({ sourceId: evB.id, kind: 'ticket', reason: '合理' }) !== 'scope') throw new Error('跨岛事件应拒');
+
+  /* 理由超长 → 丢弃 */
+  if (why({ sourceId: evOK.id, kind: 'ticket', reason: '长'.repeat(61) }) !== 'reason') throw new Error('理由超长应拒');
+
+  /* completed 是有效历史来源：可以创建（创建后立刻 decline 收场，不占 pending 上限） */
+  const done = S.weProposals.createFromReply(chat, 'msg-fc-done',
+    { sourceId: evDone.id, kind: 'ticket', reason: '看过的也想留' });
+  if (!done.ok) throw new Error('completed 来源应可提议：' + JSON.stringify(done));
+  S.weProposals.decline(done.proposal.id);
+
+  return { kind拒: true, deleted拒: true, 跨角色拒: true, cancelled拒: true,
+    跨岛拒: true, 类型拒: true, 超长拒: true, completed可创建: true };
+});
+
+t('收藏馆P2：accept 幂等 + 正式记录 createdBy/confirmedBy/confirmedAt + declined 冷却 + 老 weAdd 兼容', () => {
+  const A = S.core.createSandbox('isle', '确认甲岛');
+  const m = S.core.upsertChar({ name: '确认大号', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '我' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+  const chat = { id: 'chat-ac', characterId: m, userId: u, sandboxId: A.id };
+  const before = S.weStore.list().length;
+
+  /* accept：写入正式 weEntries + 全部确认字段 */
+  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '江边的日落' });
+  const r = S.weProposals.createFromReply(chat, 'msg-ac-1', { sourceId: ev.id, kind: 'place', reason: '那天的光很好' });
+  if (!r.ok) throw new Error('提议创建失败：' + JSON.stringify(r));
+  const acc = S.weProposals.accept(r.proposal.id);
+  if (!acc.ok) throw new Error('accept 失败：' + JSON.stringify(acc));
+  const entry = acc.entry;
+  if (entry.createdBy !== 'char') throw new Error('正式记录 createdBy 应为 char：' + entry.createdBy);
+  if (entry.confirmedBy !== 'user') throw new Error('confirmedBy 应为 user');
+  if (typeof entry.confirmedAt !== 'number') throw new Error('confirmedAt 应为时间戳');
+  if (entry.sandboxId !== A.id) throw new Error('正式记录盖错岛章');
+  if (entry.kind !== 'place' || entry.sourceId !== ev.id) throw new Error('来源字段没带全');
+  const p = S.weProposals.findInScope(r.proposal.id);
+  if (p.status !== 'accepted' || p.acceptedEntryId !== entry.id || p.resolvedBy !== 'user') {
+    throw new Error('proposal 写回不对：' + JSON.stringify(p));
+  }
+  if (S.weStore.list().length !== before + 1) throw new Error('正式馆藏应恰好 +1');
+
+  /* 幂等：重复 accept 不生成第二条 */
+  const acc2 = S.weProposals.accept(r.proposal.id);
+  if (acc2.ok || acc2.why !== 'already-accepted' || acc2.entryId !== entry.id) {
+    throw new Error('重复 accept 应幂等拒绝：' + JSON.stringify(acc2));
+  }
+  if (S.weStore.list().length !== before + 1) throw new Error('重复 accept 生成了第二条 weEntry！');
+
+  /* declined：不生成 weEntries；冷却期内同源重复提议被拦 */
+  const ev2 = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '没留下的那顿' });
+  const r2 = S.weProposals.createFromReply(chat, 'msg-ac-2', { sourceId: ev2.id, kind: 'letter', reason: '算了' });
+  const cnt = S.weStore.list().length;
+  const dec = S.weProposals.decline(r2.proposal.id);
+  if (!dec.ok) throw new Error('decline 失败');
+  if (S.weStore.list().length !== cnt) throw new Error('declined 生成了 weEntries！');
+  if (S.weProposals.findInScope(r2.proposal.id).status !== 'declined') throw new Error('状态没写');
+  const again = S.weProposals.createFromReply(chat, 'msg-ac-3', { sourceId: ev2.id, kind: 'letter', reason: '又想提' });
+  if (again.ok || again.why !== 'cooldown') throw new Error('冷却期内应拦：' + JSON.stringify(again));
+
+  /* 老 weAdd 兼容：不传 createdBy/confirmed* 的手动记录行为完全不变 */
+  const manual = S.weStore.add({ title: '手动条目', kind: 'other' }, A.id);
+  if (manual.createdBy !== 'user') throw new Error('老 weAdd 调用被改坏：' + manual.createdBy);
+  if ('confirmedBy' in manual || 'confirmedAt' in manual) throw new Error('手动记录不该有 confirmed 字段');
+
+  return { accept入馆: true, createdBy_char: true, confirmedBy_user: true, confirmedAt: true,
+    acceptedEntryId回写: true, 幂等: true, declined不进馆: true, 冷却拦截: true, 老weAdd兼容: true };
+});
+
+t('收藏馆P2：weProposals 进删房名单（真跑拆岛）+ collection-proposal 页注册', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'core.js'), 'utf8');
+  if (src.indexOf("'weProposals'") < 0) throw new Error("core.js cleanupSandbox 名单里没有 'weProposals'");
+
+  const A = S.core.createSandbox('isle', '拆岛提议甲');
+  const m = S.core.upsertChar({ name: '拆岛提议大号', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '我' }).id;
+  S.core.setSandboxChars(A.id, [m]);
+  S.core.setActiveSandbox(A.id);
+  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '要被拆掉的提议' });
+  const chat = { id: 'chat-purge', characterId: m, userId: u, sandboxId: A.id };
+  const r = S.weProposals.createFromReply(chat, 'msg-purge', { sourceId: ev.id, kind: 'place', reason: '留一下' });
+  if (!r.ok) throw new Error('提议创建失败：' + JSON.stringify(r));
+
+  const purge = S.core._purgeSync.sandbox(A.id);
+  if (!purge || purge.ok !== true) throw new Error('拆岛清理失败：' + JSON.stringify(purge));
+  const left = S.store.get('weProposals').filter((x) => x && x.sandboxId === A.id);
+  if (left.length) throw new Error('拆岛后 proposal 还在（孤儿）：' + left.length);
+
+  if (!S.registered()['collection-proposal']) throw new Error('collection-proposal 页未注册');
+  if (!S.registered().collection || !S.registered()['collection-item']) throw new Error('门厅/详情页没了');
+
+  return { 名单收录: true, 拆岛后清空: true, 页面注册: true };
 });
 
 if (asyncPending > 0) {

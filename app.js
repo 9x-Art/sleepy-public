@@ -421,6 +421,14 @@
       built[id] = entry;
       stack.appendChild(entry.el);
     } else {
+      /* 表单页（contact-edit / mask-edit 这类「新建」入口）重开时必须重画：
+         params 往往一模一样（{id:'', sandboxId}），applyParams 的同参短路
+         会把上一次填了一半、已经保存过的旧 DOM 原样端回来 ——
+         用户看到「点 + 还是上一个人」，保存时闭包里的旧花名册快照
+         还会把别人顶出房间（实测过：群岛第二个 char 覆盖第一个）。
+         页面在 def 上声明 freshOnOpen 即表示「我每次 open 都要全新 render」；
+         不声明的页保持原样（有的页靠旧 DOM 保住输入草稿）。 */
+      if (entry.def && entry.def.freshOnOpen) entry.params = null;
       applyParams(entry, params);
     }
     void entry.el.offsetWidth;

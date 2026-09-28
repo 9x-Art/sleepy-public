@@ -543,6 +543,40 @@
     return { text: text, descs: descs };
   }
 
+  /* 收藏提议（We 收藏馆 P2）：回复里写 [收藏提议:事件id|分类|理由]。
+     抽取 / 校验 / 去重 / 来源核验 / 落库全部收口在 Sleepy.weProposals
+     （唯一出口 page-we-proposal.js）—— 这里只负责剥标签，正文里
+     不出现任何标签文本。引擎缺席时退化为「只剥标签不创建提议」。 */
+  function extractProposal(raw) {
+    if (Sleepy.weProposals && Sleepy.weProposals.extractTag) {
+      return Sleepy.weProposals.extractTag(raw);
+    }
+    return { text: String(raw == null ? '' : raw), hit: null };
+  }
+
+  /* 提议落库 + 落一张 we-proposal 卡片消息（卡片渲染见页面内 weProposalCard）。
+     失败（格式非法 / 去重命中 / 来源 fail closed）**静默**——聊天正文照常。
+     返回卡片消息或 null。 */
+  function commitProposal(chatId, originMessageId, hit) {
+    if (!Sleepy.weProposals || !hit) return null;
+    var chat = getChat(chatId);
+    if (!chat) return null;
+    var r = Sleepy.weProposals.createFromReply(chat, originMessageId || null, hit);
+    if (!r || !r.ok) return null;
+    return addMessage(chatId, {
+      id: newId(),
+      role: 'assistant',
+      type: 'we-proposal',
+      proposalId: r.proposal.id,
+      title: r.proposal.title,      /* 真实事件标题（程序侧复核过的） */
+      note: r.proposal.note,        /* char 的提议理由 */
+      sourceType: r.proposal.sourceType,
+      sourceId: r.proposal.sourceId,
+      content: '',
+      timestamp: Date.now()
+    });
+  }
+
   /* 手机痕迹（查手机第 2 批）：把回复里的 [手机] 行抽出、校验、落库。
      搭载在本次回复上，0 新增调用（架构 v1 §5.1）；手机壳不存在就顺手建
      （幂等、0 API）。返回抽干净的正文 + 落库条数 + 授权卡负载。
@@ -643,6 +677,12 @@
       return '[我邀请你一起同席共读《' + (m.title || '未命名') + '》' +
         (m.answer ? '；你已经回应了' : '；还没有回应') + ']';
     }
+    /* 收藏提议卡（We 收藏馆 P2）：只报事实，标签一个字都不进历史 ——
+       对方只需要知道「有过这么个提议」，收不收是 user 的事。 */
+    if (m.type === 'we-proposal') {
+      return '[你想把「' + (m.title || '一件东西') + '」收进你们的收藏馆，' +
+        '对方还没有回应]';
+    }
     return m.content || '';
   }
 
@@ -729,6 +769,7 @@
     if (msg.type === 'phone-invite') return '[手机邀请]' + (msg.content ? ' ' + msg.content : '');
     if (msg.type === 'wj-share') return '[作品]《' + (msg.title || '未命名') + '》';
     if (msg.type === 'wj-invite') return '[同席邀请]《' + (msg.title || '未命名') + '》';
+    if (msg.type === 'we-proposal') return '[收藏提议]' + (msg.title ? ' ' + msg.title : '');
     var raw = String(msg.content || '');
     var pe = Sleepy.promptEngine;
     if (pe && pe.splitBubblesT) {
@@ -1854,6 +1895,8 @@
           content.appendChild(checkinCard(msg));
         } else if (msg.type === 'wj-share' || msg.type === 'wj-invite') {
           content.appendChild(wjCard(msg));
+        } else if (msg.type === 'we-proposal') {
+          content.appendChild(weProposalCard(msg));
         } else {
           var textEl = h('div', 'msg-text');
           var shown;
@@ -2010,6 +2053,73 @@
             ctx.open('wj-read', { id: msg.workId, session: msg.sessionId });
           }
         });
+      }
+
+      /* 收藏提议卡（We 收藏馆 P2）：char 提议 → user 确认的确认流入口。
+         数据与动作唯一出口是 Sleepy.weProposals（page-we-proposal.js）——
+         这里只渲染 + 转发按钮点击，**accept/decline 不是模型动作**。
+         来源状态实时复核（completed 有效 / cancelled 失效都照实显示）。 */
+      function weProposalCard(msg) {
+        var card = h('div', 'msg-wep');
+        var box = h('div', 'msg-wep-card');
+        box.appendChild(h('div', 'msg-wep-k', '收 藏 提 议'));
+        box.appendChild(h('div', 'msg-wep-title', msg.title || '（未命名）'));
+        if (msg.note) box.appendChild(h('p', 'msg-wep-note', msg.note));
+
+        var p = (Sleepy.weProposals && Sleepy.weProposals.findInScope)
+          ? Sleepy.weProposals.findInScope(msg.proposalId) : null;
+        var src = (Sleepy.collectionStore && Sleepy.collectionStore.checkSource)
+          ? Sleepy.collectionStore.checkSource(
+              { sourceType: msg.sourceType, sourceId: msg.sourceId })
+          : { status: 'live', text: '' };
+
+        var foot = h('div', 'msg-wep-foot');
+        if (!p) {
+          foot.appendChild(h('span', 'msg-wep-state', '这条提议已不存在'));
+        } else if (p.status === 'accepted') {
+          foot.appendChild(h('span', 'msg-wep-state is-ok', '已收进馆里'));
+        } else if (p.status === 'declined') {
+          foot.appendChild(h('span', 'msg-wep-state', '暂时没有收下'));
+        } else {
+          /* pending：来源状态照实显示 —— 已取消/已删除的约定先告诉 user
+             不能收（user 点收下时 accept 还会再复核一次，双保险） */
+          var stateText = (src.status === 'gone')
+            ? src.text : '待你确认';
+          var st = h('span', 'msg-wep-state' + (src.status === 'gone' ? ' is-warn' : ''), stateText);
+          foot.appendChild(st);
+          var acts = h('div', 'msg-wep-acts');
+          var okBtn = h('button', 'msg-wep-btn is-primary', '收进馆里');
+          okBtn.type = 'button';
+          okBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var r = Sleepy.weProposals ? Sleepy.weProposals.accept(msg.proposalId) : { ok: false };
+            if (r.ok) {
+              ctx.toast('已收进馆里', 'ok');
+            } else if (r.why === 'cancelled' || r.why === 'deleted') {
+              /* 来源确认前失效：保留 pending + 明确提示，绝不静默入馆 */
+              ctx.toast('这条约定已经不在了，提议先留着', 'warn');
+            } else if (r.why === 'already-accepted') {
+              ctx.toast('已经在馆里了', 'ok');
+            } else {
+              ctx.toast('暂时收不进来，稍后再试', 'warn');
+            }
+            renderMessages();
+          });
+          var noBtn = h('button', 'msg-wep-btn', '暂时不留');
+          noBtn.type = 'button';
+          noBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (Sleepy.weProposals) Sleepy.weProposals.decline(msg.proposalId);
+            ctx.toast('先不留', 'ok');
+            renderMessages();
+          });
+          acts.appendChild(okBtn);
+          acts.appendChild(noBtn);
+          foot.appendChild(acts);
+        }
+        box.appendChild(foot);
+        card.appendChild(box);
+        return card;
       }
 
       function attachCard(msg) {
@@ -2695,6 +2805,18 @@
             var gi = extractGenimgs(finalText);
             finalText = gi.text;
 
+            /* 收藏提议标签同样抽掉（[收藏提议:id|kind|理由]，We 收藏馆 P2）——
+               落成 weProposals 待确认 + 一张卡片消息，正文/心声里不出现标签 */
+            var wp = extractProposal(finalText);
+            finalText = wp.text;
+            /* 协议只许把提议写在正文；模型真塞进心声里的话，从心声剥掉
+               （标签不得留在心声里），并并入提议（正文没有提议时才生效） */
+            if (split.whisper) {
+              var wpx = extractProposal(split.whisper);
+              if (wpx.hit && !wp.hit) wp = wpx;
+              split.whisper = wpx.text;
+            }
+
             /* 手机痕迹（查手机第 2 批）：抽出 [手机] 行、校验、落库。
                实现在 applyPhoneTrace 里（导出给冒烟走真实路径）——
                别把这段逻辑挪回这里：这里的作用域没有 chat 变量，
@@ -2704,7 +2826,8 @@
             var pdApplied = trace.applied;
             var granted = trace.granted;
 
-            if (!finalText && !st.names.length && !pt.patted && !gi.descs.length && !pdApplied) {
+            if (!finalText && !st.names.length && !pt.patted && !gi.descs.length &&
+                !wp.hit && !pdApplied) {
               ctx.toast('这次没出声，要不再试一次？', 'warn');
               renderMessages();
               updateSendUI();
@@ -2754,6 +2877,10 @@
             if (pt.patted) charSendPat(pt.suffix);
             /* TA 发的图排在表情后面，一次最多 2 张防刷 */
             gi.descs.slice(0, 2).forEach(function (desc) { charSendPhoto(desc); });
+            /* 收藏提议排在图后面（We 收藏馆 P2）：创建 proposal（校验/去重/
+               来源核验都在 weProposals 里，失败静默）+ 落一张待确认卡片。
+               originMessageId 挂这条回复 —— reroll 复用同一 msg.id，天然防重。 */
+            if (wp.hit) commitProposal(chatId, replyMsgId || target, wp.hit);
             /* 他主动递手机的邀请卡排在最后 —— 权限已落 phonePerms，
                「查手机」入口会显示「已向你开放」（分流定案 §二·B） */
             if (granted) {
@@ -2822,6 +2949,10 @@
              （用户是主动停的，别再给他弹东西出来）。 */
           var pSt = extractStickers(partial);
           var pText = pSt.text;
+          /* 收藏提议标签同样剥掉（P2）。提议动作本身已经完成，照常落库 ——
+             收不收由 user 在卡片上决定，与「不补发表情」不冲突。 */
+          var pWp = extractProposal(pText);
+          pText = pWp.text;
           var memRec = commitMemory(chatId, 'assistant', pText);
           var memId = memRec ? memRec.id : null;
           if (target) patchMessage(chatId, target, { content: pText, timestamp: Date.now(), memoryId: memId });
@@ -2837,6 +2968,12 @@
           }
         } else if (target) {
           patchMessage(chatId, target, { content: '（这条被停掉了）' });
+        }
+
+        /* 手动停止时提议也照常落库（剥标签已在上面做完）——
+           卡片挂在这条（半截）回复上，收不收仍由 user 决定 */
+        if (pWp && pWp.hit) {
+          commitProposal(chatId, stoppedMsgId || target || null, pWp.hit);
         }
 
         if (beat.trim()) {

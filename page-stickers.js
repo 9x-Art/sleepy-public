@@ -235,6 +235,24 @@
     save(list);
   }
 
+  /* 整组同步到全局（2026-09-28 用户补的批量口）：
+     「我-表情包」的行注写着「可同步到所有岛 · 所有账号」，但以前只有
+     单张详情里藏着一个开关，一组一张张点太费劲。组头「同步」钮走这里。
+     开=整组 global:true 并摘房章；关=整组 global:false（房章不回补 ——
+     与单张开关同口径，关掉后哪间房都还看得见，属既有语义）。 */
+  function setGroupGlobal(groupName, on) {
+    var list = all();
+    var n = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i] || groupOf(list[i]) !== groupName) continue;
+      list[i].global = !!on;
+      if (on) delete list[i].sandboxId;
+      n++;
+    }
+    if (n) save(list);
+    return n;
+  }
+
   /* 上移 / 下移：换的是**全量列表**里的位置（顺序就是数组顺序）。 */
   function move(id, dir) {
     var list = all();
@@ -706,6 +724,20 @@
             });
           });
           head.appendChild(rename);
+
+          /* 整组同步到全局（批量口）：全组已 global 就显示「收回本岛」，
+             点一下整组翻转 —— 单张细粒度仍在详情里。 */
+          var allGlobal = inGroup.length && inGroup.every(function (s) { return !!s.global; });
+          var sync = h('button', 'stk-group-op', allGlobal ? '收回本岛' : '同步到全局');
+          sync.type = 'button';
+          sync.addEventListener('click', function () {
+            var on = !allGlobal;
+            var n = setGroupGlobal(gn, on);
+            rebuild();
+            ctx.toast(on ? ('已把「' + gn + '」的 ' + n + ' 张同步到所有岛')
+                         : ('已把「' + gn + '」的 ' + n + ' 张收回本岛'), 'ok');
+          });
+          head.appendChild(sync);
           sec.appendChild(head);
 
           if (open) {
@@ -775,6 +807,7 @@
     remove: remove,
     update: update,
     setGlobal: setGlobal,
+    setGroupGlobal: setGroupGlobal,
     move: move,
     UNGROUPED: UNGROUPED
   };

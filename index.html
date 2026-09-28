@@ -226,6 +226,11 @@
      life-feed（recent）、favorites（收藏数量）。日历排在它之前已加载，所以这里
      排在 page-wj-create 之后即可；它注册 'we' 入口，桌面那格才点得开。 -->
 <script src="page-we.js" defer></script>
+<!-- We 收藏馆 P2（提议确认流）：char 提议的独立 scoped store + 唯一读写出口
+     （extractTag / validateSource / createFromReply / accept / decline）。
+     依赖 page-we.js（weStore.add / KINDS）与 calendar（来源核验）；
+     page-chat（标签抽取+提议卡）与 page-collection（待确认条）运行时惰性取。 -->
+<script src="page-we-proposal.js" defer></script>
 <!-- We 收藏馆（门厅 + 藏品详情）：依赖 page-we.js 导出的 weStore（kind 兼容）。
      注册 'collection' 页，We 首页「去收藏馆 →」打开它。不占桌面格。 -->
 <script src="page-collection.js" defer></script>

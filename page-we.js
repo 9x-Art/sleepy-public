@@ -87,7 +87,11 @@
   }
 
   /* 追加一条共同记录。rec 是用户填的「内容 + 可选来源引用」，
-     这里补 id / createdAt / updatedAt / createdBy，并盖当前房章。 */
+     这里补 id / createdAt / updatedAt / createdBy，并盖当前房章。
+
+     P2（提议确认流）扩展：rec.createdBy 可选（'char'，缺省仍 'user'）、
+     rec.confirmedBy / rec.confirmedAt 可选（char 提议经 user 确认的留痕）。
+     不传这些字段的既有 user 手动记录行为完全不变（entry 形状与首轮一致）。 */
   function weAdd(rec, sandboxId) {
     var now = Date.now();
     var entry = {
@@ -101,10 +105,12 @@
       sourceRef: rec.sourceRef || null,
       refCharId: rec.refCharId || null,
       refUserId: rec.refUserId || null,
-      createdBy: 'user',          /* 首版只允许 user 创建 */
+      createdBy: rec.createdBy === 'char' ? 'char' : 'user',
       createdAt: now,
       updatedAt: now
     };
+    if (rec.confirmedBy) entry.confirmedBy = String(rec.confirmedBy);
+    if (rec.confirmedAt) entry.confirmedAt = rec.confirmedAt;
     /* 写入必须带当前 sandboxId —— 由 tagScope 盖章（不手写）。 */
     core.tagScope(entry, sandboxId);
 

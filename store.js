@@ -167,6 +167,19 @@
        core.js cleanupSandbox 的 scoped 名单已收录，拆岛跟着清。 */
     weEntries: [],
 
+    /* We 收藏馆 P2（2026-09-27）：char 提议、user 确认的**待确认提议表**。
+       pending 绝不进 weEntries —— 只有 user 确认后经 weStore.add 生成正式藏品。
+       { id, sandboxId, refCharId, refUserId,
+         status: 'pending'|'accepted'|'declined',
+         title, note, kind, at,
+         sourceType: 'calendar', sourceId, sourceRef,
+         proposedBy: 'char', proposedAt,
+         originMessageId, originChatId, dedupeKey,
+         resolvedBy, resolvedAt, acceptedEntryId }
+       sandboxId 取 chat 记录自身（不取全局指针），读写唯一出口 page-we-proposal.js。
+       core.js cleanupSandbox 的 scoped 名单已收录，拆岛跟着清。 */
+    weProposals: [],
+
     /* 名片夹（树状）：见文件头 1) */
     characters: [],
 

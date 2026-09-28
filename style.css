@@ -12964,3 +12964,85 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .co-meta-row:last-child{border-bottom:0}
 .co-meta-k{flex:none;min-width:48px;color:var(--text-faint, var(--text-dim));letter-spacing:.08em}
 .co-meta-v{color:var(--text);word-break:break-all}
+
+/* ============================================================
+   We 收藏馆 P2（提议确认流，2026-09-27）
+   —— 门厅待确认条 / collection-proposal 页 / 聊天里的 we-proposal 卡。
+   只加确认流必要样式：沿用 We 米白纸面 / 衬线 / 焦糖 / 硬边小卡，
+   不重做票根等实体卡片（留给完整 We 视觉统一轮）。
+   ============================================================ */
+
+/* ---- 门厅：待确认条（pending 不算进正式馆藏计数） ---- */
+.co-pending-bar{
+  display:flex;align-items:baseline;gap:9px;width:calc(100% + 44px);
+  margin:14px -22px 0;padding:12px 22px;
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+  border:0;border-top:1px solid rgba(176,138,94,.35);border-bottom:1px solid rgba(176,138,94,.35);
+  font-family:inherit;cursor:pointer;color:var(--text);text-align:left;
+}
+.co-pending-no{
+  font-family:var(--ff-serif);font-size:19px;line-height:1;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+.co-pending-t{font-size:12.5px;color:var(--text)}
+.co-pending-go{
+  margin-left:auto;font-size:11px;letter-spacing:.08em;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+.co-pending-bar:active{opacity:.8}
+
+/* ---- 待确认提议页（collection-proposal） ---- */
+.co-proposal-card{cursor:default}
+.co-proposal-acts{
+  display:flex;gap:9px;margin-top:12px;
+}
+.co-proposal-btn{
+  flex:1;padding:9px 0;font-size:12.5px;letter-spacing:.06em;
+  font-family:inherit;cursor:pointer;color:var(--text);
+  background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.28);border-radius:0;
+}
+.co-proposal-btn.is-primary{
+  background:var(--g-accent, #B08A5E);border-color:var(--g-accent, #B08A5E);
+  color:#fff;
+}
+.co-proposal-btn:active{opacity:.85}
+
+/* ---- 聊天里的提议卡（type:'we-proposal'） ---- */
+.msg-wep{padding:2px 0}
+.msg-wep-card{
+  min-width:190px;max-width:240px;padding:11px 13px 10px;
+  background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(176,138,94,.4);
+  box-shadow:2px 2px 0 rgba(27,25,23,.05);
+}
+.msg-wep-k{
+  font-family:var(--ff-serif);font-size:9.5px;letter-spacing:.24em;
+  color:var(--g-accent-deep, var(--g-accent));margin-bottom:7px;
+}
+.msg-wep-title{
+  font-family:var(--ff-serif);font-size:14.5px;line-height:1.35;
+  color:var(--text);
+}
+.msg-wep-note{
+  margin:7px 0 0;font-size:12px;line-height:1.55;color:var(--text-dim);
+  white-space:pre-wrap;word-break:break-word;
+}
+.msg-wep-foot{margin-top:10px;border-top:1px solid rgba(27,25,23,.12);padding-top:9px}
+.msg-wep-state{
+  display:block;font-size:11px;letter-spacing:.05em;
+  color:var(--text-faint, var(--text-dim));
+}
+.msg-wep-state.is-ok{color:var(--g-accent-deep, var(--g-accent))}
+.msg-wep-state.is-warn{color:#a05a2c}
+.msg-wep-acts{display:flex;gap:7px;margin-top:9px}
+.msg-wep-btn{
+  flex:1;padding:7px 0;font-size:11.5px;letter-spacing:.05em;
+  font-family:inherit;cursor:pointer;color:var(--text);
+  background:transparent;border:1px solid rgba(27,25,23,.28);border-radius:0;
+}
+.msg-wep-btn.is-primary{
+  background:var(--g-accent, #B08A5E);border-color:var(--g-accent, #B08A5E);
+  color:#fff;
+}
+.msg-wep-btn:active{opacity:.85}

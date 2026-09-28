@@ -161,10 +161,17 @@
   }
 
   /* ------------------------- 读（隔离入口，唯一出口） -------------------------
-     只读当前 scoped 的 weEntries，按时间倒序。切岛后 onShow 重读即换批。 */
+     只读当前 scoped 的 weEntries，按时间倒序。切岛后 onShow 重读即换批。
+     at 通常是数字时间戳，但 char 提议入馆的记录 at 继承事件 startAt
+     （日期字符串）—— 减法会 NaN，这里归一：解析不出就当 0，保持原序。 */
+  function atNum(v) {
+    if (typeof v === 'number') return v;
+    var n = new Date(v).getTime();
+    return isNaN(n) ? 0 : n;
+  }
   function entries() {
     return core.scoped(arr(store.get('weEntries'))).slice().sort(function (a, b) {
-      return (b.at || 0) - (a.at || 0);
+      return atNum(b.at) - atNum(a.at);
     });
   }
 
@@ -203,6 +210,23 @@
     factsBar.appendChild(factCell(countKind(list, 'ticket'), '票 根'));
     factsBar.appendChild(factCell(countKind(list, 'photo'), '照 片'));
     shell.appendChild(factsBar);
+
+    /* 待确认条（P2）：char 提议、user 未处理的 pending 数量。
+       **不算进正式馆藏计数** —— 只读 weProposals，不碰 entries()。 */
+    var pend = (Sleepy.weProposals && Sleepy.weProposals.listPending)
+      ? Sleepy.weProposals.listPending() : [];
+    if (pend.length) {
+      var pbar = h('button', 'co-pending-bar');
+      pbar.type = 'button';
+      pbar.appendChild(h('span', 'co-pending-no',
+        String(pend.length).padStart ? ('0' + pend.length).slice(-2) : String(pend.length)));
+      pbar.appendChild(h('span', 'co-pending-t', '件提议待你确认'));
+      pbar.appendChild(h('span', 'co-pending-go', '去看看 →'));
+      pbar.onclick = function () {
+        if (Sleepy.nav) Sleepy.nav.open('collection-proposal');
+      };
+      shell.appendChild(pbar);
+    }
 
     /* 空态：We 语境 */
     if (!list.length) {
@@ -326,13 +350,22 @@
     meta.appendChild(metaRow('分类', KIND_LABEL[k] || '其他'));
     meta.appendChild(metaRow('来源', srcLabel(en.sourceType) +
       (en.sourceRef ? ' · ' + String(en.sourceRef).slice(0, 40) : '')));
-    meta.appendChild(metaRow('创建', en.createdBy === 'user' ? '我' : (en.createdBy || '我')));
+    meta.appendChild(metaRow('创建', createdByLabel(en)));
+    if (en.confirmedBy === 'user' && en.confirmedAt) {
+      meta.appendChild(metaRow('确认', '我 · ' + fmtFull(en.confirmedAt)));
+    }
     if (en.refCharId || en.refUserId) {
       meta.appendChild(metaRow('归属', charName(en.refCharId) + (userName(en.refUserId) ? ' · ' + userName(en.refUserId) : '')));
     }
     shell.appendChild(meta);
 
     body.appendChild(shell);
+  }
+
+  /* 创建者展示（P2）：char 提议入馆的记录显示角色名，user 的照旧「我」 */
+  function createdByLabel(en) {
+    if (en.createdBy === 'char') return charName(en.refCharId) || '他';
+    return '我';
   }
 
   function metaRow(k, v) {
@@ -389,6 +422,91 @@
     render: function (ctx) {
       ctx.__paint = function () { paintDetailSafe(ctx); };
       paintDetailSafe(ctx);
+    },
+    onShow: function (ctx) {
+      if (ctx.__paint) ctx.__paint();
+    }
+  });
+
+  /* ------------------------- 待确认提议（P2） -------------------------
+     独立第三页（沿用门厅/详情拆页惯例）：只列当前岛 pending 的提议。
+     accept 成功 → nav.back() 回门厅 → onShow 重读，新藏品立即出现；
+     来源已失效 → 保留 pending + 明确提示（绝不静默入馆）；
+     declined → 只改 proposal 状态，正式馆藏计数不变。 */
+  function paintProposal(ctx) {
+    ctx.setTitle('待确认提议');
+    ctx.setActions([]);
+
+    var body = ctx.body;
+    body.innerHTML = '';
+    var shell = h('div', 'we-page-paper co-page co-proposal');
+
+    var pend = (Sleepy.weProposals && Sleepy.weProposals.listPending)
+      ? Sleepy.weProposals.listPending() : [];
+
+    var head = h('div', 'co-detail-head');
+    head.appendChild(h('div', 'co-detail-kind', 'W E · 待 你 确 认'));
+    head.appendChild(h('h2', 'co-detail-title', pend.length
+      ? ('有 ' + pend.length + ' 件想收进馆里')
+      : '暂时没有要确认的提议'));
+    head.appendChild(h('p', 'co-detail-date',
+      pend.length ? 'TA 提的，收不收由你决定。' : 'TA 提议过的会出现在这里。'));
+    shell.appendChild(head);
+
+    pend.forEach(function (p) {
+      var card = h('div', 'co-card co-proposal-card');
+      var kHead = h('div', 'co-card-head');
+      kHead.appendChild(h('span', 'co-card-title', p.title || '（未命名）'));
+      kHead.appendChild(h('span', 'co-card-day', fmtDay(p.proposedAt)));
+      card.appendChild(kHead);
+      if (p.note) card.appendChild(h('p', 'co-card-note', '「' + p.note + '」—— ' + (charName(p.refCharId) || 'TA')));
+      /* 来源状态实时复核（completed 有效 / cancelled 失效照实显示） */
+      var src = checkSource({ sourceType: p.sourceType, sourceId: p.sourceId });
+      var srcLine = h('div', 'co-card-src' + (src.status === 'gone' ? ' is-gone' : ''));
+      srcLine.appendChild(h('span', '', src.status === 'gone'
+        ? src.text
+        : (src.status === 'done' ? '来源已完成 · ' + src.text : '来源仍在 · ' + src.text)));
+      card.appendChild(srcLine);
+
+      var acts = h('div', 'co-proposal-acts');
+      var okBtn = h('button', 'co-proposal-btn is-primary', '收进馆里');
+      okBtn.type = 'button';
+      okBtn.onclick = function () {
+        var r = Sleepy.weProposals ? Sleepy.weProposals.accept(p.id) : { ok: false };
+        if (r && r.ok) {
+          ctx.toast('已收进馆里', 'ok');
+          if (Sleepy.nav) Sleepy.nav.back();   /* 回门厅，onShow 重读见新藏品 */
+        } else if (r && (r.why === 'cancelled' || r.why === 'deleted')) {
+          ctx.toast('这条约定已经不在了，提议先留着', 'warn');
+          paintProposal(ctx);
+        } else if (r && r.why === 'already-accepted') {
+          if (Sleepy.nav) Sleepy.nav.back();
+        } else {
+          ctx.toast('暂时收不进来，稍后再试', 'warn');
+          paintProposal(ctx);
+        }
+      };
+      var noBtn = h('button', 'co-proposal-btn', '暂时不留');
+      noBtn.type = 'button';
+      noBtn.onclick = function () {
+        if (Sleepy.weProposals) Sleepy.weProposals.decline(p.id);
+        ctx.toast('先不留', 'ok');
+        paintProposal(ctx);
+      };
+      acts.appendChild(okBtn);
+      acts.appendChild(noBtn);
+      card.appendChild(acts);
+      shell.appendChild(card);
+    });
+
+    body.appendChild(shell);
+  }
+
+  Sleepy.register('collection-proposal', {
+    title: '待确认提议',
+    render: function (ctx) {
+      ctx.__paint = function () { paintProposal(ctx); };
+      paintProposal(ctx);
     },
     onShow: function (ctx) {
       if (ctx.__paint) ctx.__paint();

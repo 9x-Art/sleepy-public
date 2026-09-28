@@ -594,6 +594,8 @@
       note: '配置生图接口后才注入（[生图:描述]）' },
     { id: 'phone', slot: 'C04', name: '手机痕迹', kind: 'program', required: false,
       note: '岛里有手机的角色才有（[手机] 行搭载，0 新增调用）' },
+    { id: 'weproposal', slot: 'C04', name: '收藏提议', kind: 'program', required: false,
+      note: '当前岛有可提议的日程事件才注入（[收藏提议:事件id|分类|理由]，We 收藏馆 P2）' },
     /* 心声说明不再单独注入：引擎的输出协议（c05 卡）已经规定了 [WHISPER]，
        模块 E 的 replySpec 教的是旧 <心声> 写法 —— 两份同时进 prompt 会打架。 */
     { id: 'drop', slot: 'K03', name: '掉马事件', kind: 'program', required: false,
@@ -906,6 +908,34 @@
     return '';
   }
 
+  /* 收藏提议说明（We 收藏馆 P2）：当前岛有「可提议」的日程事件才注入。
+     候选闭集直接列出（id 来自真实日历），模型只能从里面挑 ——
+     伪造 id / 自报标题在程序侧 fail closed（page-we-proposal.js 的
+     validateSource：不存在的 / 已取消的 / 跨角色 / 跨岛的一律丢弃，
+     title 等字段以真实事件为准）。 */
+  function compileWeProposal(charId) {
+    var wp = Sleepy.weProposals;
+    if (!wp || !wp.candidatesOf) return '';
+    var cands = wp.candidatesOf(charId) || [];
+    if (!cands.length) return '';
+    var kindKeys = (Sleepy.weStore && Sleepy.weStore.KIND_LABEL) ?
+      Object.keys(Sleepy.weStore.KIND_LABEL) : [];
+    var lines = [
+      '【收藏提议】你最近的生活里，有一件你想和对方一起留下的约定。如果你想把某一件收进你们的收藏馆，',
+      '可以在回复最后另起一行写一条标签（最多一条；没有想提的就不写，禁止每轮硬凑）：',
+      '[收藏提议:事件id|分类|一句话理由]',
+      '规则：',
+      '- 事件id 只能从下面这份清单里选，一个字都不能编：'
+    ];
+    cands.forEach(function (e) {
+      lines.push('  · ' + e.id + '（' + String(e.title || '未命名') + '）');
+    });
+    lines.push('- 分类只能填一个：' + (kindKeys.join(' / ') || 'other'));
+    lines.push('- 理由一句话（30 字以内），用你的口吻说为什么想留下它；');
+    lines.push('- 对方看不到标签文字本身，只会收到一张「待确认」的卡片，收不收由对方决定，你不用追问结果。');
+    return lines.join('\n');
+  }
+
   /* K04 世界书：这层之前只有录入和浏览，从没进过 prompt（体检发现的断线）。
      召回规则（从简，向量召回后置）：
      · 书：enabled 的全局书 + 挂在当前角色（或其大号）身上的个人书
@@ -1057,6 +1087,7 @@
         case 'pat': pushSlot(def, cardBody('pat')); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
+        case 'weproposal': pushSlot(def, compileWeProposal(charId)); break;
         case 'phone': pushSlot(def, compilePhoneDelta(charId)); break;
         case 'drop': pushSlot(def, compileDrop(charId)); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
