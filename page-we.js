@@ -26,6 +26,14 @@
    空态 / 错误态全覆盖，绝不写假数据；空态文案用 We 语境。
    新增样式统一 we- 前缀，与 JS 一起维护（见 style.css 末尾追加段）。
 
+   —— 三页导航（weNav，2026-09-28 实施单）——
+   We 空间三个主页面：首页('we') / 时光('we-time') / 收藏馆('collection')，
+   三处挂同一条 .we-tabbar（本文件导出 Sleepy.weNav.mount，幂等）。
+   切 Tab 走 Sleepy.nav.replace：栈深不变、浏览器历史用 replaceState 原地替换
+   （见 app.js），反复切换不涨返回栈，按一次返回就退出 We。
+   二级页（collection-item / collection-proposal）不挂底栏，返回回实际来源页。
+   新增「＋」是动作不是第四页：复用 openAddDrawer（可访问名称「记一条共同记录」）。
+
    —— 视觉结构对齐（编辑式排版，参照 We 首页视觉 Demo v1）——
    只改表现层，数据闭环不动。结构语言：
      · 封面 hero：竖排小标 + 衬线大 wordmark，关系空间封面感，不是普通设置页
@@ -57,6 +65,78 @@
   }
 
   function arr(v) { return Array.isArray(v) ? v : []; }
+
+  /* ============================ 三页共享底栏（weNav） ============================
+     We 空间三个主页面（首页 'we' / 时光 'we-time' / 收藏馆 'collection'）
+     挂同一条 .we-tabbar：同一风格、同一行为、当前项高亮。
+     布局借 .page.has-tabbar 的通用机制（style.css）：滚动交给 .app-body，
+     底栏是 .page-inner 里的文档流兄弟（flex:none 常驻）——
+     不 fixed 到 #phone，也不碰宿主浏览器底部。
+     二级页（collection-item / collection-proposal）不挂它，返回回实际来源页。 */
+
+  var WE_TABS = [
+    { id: 'we', name: '首页' },
+    { id: 'we-time', name: '时光' },
+    { id: 'collection', name: '收藏馆' }
+  ];
+
+  /* 挂底栏（幂等）：render 可能因 applyParams 重跑，条已挂过就只更新高亮。
+     onShow / 切岛重画只清 ctx.body，不会把 bar 删掉，也不会长出第二份。 */
+  function mountBar(ctx, activeId) {
+    var inner = ctx.el.querySelector('.page-inner');
+    if (!inner) return;
+    ctx.el.classList.add('has-tabbar');
+    var bar = inner.querySelector('.we-tabbar');
+    if (!bar) {
+      bar = h('nav', 'we-tabbar');
+      bar.setAttribute('aria-label', 'We 导航');
+      WE_TABS.forEach(function (t) {
+        var b = h('button', 'we-tab');
+        b.type = 'button';
+        b.appendChild(h('span', 'we-tab-tx', t.name));
+        b.appendChild(h('i', 'we-tab-line'));       /* 选中项砖红短下划线 */
+        b.__weTabId = t.id;
+        b.addEventListener('click', function () { goTab(t.id); });
+        bar.appendChild(b);
+      });
+      /* ＋ 是动作不是第四个 Tab：复用同一个新增抽屉和保存出口 */
+      var add = h('button', 'we-tab-add');
+      add.type = 'button';
+      add.setAttribute('aria-label', '记一条共同记录');
+      add.title = '记一条共同记录';
+      add.innerHTML = ic('<path d="M12 6v12M6 12h12"/>', 20);
+      add.addEventListener('click', function () { openAddDrawer(ctx); });
+      bar.appendChild(add);
+      inner.appendChild(bar);
+    }
+    Array.prototype.forEach.call(bar.querySelectorAll('.we-tab'), function (b) {
+      var on = b.__weTabId === activeId;
+      b.classList.toggle('is-on', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
+  }
+
+  /* 主 Tab 切换：点当前页自己 = 无事发生（不重挂、不加历史、不触发写入）。
+     其余一律 nav.replace：栈深不变；浏览器历史由 app.js 的 replaceHist
+     原地替换（replaceState）—— 反复切换不涨返回栈，按一次返回就退出 We，
+     进入 We 之前的返回目标原样保留。目标已在栈里时（正文入口推进来的
+     深层场景）open 自己会退回那一层，app.js 的 replace 会补喊 onShow。 */
+  function goTab(id) {
+    var nav = Sleepy.nav;
+    if (!nav || nav.top() === id) return;
+    nav.replace(id);
+  }
+
+  /* 重画时保留滚动位置：切 Tab / 切岛都会整页重画（onShow 重读重画），
+     ctx.body（.app-body，has-tabbar 下的滚动容器）的 scrollTop 在
+     innerHTML 清空时会被钳到 0 —— 先存后还，普通切换不丢位置。 */
+  function paintKeepingScroll(ctx, build) {
+    var st = 0;
+    try { st = ctx.body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
+    build();
+    try { ctx.body.scrollTop = st; } catch (e) { /* 同上 */ }
+  }
 
   /* ============================ weStore（weEntries） ============================
      唯一出口。不复制聊天全文 / 图片本体 —— 只存引用：
@@ -324,7 +404,11 @@
         weAdd(rec);
         close();
         ctx.toast('已记下', 'ok');
-        paint(ctx);
+        /* 刷新交给宿主页自己的 onShow（ctx.refresh）—— 底栏把抽屉带到了
+           三个主页面，谁打开的谁刷自己（首页 paint / 时光重聚合 / 门厅重读）。
+           挂 ctx.body 之外的抽屉不依赖页面 DOM，重画不影响它（已 close）。 */
+        if (typeof ctx.refresh === 'function') ctx.refresh();
+        else paint(ctx);
       } catch (e) {
         ctx.toast('保存失败：' + (e && e.message || e), 'err');
       }
@@ -372,6 +456,8 @@
 
   function paint(ctx) {
     var body = ctx.body;
+    var __st = 0;
+    try { __st = body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
     body.innerHTML = '';
     /* 纸张氛围容器：暖浅米白纸底 + 纸纹，通到屏缘。所有内容铺在纸上。 */
     var out = h('div', 'we-page-paper');
@@ -532,6 +618,8 @@
     } else {
       eSec.appendChild(h('p', 'we-none we-diy-hint', '先记下一件小事，We 会替你留着。'));
     }
+    /* 重画不丢滚动位置（切 Tab / 切岛 onShow 重画是常态） */
+    try { body.scrollTop = __st; } catch (e) { /* 桩环境没有 */ }
   }
 
   /* ---- 数据预取辅助 ---- */
@@ -711,12 +799,417 @@
     return box;
   }
 
+  /* ============================ 时光（v1） ============================
+     定位：按时间浏览当前关系内**真实发生过**的共同经历。
+       · 首页「最近时光」是摘要（lifeFeed.recent，TA 视角、有窗口上限）
+       · 时光页是可继续浏览的列表（user 视角、全量回溯、分批渲染）
+       · 收藏馆是主动选择留下的藏品
+     三个来源（全部是已接入的真实读取出口，只读聚合，不建新仓库）：
+       ① 朋友圈   momentsTab.all() + core.scoped，关系内（TA 发的 +
+                  当前号我发的），**user 视角三道闸 canSee(m, user.id,'user')**
+                  —— 红线：「user 能看到的」≠「char 能看到的」。这里给
+                  user 看，方向必须用 canSee，不能用 canCharSee。
+       ② 日记     diary.list()（scoped）：TA 写的挂他名下；我写的按号隔离
+                  （缺 userId 的旧数据 **fail closed** —— 拿不准归属的私密
+                  内容不进时光，与记忆可见性同纪律；日记页全量显示不受影响）；
+                  待补（status='pending'）还没发生，不冒充经历，排除。
+       ③ 共同记录 weStore.list()（scoped）：已入馆的记录。P2 的 pending
+                  提议在 weProposals 表里，天然混不进来。
+     不收日历：lifeFeed 只接入「即将到来」（未来约定留在首页「接下来」）；
+     已发生事件的 user 可见性口径（TA 的 private 事件不能泄进来）需要
+     单独拍板，v1 不擅自扩 —— 见回交「尚未覆盖的来源」。
+     排序：真实发生时间倒序；缺时间的排最后、显示「时间不详」，不编日期。
+     去重：type + id（真实稳定来源标识），不靠标题合并。
+     分页：三张表都是本机小表，全量读、按 TIME_BATCH 分批渲染，
+     「加载更多」真实可继续 —— 不只给最近几条就冒充全量。 */
+
+  var TIME_BATCH = 30;
+
+  /* at 归一：number 直用；日期字符串（char 提议入馆的 startAt、
+     个别日记字符串时间戳）走 Date.parse；解析不出一律 0 →「时间不详」，
+     绝不产生纪元日期。排序 / 分组 / 展示全部吃这个出口，不各算各的。
+     时区：本地 Date = user 设备系统时区 —— 这正是运行时时区唯一出口
+     （calendar.runtimeTzOf）在「未选择时区」档的语义，两边天然一致；
+     char 显式时区只影响「他那边」的注入行（timeFacts），不改写 user
+     浏览自己经历的分组（历史条目原始时间语义不动）。 */
+  function atNum(v) {
+    if (typeof v === 'number') return isNaN(v) ? 0 : v;
+    if (!v) return 0;
+    var n = new Date(v).getTime();
+    return isNaN(n) ? 0 : n;
+  }
+
+  /* ---- 来源可见性判据（唯一出口）----
+     列表读取（timeItems）与点击复核（jumpToSource → sourceStatus）
+     共用同一组判据，改一处两边同步。上下文（角色/号）缺失、权限接口
+     缺失一律 fail closed。 */
+
+  /* 这条朋友圈在当前关系（char × user）下 user 能不能看 */
+  function momentVisibleToUser(m, char, user) {
+    if (!m || m.status === 'deleted') return false;
+    if (!char || !user) return false;
+    if (!(m.characterId === char.id || m.maskId === user.id)) return false;  /* 关系内 */
+    var M = Sleepy.momentsTab;
+    return !!(M && M.canSee && M.canSee(m, user.id, 'user'));
+  }
+
+  /* 这篇日记在当前关系（char × user）下 user 能不能看 */
+  function diaryVisibleToUser(d, char, user) {
+    if (!d || !d.content || d.status === 'pending') return false;  /* 待补 ≠ 已发生 */
+    if (!char || !user) return false;
+    if ((d.author || 'user') === 'char') {
+      return d.charId === char.id;        /* TA 写的：挂他名下才收（归属即权限） */
+    }
+    /* 我写的按号隔离。缺 userId 的旧数据 fail closed（见文件头注释）。 */
+    return !!d.userId && d.userId === user.id;
+  }
+
+  /* 点击复核用：按 src+id 实时回源，返回 'ok' | 'gone' | 'denied'。
+     gone = 记录本身没了；denied = 还在但当前上下文 / 权限看不到。 */
+  function sourceStatus(src, id) {
+    var char = core.activeCharOnIsland();
+    var user = core.activeUserOnIsland();
+    if (!char || !user) return 'denied';                    /* 上下文缺失 fail closed */
+    if (src === 'moments') {
+      var M = Sleepy.momentsTab;
+      if (!M || !M.byId || !M.canSee) return 'denied';      /* 权限接口缺失 fail closed */
+      var m = M.byId(id);
+      if (!m || m.status === 'deleted') return 'gone';
+      if (m.sandboxId && core.scopeId() && m.sandboxId !== core.scopeId()) return 'gone';
+      return momentVisibleToUser(m, char, user) ? 'ok' : 'denied';
+    }
+    if (src === 'diary') {
+      var D = Sleepy.diary;
+      if (!D || !D.list) return 'denied';
+      var d = findDiary(id);
+      if (!d) return 'gone';
+      if (d.sandboxId && core.scopeId() && d.sandboxId !== core.scopeId()) return 'gone';
+      return diaryVisibleToUser(d, char, user) ? 'ok' : 'denied';
+    }
+    if (src === 'we') {
+      var cs = Sleepy.collectionStore;
+      if (!cs || !cs.findInScope) return 'denied';
+      return cs.findInScope(id) ? 'ok' : 'gone';
+    }
+    return 'denied';
+  }
+
+  /* 时光聚合。char / user 显式传入（指针卫兵在 paintTime 解析一次），
+     纯读、无副作用 —— 冒烟直接调它做隔离断言。可见性判据与点击复核
+     共用（见上），不另写一份。 */
+  function timeItems(char, user) {
+    var out = [];
+    var seen = {};
+
+    /* ① 朋友圈（user 视角三道闸，判据共用） */
+    var M = Sleepy.momentsTab;
+    if (M && M.all && M.canSee && char && user) {
+      core.scoped(arr(M.all())).forEach(function (m) {
+        if (!momentVisibleToUser(m, char, user)) return;
+        if (seen['moments:' + m.id]) return;
+        seen['moments:' + m.id] = true;
+        var mine = !!m.maskId && m.maskId === user.id;
+        out.push({
+          src: 'moments', id: m.id, at: atNum(m.at),
+          title: String(m.text || '').trim() || (m.mediaId ? '（发了一张图）' : '（无文字）'),
+          note: '', mediaId: m.mediaId || null, mine: mine
+        });
+      });
+    }
+
+    /* ② 日记（user 视角，判据共用） */
+    var D = Sleepy.diary;
+    if (D && D.list && char && user) {
+      D.list().forEach(function (d) {
+        if (!diaryVisibleToUser(d, char, user)) return;
+        if (seen['diary:' + d.id]) return;
+        seen['diary:' + d.id] = true;
+        out.push({
+          src: 'diary', id: d.id, at: atNum(d.timestamp),
+          title: String(d.content).replace(/\s+/g, ' ').trim().slice(0, 60),
+          note: '', mediaId: d.mediaId || null,
+          mine: (d.author || 'user') !== 'char'
+        });
+      });
+    }
+
+    /* ③ 共同记录。边界 = 岛（scoped）：同岛多角色 / 多账号共享全部记录，
+       refCharId / refUserId 只是归属档案不是 ACL —— 这是产品既定口径
+       （weEntries 主表 scoped 过滤），不擅自收紧成关系过滤。 */
+    if (Sleepy.weStore && Sleepy.weStore.list) {
+      Sleepy.weStore.list().forEach(function (en) {
+        if (!en || !en.id) return;
+        if (seen['we:' + en.id]) return;
+        seen['we:' + en.id] = true;
+        out.push({
+          src: 'we', id: en.id, at: atNum(en.at),
+          title: en.title || '（未命名）',
+          note: en.note || '',
+          kind: kindOf(en), createdBy: en.createdBy || 'user',
+          mine: en.createdBy !== 'char'
+        });
+      });
+    }
+
+    /* at 已全部归一为数字（无效 = 0），排序不会出 NaN */
+    return out.sort(function (a, b) { return b.at - a.at; });
+  }
+
+  function timeSrcLabel(it) {
+    if (it.src === 'moments') return '朋友圈';
+    if (it.src === 'diary') return it.mine ? '日记 · 我写的' : '日记 · TA 写的';
+    return it.kind && it.kind !== 'other'
+      ? '共同记录 · ' + (WE_KIND_LABEL[it.kind] || '其他')
+      : '共同记录';
+  }
+
+  function dayKeyOf(at) {
+    if (!at) return '';
+    var d = new Date(at);
+    if (isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+  }
+
+  function dayLabelOf(at) {
+    if (!at) return '时间不详';           /* 0 / 缺失 → 时间不详，绝不出纪元日期 */
+    var d = new Date(at);
+    if (isNaN(d.getTime())) return '时间不详';
+    var y = d.getFullYear() === new Date().getFullYear() ? '' : d.getFullYear() + '年';
+    return y + (d.getMonth() + 1) + '月' + d.getDate() + '日 · 周' +
+      '日一二三四五六'.charAt(d.getDay());
+  }
+
+  /* 缩略图只铺真实可用的图（mediaId → objectURL），挂不上就留纸纹底。
+     **必须在卡片挂进 DOM 之后才启动加载**（appendBatch 里调）——
+     构建期 isConnected 必为假，提前调等于永远不发请求。
+     异步回来检查 isConnected：重画 / 切岛 / 切上下文后旧节点已摘除，
+     旧响应改不到新视图；图不在了保持纸纹占位。 */
+  function fillThumb(img, mediaId) {
+    if (!mediaId || !img.isConnected || !Sleepy.media || !Sleepy.media.url) return;
+    Sleepy.media.url(mediaId).then(function (u) {
+      if (u && img.isConnected) {
+        img.style.backgroundImage = 'url(' + u + ')';
+        img.classList.add('has-img');
+      }
+    })['catch'](function () { /* 图不在了就保持纸纹位 */ });
+  }
+
+  function timeItemEl(ctx, it) {
+    var card = h('button', 'co-card we-time-item');
+    card.type = 'button';
+    var head = h('div', 'co-card-head');
+    head.appendChild(h('span', 'co-card-title', it.title || '（无标题）'));
+    head.appendChild(h('span', 'co-card-day', it.at ? fmtDay(it.at) : '时间不详'));
+    card.appendChild(head);
+    if (it.note) card.appendChild(h('p', 'co-card-note', it.note));
+    var foot = h('div', 'co-card-src');
+    foot.appendChild(h('span', '', timeSrcLabel(it)));
+    card.appendChild(foot);
+    if (it.mediaId) card.appendChild(h('i', 'we-time-thumb'));
+    /* 点击：先复核来源还在 / 还可看（删除 / 失效 / 无权都在这里拦下，
+       明确反馈不跳页），再打开对应页面**定位到那条记录**，不是只把
+       来源 App 首页打开。 */
+    card.addEventListener('click', function () { jumpToSource(ctx, it); });
+    return card;
+  }
+
+  /* 时光 → 来源定位。momentCard / diary 列表条目带 data-id（表现层挂钩）。
+     点击时按 sourceStatus 实时复核当前岛 / 角色 / 号 / 状态 / 权限：
+       gone   → 「已经不在了」类反馈；
+       denied → 「当前身份看不到」类反馈；
+     都停在原地不跳页。通过才打开对应页面并定位到那条记录。 */
+  function jumpToSource(ctx, it) {
+    var nav = Sleepy.nav;
+    if (!nav) return;
+    var st = sourceStatus(it.src, it.id);
+    if (st !== 'ok') {
+      ctx.toast(st === 'gone' ? sourceGoneText(it.src) : '现在这个身份看不到它了', 'warn');
+      return;
+    }
+    if (it.src === 'moments') {
+      nav.open('moments', { tab: 'moments', jump: it.id });
+      /* 这次「来源浏览」给朋友圈页打标记：返回守卫放行一次，
+         返回键 / 浏览器返回直接回时光；桌面进入的聊天语义不变。 */
+      var tc = nav.topCtx();
+      if (tc) tc.__weSourceJump = true;
+      revealInPage(ctx, 'moments', it.id);
+    } else if (it.src === 'diary') {
+      nav.open('diary');
+      revealInPage(ctx, 'diary', it.id);
+    } else {
+      nav.open('collection-item', { id: it.id });
+    }
+  }
+
+  function sourceGoneText(src) {
+    return src === 'moments' ? '这条动态已经不在了'
+      : src === 'diary' ? '这一篇已经撕掉了'
+      : '这件记录已经不在馆里';
+  }
+
+  function findDiary(id) {
+    var D = Sleepy.diary;
+    if (!D || !D.list) return null;
+    var hit = null;
+    D.list().forEach(function (d) { if (d && d.id === id) hit = d; });
+    return hit;
+  }
+
+  /* 在目标页里定位那条记录：手动算滚动容器内偏移（工作记忆红线：
+     scrollIntoView 居中会把整个 .page 搬走），滚动后短高亮。
+     目标还没渲染（页面实例是旧的、列表还是上一份 DOM）→ 借目标页
+     现有的 rebuild / refresh 重画一次再找；两次都找不到**明确反馈**，
+     不静默失败。 */
+  function revealInPage(ctx, pageId, id, retried) {
+    var page = document.querySelector('.page[data-page="' + pageId + '"]');
+    var el = page && page.querySelector('[data-id="' + id + '"]');
+    if (!el && !retried) {
+      var tc = Sleepy.nav.topCtx();
+      var fn = tc && (tc.rebuild || tc.refresh);
+      if (fn) { try { fn.call(tc); } catch (e) { /* 重画失败按找不到处理 */ } }
+      return revealInPage(ctx, pageId, id, true);
+    }
+    if (!el) {
+      ctx.toast('没定位到那条，它可能刚被移走', 'warn');
+      return;
+    }
+    var c = el.parentNode;
+    while (c && c !== document.body) {
+      var cs = null;
+      try { cs = getComputedStyle(c); } catch (e) { /* 桩环境 */ }
+      if (cs && /(auto|scroll)/.test(cs.overflowY) &&
+          c.scrollHeight > c.clientHeight && c.clientHeight > 0) break;
+      c = c.parentNode;
+    }
+    if (c && c !== document.body) {
+      try {
+        var delta = el.getBoundingClientRect().top -
+          c.getBoundingClientRect().top - 90;
+        c.scrollTop += delta;
+      } catch (e) { /* 桩环境没有 */ }
+    }
+    el.classList.add('we-jump-flash');
+    setTimeout(function () { el.classList.remove('we-jump-flash'); }, 1600);
+  }
+
+  function paintTime(ctx) {
+    ctx.setTitle('时光');
+    ctx.setActions([]);
+
+    var body = ctx.body;
+    var __st = 0;
+    try { __st = body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
+    body.innerHTML = '';
+    var paper = h('div', 'we-page-paper we-time-page');
+    body.appendChild(paper);
+
+    /* 关系上下文守卫（与首页同款：We 不自猜岛） */
+    var sb = core.activeSandbox();
+    if (!sb) {
+      paper.appendChild(empty(ctx, '还没有当前世界',
+        '先在桌面选一间房，再回来看时光。'));
+      return;
+    }
+    var user = core.activeUserOnIsland();
+    var char = core.activeCharOnIsland();
+    if (!user || !char) {
+      paper.appendChild(empty(ctx, '这里还没有确定的关系对象',
+        '在这座岛先选好角色和你自己，时光才会开始。'));
+      return;
+    }
+
+    /* 批次展开状态带「岛|角色|号」签名。**先重置再画**：换岛 / 换角色 /
+       换号（哪怕目标上下文是空态）一律不继承上一个上下文的展开进度。 */
+    var memo = ctx.__weTimeMemo;
+    var sig = sb.id + '|' + char.id + '|' + user.id;
+    if (!memo || memo.sig !== sig) memo = ctx.__weTimeMemo = { sig: sig, shown: TIME_BATCH };
+
+    /* 聚合失败 ≠ 空数据：给重试，不把失败当空态 */
+    var items;
+    try {
+      items = timeItems(char, user);
+    } catch (e) {
+      var errBox = h('div', 'empty co-empty');
+      errBox.appendChild(h('div', 'empty-paper'));
+      errBox.appendChild(h('p', 'empty-text', '时光暂时读不出来'));
+      var retry = ui.button('重试', 'primary');
+      retry.type = 'button';
+      retry.addEventListener('click', function () { paintTime(ctx); });
+      errBox.appendChild(retry);
+      paper.appendChild(errBox);
+      return;
+    }
+
+    /* 封面：与首页 / 门厅同一套视觉语言 */
+    var cover = h('div', 'we-cover we-time-cover');
+    cover.appendChild(h('div', 'we-cover-vert', 'OUR TIME'));
+    var ct = h('div', 'we-cover-txt');
+    ct.appendChild(h('div', 'we-cover-kicker', 'W E · 时 光'));
+    ct.appendChild(h('div', 'we-cover-title',
+      String(char.name || '未命名').trim() + ' × ' + core.labelOfUser(user, '我')));
+    ct.appendChild(h('div', 'we-cover-sub', '一起经过的，都替你们记着。'));
+    cover.appendChild(ct);
+    paper.appendChild(cover);
+
+    if (!items.length) {
+      var box = h('div', 'empty co-empty');
+      box.appendChild(h('div', 'empty-paper'));
+      box.appendChild(h('p', 'empty-text', '这里还没有一起经过的片段。'));
+      var addBtn = ui.button('记一条', 'primary');
+      addBtn.type = 'button';
+      addBtn.addEventListener('click', function () { openAddDrawer(ctx); });
+      box.appendChild(addBtn);
+      paper.appendChild(box);
+      return;
+    }
+
+    /* 按日分组 + 分批渲染：target 取 memo 记住的展开条数（数据减少时
+       钳位到现有条数），先把足够条目铺出来，最后再恢复滚动位置 ——
+       位置才有东西可落。 */
+    var target = Math.min(Math.max(memo.shown, TIME_BATCH), items.length);
+
+    var listEl = h('div', 'we-time-list');
+    paper.appendChild(listEl);
+    var shown = 0;
+    var lastDay = null;
+
+    function appendBatch() {
+      var end = Math.min(shown + TIME_BATCH, items.length);
+      for (var i = shown; i < end; i++) {
+        var it = items[i];
+        var dk = dayKeyOf(it.at);
+        if (dk !== lastDay) {
+          listEl.appendChild(h('div', 'we-time-day', dayLabelOf(it.at)));
+          lastDay = dk;
+        }
+        var card = timeItemEl(ctx, it);
+        listEl.appendChild(card);
+        /* 缩略图在卡片**挂进 DOM 之后**才启动加载（见 fillThumb 注释） */
+        var th = card.querySelector('.we-time-thumb');
+        if (th) fillThumb(th, it.mediaId);
+      }
+      shown = end;
+      memo.shown = shown;
+      var oldMore = listEl.querySelector('.we-time-more');
+      if (oldMore && oldMore.parentNode) oldMore.parentNode.removeChild(oldMore);
+      if (shown < items.length) {
+        var moreBtn = h('button', 'we-time-more', '还有更早的 · 加载更多');
+        moreBtn.type = 'button';
+        moreBtn.addEventListener('click', appendBatch);
+        listEl.appendChild(moreBtn);
+      }
+    }
+    while (shown < target) appendBatch();
+
+    try { body.scrollTop = __st; } catch (e) { /* 桩环境没有 */ }
+  }
+
   /* ============================ 注册 ============================ */
 
   Sleepy.register('we', {
     title: 'We',
 
-    /* render 只跑一次（页面缓存复用）：建好首屏 + 顶栏动作。 */
+    /* render 只跑一次（页面缓存复用）：建好首屏 + 顶栏动作 + 三页底栏。 */
     render: function (ctx) {
       ctx.setTitle('We');
       ctx.setActions([{
@@ -724,6 +1217,7 @@
         svg: ic('<path d="M12 6.5v11M6.5 12h11"/>', 18),
         onClick: function () { openAddDrawer(ctx); }
       }]);
+      mountBar(ctx, 'we');
       paint(ctx);
     },
 
@@ -731,6 +1225,18 @@
        topCtx().refresh() 时的落点，保证切岛后数据不串线。 */
     onShow: function (ctx) {
       paint(ctx);
+    }
+  });
+
+  /* 时光（v1）：user 视角的已发生共同经历，只读聚合三个真实来源 */
+  Sleepy.register('we-time', {
+    title: '时光',
+    render: function (ctx) {
+      mountBar(ctx, 'we-time');
+      paintTime(ctx);
+    },
+    onShow: function (ctx) {
+      paintTime(ctx);
     }
   });
 
@@ -742,6 +1248,24 @@
     KINDS: WE_KINDS,
     kindOf: kindOf,
     KIND_LABEL: WE_KIND_LABEL
+  };
+
+  /* 三页共享底栏 + 新增抽屉的对外出口：'collection' 门厅（page-collection.js）
+     也挂这条 bar；冒烟核对 TABS / 幂等挂载。openAdd = 同一个新增抽屉。 */
+  Sleepy.weNav = {
+    mount: mountBar,
+    openAdd: openAddDrawer,
+    TABS: WE_TABS
+  };
+
+  /* 时光聚合的只读出口（冒烟做隔离 / 排序 / 排除断言用，不承担写入）。
+     sourceStatus / dayLabel 一并导出：点击复核状态机与时间展示的测试锚点。 */
+  Sleepy.weTime = {
+    collect: timeItems,
+    BATCH: TIME_BATCH,
+    sourceStatus: sourceStatus,
+    dayLabel: dayLabelOf,
+    atNum: atNum
   };
 
 })(window);

@@ -183,10 +183,15 @@
    v2（2026-09-17）：配色整体换成纯白 + 玻璃，视觉全表重写。
    版本号必须跟着跳 —— 不跳的话老用户装到的主屏应用会一直用
    缓存里那份旧 style.css，看到的是上一版米白皮肤。
+
+   v124（2026-09-28）：We 三页导航（we-tabbar：首页 / 时光 / 收藏馆 + ＋
+   新增动作）与时光页 v1（page-we.js 新增 'we-time' 聚合页、
+   page-collection.js 门厅挂 bar、app.js replace 走 replaceState）。
+   → 必须跳版本：老用户缓存里的 page-we.js / style.css / app.js 都变了。
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v123';
+var CACHE = 'sleepy-v127';
 var CORE = [
   './',
   './index.html',

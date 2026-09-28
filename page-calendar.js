@@ -691,9 +691,18 @@
       g2.card.appendChild(culWrap);
       body.appendChild(g2.wrap);
 
-      /* ---- 时区：事件存绝对时间，页面按这里的时区显示（§4.3）---- */
-      var g3 = group('常驻时区', '事件按这个时区显示。第一版不处理旅行轨迹。');
+      /* ---- 时区：事件存绝对时间，页面按这里的时区显示（§4.3）----
+         空值（跟随角色）= 不固定，运行时 runtimeTzOf 解析：
+         角色常驻地点 → 设备系统时区；没选时区不许假装成某个具体城市。 */
+      var g3 = group('常驻时区', '事件按这个时区显示。选「跟随角色」就先按他档案里的时区，他也没设才按这台设备。第一版不处理旅行轨迹。');
       var sel = h('select', 'cal-select');
+      var oFollow = document.createElement('option');
+      oFollow.value = '';
+      /* 空值 = 摘掉日历覆盖：先跟角色的常驻地点，角色也没设才跟设备。
+         文案把两级说清，别让人以为空值=这台设备。 */
+      oFollow.textContent = '跟随角色（未设置则跟随设备）';
+      if (!cfg.timezone) oFollow.selected = true;
+      sel.appendChild(oFollow);
       DATA().TIMEZONES.forEach(function (tz) {
         var o = document.createElement('option');
         o.value = tz;
@@ -701,6 +710,14 @@
         if (cfg.timezone === tz) o.selected = true;
         sel.appendChild(o);
       });
+      /* char 带了列表外的显式时区（比如设备时区落盘前旧数据），补一个选项如实显示 */
+      if (cfg.timezone && sel.value !== cfg.timezone) {
+        var oExtra = document.createElement('option');
+        oExtra.value = cfg.timezone;
+        oExtra.textContent = cfg.timezone;
+        oExtra.selected = true;
+        sel.appendChild(oExtra);
+      }
       sel.addEventListener('change', function () {
         c.saveCfg(ch.id, { timezone: sel.value });
         ctx.toast('时区改了', 'ok');

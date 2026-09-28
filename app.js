@@ -392,7 +392,7 @@
     }
   }
 
-  function open(id, params) {
+  function open(id, params, opts) {
     if (!id) return;
 
     /* 桌面是 bootHome 挂的**常驻底层**，不在页面栈里（见 bootHome）。
@@ -434,7 +434,12 @@
     void entry.el.offsetWidth;
     pageStack.push(entry);
     relayout();
-    histPush(id);
+    /* replaceHist：调用方（replace）明确要求**原地替换**历史 ——
+       用 replaceState 顶掉当前条目而不是再 push 一条。
+       We 三页底栏切 Tab 靠它：反复切换不涨浏览器返回栈，
+       按一次返回就能退出 We（不会沿着一串 Tab 切换记录倒放）。 */
+    if (opts && opts.replaceHist) histReplace(id);
+    else histPush(id);
     safeCall(entry.def && entry.def.onShow, entry.ctx);
   }
 
@@ -478,9 +483,21 @@
     relayout();
   }
 
-  /* 用当前层替换栈顶（删除后跳转之类），不做来回动画 */
+  /* 用当前层替换栈顶（删除后跳转之类），不做来回动画。
+     We 三页底栏（weNav）也用它切主 Tab —— 语义是「这层换成那层」，
+     返回栈深度不变（见 replaceHist）。 */
   function replace(id, params) {
+    /* 目标是紧邻的下一层（正文 push 的详情 / 门厅再「切」回去）→
+       语义上就是**返回**：closeTop 弹一层并自己发 history.back()，
+       历史不涨也不留死条目。绝不能走下面的 pop+open+histReplace ——
+       那会把当前条目原地改写成和前一条一模一样，返回键第一下就成了死的。
+       （closeTop 的 popstate 是异步的，但这里后续没有同 tick 的 open，
+       不踩「closeTop 再 open 被追上」的坑。） */
+    var below = pageStack.length >= 2 ? pageStack[pageStack.length - 2] : null;
+    if (below && below.id === id) { closeTop(); return; }
+
     var e = pageStack.pop();
+    var popped = !!e;
     if (e) {
       safeCall(e.def && e.def.onHide, e.ctx);
       e.el.style.transition = 'none';
@@ -488,7 +505,21 @@
       void e.el.offsetWidth;
       e.el.style.transition = '';
     }
-    open(id, params);
+    var before = pageStack.length;
+    open(id, params, { replaceHist: popped });
+    /* open 的 push 分支自己会喊 onShow（栈加深一层就是它）；
+       但「目标已经在栈里」的分支只 closeTo、**不喊 onShow** ——
+       从深层 Tab 切回下层页面时会看到旧数据。replace 语义上等于
+       「切到这一页」，这种情况在这里补喊一次（幂等：onShow 是重读重画）。
+       histReplace 只在 closeTo 一层都没弹时补（history.back 未落地，
+       此时不能动历史）；弹过层的深分支维持原状（罕见路径）。 */
+    if (pageStack.length <= before) {
+      var top = current();
+      if (top) {
+        safeCall(top.def && top.def.onShow, top.ctx);
+        if (popped && pageStack.length === before) histReplace(top.id);
+      }
+    }
   }
 
   /* history.back() 是异步的：popstate 回来之前 pageStack 不会变。
@@ -534,6 +565,13 @@
     if (!histOK) return;
     try {
       global.history.pushState({ sleepy: id, depth: pageStack.length }, '', '#' + id);
+    } catch (e) { histOK = false; }
+  }
+  /* 原地替换当前历史条目（不新增）。与 histPush 同构，只是 replaceState。 */
+  function histReplace(id) {
+    if (!histOK) return;
+    try {
+      global.history.replaceState({ sleepy: id, depth: pageStack.length }, '', '#' + id);
     } catch (e) { histOK = false; }
   }
   function histDrop() {

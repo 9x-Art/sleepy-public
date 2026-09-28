@@ -195,6 +195,12 @@
     var inner = ctx.el.querySelector('.page-inner');
     ctx.el.classList.add('has-tabbar');
 
+    /* applyParams 重渲染（We 跳转带不同 jump 参数会走到这里）时旧的
+       panel/bar 还挂在原处 —— 先摘干净再挂，不许出双份底栏 / 双面板。 */
+    Array.prototype.forEach.call(
+      inner.querySelectorAll('.tab-panel,.tab-bar'),
+      function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
+
     var panel = h('div', 'tab-panel');
     ctx.body.appendChild(panel);
 
@@ -255,6 +261,13 @@
        （用户：「要返回聊天列表页」）。现在三个入口统一挂。 */
     ctx.__backGuard = function () {
       if (cur === 'chat') return false;
+      /* We 时光跳进朋友圈的这次「来源浏览」：返回直接回时光（放行默认
+         返回、弹掉本页），不走「先切回消息 tab」的聊天语义 —— 只豁免
+         这一次（标记即摘）。桌面进入聊天 App 的返回语义完全不变。 */
+      if (ctx.__weSourceJump && cur === 'moments') {
+        ctx.__weSourceJump = false;
+        return false;
+      }
       go('chat');
       return true;
     };
@@ -287,7 +300,10 @@
   Object.keys(ENTRY).forEach(function (id) {
     var def = {
       title: tabMeta(ENTRY[id]).name,
-      render: function (ctx) { mount(ctx, ENTRY[id]); },
+      /* params.tab 可指定落在哪个 tab —— We 时光跳转朋友圈时带
+         { tab:'moments', jump:id }，保证落进朋友圈那一屏再定位，
+         不会停在用户上次离开的 tab 上。 */
+      render: function (ctx) { mount(ctx, (ctx.params && ctx.params.tab) || ENTRY[id]); },
       /* 回到这一页时刷当前那一屏 —— 切完马甲回来、从对话详情返回、
          从配置台改完东西回来，都靠它。 */
       onShow: function (ctx) { if (ctx.__appRefresh) ctx.__appRefresh(); }

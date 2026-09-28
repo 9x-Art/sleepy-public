@@ -129,7 +129,10 @@
   var DEFAULT_CFG = {
     region: 'CN',              /* 法定日历：CN/JP/KR/US/UK/NONE */
     cultures: ['cn', 'intl'],  /* 文化节日多选（总纲 §4.2） */
-    timezone: 'Asia/Shanghai',
+    timezone: '',              /* ⚠️ 默认「未选择」—— 运行时按 runtimeTzOf 解析
+                                  （char 显式 > 设备系统时区 > UTC 兜底），
+                                  不许再写死 Asia/Shanghai：那会让没选时区的
+                                  char 永远被当成住在上海（2026-09-28 收尾）。 */
     scheduleOn: false,         /* 生成角色日程。§6.4：默认关闭，由 user 主动开 */
     anniversaryPerm: 'ask',    /* off | ask | auto，默认「保存前询问」§10.3 */
     remindOn: true             /* 本地提醒开关 */
@@ -150,13 +153,60 @@
     return null;
   }
 
+  /* ---------------------------- 运行时时区（唯一出口） ----------------------------
+
+     2026-09-28 收尾定稿（用户）：
+       ① 日历显式覆盖（calConfigs 那条记录里 timezone 非空）
+       ② char 常驻地点（char.timezone 非空）
+       ③ 都没选 → **跟随 user 设备系统时区**（Intl resolvedOptions，
+          运行时展示规则，绝不回写进 char 资料 —— 红线）
+       ④ 设备时区读不到 / 解析失败 → 项目安全兜底 'UTC'
+     不允许「未选择」默认成上海 / UTC / 任何开发环境时区（③④之外没有路）。
+     level 如实暴露，测试和降级提示都从这里拿，不许自己再推一遍。 */
+  function deviceTimezone() {
+    if (typeof Intl === 'undefined' || !Intl.DateTimeFormat ||
+        !Intl.DateTimeFormat.prototype || !Intl.DateTimeFormat.prototype.resolvedOptions) return '';
+    try {
+      var tz = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return typeof tz === 'string' && tz ? tz : '';
+    } catch (e) { return ''; }
+  }
+  /* 时区串能不能真的用（旧数据可能存了无效/过期 IANA 名）。
+     校验用「显式 timeZone」的 formatter —— 与 tzNow 同一条路，结果一致；
+     带记忆：无效值反复查不贵，但月历每格都会过这里。 */
+  var TZ_USABLE_MEMO = {};
+  function tzUsable(tz) {
+    if (!tz) return false;
+    if (TZ_USABLE_MEMO[tz] !== undefined) return TZ_USABLE_MEMO[tz];
+    var ok = true;
+    if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+      try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); }
+      catch (e) { ok = false; }
+    }
+    TZ_USABLE_MEMO[tz] = ok;
+    return ok;
+  }
+  function runtimeTzOf(charId) {
+    /* 每级都先验有效性：无效的显式值（旧数据写坏）不采用，直接落到下一级 ——
+       宁可跟设备，也不要拿着坏串假装是时区。
+       ⚠️ 旧版本自动写入的 'Asia/Shanghai' 不做批量清洗 —— 无法区分
+       「自动默认」和「用户主动选的上海」；旧角色想跟设备，
+       在设置里明确选一次「跟随设备」即可。 */
+    var rec = cfgRec(charId);
+    if (rec && rec.timezone && tzUsable(rec.timezone)) return { tz: String(rec.timezone), level: 'calendar' };
+    var p = placeOf(charId);
+    if (p.timezone && tzUsable(p.timezone)) return { tz: p.timezone, level: 'char' };
+    var dev = deviceTimezone();
+    if (dev) return { tz: dev, level: 'device' };
+    return { tz: 'UTC', level: 'fallback' };
+  }
+
   function cfgOf(charId) {
     var out = {};
     for (var k in DEFAULT_CFG) if (DEFAULT_CFG.hasOwnProperty(k)) out[k] = DEFAULT_CFG[k];
     /* ① 常驻地点 */
     var place = placeOf(charId);
     if (place.region) out.region = place.region;
-    if (place.timezone) out.timezone = place.timezone;
     /* ② 日历里的覆盖 */
     var rec = cfgRec(charId);
     if (rec) {
@@ -164,6 +214,10 @@
         if (rec[k2] !== undefined && rec[k2] !== null) out[k2] = rec[k2];
       }
     }
+    /* 时区不走上面的复制/覆盖 —— 运行时解析是唯一出口（runtimeTzOf）：
+       显式两级（日历覆盖 > char 常驻地点）都没选时跟随设备系统时区，
+       最后才落到 UTC 兜底。 */
+    out.timezone = runtimeTzOf(charId).tz;
     if (!out.cultures) out.cultures = [];
     return out;
   }
@@ -670,16 +724,18 @@
     var at = opts.at ? new Date(opts.at) : new Date();
     var cfg = cfgOf(charId);
     var place = placeOf(charId);
+    var rt = runtimeTzOf(charId);          /* 兜底级别：calendar/char/device/fallback */
     var mine = tzNow(cfg.timezone, at);
     var local = localNow(at);
-    if (!mine) mine = { iso: local.iso, time: local.time, exact: true };
+    if (!mine) mine = { iso: local.iso, time: local.time, exact: true };  /* 第 5 层：连近似表都没有 → 设备本地时间 */
 
     var lines = [];
     var where = place.city || (DATA.TZ_LABELS && DATA.TZ_LABELS[cfg.timezone]) || cfg.timezone || '';
     lines.push('【时间事实】现在的真实时间以这里为准；不要自己编日期，也不要把它当台词念出来。');
     lines.push('你的现在：' + cnDate(mine.iso) + ' ' + mine.time +
       (where ? '（' + where + (cfg.timezone ? ' · ' + cfg.timezone : '') + '）' : '') +
-      (mine.exact ? '' : '，约'));
+      (mine.exact ? '' : '，约') +
+      (rt.level === 'fallback' ? '（时区未知，暂按 UTC 计）' : ''));
 
     /* 时差：只在真的不同的时候说一句。同一天且同一时刻就不占篇幅。 */
     if (mine.iso !== local.iso) {
@@ -799,6 +855,8 @@
     langOf: langOf, KEY_TRANS: KEY_TRANS, translateOn: translateOn, setTranslateOn: setTranslateOn,
     /* 时间事实（喂给模型的那一段） */
     tzNow: tzNow, localNow: localNow, cnDate: cnDate, timeFacts: timeFacts,
+    /* 运行时时区唯一出口 + 兜底级别（2026-09-28 收尾；测试也从这里锚） */
+    deviceTimezone: deviceTimezone, runtimeTzOf: runtimeTzOf,
     /* 公共日期 */
     dayInfo: dayInfo, monthGrid: monthGrid, buildYear: buildYear,
     /* 事件 */

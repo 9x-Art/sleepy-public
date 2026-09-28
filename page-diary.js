@@ -454,6 +454,7 @@
           var written = d.status !== 'pending';
           var dt = new Date(d.timestamp || Date.now());
           var item = h('article', 'dia-paper dia-paper-' + (PAPERS.some(function (p) { return p.id === cur.paper; }) ? cur.paper : 'ruled'));
+          item.dataset.id = d.id || '';   /* 时光跳转定位用（weNav revealInPage） */
 
           var meta = h('div', 'dia-meta');
           var stamp = h('span', 'dia-stamp',

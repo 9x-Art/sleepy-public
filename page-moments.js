@@ -956,6 +956,7 @@
       ? { kind: 'char', refId: m.characterId, name: m.name || '某人' }
       : { kind: 'mask', refId: m.maskId, name: m.name || '我' };
     var card = h('div', 'moment-item');
+    card.setAttribute('data-id', m.id || '');   /* 时光跳转定位用（weNav revealInPage） */
 
     card.appendChild(avatarEl(author, 'mo-avatar'));
 

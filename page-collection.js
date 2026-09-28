@@ -182,12 +182,16 @@
     return null;
   }
 
-  /* ------------------------- 门厅 ------------------------- */
+  /* ------------------------- 门厅 -------------------------
+     门厅是 We 三主页面之一：挂共享底栏（weNav，收藏馆项高亮）。
+     详情 / 提议是二级页，不挂 bar —— 返回回实际来源页。 */
   function paintHall(ctx) {
     ctx.setTitle('收藏馆');
     ctx.setActions([]);
 
     var body = ctx.body;
+    var __st = 0;
+    try { __st = body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
     body.innerHTML = '';
     var shell = h('div', 'we-page-paper co-page co-hall');
 
@@ -278,6 +282,8 @@
     shell.appendChild(section);
 
     body.appendChild(shell);
+    /* 重画不丢滚动位置（三页 Tab 切换 / 切岛 onShow 重画是常态） */
+    try { body.scrollTop = __st; } catch (e) { /* 桩环境没有 */ }
   }
 
   function countKind(list, k) {
@@ -408,6 +414,8 @@
   Sleepy.register('collection', {
     title: '收藏馆',
     render: function (ctx) {
+      /* 门厅是 We 三主页面之一：挂共享底栏（收藏馆项高亮，幂等） */
+      if (Sleepy.weNav && Sleepy.weNav.mount) Sleepy.weNav.mount(ctx, 'collection');
       ctx.__paint = function () { paintHallSafe(ctx); };
       paintHallSafe(ctx);
     },

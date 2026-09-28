@@ -1222,14 +1222,27 @@
         return { el: wrap, t: t, offset: offset };
       }
       var c1 = clock('你（' + (s.user ? s.user.city || '这里' : '这里') + '）', 0);
-      var c2 = clock((s.char ? s.name : '对方') + '（' + ((s.char && s.char.city) || '那边') + '）', 7);
+      /* 「他那边」不再写死 +7（demo 遗留）—— 按运行时时区唯一出口解析：
+         char 显式时区 > 设备系统时区（calendar.runtimeTzOf）；拿不到就两边同钟。 */
+      var hisTz = '';
+      try {
+        var cal = Sleepy.calendar;
+        if (cal && cal.runtimeTzOf && s.char && s.char.id) hisTz = cal.runtimeTzOf(s.char.id).tz;
+      } catch (e) { hisTz = ''; }
+      var c2 = clock((s.char ? s.name : '对方') + '（' + ((s.char && s.char.city) || '那边') + '）', 0);
+      c2.__tz = hisTz;
       mine.appendChild(c1.el);
       his.appendChild(c2.el);
 
       function tick() {
         [c1, c2].forEach(function (c) {
-          var now = new Date(Date.now() + c.offset * 3600000);
           function p(n) { return n < 10 ? '0' + n : '' + n; }
+          if (c.__tz && Sleepy.calendar && Sleepy.calendar.tzNow) {
+            /* 显式/解析出的时区：直接按它显示（含夏令时，走 Intl） */
+            var t = Sleepy.calendar.tzNow(c.__tz);
+            if (t && t.time) { c.t.textContent = t.time; return; }
+          }
+          var now = new Date(Date.now() + c.offset * 3600000);
           c.t.textContent = p(now.getHours()) + ':' + p(now.getMinutes());
         });
       }

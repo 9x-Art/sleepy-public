@@ -8673,6 +8673,259 @@ t('收藏馆：We 首页入口指向 collection，不再开 favorites', () => {
   return { 入口改collection: true, favorites原样: true };
 });
 
+/* ======================== We 三页导航 + 时光 v1（2026-09-28） ========================
+   证据：weNav / weTime 出口、三主页面挂 bar（二级页不挂）、
+   replace 切 Tab 不涨栈、时光聚合的 user 视角闸门与身份/岛屿隔离。 */
+
+t('We 导航：weNav / weTime 出口齐全，we-time 已注册，三主页面挂 bar、二级页不挂', () => {
+  if (!S.weNav || typeof S.weNav.mount !== 'function') throw new Error('S.weNav.mount 缺失');
+  if (typeof S.weNav.openAdd !== 'function') throw new Error('weNav.openAdd 缺失（＋ 必须复用同一抽屉）');
+  const ids = S.weNav.TABS.map((x) => x.id).join(',');
+  if (ids !== 'we,we-time,collection') throw new Error('weNav.TABS 不对：' + ids);
+  if (!S.registered()['we-time']) throw new Error('we-time 页未注册');
+  if (!S.weTime || typeof S.weTime.collect !== 'function') throw new Error('weTime.collect 缺失');
+
+  const weSrc = fs.readFileSync(path.join(ROOT, 'page-we.js'), 'utf8');
+  const coSrc = fs.readFileSync(path.join(ROOT, 'page-collection.js'), 'utf8');
+  if (weSrc.indexOf("aria-label', '记一条共同记录'") < 0) throw new Error('＋ 按钮缺可访问名称「记一条共同记录」');
+  if ((weSrc.match(/mountBar\(ctx, '/g) || []).length < 2) throw new Error('we / we-time 没都挂 bar');
+  if (coSrc.indexOf("weNav.mount(ctx, 'collection')") < 0) throw new Error('收藏馆门厅未挂 bar');
+  if (coSrc.indexOf("weNav.mount(ctx, 'collection-item')") >= 0 ||
+      coSrc.indexOf("weNav.mount(ctx, 'collection-proposal')") >= 0) {
+    throw new Error('二级页（详情/提议）不该挂主底栏');
+  }
+  /* 来源定位跳转的挂钩：moments/diary 条目带 data-id，聊天壳支持 params.tab，
+     跳转带预检（jumpToSource）与定位（revealInPage），不许只开来源 App 首页 */
+  const moSrc = fs.readFileSync(path.join(ROOT, 'page-moments.js'), 'utf8');
+  const diaSrc = fs.readFileSync(path.join(ROOT, 'page-diary.js'), 'utf8');
+  const appTabSrc = fs.readFileSync(path.join(ROOT, 'page-app.js'), 'utf8');
+  if (moSrc.indexOf("card.setAttribute('data-id', m.id || '')") < 0) throw new Error('朋友圈条目缺 data-id（时光定位靠它）');
+  if (diaSrc.indexOf('item.dataset.id = d.id') < 0) throw new Error('日记条目缺 data-id');
+  if (appTabSrc.indexOf('ctx.params && ctx.params.tab') < 0) throw new Error('聊天壳不支持 params.tab（跳转会停在旧 tab）');
+  if (weSrc.indexOf('jumpToSource') < 0 || weSrc.indexOf('revealInPage') < 0) throw new Error('时光缺来源预检/定位跳转');
+  if (weSrc.indexOf("nav.open('moments')") >= 0) throw new Error('朋友圈跳转仍是只开 App 首页（应带 tab+jump 定位）');
+  return { tabs: ids, weTime注册: true, 门厅挂bar: true, 定位挂钩: true };
+});
+
+t('We 导航：page-group 线下交接的 nav.replace 路径语义不变', () => {
+  const g = fs.readFileSync(path.join(ROOT, 'page-group.js'), 'utf8');
+  if (g.indexOf('Sleepy.nav.replace(pid, params)') < 0) throw new Error('线下交接换页调用点变了');
+  const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  /* replace 仍是「弹栈顶 + open」：目标不在栈内照常 push（onShow 照旧触发），
+     只是历史从 pushState 变 replaceState（少一条死条目，返回键直达上一页）。 */
+  if (appSrc.indexOf('opts.replaceHist') < 0 || appSrc.indexOf('function histReplace') < 0) {
+    throw new Error('app.js replace 的历史替换机制丢了');
+  }
+  if (appSrc.indexOf('pageStack.length <= before') < 0) {
+    throw new Error('replace 的 onShow 补发没了（目标在栈内切回会看到旧数据）');
+  }
+  return { 调用点不变: true, 历史替换: true, onShow补发: true };
+});
+
+t('We 导航：主 Tab 切换走 replace —— 栈深不变、点当前页不动、历史原地替换', () => {
+  const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  if (appSrc.indexOf('function histReplace') < 0 || appSrc.indexOf('opts.replaceHist') < 0) {
+    throw new Error('app.js replace 没有走 replaceState（切 Tab 会涨浏览器返回栈）');
+  }
+  const pageWeSrc = fs.readFileSync(path.join(ROOT, 'page-we.js'), 'utf8');
+  if (pageWeSrc.indexOf('nav.replace(id)') < 0) throw new Error('goTab 没走 nav.replace');
+
+  /* 行为断言（桩下 histOK=false → 纯内存栈，正好看栈深与栈顶） */
+  S.nav.closeAll();
+  S.nav.open('we');
+  if (S.nav.depth() !== 1 || S.nav.top() !== 'we') throw new Error('打开 we 栈不对');
+  S.nav.replace('we-time');
+  if (S.nav.depth() !== 1 || S.nav.top() !== 'we-time') throw new Error('replace 后栈深/栈顶不对');
+  S.nav.replace('we-time');                       /* 点当前 Tab：不重挂不涨栈 */
+  if (S.nav.depth() !== 1 || S.nav.top() !== 'we-time') throw new Error('点当前 Tab 竟然动栈');
+  S.nav.replace('collection');
+  if (S.nav.depth() !== 1 || S.nav.top() !== 'collection') throw new Error('切到收藏馆不对');
+  S.nav.open('collection-item', { id: 'x' });     /* 二级页照常压栈 */
+  if (S.nav.depth() !== 2 || S.nav.top() !== 'collection-item') throw new Error('详情应压栈');
+  S.nav.closeAll();
+  return { replace栈深不变: true, 点当前不动: true, 详情照常压栈: true };
+});
+
+t('时光 v1：聚合朋友圈/日记/共同记录；user 视角闸门 + 号隔离 + 岛隔离 + 倒序去重', () => {
+  const A = S.core.createSandbox('isle', '时甲');
+  const B = S.core.createSandbox('isle', '时乙');
+  const m1 = S.core.upsertChar({ name: '时大号', kind: 'main' }).id;
+  const m2 = S.core.upsertChar({ name: '时二号', kind: 'main' }).id;
+  const u1 = S.core.upsertUser({ name: '时我' }).id;
+  const u2 = S.core.upsertUser({ name: '时我二' }).id;
+  S.core.setSandboxChars(A.id, [m1, m2]);
+  S.core.setSandboxMasks(A.id, [u1, u2]);
+
+  const now = Date.now();
+  S.core.setActiveSandbox(A.id);
+  S.core.switchTo(m1, u1);
+  /* 日记写入：page-diary 未导出 addEntry（只给读），这里按 addEntry 的
+     真实落盘口径播种 —— tagScope 盖当前房章 + char/user 归属字段。 */
+  const seedDiary = (rec) => {
+    const it = S.core.tagScope({
+      id: 'dsmoke-' + Math.random().toString(36).slice(2, 9),
+      content: rec.content,
+      timestamp: rec.timestamp,
+      status: rec.status || 'written',
+      author: rec.author || 'user'
+    });
+    if (rec.charId) it.charId = rec.charId;
+    else it.userId = rec.userId || null;
+    const all = S.store.get('diaries');
+    all.push(it);
+    S.store.set('diaries', all);
+    return it;
+  };
+  S.momentsTab.add({ text: '我发的一条', at: now - 1000 });
+  S.momentsTab.add({ text: 'TA 发的一条', at: now - 2000, characterId: m1 });
+  S.momentsTab.add({ text: 'TA 的私密一条', at: now - 2500, characterId: m1, privacy: 'self' });
+  seedDiary({ content: 'TA 写的日记', author: 'char', charId: m1, timestamp: now - 3000 });
+  seedDiary({ content: '我写的日记', timestamp: now - 4000, userId: u1 });
+  seedDiary({ content: '待补的草稿', timestamp: now - 5000, status: 'pending', userId: u1 });
+  seedDiary({ content: '二号角色自己的日记', author: 'char', charId: m2, timestamp: now - 6000 });
+  seedDiary({ content: '老日记没有归属', timestamp: now - 8000 });   /* 缺 userId 的旧数据 */
+  const weE = S.weStore.add({ title: '一起看过海', note: '码头吹风', at: now - 1500 }, A.id);
+
+  /* u2 发一条动态、写一篇日记（号隔离的「别人那边」） */
+  S.core.switchTo(m1, u2);
+  S.momentsTab.add({ text: '二号的动态', at: now - 800 });
+  seedDiary({ content: '二号写的日记', timestamp: now - 900, userId: u2 });
+
+  /* 乙岛来一条（岛隔离的「别岛」） */
+  S.core.setActiveSandbox(B.id);
+  S.core.switchTo(m1, u1);
+  seedDiary({ content: '乙岛的日记', timestamp: now - 700, userId: u1 });
+
+  /* 回甲岛 u1 视角聚合 */
+  S.core.setActiveSandbox(A.id);
+  S.core.switchTo(m1, u1);
+  const char1 = S.core.findChar(m1);
+  const user1 = S.core.findUser(u1);
+  const items = S.weTime.collect(char1, user1);
+  const texts = items.map((x) => x.title).join('|');
+  const has = (t) => texts.indexOf(t) >= 0;
+  const no = (t) => texts.indexOf(t) < 0;
+
+  if (!has('我发的一条') || !has('TA 发的一条')) throw new Error('朋友圈来源缺失：' + texts);
+  if (!has('TA 写的日记') || !has('我写的日记')) throw new Error('日记来源缺失：' + texts);
+  if (!has('一起看过海')) throw new Error('共同记录缺失：' + texts);
+  if (!no('TA 的私密一条')) throw new Error('TA 的私密动态漏进了 user 视角');
+  if (!no('二号的动态') || !no('二号写的日记')) throw new Error('别的号的记录串进来了');
+  if (!no('二号角色自己的日记')) throw new Error('别的角色的日记串进来了');
+  if (!no('待补的草稿')) throw new Error('pending 草稿冒充已发生经历');
+  if (!no('乙岛的日记')) throw new Error('别岛的日记串进来了');
+  if (!no('老日记没有归属')) throw new Error('缺 userId 的旧日记越权进了时光（应 fail closed）');
+
+  /* 排序：真实时间倒序；来源标识齐 */
+  for (let i = 1; i < items.length; i++) {
+    if ((items[i - 1].at || 0) < (items[i].at || 0)) throw new Error('排序不是倒序');
+  }
+  const kinds = new Set(items.map((x) => x.src));
+  if (!kinds.has('moments') || !kinds.has('diary') || !kinds.has('we')) {
+    throw new Error('来源类型不全：' + [...kinds].join(','));
+  }
+  if (!items.every((x) => x.id)) throw new Error('条目缺稳定 id（去重/跳转靠它）');
+
+  /* 切号（u2）：u1 的日记/动态不得出现；乙岛记录也不得出现 */
+  S.core.switchTo(m1, u2);
+  const items2 = S.weTime.collect(char1, S.core.findUser(u2));
+  const texts2 = items2.map((x) => x.title).join('|');
+  if (texts2.indexOf('我写的日记') >= 0 || texts2.indexOf('我发的一条') >= 0) {
+    throw new Error('切号后旧号摘要还在（串身份）：' + texts2);
+  }
+
+  /* 切岛：甲岛全部消失 */
+  S.core.setActiveSandbox(B.id);
+  const items3 = S.weTime.collect(char1, S.core.findUser(u1));
+  if (items3.some((x) => x.id === weE.id)) throw new Error('切岛后甲岛共同记录还在（串岛）');
+  S.core.setActiveSandbox(A.id);
+  S.core.switchTo(m1, u1);
+  return { 聚合三源: true, 视角闸门: true, 号隔离: true, 岛隔离: true, 倒序: true, pending排除: true };
+});
+
+t('时光 v1.1：时间归一（无 NaN/纪元）+ weEntries 岛级共享边界 + sourceStatus 状态机', () => {
+  if (typeof S.weTime.dayLabel !== 'function' || typeof S.weTime.sourceStatus !== 'function' ||
+      typeof S.weTime.atNum !== 'function') {
+    throw new Error('weTime.dayLabel / sourceStatus / atNum 未导出');
+  }
+  /* 时间展示：0 / NaN / 无效字符串 → 「时间不详」，绝无纪元日期 */
+  if (S.weTime.dayLabel(0) !== '时间不详') throw new Error('dayLabel(0) 应为时间不详，实际=' + S.weTime.dayLabel(0));
+  if (S.weTime.dayLabel(NaN) !== '时间不详') throw new Error('dayLabel(NaN) 应为时间不详');
+  if (S.weTime.dayLabel('garbage') !== '时间不详') throw new Error('dayLabel(无效字符串) 应为时间不详');
+  if (S.weTime.dayLabel(Date.now()).indexOf('月') < 0) throw new Error('dayLabel(有效) 不是日期');
+  if (S.weTime.atNum('2026-09-01') <= 0 || S.weTime.atNum('garbage') !== 0 || S.weTime.atNum(null) !== 0) {
+    throw new Error('atNum 归一不对');
+  }
+
+  /* 两个角色 → 必须群岛（孤岛 setSandboxChars 会被静默拒绝，charIds 留空） */
+  const A = S.core.createSandbox('archipelago', '时丙');
+  const m1 = S.core.upsertChar({ name: '丙大号', kind: 'main' }).id;
+  const m2 = S.core.upsertChar({ name: '丙二号', kind: 'main' }).id;
+  const u1 = S.core.upsertUser({ name: '丙我' }).id;
+  S.core.setSandboxChars(A.id, [m1, m2]);
+  S.core.setSandboxMasks(A.id, [u1]);
+  S.core.setActiveSandbox(A.id);
+  S.core.switchTo(m1, u1);
+
+  const seedDiary = (rec) => {
+    const it = S.core.tagScope({
+      id: 'dt1-' + Math.random().toString(36).slice(2, 9),
+      content: rec.content, timestamp: rec.timestamp,
+      status: rec.status || 'written', author: rec.author || 'user'
+    });
+    if (rec.charId) it.charId = rec.charId; else it.userId = rec.userId || null;
+    const all = S.store.get('diaries'); all.push(it); S.store.set('diaries', all);
+    return it;
+  };
+  seedDiary({ content: '字符串时间的日记', timestamp: '2026-09-01T10:00:00', userId: u1 });
+  seedDiary({ content: '无效时间的日记', timestamp: 'garbage', userId: u1 });
+  S.momentsTab.add({ text: '字符串时间的动态', characterId: m1, at: '2026-08-01T08:00:00' });
+
+  const char1 = S.core.findChar(m1);
+  const user1 = S.core.findUser(u1);
+  const items = S.weTime.collect(char1, user1);
+  if (!items.every((x) => typeof x.at === 'number' && !isNaN(x.at))) {
+    throw new Error('聚合结果存在非数字 / NaN 时间（归一失败）');
+  }
+  for (let i = 1; i < items.length; i++) {
+    if (items[i - 1].at < items[i].at) throw new Error('排序乱了（时间归一失败）');
+  }
+  const bad = items.find((x) => x.title.indexOf('无效时间的日记') >= 0);
+  if (!bad || bad.at !== 0) throw new Error('无效时间应归一为 0（排最后）');
+  const strDiary = items.find((x) => x.title.indexOf('字符串时间的日记') >= 0);
+  if (!strDiary || strDiary.at <= 0) throw new Error('合法字符串时间应解析为时间戳');
+
+  /* weEntries 共享边界 = 岛（scoped）：同岛另一角色也可见。
+     core.scoped 的岛过滤不自动等于关系过滤 —— refCharId / refUserId 是
+     归属档案不是 ACL，这是产品既定口径，这里只证明边界，不改权限。 */
+  const e1 = S.weStore.add({ title: '丙岛共享记录', at: Date.now() - 100 }, A.id);
+  S.core.switchTo(m2, u1);
+  const items2 = S.weTime.collect(S.core.findChar(m2), S.core.findUser(u1));
+  if (!items2.some((x) => x.id === e1.id)) {
+    throw new Error('同岛另一角色看不到共同记录（边界应=岛，不应擅自收紧）');
+  }
+  S.core.switchTo(m1, u1);
+
+  /* sourceStatus 状态机：ok / gone / denied（上下文与接口缺失 fail closed） */
+  const stWe = S.weTime.sourceStatus('we', e1.id);
+  if (stWe !== 'ok') {
+    const sbNow = S.core.activeSandbox();
+    throw new Error('存在的记录应 ok，实际=' + stWe +
+      ' sb=' + JSON.stringify(sbNow && { id: sbNow.id, charIds: sbNow.charIds }) +
+      ' activeCharId=' + S.store.get('activeCharId') +
+      ' findChar=' + JSON.stringify(!!S.core.findChar(m1)) +
+      ' findInScope=' + JSON.stringify(!!S.collectionStore.findInScope(e1.id)));
+  }
+  if (S.weTime.sourceStatus('we', 'nope') !== 'gone') throw new Error('不存在的记录应 gone');
+  if (S.weTime.sourceStatus('moments', 'mo-nope') !== 'gone') throw new Error('不存在的动态应 gone');
+  const mv = S.momentsTab.add({ text: '丙岛私密动态', characterId: m1, privacy: 'self', at: Date.now() });
+  if (S.weTime.sourceStatus('moments', mv.id) !== 'denied') {
+    throw new Error('TA 私密动态对 user 应 denied');
+  }
+  S.momentsTab.remove(mv.id);
+  return { 时间归一: true, 无纪元: true, 岛级共享: true, 状态机: true };
+});
+
 t('新建表单页重开必须重画（freshOnOpen 静态护栏）', () => {
   const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
   if (appSrc.indexOf('freshOnOpen') < 0) throw new Error('app.js 没有 freshOnOpen 重开重画机制');

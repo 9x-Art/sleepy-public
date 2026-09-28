@@ -1,0 +1,1377 @@
+diff --git a/calendar-data.js b/calendar-data.js
+index 5813360..bfdd2f9 100644
+--- a/calendar-data.js
++++ b/calendar-data.js
+@@ -327,7 +327,8 @@
+     'America/New_York': -300,
+     'Europe/London': 0,
+     'Europe/Paris': 60,
+-    'Australia/Sydney': 600
++    'Australia/Sydney': 600,
++    'UTC': 0        /* runtimeTzOf 第 ④ 级安全兜底（无 Intl 时近似表也得接得住） */
+   };
+ 
+   Sleepy.calendarData = {
+diff --git a/calendar.js b/calendar.js
+index b6f472b..4f43485 100644
+--- a/calendar.js
++++ b/calendar.js
+@@ -129,7 +129,10 @@
+   var DEFAULT_CFG = {
+     region: 'CN',              /* 法定日历：CN/JP/KR/US/UK/NONE */
+     cultures: ['cn', 'intl'],  /* 文化节日多选（总纲 §4.2） */
+-    timezone: 'Asia/Shanghai',
++    timezone: '',              /* ⚠️ 默认「未选择」—— 运行时按 runtimeTzOf 解析
++                                  （char 显式 > 设备系统时区 > UTC 兜底），
++                                  不许再写死 Asia/Shanghai：那会让没选时区的
++                                  char 永远被当成住在上海（2026-09-28 收尾）。 */
+     scheduleOn: false,         /* 生成角色日程。§6.4：默认关闭，由 user 主动开 */
+     anniversaryPerm: 'ask',    /* off | ask | auto，默认「保存前询问」§10.3 */
+     remindOn: true             /* 本地提醒开关 */
+@@ -150,13 +153,60 @@
+     return null;
+   }
+ 
++  /* ---------------------------- 运行时时区（唯一出口） ----------------------------
++
++     2026-09-28 收尾定稿（用户）：
++       ① 日历显式覆盖（calConfigs 那条记录里 timezone 非空）
++       ② char 常驻地点（char.timezone 非空）
++       ③ 都没选 → **跟随 user 设备系统时区**（Intl resolvedOptions，
++          运行时展示规则，绝不回写进 char 资料 —— 红线）
++       ④ 设备时区读不到 / 解析失败 → 项目安全兜底 'UTC'
++     不允许「未选择」默认成上海 / UTC / 任何开发环境时区（③④之外没有路）。
++     level 如实暴露，测试和降级提示都从这里拿，不许自己再推一遍。 */
++  function deviceTimezone() {
++    if (typeof Intl === 'undefined' || !Intl.DateTimeFormat ||
++        !Intl.DateTimeFormat.prototype || !Intl.DateTimeFormat.prototype.resolvedOptions) return '';
++    try {
++      var tz = new Intl.DateTimeFormat().resolvedOptions().timeZone;
++      return typeof tz === 'string' && tz ? tz : '';
++    } catch (e) { return ''; }
++  }
++  /* 时区串能不能真的用（旧数据可能存了无效/过期 IANA 名）。
++     校验用「显式 timeZone」的 formatter —— 与 tzNow 同一条路，结果一致；
++     带记忆：无效值反复查不贵，但月历每格都会过这里。 */
++  var TZ_USABLE_MEMO = {};
++  function tzUsable(tz) {
++    if (!tz) return false;
++    if (TZ_USABLE_MEMO[tz] !== undefined) return TZ_USABLE_MEMO[tz];
++    var ok = true;
++    if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
++      try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); }
++      catch (e) { ok = false; }
++    }
++    TZ_USABLE_MEMO[tz] = ok;
++    return ok;
++  }
++  function runtimeTzOf(charId) {
++    /* 每级都先验有效性：无效的显式值（旧数据写坏）不采用，直接落到下一级 ——
++       宁可跟设备，也不要拿着坏串假装是时区。
++       ⚠️ 旧版本自动写入的 'Asia/Shanghai' 不做批量清洗 —— 无法区分
++       「自动默认」和「用户主动选的上海」；旧角色想跟设备，
++       在设置里明确选一次「跟随设备」即可。 */
++    var rec = cfgRec(charId);
++    if (rec && rec.timezone && tzUsable(rec.timezone)) return { tz: String(rec.timezone), level: 'calendar' };
++    var p = placeOf(charId);
++    if (p.timezone && tzUsable(p.timezone)) return { tz: p.timezone, level: 'char' };
++    var dev = deviceTimezone();
++    if (dev) return { tz: dev, level: 'device' };
++    return { tz: 'UTC', level: 'fallback' };
++  }
++
+   function cfgOf(charId) {
+     var out = {};
+     for (var k in DEFAULT_CFG) if (DEFAULT_CFG.hasOwnProperty(k)) out[k] = DEFAULT_CFG[k];
+     /* ① 常驻地点 */
+     var place = placeOf(charId);
+     if (place.region) out.region = place.region;
+-    if (place.timezone) out.timezone = place.timezone;
+     /* ② 日历里的覆盖 */
+     var rec = cfgRec(charId);
+     if (rec) {
+@@ -164,6 +214,10 @@
+         if (rec[k2] !== undefined && rec[k2] !== null) out[k2] = rec[k2];
+       }
+     }
++    /* 时区不走上面的复制/覆盖 —— 运行时解析是唯一出口（runtimeTzOf）：
++       显式两级（日历覆盖 > char 常驻地点）都没选时跟随设备系统时区，
++       最后才落到 UTC 兜底。 */
++    out.timezone = runtimeTzOf(charId).tz;
+     if (!out.cultures) out.cultures = [];
+     return out;
+   }
+@@ -670,16 +724,18 @@
+     var at = opts.at ? new Date(opts.at) : new Date();
+     var cfg = cfgOf(charId);
+     var place = placeOf(charId);
++    var rt = runtimeTzOf(charId);          /* 兜底级别：calendar/char/device/fallback */
+     var mine = tzNow(cfg.timezone, at);
+     var local = localNow(at);
+-    if (!mine) mine = { iso: local.iso, time: local.time, exact: true };
++    if (!mine) mine = { iso: local.iso, time: local.time, exact: true };  /* 第 5 层：连近似表都没有 → 设备本地时间 */
+ 
+     var lines = [];
+     var where = place.city || (DATA.TZ_LABELS && DATA.TZ_LABELS[cfg.timezone]) || cfg.timezone || '';
+     lines.push('【时间事实】现在的真实时间以这里为准；不要自己编日期，也不要把它当台词念出来。');
+     lines.push('你的现在：' + cnDate(mine.iso) + ' ' + mine.time +
+       (where ? '（' + where + (cfg.timezone ? ' · ' + cfg.timezone : '') + '）' : '') +
+-      (mine.exact ? '' : '，约'));
++      (mine.exact ? '' : '，约') +
++      (rt.level === 'fallback' ? '（时区未知，暂按 UTC 计）' : ''));
+ 
+     /* 时差：只在真的不同的时候说一句。同一天且同一时刻就不占篇幅。 */
+     if (mine.iso !== local.iso) {
+@@ -799,6 +855,8 @@
+     langOf: langOf, KEY_TRANS: KEY_TRANS, translateOn: translateOn, setTranslateOn: setTranslateOn,
+     /* 时间事实（喂给模型的那一段） */
+     tzNow: tzNow, localNow: localNow, cnDate: cnDate, timeFacts: timeFacts,
++    /* 运行时时区唯一出口 + 兜底级别（2026-09-28 收尾；测试也从这里锚） */
++    deviceTimezone: deviceTimezone, runtimeTzOf: runtimeTzOf,
+     /* 公共日期 */
+     dayInfo: dayInfo, monthGrid: monthGrid, buildYear: buildYear,
+     /* 事件 */
+diff --git a/page-calendar.js b/page-calendar.js
+index 9cec2db..860fb8c 100644
+--- a/page-calendar.js
++++ b/page-calendar.js
+@@ -691,9 +691,18 @@
+       g2.card.appendChild(culWrap);
+       body.appendChild(g2.wrap);
+ 
+-      /* ---- 时区：事件存绝对时间，页面按这里的时区显示（§4.3）---- */
+-      var g3 = group('常驻时区', '事件按这个时区显示。第一版不处理旅行轨迹。');
++      /* ---- 时区：事件存绝对时间，页面按这里的时区显示（§4.3）----
++         空值（跟随角色）= 不固定，运行时 runtimeTzOf 解析：
++         角色常驻地点 → 设备系统时区；没选时区不许假装成某个具体城市。 */
++      var g3 = group('常驻时区', '事件按这个时区显示。选「跟随角色」就先按他档案里的时区，他也没设才按这台设备。第一版不处理旅行轨迹。');
+       var sel = h('select', 'cal-select');
++      var oFollow = document.createElement('option');
++      oFollow.value = '';
++      /* 空值 = 摘掉日历覆盖：先跟角色的常驻地点，角色也没设才跟设备。
++         文案把两级说清，别让人以为空值=这台设备。 */
++      oFollow.textContent = '跟随角色（未设置则跟随设备）';
++      if (!cfg.timezone) oFollow.selected = true;
++      sel.appendChild(oFollow);
+       DATA().TIMEZONES.forEach(function (tz) {
+         var o = document.createElement('option');
+         o.value = tz;
+@@ -701,6 +710,14 @@
+         if (cfg.timezone === tz) o.selected = true;
+         sel.appendChild(o);
+       });
++      /* char 带了列表外的显式时区（比如设备时区落盘前旧数据），补一个选项如实显示 */
++      if (cfg.timezone && sel.value !== cfg.timezone) {
++        var oExtra = document.createElement('option');
++        oExtra.value = cfg.timezone;
++        oExtra.textContent = cfg.timezone;
++        oExtra.selected = true;
++        sel.appendChild(oExtra);
++      }
+       sel.addEventListener('change', function () {
+         c.saveCfg(ch.id, { timezone: sel.value });
+         ctx.toast('时区改了', 'ok');
+diff --git a/page-desktop.js b/page-desktop.js
+index ef01e34..ca2c85a 100644
+--- a/page-desktop.js
++++ b/page-desktop.js
+@@ -1222,14 +1222,27 @@
+         return { el: wrap, t: t, offset: offset };
+       }
+       var c1 = clock('你（' + (s.user ? s.user.city || '这里' : '这里') + '）', 0);
+-      var c2 = clock((s.char ? s.name : '对方') + '（' + ((s.char && s.char.city) || '那边') + '）', 7);
++      /* 「他那边」不再写死 +7（demo 遗留）—— 按运行时时区唯一出口解析：
++         char 显式时区 > 设备系统时区（calendar.runtimeTzOf）；拿不到就两边同钟。 */
++      var hisTz = '';
++      try {
++        var cal = Sleepy.calendar;
++        if (cal && cal.runtimeTzOf && s.char && s.char.id) hisTz = cal.runtimeTzOf(s.char.id).tz;
++      } catch (e) { hisTz = ''; }
++      var c2 = clock((s.char ? s.name : '对方') + '（' + ((s.char && s.char.city) || '那边') + '）', 0);
++      c2.__tz = hisTz;
+       mine.appendChild(c1.el);
+       his.appendChild(c2.el);
+ 
+       function tick() {
+         [c1, c2].forEach(function (c) {
+-          var now = new Date(Date.now() + c.offset * 3600000);
+           function p(n) { return n < 10 ? '0' + n : '' + n; }
++          if (c.__tz && Sleepy.calendar && Sleepy.calendar.tzNow) {
++            /* 显式/解析出的时区：直接按它显示（含夏令时，走 Intl） */
++            var t = Sleepy.calendar.tzNow(c.__tz);
++            if (t && t.time) { c.t.textContent = t.time; return; }
++          }
++          var now = new Date(Date.now() + c.offset * 3600000);
+           c.t.textContent = p(now.getHours()) + ':' + p(now.getMinutes());
+         });
+       }
+diff --git a/page-idcard.js b/page-idcard.js
+index d2793fc..4cf2374 100644
+--- a/page-idcard.js
++++ b/page-idcard.js
+@@ -875,11 +875,18 @@
+       var tzRow = h('div', 'set-field');
+       tzRow.appendChild(h('label', 'set-label', '常驻时区'));
+       var tzSel = h('select', 'set-select');
++      /* 「跟随设备」= 不固定时区：运行时按 runtimeTzOf 跟 user 设备系统时区走
++         （2026-09-28 收尾）。不许没选就默认 Asia/Shanghai —— 那是写死开发环境。 */
++      var tzFixed = existing ? String(existing.timezone || '').trim() : '';
++      var opFollow = h('option', '', '跟随设备');
++      opFollow.value = '';
++      if (!tzFixed) opFollow.selected = true;
++      tzSel.appendChild(opFollow);
+       var TZS = (Sleepy.calendarData && Sleepy.calendarData.TIMEZONES) || [];
+       TZS.forEach(function (tz) {
+         var op = h('option', '', tz);
+         op.value = tz;
+-        if (((existing ? existing.timezone : '') || 'Asia/Shanghai') === tz) op.selected = true;
++        if (tzFixed === tz) op.selected = true;
+         tzSel.appendChild(op);
+       });
+       tzRow.appendChild(tzSel);
+@@ -1143,9 +1150,11 @@
+           avatarMedia: f.avatar.getMedia(),
+           city: String(f.city.get() || '').trim(),
+           status: String(f.status.get() || '').trim() || (kind === 'sub' ? '小号' : '在线'),
+-          /* 常驻地点：日历/时区/以后的语言档都从这三个字段推 */
++          /* 常驻地点：日历/时区/以后的语言档都从这三个字段推。
++             timezone 留空（跟随设备）就存空串 —— 运行时 runtimeTzOf 会
++             解析成设备系统时区；绝不在这里补 Asia/Shanghai 兜底。 */
+           region: regionSel.value || 'CN',
+-          timezone: tzSel.value || 'Asia/Shanghai',
++          timezone: tzSel.value || '',
+           /* 国籍：**只存不用**（显示 + 文化默认），别拿它去推计算 */
+           nationality: String(f.nation.get() || '').trim(),
+           boundUserId: uSel.value || null,
+diff --git a/page-we.js b/page-we.js
+index 18ccaa8..8ad4d3a 100644
+--- a/page-we.js
++++ b/page-we.js
+@@ -26,6 +26,14 @@
+    空态 / 错误态全覆盖，绝不写假数据；空态文案用 We 语境。
+    新增样式统一 we- 前缀，与 JS 一起维护（见 style.css 末尾追加段）。
+ 
++   —— 三页导航（weNav，2026-09-28 实施单）——
++   We 空间三个主页面：首页('we') / 时光('we-time') / 收藏馆('collection')，
++   三处挂同一条 .we-tabbar（本文件导出 Sleepy.weNav.mount，幂等）。
++   切 Tab 走 Sleepy.nav.replace：栈深不变、浏览器历史用 replaceState 原地替换
++   （见 app.js），反复切换不涨返回栈，按一次返回就退出 We。
++   二级页（collection-item / collection-proposal）不挂底栏，返回回实际来源页。
++   新增「＋」是动作不是第四页：复用 openAddDrawer（可访问名称「记一条共同记录」）。
++
+    —— 视觉结构对齐（编辑式排版，参照 We 首页视觉 Demo v1）——
+    只改表现层，数据闭环不动。结构语言：
+      · 封面 hero：竖排小标 + 衬线大 wordmark，关系空间封面感，不是普通设置页
+@@ -58,6 +66,78 @@
+ 
+   function arr(v) { return Array.isArray(v) ? v : []; }
+ 
++  /* ============================ 三页共享底栏（weNav） ============================
++     We 空间三个主页面（首页 'we' / 时光 'we-time' / 收藏馆 'collection'）
++     挂同一条 .we-tabbar：同一风格、同一行为、当前项高亮。
++     布局借 .page.has-tabbar 的通用机制（style.css）：滚动交给 .app-body，
++     底栏是 .page-inner 里的文档流兄弟（flex:none 常驻）——
++     不 fixed 到 #phone，也不碰宿主浏览器底部。
++     二级页（collection-item / collection-proposal）不挂它，返回回实际来源页。 */
++
++  var WE_TABS = [
++    { id: 'we', name: '首页' },
++    { id: 'we-time', name: '时光' },
++    { id: 'collection', name: '收藏馆' }
++  ];
++
++  /* 挂底栏（幂等）：render 可能因 applyParams 重跑，条已挂过就只更新高亮。
++     onShow / 切岛重画只清 ctx.body，不会把 bar 删掉，也不会长出第二份。 */
++  function mountBar(ctx, activeId) {
++    var inner = ctx.el.querySelector('.page-inner');
++    if (!inner) return;
++    ctx.el.classList.add('has-tabbar');
++    var bar = inner.querySelector('.we-tabbar');
++    if (!bar) {
++      bar = h('nav', 'we-tabbar');
++      bar.setAttribute('aria-label', 'We 导航');
++      WE_TABS.forEach(function (t) {
++        var b = h('button', 'we-tab');
++        b.type = 'button';
++        b.appendChild(h('span', 'we-tab-tx', t.name));
++        b.appendChild(h('i', 'we-tab-line'));       /* 选中项砖红短下划线 */
++        b.__weTabId = t.id;
++        b.addEventListener('click', function () { goTab(t.id); });
++        bar.appendChild(b);
++      });
++      /* ＋ 是动作不是第四个 Tab：复用同一个新增抽屉和保存出口 */
++      var add = h('button', 'we-tab-add');
++      add.type = 'button';
++      add.setAttribute('aria-label', '记一条共同记录');
++      add.title = '记一条共同记录';
++      add.innerHTML = ic('<path d="M12 6v12M6 12h12"/>', 20);
++      add.addEventListener('click', function () { openAddDrawer(ctx); });
++      bar.appendChild(add);
++      inner.appendChild(bar);
++    }
++    Array.prototype.forEach.call(bar.querySelectorAll('.we-tab'), function (b) {
++      var on = b.__weTabId === activeId;
++      b.classList.toggle('is-on', on);
++      if (on) b.setAttribute('aria-current', 'page');
++      else b.removeAttribute('aria-current');
++    });
++  }
++
++  /* 主 Tab 切换：点当前页自己 = 无事发生（不重挂、不加历史、不触发写入）。
++     其余一律 nav.replace：栈深不变；浏览器历史由 app.js 的 replaceHist
++     原地替换（replaceState）—— 反复切换不涨返回栈，按一次返回就退出 We，
++     进入 We 之前的返回目标原样保留。目标已在栈里时（正文入口推进来的
++     深层场景）open 自己会退回那一层，app.js 的 replace 会补喊 onShow。 */
++  function goTab(id) {
++    var nav = Sleepy.nav;
++    if (!nav || nav.top() === id) return;
++    nav.replace(id);
++  }
++
++  /* 重画时保留滚动位置：切 Tab / 切岛都会整页重画（onShow 重读重画），
++     ctx.body（.app-body，has-tabbar 下的滚动容器）的 scrollTop 在
++     innerHTML 清空时会被钳到 0 —— 先存后还，普通切换不丢位置。 */
++  function paintKeepingScroll(ctx, build) {
++    var st = 0;
++    try { st = ctx.body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
++    build();
++    try { ctx.body.scrollTop = st; } catch (e) { /* 同上 */ }
++  }
++
+   /* ============================ weStore（weEntries） ============================
+      唯一出口。不复制聊天全文 / 图片本体 —— 只存引用：
+      sourceType / sourceId / sourceRef / refCharId / refUserId。
+@@ -324,7 +404,11 @@
+         weAdd(rec);
+         close();
+         ctx.toast('已记下', 'ok');
+-        paint(ctx);
++        /* 刷新交给宿主页自己的 onShow（ctx.refresh）—— 底栏把抽屉带到了
++           三个主页面，谁打开的谁刷自己（首页 paint / 时光重聚合 / 门厅重读）。
++           挂 ctx.body 之外的抽屉不依赖页面 DOM，重画不影响它（已 close）。 */
++        if (typeof ctx.refresh === 'function') ctx.refresh();
++        else paint(ctx);
+       } catch (e) {
+         ctx.toast('保存失败：' + (e && e.message || e), 'err');
+       }
+@@ -372,6 +456,8 @@
+ 
+   function paint(ctx) {
+     var body = ctx.body;
++    var __st = 0;
++    try { __st = body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
+     body.innerHTML = '';
+     /* 纸张氛围容器：暖浅米白纸底 + 纸纹，通到屏缘。所有内容铺在纸上。 */
+     var out = h('div', 'we-page-paper');
+@@ -532,6 +618,8 @@
+     } else {
+       eSec.appendChild(h('p', 'we-none we-diy-hint', '先记下一件小事，We 会替你留着。'));
+     }
++    /* 重画不丢滚动位置（切 Tab / 切岛 onShow 重画是常态） */
++    try { body.scrollTop = __st; } catch (e) { /* 桩环境没有 */ }
+   }
+ 
+   /* ---- 数据预取辅助 ---- */
+@@ -711,12 +799,417 @@
+     return box;
+   }
+ 
++  /* ============================ 时光（v1） ============================
++     定位：按时间浏览当前关系内**真实发生过**的共同经历。
++       · 首页「最近时光」是摘要（lifeFeed.recent，TA 视角、有窗口上限）
++       · 时光页是可继续浏览的列表（user 视角、全量回溯、分批渲染）
++       · 收藏馆是主动选择留下的藏品
++     三个来源（全部是已接入的真实读取出口，只读聚合，不建新仓库）：
++       ① 朋友圈   momentsTab.all() + core.scoped，关系内（TA 发的 +
++                  当前号我发的），**user 视角三道闸 canSee(m, user.id,'user')**
++                  —— 红线：「user 能看到的」≠「char 能看到的」。这里给
++                  user 看，方向必须用 canSee，不能用 canCharSee。
++       ② 日记     diary.list()（scoped）：TA 写的挂他名下；我写的按号隔离
++                  （缺 userId 的旧数据 **fail closed** —— 拿不准归属的私密
++                  内容不进时光，与记忆可见性同纪律；日记页全量显示不受影响）；
++                  待补（status='pending'）还没发生，不冒充经历，排除。
++       ③ 共同记录 weStore.list()（scoped）：已入馆的记录。P2 的 pending
++                  提议在 weProposals 表里，天然混不进来。
++     不收日历：lifeFeed 只接入「即将到来」（未来约定留在首页「接下来」）；
++     已发生事件的 user 可见性口径（TA 的 private 事件不能泄进来）需要
++     单独拍板，v1 不擅自扩 —— 见回交「尚未覆盖的来源」。
++     排序：真实发生时间倒序；缺时间的排最后、显示「时间不详」，不编日期。
++     去重：type + id（真实稳定来源标识），不靠标题合并。
++     分页：三张表都是本机小表，全量读、按 TIME_BATCH 分批渲染，
++     「加载更多」真实可继续 —— 不只给最近几条就冒充全量。 */
++
++  var TIME_BATCH = 30;
++
++  /* at 归一：number 直用；日期字符串（char 提议入馆的 startAt、
++     个别日记字符串时间戳）走 Date.parse；解析不出一律 0 →「时间不详」，
++     绝不产生纪元日期。排序 / 分组 / 展示全部吃这个出口，不各算各的。
++     时区：本地 Date = user 设备系统时区 —— 这正是运行时时区唯一出口
++     （calendar.runtimeTzOf）在「未选择时区」档的语义，两边天然一致；
++     char 显式时区只影响「他那边」的注入行（timeFacts），不改写 user
++     浏览自己经历的分组（历史条目原始时间语义不动）。 */
++  function atNum(v) {
++    if (typeof v === 'number') return isNaN(v) ? 0 : v;
++    if (!v) return 0;
++    var n = new Date(v).getTime();
++    return isNaN(n) ? 0 : n;
++  }
++
++  /* ---- 来源可见性判据（唯一出口）----
++     列表读取（timeItems）与点击复核（jumpToSource → sourceStatus）
++     共用同一组判据，改一处两边同步。上下文（角色/号）缺失、权限接口
++     缺失一律 fail closed。 */
++
++  /* 这条朋友圈在当前关系（char × user）下 user 能不能看 */
++  function momentVisibleToUser(m, char, user) {
++    if (!m || m.status === 'deleted') return false;
++    if (!char || !user) return false;
++    if (!(m.characterId === char.id || m.maskId === user.id)) return false;  /* 关系内 */
++    var M = Sleepy.momentsTab;
++    return !!(M && M.canSee && M.canSee(m, user.id, 'user'));
++  }
++
++  /* 这篇日记在当前关系（char × user）下 user 能不能看 */
++  function diaryVisibleToUser(d, char, user) {
++    if (!d || !d.content || d.status === 'pending') return false;  /* 待补 ≠ 已发生 */
++    if (!char || !user) return false;
++    if ((d.author || 'user') === 'char') {
++      return d.charId === char.id;        /* TA 写的：挂他名下才收（归属即权限） */
++    }
++    /* 我写的按号隔离。缺 userId 的旧数据 fail closed（见文件头注释）。 */
++    return !!d.userId && d.userId === user.id;
++  }
++
++  /* 点击复核用：按 src+id 实时回源，返回 'ok' | 'gone' | 'denied'。
++     gone = 记录本身没了；denied = 还在但当前上下文 / 权限看不到。 */
++  function sourceStatus(src, id) {
++    var char = core.activeCharOnIsland();
++    var user = core.activeUserOnIsland();
++    if (!char || !user) return 'denied';                    /* 上下文缺失 fail closed */
++    if (src === 'moments') {
++      var M = Sleepy.momentsTab;
++      if (!M || !M.byId || !M.canSee) return 'denied';      /* 权限接口缺失 fail closed */
++      var m = M.byId(id);
++      if (!m || m.status === 'deleted') return 'gone';
++      if (m.sandboxId && core.scopeId() && m.sandboxId !== core.scopeId()) return 'gone';
++      return momentVisibleToUser(m, char, user) ? 'ok' : 'denied';
++    }
++    if (src === 'diary') {
++      var D = Sleepy.diary;
++      if (!D || !D.list) return 'denied';
++      var d = findDiary(id);
++      if (!d) return 'gone';
++      if (d.sandboxId && core.scopeId() && d.sandboxId !== core.scopeId()) return 'gone';
++      return diaryVisibleToUser(d, char, user) ? 'ok' : 'denied';
++    }
++    if (src === 'we') {
++      var cs = Sleepy.collectionStore;
++      if (!cs || !cs.findInScope) return 'denied';
++      return cs.findInScope(id) ? 'ok' : 'gone';
++    }
++    return 'denied';
++  }
++
++  /* 时光聚合。char / user 显式传入（指针卫兵在 paintTime 解析一次），
++     纯读、无副作用 —— 冒烟直接调它做隔离断言。可见性判据与点击复核
++     共用（见上），不另写一份。 */
++  function timeItems(char, user) {
++    var out = [];
++    var seen = {};
++
++    /* ① 朋友圈（user 视角三道闸，判据共用） */
++    var M = Sleepy.momentsTab;
++    if (M && M.all && M.canSee && char && user) {
++      core.scoped(arr(M.all())).forEach(function (m) {
++        if (!momentVisibleToUser(m, char, user)) return;
++        if (seen['moments:' + m.id]) return;
++        seen['moments:' + m.id] = true;
++        var mine = !!m.maskId && m.maskId === user.id;
++        out.push({
++          src: 'moments', id: m.id, at: atNum(m.at),
++          title: String(m.text || '').trim() || (m.mediaId ? '（发了一张图）' : '（无文字）'),
++          note: '', mediaId: m.mediaId || null, mine: mine
++        });
++      });
++    }
++
++    /* ② 日记（user 视角，判据共用） */
++    var D = Sleepy.diary;
++    if (D && D.list && char && user) {
++      D.list().forEach(function (d) {
++        if (!diaryVisibleToUser(d, char, user)) return;
++        if (seen['diary:' + d.id]) return;
++        seen['diary:' + d.id] = true;
++        out.push({
++          src: 'diary', id: d.id, at: atNum(d.timestamp),
++          title: String(d.content).replace(/\s+/g, ' ').trim().slice(0, 60),
++          note: '', mediaId: d.mediaId || null,
++          mine: (d.author || 'user') !== 'char'
++        });
++      });
++    }
++
++    /* ③ 共同记录。边界 = 岛（scoped）：同岛多角色 / 多账号共享全部记录，
++       refCharId / refUserId 只是归属档案不是 ACL —— 这是产品既定口径
++       （weEntries 主表 scoped 过滤），不擅自收紧成关系过滤。 */
++    if (Sleepy.weStore && Sleepy.weStore.list) {
++      Sleepy.weStore.list().forEach(function (en) {
++        if (!en || !en.id) return;
++        if (seen['we:' + en.id]) return;
++        seen['we:' + en.id] = true;
++        out.push({
++          src: 'we', id: en.id, at: atNum(en.at),
++          title: en.title || '（未命名）',
++          note: en.note || '',
++          kind: kindOf(en), createdBy: en.createdBy || 'user',
++          mine: en.createdBy !== 'char'
++        });
++      });
++    }
++
++    /* at 已全部归一为数字（无效 = 0），排序不会出 NaN */
++    return out.sort(function (a, b) { return b.at - a.at; });
++  }
++
++  function timeSrcLabel(it) {
++    if (it.src === 'moments') return '朋友圈';
++    if (it.src === 'diary') return it.mine ? '日记 · 我写的' : '日记 · TA 写的';
++    return it.kind && it.kind !== 'other'
++      ? '共同记录 · ' + (WE_KIND_LABEL[it.kind] || '其他')
++      : '共同记录';
++  }
++
++  function dayKeyOf(at) {
++    if (!at) return '';
++    var d = new Date(at);
++    if (isNaN(d.getTime())) return '';
++    return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
++  }
++
++  function dayLabelOf(at) {
++    if (!at) return '时间不详';           /* 0 / 缺失 → 时间不详，绝不出纪元日期 */
++    var d = new Date(at);
++    if (isNaN(d.getTime())) return '时间不详';
++    var y = d.getFullYear() === new Date().getFullYear() ? '' : d.getFullYear() + '年';
++    return y + (d.getMonth() + 1) + '月' + d.getDate() + '日 · 周' +
++      '日一二三四五六'.charAt(d.getDay());
++  }
++
++  /* 缩略图只铺真实可用的图（mediaId → objectURL），挂不上就留纸纹底。
++     **必须在卡片挂进 DOM 之后才启动加载**（appendBatch 里调）——
++     构建期 isConnected 必为假，提前调等于永远不发请求。
++     异步回来检查 isConnected：重画 / 切岛 / 切上下文后旧节点已摘除，
++     旧响应改不到新视图；图不在了保持纸纹占位。 */
++  function fillThumb(img, mediaId) {
++    if (!mediaId || !img.isConnected || !Sleepy.media || !Sleepy.media.url) return;
++    Sleepy.media.url(mediaId).then(function (u) {
++      if (u && img.isConnected) {
++        img.style.backgroundImage = 'url(' + u + ')';
++        img.classList.add('has-img');
++      }
++    })['catch'](function () { /* 图不在了就保持纸纹位 */ });
++  }
++
++  function timeItemEl(ctx, it) {
++    var card = h('button', 'co-card we-time-item');
++    card.type = 'button';
++    var head = h('div', 'co-card-head');
++    head.appendChild(h('span', 'co-card-title', it.title || '（无标题）'));
++    head.appendChild(h('span', 'co-card-day', it.at ? fmtDay(it.at) : '时间不详'));
++    card.appendChild(head);
++    if (it.note) card.appendChild(h('p', 'co-card-note', it.note));
++    var foot = h('div', 'co-card-src');
++    foot.appendChild(h('span', '', timeSrcLabel(it)));
++    card.appendChild(foot);
++    if (it.mediaId) card.appendChild(h('i', 'we-time-thumb'));
++    /* 点击：先复核来源还在 / 还可看（删除 / 失效 / 无权都在这里拦下，
++       明确反馈不跳页），再打开对应页面**定位到那条记录**，不是只把
++       来源 App 首页打开。 */
++    card.addEventListener('click', function () { jumpToSource(ctx, it); });
++    return card;
++  }
++
++  /* 时光 → 来源定位。momentCard / diary 列表条目带 data-id（表现层挂钩）。
++     点击时按 sourceStatus 实时复核当前岛 / 角色 / 号 / 状态 / 权限：
++       gone   → 「已经不在了」类反馈；
++       denied → 「当前身份看不到」类反馈；
++     都停在原地不跳页。通过才打开对应页面并定位到那条记录。 */
++  function jumpToSource(ctx, it) {
++    var nav = Sleepy.nav;
++    if (!nav) return;
++    var st = sourceStatus(it.src, it.id);
++    if (st !== 'ok') {
++      ctx.toast(st === 'gone' ? sourceGoneText(it.src) : '现在这个身份看不到它了', 'warn');
++      return;
++    }
++    if (it.src === 'moments') {
++      nav.open('moments', { tab: 'moments', jump: it.id });
++      /* 这次「来源浏览」给朋友圈页打标记：返回守卫放行一次，
++         返回键 / 浏览器返回直接回时光；桌面进入的聊天语义不变。 */
++      var tc = nav.topCtx();
++      if (tc) tc.__weSourceJump = true;
++      revealInPage(ctx, 'moments', it.id);
++    } else if (it.src === 'diary') {
++      nav.open('diary');
++      revealInPage(ctx, 'diary', it.id);
++    } else {
++      nav.open('collection-item', { id: it.id });
++    }
++  }
++
++  function sourceGoneText(src) {
++    return src === 'moments' ? '这条动态已经不在了'
++      : src === 'diary' ? '这一篇已经撕掉了'
++      : '这件记录已经不在馆里';
++  }
++
++  function findDiary(id) {
++    var D = Sleepy.diary;
++    if (!D || !D.list) return null;
++    var hit = null;
++    D.list().forEach(function (d) { if (d && d.id === id) hit = d; });
++    return hit;
++  }
++
++  /* 在目标页里定位那条记录：手动算滚动容器内偏移（工作记忆红线：
++     scrollIntoView 居中会把整个 .page 搬走），滚动后短高亮。
++     目标还没渲染（页面实例是旧的、列表还是上一份 DOM）→ 借目标页
++     现有的 rebuild / refresh 重画一次再找；两次都找不到**明确反馈**，
++     不静默失败。 */
++  function revealInPage(ctx, pageId, id, retried) {
++    var page = document.querySelector('.page[data-page="' + pageId + '"]');
++    var el = page && page.querySelector('[data-id="' + id + '"]');
++    if (!el && !retried) {
++      var tc = Sleepy.nav.topCtx();
++      var fn = tc && (tc.rebuild || tc.refresh);
++      if (fn) { try { fn.call(tc); } catch (e) { /* 重画失败按找不到处理 */ } }
++      return revealInPage(ctx, pageId, id, true);
++    }
++    if (!el) {
++      ctx.toast('没定位到那条，它可能刚被移走', 'warn');
++      return;
++    }
++    var c = el.parentNode;
++    while (c && c !== document.body) {
++      var cs = null;
++      try { cs = getComputedStyle(c); } catch (e) { /* 桩环境 */ }
++      if (cs && /(auto|scroll)/.test(cs.overflowY) &&
++          c.scrollHeight > c.clientHeight && c.clientHeight > 0) break;
++      c = c.parentNode;
++    }
++    if (c && c !== document.body) {
++      try {
++        var delta = el.getBoundingClientRect().top -
++          c.getBoundingClientRect().top - 90;
++        c.scrollTop += delta;
++      } catch (e) { /* 桩环境没有 */ }
++    }
++    el.classList.add('we-jump-flash');
++    setTimeout(function () { el.classList.remove('we-jump-flash'); }, 1600);
++  }
++
++  function paintTime(ctx) {
++    ctx.setTitle('时光');
++    ctx.setActions([]);
++
++    var body = ctx.body;
++    var __st = 0;
++    try { __st = body.scrollTop || 0; } catch (e) { /* 桩环境没有 */ }
++    body.innerHTML = '';
++    var paper = h('div', 'we-page-paper we-time-page');
++    body.appendChild(paper);
++
++    /* 关系上下文守卫（与首页同款：We 不自猜岛） */
++    var sb = core.activeSandbox();
++    if (!sb) {
++      paper.appendChild(empty(ctx, '还没有当前世界',
++        '先在桌面选一间房，再回来看时光。'));
++      return;
++    }
++    var user = core.activeUserOnIsland();
++    var char = core.activeCharOnIsland();
++    if (!user || !char) {
++      paper.appendChild(empty(ctx, '这里还没有确定的关系对象',
++        '在这座岛先选好角色和你自己，时光才会开始。'));
++      return;
++    }
++
++    /* 批次展开状态带「岛|角色|号」签名。**先重置再画**：换岛 / 换角色 /
++       换号（哪怕目标上下文是空态）一律不继承上一个上下文的展开进度。 */
++    var memo = ctx.__weTimeMemo;
++    var sig = sb.id + '|' + char.id + '|' + user.id;
++    if (!memo || memo.sig !== sig) memo = ctx.__weTimeMemo = { sig: sig, shown: TIME_BATCH };
++
++    /* 聚合失败 ≠ 空数据：给重试，不把失败当空态 */
++    var items;
++    try {
++      items = timeItems(char, user);
++    } catch (e) {
++      var errBox = h('div', 'empty co-empty');
++      errBox.appendChild(h('div', 'empty-paper'));
++      errBox.appendChild(h('p', 'empty-text', '时光暂时读不出来'));
++      var retry = ui.button('重试', 'primary');
++      retry.type = 'button';
++      retry.addEventListener('click', function () { paintTime(ctx); });
++      errBox.appendChild(retry);
++      paper.appendChild(errBox);
++      return;
++    }
++
++    /* 封面：与首页 / 门厅同一套视觉语言 */
++    var cover = h('div', 'we-cover we-time-cover');
++    cover.appendChild(h('div', 'we-cover-vert', 'OUR TIME'));
++    var ct = h('div', 'we-cover-txt');
++    ct.appendChild(h('div', 'we-cover-kicker', 'W E · 时 光'));
++    ct.appendChild(h('div', 'we-cover-title',
++      String(char.name || '未命名').trim() + ' × ' + core.labelOfUser(user, '我')));
++    ct.appendChild(h('div', 'we-cover-sub', '一起经过的，都替你们记着。'));
++    cover.appendChild(ct);
++    paper.appendChild(cover);
++
++    if (!items.length) {
++      var box = h('div', 'empty co-empty');
++      box.appendChild(h('div', 'empty-paper'));
++      box.appendChild(h('p', 'empty-text', '这里还没有一起经过的片段。'));
++      var addBtn = ui.button('记一条', 'primary');
++      addBtn.type = 'button';
++      addBtn.addEventListener('click', function () { openAddDrawer(ctx); });
++      box.appendChild(addBtn);
++      paper.appendChild(box);
++      return;
++    }
++
++    /* 按日分组 + 分批渲染：target 取 memo 记住的展开条数（数据减少时
++       钳位到现有条数），先把足够条目铺出来，最后再恢复滚动位置 ——
++       位置才有东西可落。 */
++    var target = Math.min(Math.max(memo.shown, TIME_BATCH), items.length);
++
++    var listEl = h('div', 'we-time-list');
++    paper.appendChild(listEl);
++    var shown = 0;
++    var lastDay = null;
++
++    function appendBatch() {
++      var end = Math.min(shown + TIME_BATCH, items.length);
++      for (var i = shown; i < end; i++) {
++        var it = items[i];
++        var dk = dayKeyOf(it.at);
++        if (dk !== lastDay) {
++          listEl.appendChild(h('div', 'we-time-day', dayLabelOf(it.at)));
++          lastDay = dk;
++        }
++        var card = timeItemEl(ctx, it);
++        listEl.appendChild(card);
++        /* 缩略图在卡片**挂进 DOM 之后**才启动加载（见 fillThumb 注释） */
++        var th = card.querySelector('.we-time-thumb');
++        if (th) fillThumb(th, it.mediaId);
++      }
++      shown = end;
++      memo.shown = shown;
++      var oldMore = listEl.querySelector('.we-time-more');
++      if (oldMore && oldMore.parentNode) oldMore.parentNode.removeChild(oldMore);
++      if (shown < items.length) {
++        var moreBtn = h('button', 'we-time-more', '还有更早的 · 加载更多');
++        moreBtn.type = 'button';
++        moreBtn.addEventListener('click', appendBatch);
++        listEl.appendChild(moreBtn);
++      }
++    }
++    while (shown < target) appendBatch();
++
++    try { body.scrollTop = __st; } catch (e) { /* 桩环境没有 */ }
++  }
++
+   /* ============================ 注册 ============================ */
+ 
+   Sleepy.register('we', {
+     title: 'We',
+ 
+-    /* render 只跑一次（页面缓存复用）：建好首屏 + 顶栏动作。 */
++    /* render 只跑一次（页面缓存复用）：建好首屏 + 顶栏动作 + 三页底栏。 */
+     render: function (ctx) {
+       ctx.setTitle('We');
+       ctx.setActions([{
+@@ -724,6 +1217,7 @@
+         svg: ic('<path d="M12 6.5v11M6.5 12h11"/>', 18),
+         onClick: function () { openAddDrawer(ctx); }
+       }]);
++      mountBar(ctx, 'we');
+       paint(ctx);
+     },
+ 
+@@ -734,6 +1228,18 @@
+     }
+   });
+ 
++  /* 时光（v1）：user 视角的已发生共同经历，只读聚合三个真实来源 */
++  Sleepy.register('we-time', {
++    title: '时光',
++    render: function (ctx) {
++      mountBar(ctx, 'we-time');
++      paintTime(ctx);
++    },
++    onShow: function (ctx) {
++      paintTime(ctx);
++    }
++  });
++
+   /* 导出 weStore，供冒烟核对「落盘 / 带 sandboxId / 隔离 / kind 兼容」。 */
+   Sleepy.weStore = {
+     list: weList,
+@@ -744,4 +1250,22 @@
+     KIND_LABEL: WE_KIND_LABEL
+   };
+ 
++  /* 三页共享底栏 + 新增抽屉的对外出口：'collection' 门厅（page-collection.js）
++     也挂这条 bar；冒烟核对 TABS / 幂等挂载。openAdd = 同一个新增抽屉。 */
++  Sleepy.weNav = {
++    mount: mountBar,
++    openAdd: openAddDrawer,
++    TABS: WE_TABS
++  };
++
++  /* 时光聚合的只读出口（冒烟做隔离 / 排序 / 排除断言用，不承担写入）。
++     sourceStatus / dayLabel 一并导出：点击复核状态机与时间展示的测试锚点。 */
++  Sleepy.weTime = {
++    collect: timeItems,
++    BATCH: TIME_BATCH,
++    sourceStatus: sourceStatus,
++    dayLabel: dayLabelOf,
++    atNum: atNum
++  };
++
+ })(window);
+diff --git a/prompt-engine.js b/prompt-engine.js
+index 0548a6f..5fd2142 100644
+--- a/prompt-engine.js
++++ b/prompt-engine.js
+@@ -1379,7 +1379,10 @@
+           break;
+         }
+         case 'narrative': pushSlot(def, narrativeText(session)); break;
+-        case 'scene': pushSlot(def, sceneText(session)); break;
++        /* sceneText 只认 session.charId —— 把 ctx 层解析出的 charId 回填，
++           不然「线下会话记录没带 charId、只在 ctx 上给」的调用方
++           （记忆/门禁链路同款口径）会静默退回本地时间。 */
++        case 'scene': pushSlot(def, sceneText(Object.assign({}, session, { charId: charId }))); break;
+         case 'c05off': pushSlot(def, offlineOutProto(session, !!session.pendingSetup)); break;
+         case 'history': {
+           var msgs = (session.messages || []).slice(-20);
+diff --git a/scripts/browser-tz-test.js b/scripts/browser-tz-test.js
+new file mode 100644
+index 0000000..4a3c761
+--- /dev/null
++++ b/scripts/browser-tz-test.js
+@@ -0,0 +1,491 @@
++/* ============================================================
++   scripts/browser-tz-test.js — 运行时时区三级兜底 真机行为验收（v2 原生时区）
++   ------------------------------------------------------------
++   2026-09-28 We 收尾（第二轮验收口径）：
++   设备时区用 Playwright 原生 newContext({ timezoneId }) 模拟
++   （playwright-core 1.63 原生支持，Chromium 真实替换 OS 时区），
++   同一测试时刻用 context.clock.setFixedTime 固定 ——
++   **不改 Date getter、不包装正常路径的 Intl**；Intl 故障注入
++   只出现在 fallback 专用的第三个 context，不替代正常路径。
++
++   固定时刻：2026-09-28T05:00:00Z（跨日点）
++     Asia/Shanghai      2026-09-28 13:00 周一
++     America/Los_Angeles 2026-09-27 22:00 周日
++     Asia/Tokyo         2026-09-28 14:00 周一
++     Europe/Paris       2026-09-28 07:00 周一
++     UTC                2026-09-28 05:00 周一
++
++   验证的闭环：
++     TZ1  无显式配置：设备时区生效（level=device，时间=上海现在）
++     TZ2  显式 Tokyo：不随设备漂移（沪/洛两个 context 同一时刻都=东京）
++     TZ3  日历显式覆盖 > 角色（Tokyo 角色被覆盖成 Paris → 07:00）
++     TZ4  真正打开月历并切换月份：不挂起、月份/今天高亮正确
++     TZ5  We 此刻：无配置=设备口径；切显式角色=角色口径（有意不同的双口径）
++     TZ6  We 时光日期分组：按设备本地日期（LA 跨天 9/27 周日 vs 上海 9/28 周一）
++     TZ7  线上/线下提示词注入 = 各自运行时上下文
++     TZ8  设置语义：仅改无关字段再保存，不会把解析出的设备时区写成显式配置
++     TZ9  char.timezone 全程未被回写
++     TZ10 无效时区旧值（'Mars/Olympus'）：校验失败跳级 → 跟设备，不直接采用
++     TZ11 fallback（独立 context，Intl 故障注入）：UTC + 文本标注
++   跑法：
++     NODE_PATH=C:/Users/wumei/.workbuddy/binaries/node/workspace/node_modules \
++       node scripts/browser-tz-test.js
++   ============================================================ */
++'use strict';
++const path = require('path');
++const ROOT = path.resolve(__dirname, '..');
++
++let pw;
++try { pw = require('playwright-core'); } catch (e) {
++  console.error('browser-tz-test：找不到 playwright-core —— 用 managed node workspace 跑：');
++  console.error('  NODE_PATH=C:/Users/wumei/.workbuddy/binaries/node/workspace/node_modules node scripts/browser-tz-test.js');
++  process.exit(2);
++}
++const { spawn } = require('child_process');
++const http = require('http');
++
++const PORT = process.env.TZ_TEST_PORT || 5201;
++const BASE = 'http://127.0.0.1:' + PORT;
++const FIXED_MS = Date.parse('2026-09-28T05:00:00Z');
++
++const results = [];
++function chk(name, cond, extra) {
++  results.push({ name, ok: !!cond, extra: extra || '' });
++  if (!cond) console.error('  ✗ ' + name + (extra ? '  ' + extra : ''));
++  else console.log('  ✓ ' + name);
++}
++const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
++
++function waitServer() {
++  return new Promise((res, rej) => {
++    const t0 = Date.now();
++    (function poll() {
++      http.get(BASE + '/index.html', (r) => { r.resume(); r.statusCode === 200 ? res() : retry(); })
++        .on('error', retry);
++      function retry() {
++        if (Date.now() - t0 > 15000) rej(new Error('测试站点起不来'));
++        else setTimeout(poll, 250);
++      }
++    })();
++  });
++}
++
++async function waitApp(page) {
++  const sleepyErrs = [];
++  page.on('console', (msg) => {
++    if (msg.type() === 'error') {
++      const t = msg.text();
++      if (t && t.indexOf('[Sleepy]') >= 0) sleepyErrs.push(t.slice(0, 300));
++    }
++  });
++  page.on('pageerror', (e) => {
++    const t = String(e && e.message || e);
++    if (t.indexOf('[Sleepy]') >= 0) sleepyErrs.push(t.slice(0, 300));
++  });
++  await page.waitForFunction(() => {
++    const S = window.Sleepy;
++    return !!(S && S.nav && S.core && S.core.activeSandbox && S.weStore && S.nav.open);
++  }, null, { timeout: 20000 });
++  await sleep(600);
++  return sleepyErrs;
++}
++
++/* fallback 专用：只劫持「未显式传 timeZone」的 resolvedOptions 让它抛错。
++   显式 tz（tzNow / tzUsable 校验）不受影响 —— 正常路径没被包装。 */
++const INIT_INTL_FAIL = `
++(() => {
++  const RealDTF = Intl.DateTimeFormat;
++  const RealRO = RealDTF.prototype.resolvedOptions;
++  class PatchedDTF extends RealDTF {
++    constructor(...args) {
++      super(...args);
++      this.__explicit = !!(args[1] && Object.prototype.hasOwnProperty.call(args[1], 'timeZone'));
++    }
++  }
++  PatchedDTF.prototype.resolvedOptions = function () {
++    if (!this.__explicit) throw new Error('tz-mock: 设备时区读取失败');
++    return RealRO.call(this);
++  };
++  Intl.DateTimeFormat = PatchedDTF;
++})();
++`;
++
++const PAGE_HELPERS = `
++window.__tz = {
++  expect(tz, at) {
++    const d = at ? new Date(at) : new Date();
++    const parts = new Intl.DateTimeFormat('en-US', {
++      timeZone: tz, hour12: false,
++      year: 'numeric', month: '2-digit', day: '2-digit',
++      hour: '2-digit', minute: '2-digit'
++    }).formatToParts(d);
++    const g = {};
++    parts.forEach((p) => { g[p.type] = p.value; });
++    return {
++      iso: g.year + '-' + g.month + '-' + g.day,
++      time: (g.hour === '24' ? '00' : g.hour) + ':' + g.minute
++    };
++  },
++  rt(charId) { return window.Sleepy.calendar.runtimeTzOf(charId); },
++  facts(charId) { return String(window.Sleepy.calendar.timeFacts(charId) || ''); },
++  nowLine(charId) {
++    const m = this.facts(charId).match(/你的现在：(.+)/);
++    return m ? m[1] : '';
++  },
++  cfgRecTimezone(charId) {
++    const rec = (window.Sleepy.store.get('calConfigs') || [])
++      .filter((r) => r && r.charId === charId).pop();
++    return rec ? Object.prototype.hasOwnProperty.call(rec, 'timezone') ? rec.timezone : undefined : undefined;
++  }
++};
++`;
++
++/* 岛 + 角色组 + 马甲。chars: [{timezone, city, region}]。
++   多角色必须用群岛（archipelago）—— 孤岛 setSandboxChars 会静默拒绝。 */
++async function seedIsland(page, name, chars) {
++  return page.evaluate((payload) => {
++    const S = window.Sleepy;
++    const sb = S.core.createSandbox('archipelago', payload.name);
++    const ids = payload.chars.map((cx) => {
++      const data = Object.assign({ name: cx.name, kind: 'main' }, cx.extra || {});
++      return S.core.upsertChar(data).id;
++    });
++    const u = S.core.upsertUser({ name: '我' }).id;
++    S.core.setSandboxChars(sb.id, ids);
++    S.core.setSandboxMasks(sb.id, [u]);
++    return { sb: sb.id, chars: ids, u };
++  }, { name, chars });
++}
++
++async function boot(browser, opts) {
++  const ctx = await browser.newContext(opts || {});
++  const page = await ctx.newPage();
++  await page.goto(BASE + '/index.html?splash=0&_cb=' + Date.now(), { waitUntil: 'load' });
++  const errs = await waitApp(page);
++  await page.clock.setFixedTime(new Date(FIXED_MS));   /* 同一测试时刻（boot 后再定，避免冻结启动定时器） */
++  await page.evaluate(PAGE_HELPERS);
++  return { ctx, page, errs };
++}
++
++async function main() {
++  process.on('uncaughtException', (e) => { console.error('[uncaught] ' + (e && e.stack || e)); process.exit(3); });
++  process.on('unhandledRejection', (e) => { console.error('[unhandledRejection] ' + (e && e.stack || e)); process.exit(4); });
++  const server = spawn(process.execPath, [path.join(ROOT, 'serve.js'), '--port=' + PORT], {
++    cwd: ROOT, stdio: 'ignore'
++  });
++  let browser;
++  try {
++    await waitServer();
++    browser = await pw.chromium.launch({ channel: 'msedge', headless: true });
++
++    /* ==================== context 1：设备 Asia/Shanghai ==================== */
++    const sh = await boot(browser, { timezoneId: 'Asia/Shanghai' });
++    const page = sh.page;
++    const nativeTz = await page.evaluate(() =>
++      new Intl.DateTimeFormat().resolvedOptions().timeZone);
++    chk('TZ0 原生 timezoneId 生效（context 报告 Asia/Shanghai，零包装）',
++      nativeTz === 'Asia/Shanghai', 'native=' + nativeTz);
++
++    const A = await seedIsland(page, '甲', [
++      { name: '甲大号' },                                     /* 无时区 */
++      { name: '东东京', extra: { city: '东京', region: 'JP', timezone: 'Asia/Tokyo' } },
++      { name: '坏时区', extra: { timezone: 'Mars/Olympus' } }  /* 无效旧值 */
++    ]);
++    await page.evaluate((a) => {
++      const S = window.Sleepy;
++      S.core.setActiveSandbox(a.sb);
++      S.core.switchTo(a.chars[0], a.u);
++    }, A);
++
++    /* TZ1：无显式配置 → 设备时区生效 */
++    const t1 = await page.evaluate((cid) => {
++      const rt = window.__tz.rt(cid);
++      const exp = window.__tz.expect('Asia/Shanghai', Date.now());
++      return { rt, exp, line: window.__tz.nowLine(cid) };
++    }, A.chars[0]);
++    chk('TZ1 无显式配置：设备=上海生效 → level=device、时间=13:00（固定时刻）',
++      t1.rt.level === 'device' && t1.rt.tz === 'Asia/Shanghai' &&
++      t1.line.indexOf('13:00') >= 0 && t1.line.indexOf('2026年9月28日') >= 0,
++      JSON.stringify({ rt: t1.rt, line: t1.line.slice(0, 60) }));
++
++    /* TZ10：无效时区旧值 → 校验失败跳级跟设备（不直接采用） */
++    const t10 = await page.evaluate((cid) => {
++      const rt = window.__tz.rt(cid);
++      return { rt, line: window.__tz.nowLine(cid) };
++    }, A.chars[2]);
++    chk('TZ10 无效时区值 Mars/Olympus：跳级 → level=device 按上海显示（不直接采用）',
++      t10.rt.level === 'device' && t10.rt.tz === 'Asia/Shanghai' && t10.line.indexOf('13:00') >= 0,
++      JSON.stringify({ rt: t10.rt, line: t10.line.slice(0, 50) }));
++
++    /* TZ8：设置语义 —— 仅改无关字段再保存，设备时区不得被写成显式配置 */
++    const t8 = await page.evaluate((cid) => {
++      const S = window.Sleepy;
++      const before = window.__tz.cfgRecTimezone(cid);
++      S.calendar.saveCfg(cid, { scheduleOn: true });            /* 无关字段（UI 同款调用） */
++      const afterSchedule = window.__tz.cfgRecTimezone(cid);
++      S.core.upsertChar({ id: cid, timezone: '' });             /* idcard「跟随设备」保存空串 */
++      const rt = window.__tz.rt(cid);
++      return { before, afterSchedule, rt, charTz: String((S.core.rootOf(cid) || {}).timezone || '') };
++    }, A.chars[0]);
++    chk('TZ8 设置语义：无关字段保存不产生 timezone 键；空值保存仍 level=device（原值与有效值分离）',
++      t8.before === undefined && t8.afterSchedule === undefined &&
++      t8.rt.level === 'device' && t8.charTz === '',
++      JSON.stringify(t8));
++
++    /* TZ4：真正打开月历并切换月份（原生时区 context，无任何 mock） */
++    await page.evaluate(() => window.Sleepy.nav.open('calendar'));
++    await sleep(350);
++    await page.evaluate(() => {
++      const card = document.querySelector('.page[data-page="calendar"] .cal-charcard');
++      if (card) card.click();
++    });
++    await sleep(300);
++    await page.screenshot({ path: path.join(ROOT, 'preview/phone-test/tz2-calendar.png') });
++    const t4a = await page.evaluate(() => {
++      const el = document.querySelector('.page[data-page="calendar"]');
++      const title = el.querySelector('.cal-monthtitle');
++      const today = el.querySelector('.cal-days .cal-day.is-today .cal-day-num');
++      const days = el.querySelectorAll('.cal-days .cal-day').length;
++      return { ym: title ? title.textContent : '', today: today ? today.textContent : '', days };
++    });
++    await page.evaluate(() => {
++      const btns = document.querySelectorAll('.page[data-page="calendar"] .cal-navbtn');
++      btns[btns.length - 1].click();                           /* 下个月 */
++    });
++    await sleep(250);
++    const t4b = await page.evaluate(() => {
++      const el = document.querySelector('.page[data-page="calendar"]');
++      return el.querySelector('.cal-monthtitle').textContent;
++    });
++    await page.evaluate(() => {
++      const btns = document.querySelectorAll('.page[data-page="calendar"] .cal-navbtn');
++      btns[0].click();                                          /* 上个月（回来） */
++    });
++    await sleep(250);
++    const t4c = await page.evaluate(() => {
++      const el = document.querySelector('.page[data-page="calendar"]');
++      const btns = el.querySelectorAll('.cal-navbtn');
++      btns[0].click(); btns[0].click(); btns[0].click();        /* 连翻三月：九月→八月→七月→六月 */
++      return el.querySelector('.cal-monthtitle').textContent;
++    });
++    await sleep(200);
++    const t4d = await page.evaluate(() =>
++      document.querySelector('.page[data-page="calendar"] .cal-monthtitle').textContent);
++    chk('TZ4 月历真开：九月（今天高亮 28）→ 下月十月 → 返回九月 → 连翻三月到六月，全程不挂起',
++      t4a.ym.indexOf('2026') >= 0 && t4a.ym.indexOf('九月') >= 0 &&
++      t4a.today === '28' && t4a.days >= 28 &&
++      t4b.indexOf('十月') >= 0 && t4c.indexOf('六月') >= 0 && t4d.indexOf('六月') >= 0,
++      JSON.stringify({ a: t4a, next: t4b, three: t4c, settled: t4d }));
++    const calErrs = sh.errs.filter((l) => l.indexOf('page-calendar') >= 0).length;
++    chk('TZ4b 月历渲染无 [Sleepy] 报错', calErrs === 0, 'errs=' + calErrs);
++
++    /* TZ5a：We 此刻 —— 无配置角色的设备口径 */
++    await page.evaluate(() => { window.Sleepy.nav.closeAll(); });
++    await sleep(200);
++    await page.evaluate(() => window.Sleepy.nav.open('we'));
++    await sleep(300);
++    const t5a = await page.evaluate(() => {
++      const el = document.querySelector('.page[data-page="we"]');
++      const txt = el ? (el.textContent || '') : '';
++      return { has: txt.indexOf('你的现在：') >= 0, time: txt.indexOf('13:00') >= 0 };
++    });
++    chk('TZ5a We「此刻」：无配置角色 → 设备口径（13:00 上海）',
++      sh.errs.filter((l) => l.indexOf('page-we') >= 0).length === 0 && t5a.has && t5a.time,
++      JSON.stringify(t5a));
++
++    /* TZ5b：切显式 Tokyo 角色 → 此刻变角色口径（有意保留的双口径之一） */
++    await page.evaluate((a) => {
++      const S = window.Sleepy;
++      S.core.switchTo(a.chars[1], a.u);
++      S.nav.topCtx().refresh();
++    }, A);
++    await sleep(250);
++    const t5b = await page.evaluate(() => {
++      const el = document.querySelector('.page[data-page="we"]');
++      const txt = el ? (el.textContent || '') : '';
++      return { tokyo: txt.indexOf('14:00') >= 0, notSH: txt.indexOf('13:00') < 0 };
++    });
++    chk('TZ5b We「此刻」：显式 Tokyo 角色 → 角色口径（14:00，不跟设备）',
++      t5b.tokyo && t5b.notSH, JSON.stringify(t5b));
++
++    /* TZ6：We 时光日期分组 = 设备本地日期（上海 9/28 周一） */
++    const t6 = await page.evaluate(() =>
++      window.Sleepy.weTime.dayLabel(Date.parse('2026-09-28T05:00:00Z')));
++    chk('TZ6 时光分组：设备本地日期 上海=9月28日·周一',
++      t6 === '9月28日 · 周一', 'label=' + t6);
++
++    /* TZ7a：线上/线下注入 = 运行时上下文（无配置角色 → 上海） */
++    const t7a = await page.evaluate((o) => {
++      window.__tzFixedBack = null;
++      const on = window.Sleepy.promptEngine.assembleOnline({ charId: o.cid, userId: o.uid, history: [] });
++      const segOn = (on.messages || []).filter((s) => s.role === 'system').map((s) => s.content || '').join('\n');
++      const off = window.Sleepy.promptEngine.assembleOffline({
++        charId: o.cid, userId: o.uid,
++        session: { sceneName: '场景', sceneCount: 1, env: {}, messages: [] }
++      });
++      const segOff = (off.messages || []).map((s) => s.content || '').join('\n');
++      return {
++        on: (segOn.match(/你的现在：(.+)/) || [])[1] || '',
++        off: (segOff.match(/【现实时间】(.+)/) || [])[1] || ''
++      };
++    }, { cid: A.chars[0], uid: A.u });
++    chk('TZ7a 线上【时间事实】与线下【现实时间】= 上海 13:00（无配置角色跟设备）',
++      t7a.on.indexOf('13:00') >= 0 && t7a.off.indexOf('13:00') >= 0,
++      JSON.stringify(t7a));
++    /* 显式 Tokyo 角色的线下 = 东京 */
++    const t7b = await page.evaluate((o) => {
++      const off = window.Sleepy.promptEngine.assembleOffline({
++        charId: o.cid, userId: o.uid,
++        session: { sceneName: '东京场景', sceneCount: 1, env: {}, messages: [] }
++      });
++      const seg = (off.messages || []).map((s) => s.content || '').join('\n');
++      return (seg.match(/【现实时间】(.+)/) || [])[1] || '';
++    }, { cid: A.chars[1], uid: A.u });
++    chk('TZ7b 线下：显式 Tokyo 角色 = 东京 14:00（不随设备漂移）',
++      t7b.indexOf('14:00') >= 0 && t7b.indexOf('13:00') < 0, 'line=' + t7b.slice(0, 40));
++
++    /* TZ9a：char.timezone 未被回写 */
++    const t9a = await page.evaluate((ids) => {
++      const S = window.Sleepy;
++      return {
++        noTz: String((S.core.rootOf(ids[0]) || {}).timezone || ''),
++        tokyo: String((S.core.rootOf(ids[1]) || {}).timezone || ''),
++        bad: String((S.core.rootOf(ids[2]) || {}).timezone || '')
++      };
++    }, A.chars);
++    chk('TZ9 char.timezone 全程未被回写（空仍空、Tokyo 仍 Tokyo、坏值原样保存不清洗）',
++      t9a.noTz === '' && t9a.tokyo === 'Asia/Tokyo' && t9a.bad === 'Mars/Olympus',
++      JSON.stringify(t9a));
++    await sh.ctx.close();
++
++    /* ==================== context 2：设备 America/Los_Angeles ==================== */
++    const la = await boot(browser, { timezoneId: 'America/Los_Angeles' });
++    const page2 = la.page;
++    const nativeTz2 = await page2.evaluate(() =>
++      new Intl.DateTimeFormat().resolvedOptions().timeZone);
++    chk('TZ0b 原生 timezoneId 生效（America/Los_Angeles）', nativeTz2 === 'America/Los_Angeles', 'native=' + nativeTz2);
++
++    const B = await seedIsland(page2, '乙', [
++      { name: '乙大号' },
++      { name: '乙东京', extra: { city: '东京', region: 'JP', timezone: 'Asia/Tokyo' } }
++    ]);
++    await page2.evaluate((b) => {
++      const S = window.Sleepy;
++      S.core.setActiveSandbox(b.sb);
++      S.core.switchTo(b.chars[0], b.u);
++    }, B);
++
++    /* TZ2：显式 Tokyo 在 LA 设备下不漂移（与 context1 同一固定时刻） */
++    const t2 = await page2.evaluate((cid) => {
++      const rt = window.__tz.rt(cid);
++      const line = window.__tz.nowLine(cid);
++      return { rt, line };
++    }, B.chars[1]);
++    chk('TZ2 显式 Tokyo：洛杉矶设备下仍 14:00（2026-09-28，东京）不漂移',
++      t2.rt.level === 'char' && t2.rt.tz === 'Asia/Tokyo' &&
++      t2.line.indexOf('14:00') >= 0 && t2.line.indexOf('2026年9月28日') >= 0,
++      JSON.stringify({ rt: t2.rt, line: t2.line.slice(0, 60) }));
++
++    /* TZ3：日历显式覆盖 > 角色（Tokyo 被日历覆盖成 Paris → 07:00） */
++    const t3 = await page2.evaluate((cid) => {
++      const S = window.Sleepy;
++      S.calendar.saveCfg(cid, { timezone: 'Europe/Paris' });
++      const rt = window.__tz.rt(cid);
++      const line = window.__tz.nowLine(cid);
++      /* 摘掉覆盖（UI「恢复跟随」同款）→ 回到角色层 */
++      S.calendar.resetToPlace(cid);
++      const rt2 = window.__tz.rt(cid);
++      return { rt, line, rt2 };
++    }, B.chars[1]);
++    chk('TZ3 日历覆盖 Paris > 角色 Tokyo：level=calendar、07:00；恢复跟随回东京',
++      t3.rt.level === 'calendar' && t3.rt.tz === 'Europe/Paris' &&
++      t3.line.indexOf('07:00') >= 0 && t3.line.indexOf('22:00') < 0 &&
++      t3.rt2.level === 'char' && t3.rt2.tz === 'Asia/Tokyo',
++      JSON.stringify({ rt: t3.rt, line: t3.line.slice(0, 50), rt2: t3.rt2 }));
++
++    /* 无配置角色 → LA 设备口径 */
++    const t2d = await page2.evaluate((cid) => {
++      const rt = window.__tz.rt(cid);
++      const line = window.__tz.nowLine(cid);
++      return { rt, line };
++    }, B.chars[0]);
++    chk('TZ2b 无显式配置：洛杉矶设备 → level=device、22:00（2026-09-27 周日，跨天）',
++      t2d.rt.level === 'device' && t2d.rt.tz === 'America/Los_Angeles' &&
++      t2d.line.indexOf('22:00') >= 0 && t2d.line.indexOf('2026年9月27日') >= 0,
++      JSON.stringify({ rt: t2d.rt, line: t2d.line.slice(0, 60) }));
++
++    /* TZ6b：时光分组 = 设备本地日期（LA 9/27 周日，与上海 context 的 9/28 周一不同） */
++    const t6b = await page2.evaluate(() => {
++      const ts = Date.parse('2026-09-28T05:00:00Z');
++      return window.Sleepy.weTime.dayLabel(ts);
++    });
++    chk('TZ6b 时光分组：同一时刻 LA=9月27日·周日（上海 context 是 9月28日·周一 —— 分组跟设备本地日期）',
++      t6b === '9月27日 · 周日', 'label=' + t6b);
++
++    /* TZ5c：We 此刻（LA 设备 + 无配置角色 = 设备口径） */
++    await page2.evaluate(() => window.Sleepy.nav.open('we'));
++    await sleep(300);
++    const t5c = await page2.evaluate(() => {
++      const el = document.querySelector('.page[data-page="we"]');
++      const txt = el ? (el.textContent || '') : '';
++      return { has: txt.indexOf('你的现在：') >= 0, time: txt.indexOf('22:00') >= 0 };
++    });
++    chk('TZ5c We「此刻」：洛杉矶设备 + 无配置角色 → 22:00 设备口径',
++      la.errs.filter((l) => l.indexOf('page-we') >= 0).length === 0 && t5c.has && t5c.time,
++      JSON.stringify(t5c));
++
++    /* TZ9b：char.timezone 未被回写（LA context） */
++    const t9b = await page2.evaluate((ids) => {
++      const S = window.Sleepy;
++      return {
++        noTz: String((S.core.rootOf(ids[0]) || {}).timezone || ''),
++        tokyo: String((S.core.rootOf(ids[1]) || {}).timezone || '')
++      };
++    }, B.chars);
++    chk('TZ9b char.timezone 未被回写（洛杉矶 context）',
++      t9b.noTz === '' && t9b.tokyo === 'Asia/Tokyo', JSON.stringify(t9b));
++    await la.ctx.close();
++
++    /* ==================== context 3：fallback（独立，Intl 故障注入） ==================== */
++    const fb3ctx = await browser.newContext({ timezoneId: 'Asia/Shanghai' });
++    await fb3ctx.addInitScript(INIT_INTL_FAIL);
++    const page3 = await fb3ctx.newPage();
++    await page3.goto(BASE + '/index.html?splash=0&_cb=' + Date.now(), { waitUntil: 'load' });
++    const errs3 = await waitApp(page3);
++    await page3.clock.setFixedTime(new Date(FIXED_MS));
++    await page3.evaluate(PAGE_HELPERS);
++    const C = await seedIsland(page3, '丙', [{ name: '丙大号' }]);
++    await page3.evaluate((c) => {
++      const S = window.Sleepy;
++      S.core.setActiveSandbox(c.sb);
++      S.core.switchTo(c.chars[0], c.u);
++    }, C);
++    const t11 = await page3.evaluate((cid) => {
++      const rt = window.__tz.rt(cid);
++      const facts = window.__tz.facts(cid);
++      return { rt, facts, utc: window.__tz.expect('UTC', Date.now()) };
++    }, C.chars[0]);
++    chk('TZ11 fallback（独立 context，Intl 故障注入）：level=fallback、UTC 05:00、文本标注兜底；显式校验路径未被包装（tzUsable 仍真）',
++      t11.rt.level === 'fallback' && t11.rt.tz === 'UTC' &&
++      t11.facts.indexOf(t11.utc.time) >= 0 &&
++      t11.facts.indexOf('时区未知，暂按 UTC 计') >= 0 &&
++      t11.facts.indexOf('13:00') >= 0,   /* user 那边：13:00（显式 formatter 真实解析上海） */
++      JSON.stringify({ rt: t11.rt, utc: t11.utc.time, tail: t11.facts.slice(0, 130) }));
++    await fb3ctx.close();
++
++    /* ---- 汇总 ---- */
++    console.log('\n--- 运行时时区真机验收汇总（原生 timezoneId） ---');
++    const okN = results.filter((r) => r.ok).length;
++    results.forEach((r) => console.log((r.ok ? '  ✓ ' : '  ✗ ') + r.name + (r.extra ? '  → ' + r.extra : '')));
++    console.log(okN + '/' + results.length + ' 通过');
++    if (okN !== results.length) process.exit(1);
++  } catch (e) {
++    console.error('✗ 测试抛错：' + (e && e.stack || e));
++    process.exit(1);
++  } finally {
++    if (browser) await browser.close().catch(() => {});
++    server.kill();
++  }
++}
++
++main();
+diff --git a/sw.js b/sw.js
+index 4177ac2..38efde7 100644
+--- a/sw.js
++++ b/sw.js
+@@ -183,10 +183,15 @@
+    v2（2026-09-17）：配色整体换成纯白 + 玻璃，视觉全表重写。
+    版本号必须跟着跳 —— 不跳的话老用户装到的主屏应用会一直用
+    缓存里那份旧 style.css，看到的是上一版米白皮肤。
++
++   v124（2026-09-28）：We 三页导航（we-tabbar：首页 / 时光 / 收藏馆 + ＋
++   新增动作）与时光页 v1（page-we.js 新增 'we-time' 聚合页、
++   page-collection.js 门厅挂 bar、app.js replace 走 replaceState）。
++   → 必须跳版本：老用户缓存里的 page-we.js / style.css / app.js 都变了。
+    ============================================================ */
+ 'use strict';
+ 
+-var CACHE = 'sleepy-v123';
++var CACHE = 'sleepy-v127';
+ var CORE = [
+   './',
+   './index.html',

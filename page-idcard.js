@@ -875,11 +875,18 @@
       var tzRow = h('div', 'set-field');
       tzRow.appendChild(h('label', 'set-label', '常驻时区'));
       var tzSel = h('select', 'set-select');
+      /* 「跟随设备」= 不固定时区：运行时按 runtimeTzOf 跟 user 设备系统时区走
+         （2026-09-28 收尾）。不许没选就默认 Asia/Shanghai —— 那是写死开发环境。 */
+      var tzFixed = existing ? String(existing.timezone || '').trim() : '';
+      var opFollow = h('option', '', '跟随设备');
+      opFollow.value = '';
+      if (!tzFixed) opFollow.selected = true;
+      tzSel.appendChild(opFollow);
       var TZS = (Sleepy.calendarData && Sleepy.calendarData.TIMEZONES) || [];
       TZS.forEach(function (tz) {
         var op = h('option', '', tz);
         op.value = tz;
-        if (((existing ? existing.timezone : '') || 'Asia/Shanghai') === tz) op.selected = true;
+        if (tzFixed === tz) op.selected = true;
         tzSel.appendChild(op);
       });
       tzRow.appendChild(tzSel);
@@ -1143,9 +1150,11 @@
           avatarMedia: f.avatar.getMedia(),
           city: String(f.city.get() || '').trim(),
           status: String(f.status.get() || '').trim() || (kind === 'sub' ? '小号' : '在线'),
-          /* 常驻地点：日历/时区/以后的语言档都从这三个字段推 */
+          /* 常驻地点：日历/时区/以后的语言档都从这三个字段推。
+             timezone 留空（跟随设备）就存空串 —— 运行时 runtimeTzOf 会
+             解析成设备系统时区；绝不在这里补 Asia/Shanghai 兜底。 */
           region: regionSel.value || 'CN',
-          timezone: tzSel.value || 'Asia/Shanghai',
+          timezone: tzSel.value || '',
           /* 国籍：**只存不用**（显示 + 文化默认），别拿它去推计算 */
           nationality: String(f.nation.get() || '').trim(),
           boundUserId: uSel.value || null,

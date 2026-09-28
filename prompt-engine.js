@@ -1379,7 +1379,10 @@
           break;
         }
         case 'narrative': pushSlot(def, narrativeText(session)); break;
-        case 'scene': pushSlot(def, sceneText(session)); break;
+        /* sceneText 只认 session.charId —— 把 ctx 层解析出的 charId 回填，
+           不然「线下会话记录没带 charId、只在 ctx 上给」的调用方
+           （记忆/门禁链路同款口径）会静默退回本地时间。 */
+        case 'scene': pushSlot(def, sceneText(Object.assign({}, session, { charId: charId }))); break;
         case 'c05off': pushSlot(def, offlineOutProto(session, !!session.pendingSetup)); break;
         case 'history': {
           var msgs = (session.messages || []).slice(-20);

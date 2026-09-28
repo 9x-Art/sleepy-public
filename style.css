@@ -13046,3 +13046,88 @@ button.cal-ev:active{background:var(--g-glass-2);}
   color:#fff;
 }
 .msg-wep-btn:active{opacity:.85}
+
+/* ============================================================
+   We 三页导航底栏（we-tabbar）+ 时光页（v1，2026-09-28）
+   ------------------------------------------------------------
+   三主页面（'we' / 'we-time' / 'collection'）挂同一条底栏：
+   纸底 + 顶部细线 + 深色文字 + 选中项砖红短下划线（原稿方向），
+   ＋ 是动作（复用「记一条共同记录」抽屉），不是第四个 Tab。
+   布局借 .page.has-tabbar 通用机制：滚动在 .app-body，bar flex:none 常驻，
+   不 fixed 到 #phone / 宿主浏览器。
+   ============================================================ */
+
+/* 底栏自带一份 safe-area —— We 页纸张自己的底部安全区别再算一遍
+   （同 .page.has-tabbar .page-inner padding-bottom:0 的既有纪律）。
+   margin 也要归零：has-tabbar 下 .page-inner 左右 padding 已收零，
+   纸张的 -22px 通栏负 margin 会把整张纸推出屏外（正文贴边、编号被裁）——
+   纸张直接占满，纸内的封面 / 待确认条继续用自己的 -22px 出血到屏缘。 */
+.page.has-tabbar .we-page-paper{margin-left:0;margin-right:0;padding-bottom:30px}
+
+.we-tabbar{
+  flex:none;display:flex;align-items:stretch;
+  padding:2px 8px calc(env(safe-area-inset-bottom) + 5px);
+  background:var(--we-paper, var(--g-accent-pale));
+  border-top:1px solid rgba(27,25,23,.4);
+  z-index:6;
+}
+.we-tab{
+  flex:1;min-width:0;position:relative;
+  display:flex;align-items:center;justify-content:center;
+  padding:11px 2px 10px;
+  border:0;background:none;
+  font-family:var(--ff-serif);font-size:13px;letter-spacing:.22em;
+  color:var(--text-faint, var(--text-dim));cursor:pointer;
+  transition:color .15s var(--ease);
+}
+.we-tab:active{opacity:.65}
+.we-tab .we-tab-line{
+  position:absolute;left:50%;bottom:0;width:26px;height:2px;margin-left:-13px;
+  background:transparent;
+}
+.we-tab.is-on{color:var(--text)}
+.we-tab.is-on .we-tab-line{background:var(--g-accent-deep, var(--g-accent))}
+.we-tab-add{
+  flex:none;display:flex;align-items:center;justify-content:center;
+  width:44px;border:0;background:none;
+  color:var(--text-dim);cursor:pointer;
+}
+.we-tab-add svg{display:block}
+.we-tab-add:active{opacity:.65}
+
+/* ---- 时光页 ---- */
+.we-time-cover{height:200px}
+.we-time-day{
+  display:flex;align-items:baseline;gap:10px;
+  margin:24px 0 10px;padding-bottom:6px;
+  border-bottom:1px solid rgba(27,25,23,.14);
+}
+.we-time-day b{
+  font-family:var(--ff-serif);font-size:15px;font-weight:400;
+  color:var(--text);letter-spacing:.04em;
+}
+.we-time-item .we-time-thumb{
+  display:block;height:96px;margin-top:10px;
+  background:
+    radial-gradient(120% 100% at 20% 15%, rgba(176,138,94,.16) 0%, transparent 60%),
+    repeating-linear-gradient(0deg, rgba(27,25,23,.02) 0 1px, transparent 1px 3px),
+    var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.14);
+  background-size:cover;background-position:center;
+}
+.we-time-item .we-time-thumb.has-img{border-color:rgba(27,25,23,.28)}
+.we-time-more{
+  display:block;width:100%;margin-top:16px;padding:11px 0;
+  font-family:var(--ff-serif);font-size:12.5px;letter-spacing:.14em;
+  color:var(--g-accent-deep, var(--g-accent));
+  background:none;border:1px dashed rgba(176,138,94,.5);border-radius:0;
+  cursor:pointer;
+}
+.we-time-more:active{background:rgba(176,138,94,.08)}
+
+/* 时光 → 来源定位的短高亮（weNav.revealInPage，1.6s 后自动摘） */
+.we-jump-flash{animation:weJumpFlash 1.6s var(--ease);}
+@keyframes weJumpFlash{
+  0%{background-color:rgba(176,138,94,.24);outline:2px solid var(--g-accent-deep, var(--g-accent));outline-offset:2px;}
+  100%{background-color:transparent;outline-color:transparent;outline-offset:2px;}
+}

@@ -327,7 +327,8 @@
     'America/New_York': -300,
     'Europe/London': 0,
     'Europe/Paris': 60,
-    'Australia/Sydney': 600
+    'Australia/Sydney': 600,
+    'UTC': 0        /* runtimeTzOf 第 ④ 级安全兜底（无 Intl 时近似表也得接得住） */
   };
 
   Sleepy.calendarData = {
