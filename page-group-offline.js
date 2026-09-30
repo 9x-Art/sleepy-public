@@ -1565,14 +1565,39 @@
         return;
       }
       var env = session.env || {};
+      /* B0：在场者从 present && !away 的参与者生成（char/npc 都算），
+         「我」单独按 user 身份进 subjects —— 画面里有谁只看 subjects，
+         中文 description 不再误套「排人」的场景基底。 */
       var who = presentParts(session).map(function (p) { return partMeta(session, p).name; }).join('、');
+      var subs = presentParts(session).map(function (p) {
+        return Sleepy.imggen.subjectForChar(core.findChar(p.ownerId), 'group');
+      }).filter(function (s) { return s.entityId; });
+      /* B1：user 主体按会话记的马甲走 —— id 在就带真实锁脸；
+         id 挂了空号（被删等）保留身份但**锁脸留空**并明告 fallback，
+         绝不静默套别的马甲；会话压根没记 id 才回落岛卫兵那件。 */
+      var u1 = core.findUser(session.userIdentityAccountId);
+      if (u1) {
+        subs.push(Sleepy.imggen.subjectForUser(u1, 'group'));
+      } else if (session.userIdentityAccountId) {
+        subs.push({
+          entityType: 'user', entityId: String(session.userIdentityAccountId),
+          name: '我', gender: '', faceText: ''
+        });
+        console.warn('[Sleepy] B1 群线下 user 马甲解析失败，锁脸留空：' + session.userIdentityAccountId);
+        ctx.toast('这件马甲找不到了，合影里「我」没带外貌锁', 'warn');
+      } else {
+        var au = (core.activeUserOnIsland && core.activeUserOnIsland()) || null;
+        if (au) subs.push(Sleepy.imggen.subjectForUser(au, 'group'));
+      }
+      var plan = {
+        sender: 'system', contentType: 'mixed', shot: 'group', subjects: subs,
+        description: (env.location || '') + '，' + who + '在场，' +
+          (env.timeOfDay || '') + '，' + (env.weather || '') + '的氛围，电影感构图'
+      };
       ctx.toast('正在生成…', 'ok');
       pending = true;
       setBusy(true);
-      Sleepy.imggen.generate({
-        subject: (env.location || '') + '，' + who + '在场，' +
-          (env.timeOfDay || '') + '，' + (env.weather || '') + '的氛围，电影感构图，无人物特写'
-      }).then(function (r) {
+      Sleepy.imggen.generate({ plan: plan }).then(function (r) {
         pending = false;
         setBusy(false);
         if (!r.ok) { ctx.toast('✗ ' + ((r.error && r.error.message) || '生成失败'), 'err'); return; }

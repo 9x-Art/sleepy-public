@@ -828,14 +828,8 @@
       gKind.card.appendChild(fRow);
 
       /* `city` 不再放这里 —— 它已经升格成「常驻地点」那一组（见下面 gPlace）。
-         原本的 hint 写着「用在桌面的双城时间」，那个组件早撤了。 */
-      f.status = textField({
-        label: '状态签名',
-        hint: '显示在桌面角色卡的第二行（组件商城能装一张角色卡）',
-        value: existing ? (existing.status || '') : '',
-        placeholder: '开会中…'
-      });
-      gKind.card.appendChild(f.status.el);
+         状态签名已全量下线（2026-09-29 用户拍板）：字段删除、prompt 注入撤、
+         桌面角色卡那类展示等组件商城重做时再议。 */
 
       body.appendChild(gKind.wrap);
 
@@ -1080,11 +1074,8 @@
       btnRow.appendChild(button('保存', 'primary', function () { doSave(); }));
       body.appendChild(btnRow);
 
-      if (existing && kind === 'main') {
-        var foot = h('p', 'set-foot',
-          '删除大号会把它名下的小号和 NPC 一起删掉。');
-        body.appendChild(foot);
-      }
+      /* 2026-09-29（用户）：「删除大号会把它名下的小号和 NPC 一起删掉」这句
+         解释多余，去掉 —— 且行为已改：NPC 属于岛，删除大号不再连坐 NPC。 */
 
       ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
 
@@ -1101,7 +1092,8 @@
         if (!existing) return;
         if (!armed) {
           armed = true;
-          var subs = core.subChars(existing.id).length + core.npcChars(existing.id).length;
+      /* 2026-09-29：NPC 不连坐（NPC 属于岛），确认文案只数皮套 */
+          var subs = core.subChars(existing.id).length;
           delBtn.textContent = subs
             ? ('再点一次，连同 ' + subs + ' 个下属一起删')
             : '再点一次，确认删除';
@@ -1148,8 +1140,9 @@
           wechatName: String(f.wechatName.get() || '').trim(),
           avatar: String(f.avatar.get() || '').trim(),
           avatarMedia: f.avatar.getMedia(),
+          /* 状态签名下线：不再写 status。老存档里已有的值保留不动，
+             但不再有任何入口能改它（注入与展示都已撤）。 */
           city: String(f.city.get() || '').trim(),
-          status: String(f.status.get() || '').trim() || (kind === 'sub' ? '小号' : '在线'),
           /* 常驻地点：日历/时区/以后的语言档都从这三个字段推。
              timezone 留空（跟随设备）就存空串 —— 运行时 runtimeTzOf 会
              解析成设备系统时区；绝不在这里补 Asia/Shanghai 兜底。 */
@@ -1248,9 +1241,9 @@
 
       var s3 = h('button', 'cog-opt is-danger' + (c.barrier ? ' is-on' : ''));
       s3.type = 'button';
-      s3.appendChild(h('span', 'cog-opt-title', '记忆完全隔离 · 平行宇宙'));
+      s3.appendChild(h('span', 'cog-opt-title', '记忆完全隔离'));
       s3.appendChild(h('span', 'cog-opt-desc',
-        '检索层直接拦掉非当前马甲组合的记忆。连既视感都没有，纯粹的平行宇宙。'));
+        '没有所谓大小号 —— 就只有一个认知，正常相处。'));
       s3.addEventListener('click', function () {
         core.setBarrier(charId, userId, true);
         paint();
@@ -1261,7 +1254,7 @@
       var state = h('p', 'cog-state');
       var name = core.findChar(charId);
       state.textContent = '当前：' +
-        (c.barrier ? '平行宇宙（无既视感）'
+        (c.barrier ? '记忆完全隔离'
                    : (c.cognition === 'aware' ? '已知情（明牌）' : '不知情（保护中）')) +
         ' · 面对「' + (user ? user.name : '对方') + '」的这张脸是「' + (name ? name.name : '?') + '」';
       box.appendChild(state);
@@ -1628,6 +1621,54 @@
       });
       form.appendChild(f.city.el);
 
+      /* B1 生图外貌（用户实施单）：只喂生图管线的 ImagePlan subjects，
+         **不进聊天 Prompt**。与 char 的 contact-edit 锁脸区同一套控件与
+         分档语义：基础段任何含 TA 的图都带；自拍/全身按镜头二选一追加。
+         不自动从头像/名字猜外貌，不预填；每件马甲各自独立。 */
+      var gLooks = group('生图外貌',
+        '只用于生图锁脸：写发型、发色、瞳色、面部特征、年龄感这类长期稳定特征；' +
+        '不填就只按画面描述画，不会自动猜。');
+      f.gender = h('div', 'set-field');
+      f.gender.appendChild(h('label', 'set-label', '性别（生图用）'));
+      f.genderSel = h('select', 'set-select');
+      [['', '不填（生图时不拼性别 tag）'],
+       ['female', '女（1girl）'],
+       ['male', '男（1boy）']].forEach(function (o) {
+        var op = h('option', '', o[1]);
+        op.value = o[0];
+        if ((existing ? (existing.gender || '') : '') === o[0]) op.selected = true;
+        f.genderSel.appendChild(op);
+      });
+      f.gender.appendChild(f.genderSel);
+      ui.bindLabel(f.gender, f.genderSel);
+      gLooks.card.appendChild(f.gender);
+
+      f.faceLockText = textArea({
+        label: '基础外貌锁定（生图必带）',
+        value: existing ? (existing.faceLockText || '') : '',
+        rows: 3,
+        placeholder: '发型、发色、瞳色、面部特征、年龄感、体型等长期稳定特征'
+      });
+      gLooks.card.appendChild(f.faceLockText.el);
+
+      f.faceLockSelfie = textArea({
+        label: '自拍与近景补充（可不填）',
+        value: existing ? (existing.faceLockSelfie || '') : '',
+        rows: 2,
+        placeholder: '只写自拍、头像、近距离肖像需要额外强调的内容，不重复基础段'
+      });
+      gLooks.card.appendChild(f.faceLockSelfie.el);
+
+      f.faceLockFull = textArea({
+        label: '全身与合影补充（可不填）',
+        value: existing ? (existing.faceLockFull || '') : '',
+        rows: 2,
+        placeholder: '只写身高感、穿衣轮廓等全身、合影、多人画面需要的内容，不重复基础段'
+      });
+      gLooks.card.appendChild(f.faceLockFull.el);
+
+      form.appendChild(gLooks.wrap);
+
       /* 这是我的大号（用户 2026-09-21）：每座岛只认一件，
          降落/换岛时「我」就归位到它 —— 所以得让人能明确指认。
          新建时本岛还没有大号就默认打开。 */
@@ -1689,6 +1730,11 @@
           wechatName: String(f.wechatName.get() || '').trim(),
           persona: String(f.persona.get() || '').trim(),
           city: String(f.city.get() || '').trim(),
+          /* B1 生图外貌四件：与 char 的锁脸字段同名同义，每件马甲独立 */
+          gender: String(f.genderSel.value || ''),
+          faceLockText: String(f.faceLockText.get() || '').trim(),
+          faceLockSelfie: String(f.faceLockSelfie.get() || '').trim(),
+          faceLockFull: String(f.faceLockFull.get() || '').trim(),
           avatar: String(f.avatar.get() || '').trim(),
           avatarMedia: f.avatar.getMedia(),
           isDefault: f.big.get(),

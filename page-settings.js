@@ -52,9 +52,10 @@
 
       /* 数字化的下限兜底：cfg.timeoutSec 可能是 0，也可能是字符串 '0'（老存档）。
          后者是 truthy —— `cfg.timeoutSec || 60` 拦不住它，会被
-         Math.max(1, '0') 算成 **1 秒**（2026-09-23 全链路排查）。 */
+         Math.max(1, '0') 算成 **1 秒**（2026-09-23 全链路排查）。
+         2026-09-29 起下限抬到 60（用户拍板「归一到 60s」），与 genParams 同口径。 */
       var secs = Number(cfg.timeoutSec);
-      if (!(secs >= 5)) secs = 60;
+      if (!(secs >= 60)) secs = 60;
       var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
       var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, secs * 1000) : null;
       var t0 = Date.now();
@@ -486,7 +487,7 @@
     f.contextMessages = numField({ label: '携带上下文条数', hint: '留空＝用内置默认 · 越多越记得住，也越贵', value: preset.contextMessages, min: 2, max: 200, step: 2 });
     f.contextMessages.input.placeholder = String(def.contextMessages);
     g2.card.appendChild(f.contextMessages.el);
-    f.timeoutSec = numField({ label: '超时（秒）', value: preset.timeoutSec, min: 5, max: 300, step: 5 });
+    f.timeoutSec = numField({ label: '超时（秒）', hint: '最小 60 —— 小于 60 的值运行时也会按 60 跑', value: preset.timeoutSec, min: 60, max: 300, step: 5 });
     f.timeoutSec.input.placeholder = '60';
     g2.card.appendChild(f.timeoutSec.el);
     body.appendChild(g.wrap);

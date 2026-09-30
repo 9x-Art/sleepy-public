@@ -132,6 +132,11 @@
           hint: imggen.KINDS.nai.hint,
           onClick: function () { ctx.open('settings-imggen-add', { kind: 'nai' }); }
         }));
+        listCard.appendChild(row({
+          label: '添加文字通道',
+          hint: imggen.KINDS.chat.hint,
+          onClick: function () { ctx.open('settings-imggen-add', { kind: 'chat' }); }
+        }));
       }
       refreshList();
       body.appendChild(g.wrap);
@@ -304,7 +309,7 @@
     });
     g.card.appendChild(f.size.el);
 
-    f.timeoutSec = numField({ label: '超时（秒）', value: api.timeoutSec, min: 10, max: 600, step: 10 });
+    f.timeoutSec = numField({ label: '超时（秒）', hint: '最小 60 —— 小于 60 的值运行时也会按 60 跑', value: api.timeoutSec, min: 60, max: 600, step: 10 });
     g.card.appendChild(f.timeoutSec.el);
     body.appendChild(g.wrap);
 
@@ -353,6 +358,49 @@
     });
     tryFold.body.appendChild(subj.el);
 
+    /* ---- E1 本地实验：视觉拼接模式（仅试一张，未接入其他生图入口）----
+       legacy = 完全旧路径对照；sleepy-default = Sleepy 场景/物品底座；
+       custom = 只注入用户自定义视觉词（空 = 没有额外审美词，不回退默认）。
+       实验字段存 sleepy_img_visual_exp_*，不进接口配置、不进导出。 */
+    tryFold.body.appendChild(h('p', 'test-tip', '仅本地实验，未接入其他生图入口'));
+
+    var expModeWrap = h('div', 'set-field');
+    expModeWrap.appendChild(h('label', 'set-label', '视觉拼接模式'));
+    var expModeSel = h('select', 'set-select');
+    [['legacy', '当前旧基底（对照）'],
+     ['sleepy-default', 'Sleepy 默认底座（实验）'],
+     ['custom', '用户自定义视觉词（实验）']].forEach(function (o) {
+      var op = h('option', '', o[1]);
+      op.value = o[0];
+      expModeSel.appendChild(op);
+    });
+    expModeSel.value = imggen.visualExpMode();
+    expModeWrap.appendChild(expModeSel);
+    ui.bindLabel(expModeWrap, expModeSel);
+    tryFold.body.appendChild(expModeWrap);
+
+    var customVisual = textArea({
+      label: '自定义视觉提示词',
+      hint: '只替换 Sleepy 的视觉审美层；不会关闭画面内容与无人结构。',
+      rows: 3,
+      placeholder: '例：flat graphic illustration, limited color palette'
+    });
+    customVisual.input.value = imggen.visualExpCustom();
+    tryFold.body.appendChild(customVisual.el);
+
+    function syncExpUI() {
+      /* legacy/自定义未选中时收起输入框；选中 custom 才消费它 */
+      customVisual.el.style.display = expModeSel.value === 'custom' ? '' : 'none';
+    }
+    expModeSel.addEventListener('change', function () {
+      imggen.setVisualExpMode(expModeSel.value);
+      syncExpUI();
+    });
+    customVisual.input.addEventListener('input', function () {
+      imggen.setVisualExpCustom(customVisual.get());
+    });
+    syncExpUI();
+
     var tryBtnRow = h('div', 'btn-row');
     var genBtn = button('生成', 'primary');
     tryBtnRow.appendChild(genBtn);
@@ -370,9 +418,29 @@
       out.appendChild(h('p', 'test-tip', '正在画…（生图要几秒到几十秒）'));
 
       /* 用表单里当前的值（还没保存也行）；词条全拼上，
-         正式的勾选入口在聊天里（P1） */
+         正式的勾选入口在聊天里（P1）。
+         E1：legacy 走原路径分毫不动；新模式显式构造 subjects:[] 的
+         scene plan（不靠 PERSON_RE），prompt 由实验函数拼好直进请求。 */
       var extras = imggen.listPrompts().map(function (p) { return p.text; });
-      imggen.generate({ api: collect(), subject: subject, extras: extras }).then(function (res) {
+      var expMode = imggen.visualExpMode();
+      var req;
+      if (expMode === 'legacy') {
+        req = imggen.generate({ api: collect(), subject: subject, extras: extras });
+      } else {
+        var built = imggen.buildSceneObjectExperimentPrompt({
+          api: collect(),
+          description: subject,
+          contentType: 'scene',
+          subjects: [],
+          visualMode: expMode,
+          customVisualStyle: imggen.visualExpCustom(),
+          extras: extras
+        });
+        req = (built && imggen.generateBuilt({
+          api: collect(), positive: built.positive, negative: built.negative
+        })) || Promise.resolve({ ok: false, error: { message: '这个模式不能画这张', detail: '' } });
+      }
+      req.then(function (res) {
         genBtn.disabled = false;
         if (!res.ok) {
           out.className = 'imggen-out is-err';
@@ -455,7 +523,7 @@
         apiKey: f.apiKey.get(),
         model: f.model.get(),
         size: f.size.get() || '1024x1024',
-        timeoutSec: Math.round(f.timeoutSec.get()) || 120,
+        timeoutSec: Math.round(f.timeoutSec.get()) || 60,
         positivePreset: f.positivePreset.get(),
         negativePreset: f.negativePreset.get(),
         enabled: f.enabled.get()

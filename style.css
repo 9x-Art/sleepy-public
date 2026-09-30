@@ -9259,11 +9259,33 @@ div.pp-row:active{background:none;}
 .dia-edit-paper{margin:6px 16px 14px;}
 .dia-edit-paper .set-field textarea{line-height:28px;}
 
-/* ---- 查岗卡片 ---- */
+/* ---- 查岗卡片 ----
+   2026-09-29 起是**居中系统镜头卡**（用户定稿）：这张图不是任何人拍的，
+   不挂 user 气泡，独立占一行居中（对齐 .msg-pat/.msg-system 的做法）。
+   存储仍是 role:'user'，只有渲染换载体 —— noticed 隔离闸门不动。 */
+.msg-checkin-row{
+  align-self:center;
+  max-width:64%;
+  margin:6px 0;
+  position:relative;
+}
+.msg-checkin-row.is-selected::after{
+  content:"✓";
+  position:absolute;top:-5px;right:-5px;
+  width:19px;height:19px;border-radius:50%;
+  background:var(--amber);color:#2A2118;
+  font-size:11px;font-weight:600;
+  line-height:19px;text-align:center;
+  box-shadow:0 1px 3px rgba(120,132,156,.32);
+}
 .msg-checkin{
   position:relative;max-width:220px;
   border:1px solid var(--line);border-radius:2px;
   overflow:hidden;background:var(--surface);
+}
+.msg-checkin-head{
+  text-align:center;font-size:10px;letter-spacing:.3em;
+  color:var(--text-dim);padding:6px 9px 5px;
 }
 .msg-checkin .msg-photo-img{display:block;width:100%;}
 .msg-checkin-cap{

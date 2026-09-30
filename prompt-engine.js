@@ -815,19 +815,19 @@
 
   /* K01：角色卡 content 原文注入（人设方法论：原文不做结构化处理）。
      2026-09-22 补：卡片上那几个**短字段**以前只存不注入 ——
-     用户填了状态签名、说话方式、国籍、红线，模型一个都看不见
+     用户填了说话方式、国籍、红线，模型一个都看不见
      （「过一遍预设系统，把没加的但是该加的加上」）。
      content 仍然是**原文、不做结构化处理**，这几行只是挂在它前面。
-     nationality 只用来交代口吻/文化背景 —— **不参与任何计算**（那是三件套的事）。 */
+     nationality 只用来交代口吻/文化背景 —— **不参与任何计算**（那是三件套的事）。
+     2026-09-29（用户）：状态签名全量下线 —— 字段删除，注入行一并撤。
+     桌面角色卡那类展示等组件商城重做时再议。 */
   /* 角色卡上那几个**短字段** → 注入行。
      K01 和群聊的 [ENTITY_KNOWLEDGE] **共用这一份** —— 两处各写一遍的结果
-     就是「私聊里看得见状态签名，群里看不见」（2026-09-22 通查发现的第一处）。
-     返回数组，前缀和排版交给调用方。 */
+     就是「私聊里看得见，群里看不见」。返回数组，前缀和排版交给调用方。 */
   function charMetaLines(c) {
     if (!c) return [];
     var meta = [];
     if (c.speech) meta.push('说话与行为方式：' + String(c.speech).trim());
-    if (c.status) meta.push('当前状态：' + String(c.status).trim());
     var who = [];
     if (c.gender === 'female') who.push('女');
     if (c.gender === 'male') who.push('男');
@@ -1613,7 +1613,7 @@
     assembleOnline: assembleOnline,
     assembleOffline: assembleOffline,
     /* K01 的两个出口（2026-09-22 通查）：主动消息和群聊以前各自手拼
-       `[CHARACTER]` + content，于是状态签名/说话方式/红线全看不见。
+       `[CHARACTER]` + content，于是说话方式/红线这些短字段全看不见。
        导出给它们复用，别再有第二份实现。
        charMetaLines 是「几个短字段 → 注入行」，群聊按行拼、K01 按块拼。 */
     compileCharacter: compileCharacter,

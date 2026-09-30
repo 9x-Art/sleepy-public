@@ -60,13 +60,12 @@
       return fallback;
     }
 
-    /* 超时下限 5 秒。老存档里可能存过 timeoutSec: 0 —— 那是编辑页清空
-       输入框时 Math.round(null) 写进去的（2026-09-23 修），而 0 在 pick 里
-       被当成「有效值」，最后算成 Math.max(1, 0) = 1 秒：真机报的
-       「查手机超时：1 秒没有响应」就是它（查手机走的就是主 API）。
-       UI 里本来也不让人填小于 5，所以这里钳一下就够了，不用迁存档。 */
+    /* 超时归一（2026-09-29 用户拍板「归一到 60s」）：存档里 <60 的值一律按
+       60 跑 —— 用户真机遇到「几秒就超时」，查下来是早年存的小值一直生效。
+       下限本来是 5 秒（老存档 timeoutSec: 0 会被算成 1 秒，2026-09-23 修），
+       现在直接抬到 60：UI 就不该再让人填小于 60 的值。 */
     var tout = pick('timeoutSec', GEN_DEFAULTS.timeoutSec);
-    if (!(tout >= 5)) tout = GEN_DEFAULTS.timeoutSec;
+    if (!(tout >= 60)) tout = GEN_DEFAULTS.timeoutSec;
 
     return {
       temperature: pick('temperature', GEN_DEFAULTS.temperature),
@@ -481,7 +480,9 @@
       if (!url) { resolve({ ok: false, stage: 'config', error: '还没填向量接口地址' }); return; }
       if (!cfg.model) { resolve({ ok: false, stage: 'config', error: '还没填向量模型名' }); return; }
 
-      var secs = Math.max(1, Number(ov && ov.timeoutSec) || 60);
+      /* 超时归一（2026-09-29）：embed 没有 UI 入口，ov 一般不传；
+         传了也不许低于 60 —— 口径与 genParams 一致。 */
+      var secs = Math.max(60, Number(ov && ov.timeoutSec) || 60);
       var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
       var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, secs * 1000) : null;
       var t0 = Date.now();

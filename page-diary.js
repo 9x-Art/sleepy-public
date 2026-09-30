@@ -222,7 +222,7 @@
       var t = String(ln).trim();
       if (!t) { text.push(t); return; }
       var m = /^\[\s*图\s*\]\s*([\s\S]*)$/.exec(t);
-      if (m && m[1].trim()) { imgDesc = m[1].trim().slice(0, 120); return; }
+      if (m && m[1].trim()) { imgDesc = m[1].trim().slice(0, 240); return; }   /* B0：结构化 JSON 需要更长 */
       text.push(t);
     });
     return { text: text.join('\n').trim(), imgDesc: imgDesc };
@@ -282,7 +282,7 @@
       '- 这是写给自己看的日记，不是发给对方的消息。可以提到对方，但用你平时的称呼',
       '- 不总结、不升华，结尾停在一件具体的小事上',
       canPic
-        ? '- 想配一幅插图的话，在正文最后一行单独写 [图] 画面描述（一句中文，画日记里最有画面的一刻；不想配就不写这行，也别每次都配）'
+        ? '- 想配一幅插图的话，在正文最后一行单独写一行 [图]，后面跟一段 JSON：{"description":"画面描述，英文 tag 风格","contentType":"scene|object|person|mixed","shot":"auto|selfie|portrait|full|candid|group|scene","subjects":["user","char"]}（subjects 只写画面里真实出现的人：你是 "char"，对方是 "user"；只拍到桌面/窗外/风景就留 []；不想配就不写这行，也别每次都配；写不了 JSON 才退回一句话描述）'
         : '- 不要写 [图] 行（现在配不了图）',
       '- 除了 [图] 行，只输出日记正文：不要日期抬头，不要标题，不要任何解释'
     ].filter(Boolean).join('\n\n');
@@ -310,17 +310,37 @@
 
   /* 日记配图（生图接口）：autoPic 开关开 + 接口可用才画，画完落回条目。
      顺手喂给聊天页的多模态缓存 —— 之后 TA 在聊天里「偷看」这篇日记时
-     第一轮就能看见图。 */
+     第一轮就能看见图。
+     B0：[图] 里带结构化 JSON → 按 plan 画（主体由 subjects 决定，
+     日记里也可以只画风景/物件）；还是一句话 → legacy：按正则猜 shot
+     并默认锁 char（旧行为，标 legacyFallback 供验收定位）。 */
   function maybeDiaryPic(ch, imgDesc, item) {
     if (!imgDesc || !item) return;
     if (settings().autoPic === false) return;
     if (!(Sleepy.imggen && Sleepy.imggen.readEnabled() && Sleepy.imggen.activeApi())) return;
-    var shot = /selfie|自拍|近照/i.test(imgDesc) ? 'selfie' : '';
-    Sleepy.imggen.generate({
-      subject: imgDesc,
-      faceText: Sleepy.imggen.faceTextFor(ch, shot),
-      gender: ch
-    }).then(function (r) {
+    var parsed = Sleepy.imggen.parsePlanJson(imgDesc);
+    var genOpts;
+    if (parsed) {
+      var me = (core.activeUserOnIsland && core.activeUserOnIsland()) || null;
+      var subs = [];
+      parsed.subjects.forEach(function (k) {
+        if (k === 'char') subs.push(Sleepy.imggen.subjectForChar(ch, parsed.shot));
+        else if (k === 'user' && me) subs.push(Sleepy.imggen.subjectForUser(me, parsed.shot));
+      });
+      genOpts = { plan: {
+        sender: 'char', contentType: parsed.contentType, shot: parsed.shot,
+        subjects: subs, description: parsed.description
+      } };
+    } else {
+      var shot = /selfie|自拍|近照/i.test(imgDesc) ? 'selfie' : '';
+      genOpts = {
+        subject: imgDesc,
+        faceText: Sleepy.imggen.faceTextFor(ch, shot),
+        gender: ch,
+        legacyFallback: true
+      };
+    }
+    Sleepy.imggen.generate(genOpts).then(function (r) {
       if (!(r.ok && r.mediaId)) return;
       patchEntry(item.id, { mediaId: r.mediaId });
       if (Sleepy.chatVision) Sleepy.chatVision.preloadPhotoData(r.mediaId);

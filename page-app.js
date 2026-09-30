@@ -123,7 +123,7 @@
         line.appendChild(h('span', 'addr-badge', badge));
         body.appendChild(line);
         body.appendChild(h('span', 'addr-sub',
-          c.status || (c.content ? String(c.content).split('\n')[0].slice(0, 22) : '还没写人设')));
+          c.content ? String(c.content).split('\n')[0].slice(0, 22) : '还没写人设'));
         row.appendChild(body);
 
         row.addEventListener('click', function () { openChatWith(ctx, c.id); });

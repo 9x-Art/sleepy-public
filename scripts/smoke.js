@@ -2282,7 +2282,8 @@ t('组件商城：目录非空，装一件进去桌面真的多一格', () => {
 });
 
 /* 角色卡上架（2026-09-22 用户「人1」）：默认户型里没有它（用户点名从主屏
-   拿掉的），但组件商城要能装回来 —— 状态签名就是靠这张卡的第二行才有人看见。 */
+   拿掉的），但组件商城要能装回来。
+   2026-09-29：状态签名全量下线 —— 卡片第二行恒为「在线」，不再读 char.status。 */
 t('组件商城：角色卡上架了（默认户型没有，目录里能装回来）', () => {
   S.store.set('desktop', null);
   const card = S.widgetStore.catalog().filter((c) => c.type === 'char')[0];
@@ -2292,8 +2293,12 @@ t('组件商城：角色卡上架了（默认户型没有，目录里能装回�
   const onDesk = S.desktop.getDesktop().pages.some((l) =>
     (l || []).some((c) => c.type === 'char'));
   const st = S.desktop.skin().status;   /* 卡片第二行读的就是它 */
+  /* 状态签名下线后第二行只会是「在线」或空态提示，绝不再读 char.status */
+  if (st !== '在线' && st !== '去浮岛开一间房' && st !== '从桌面下拉或切号器选一位' && st !== '还没有角色') {
+    throw new Error('第二行不该再来自 char.status，实 ' + st);
+  }
   S.store.set('desktop', null);
-  return { 尺寸: card.w + '×' + card.h, 装上了: res.ok, 桌面上有: onDesk, 状态签名: st };
+  return { 尺寸: card.w + '×' + card.h, 装上了: res.ok, 桌面上有: onDesk, 第二行: st };
 });
 
 t('组件商城：桌面塞满时明说放不下，不硬塞（重叠会被 CSS 静默盖住）', () => {
@@ -2548,6 +2553,185 @@ t('buildPrompt 选档：人物向用接口预设，场景向换内置且负面�
   if (p2.positive.indexOf('my custom person words') >= 0) throw new Error('场景向不该用接口预设');
   if (p2.positive.indexOf('scenery') < 0) throw new Error('场景向没有 scenery 词');
   if (p2.negative.indexOf('1girl') < 0) throw new Error('场景向负面没排人');
+  return 'ok';
+});
+
+/* B0 ImagePlan：有人没人只看 subjects —— 中文 description 不再误套场景基底，
+   锁脸跟着画面主体走（跟谁发的无关），多人身份段永不合并去重。 */
+t('buildPrompt(plan)：subjects 决定基底与锁脸，中文不误判', () => {
+  const g = S.imggen;
+  const api = g.newApi('general');
+  api.positivePreset = '{p}, my person words';
+  const chSub = { entityType: 'char', entityId: 'c1', name: '小雫', gender: 'female', faceText: 'silver hair, red eyes' };
+  const chSub2 = { entityType: 'char', entityId: 'c2', name: '小满', gender: 'female', faceText: 'silver hair, blue eyes' };
+  const userSub = { entityType: 'user', entityId: 'u1', name: '我', gender: '', faceText: '' };
+  const r1 = g.buildPrompt({ api, plan: { sender: 'user', contentType: 'person', shot: 'selfie', subjects: [chSub], description: '窗边喝咖啡，午后阳光' } });
+  if (r1.scene !== false) throw new Error('subjects 非空却走了场景基底');
+  if (r1.positive.indexOf('my person words') < 0) throw new Error('人物基底没用接口预设');
+  if (r1.positive.indexOf('1girl') < 0 || r1.positive.indexOf('silver hair') < 0) throw new Error('char 性别/锁脸没进正向');
+  if (r1.negative.indexOf('1girl') >= 0) throw new Error('人物图负面里不该有排人词');
+  const r2 = g.buildPrompt({ api, plan: { sender: 'user', contentType: 'scene', shot: 'scene', subjects: [], description: '雨夜窗边' } });
+  if (r2.scene !== true || r2.negative.indexOf('1girl') < 0) throw new Error('纯场景该走场景基底');
+  const r3 = g.buildPrompt({ api, plan: { sender: 'user', contentType: 'person', shot: 'selfie', subjects: [userSub], description: '对镜自拍' } });
+  if (r3.scene !== false) throw new Error('user 出镜也该走人物基底');
+  if (r3.positive.indexOf('silver hair') >= 0) throw new Error('user 出镜不该拼到 char 的资料');
+  const r4 = g.buildPrompt({ api, plan: { sender: 'char', contentType: 'mixed', shot: 'group', subjects: [userSub, chSub, chSub2], description: '合影' } });
+  if (r4.scene !== false) throw new Error('合影不该走场景基底');
+  if (r4.positive.split('silver hair').length !== 3) throw new Error('两人相同的特征词被合并去重了');
+  if (r4.positive.indexOf('小雫 (1girl') < 0 || r4.positive.indexOf('小满 (1girl') < 0) throw new Error('多人没做名字绑定');
+  return 'ok';
+});
+
+/* parsePlanJson：结构化 [图]/[生图:] 收口 —— 坏档位/一句话一律回 null 走 legacy。 */
+t('parsePlanJson / subjectForChar：白名单收口 + 按 shot 取锁脸组', () => {
+  const g = S.imggen;
+  const ok = g.parsePlanJson('{"description":"rain on window","contentType":"scene","shot":"scene","subjects":[]}');
+  if (!ok || ok.contentType !== 'scene' || ok.subjects.length) throw new Error('JSON 没读出来');
+  if (g.parsePlanJson('在阳台喝咖啡的自拍') !== null) throw new Error('一句话不该被解析成 plan');
+  const bad = g.parsePlanJson('{"description":"x","contentType":"magic","shot":"nope","subjects":["dog"]}');
+  if (bad === null || bad.contentType !== 'scene' || bad.subjects.length) throw new Error('白名单没收口');
+  const sub = g.subjectForChar(
+    { id: 'c1', name: '小雫', gender: 'female', faceLockText: 'base', faceLockSelfie: 'selfie词', faceLockFull: 'full词' },
+    'selfie');
+  if (sub.faceText.indexOf('selfie词') < 0 || sub.faceText.indexOf('full词') >= 0) throw new Error('subjectForChar 没按 shot 取锁脸组');
+  const uSub = g.subjectForUser({ id: 'u1', name: '' });
+  if (uSub.faceText !== '' || uSub.gender !== '') throw new Error('user 主体必须保持空（B1 才补资料）');
+  return 'ok';
+});
+
+/* B0 sender 语义：sender 只表示图片最终落谁的消息气泡，不参与
+   主体/锁脸/基底判断；查岗消息真实归属是 user 气泡 → sender 必须 'user'。 */
+t('plan.sender：不参与拼词 + 查岗归属与 sender 一致', () => {
+  const g = S.imggen;
+  const api = g.newApi('general');
+  const chSub = { entityType: 'char', entityId: 'c1', name: '小雫', gender: 'female', faceText: 'silver hair, red eyes' };
+  const base = { contentType: 'person', shot: 'selfie', subjects: [chSub], description: '窗边喝咖啡' };
+  const asUser = g.buildPrompt({ api, plan: Object.assign({ sender: 'user' }, base) });
+  const asChar = g.buildPrompt({ api, plan: Object.assign({ sender: 'char' }, base) });
+  if (asUser.positive !== asChar.positive || asUser.negative !== asChar.negative) {
+    throw new Error('sender 参与了拼词（主体/基底不该看 sender）');
+  }
+  /* 查岗：消息存 role:'user' + type:'checkin'，渲染落 user 气泡；
+     planFromDirector 的 sender 必须同为 'user'，不许写成 'char'。 */
+  const src = fs.readFileSync('page-chat.js', 'utf8');
+  if (src.indexOf("planFromDirector(d, ch, c, 'user')") < 0) {
+    throw new Error('runCheckin 的 plan.sender 不是 user');
+  }
+  const m = /role:\s*'user',\s*type:\s*'checkin'/.exec(src);
+  if (!m) throw new Error('查岗消息不是 user 气泡了（归属变了要同步 sender）');
+  if (src.indexOf("planFromDirector(d, ch, c, 'char')") >= 0) {
+    throw new Error('查岗被错写成 char 归属');
+  }
+  return 'ok';
+});
+
+/* B1 user 马甲锁脸：subjectForUser 读马甲**自己**的性别与外貌，分档与 char
+   同语义；user/char 实体边界不串；sender 不影响读取；空 subjects 不拼任何锁脸。 */
+t('B1 subjectForUser：马甲自己的外貌 + shot 分档 + 实体边界', () => {
+  const g = S.imggen;
+  const mkA = { id: 'uA', name: '马甲A', gender: 'female', faceLockText: 'black bob hair', faceLockSelfie: 'peace sign', faceLockFull: 'red sneakers' };
+  const mkB = { id: 'uB', name: '马甲B', gender: 'male', faceLockText: 'tall, glasses', faceLockSelfie: 'smirk', faceLockFull: 'blue jacket' };
+  const sSelf = g.subjectForUser(mkA, 'selfie');
+  if (sSelf.faceText !== 'black bob hair, peace sign') throw new Error('user 自拍分档不对');
+  if (sSelf.gender !== 'female') throw new Error('user 性别没读自己的');
+  if (g.subjectForUser(mkA, 'group').faceText !== 'black bob hair, red sneakers') throw new Error('user 全身分档不对');
+  if (g.subjectForUser(mkB, 'selfie').faceText.indexOf('peace sign') >= 0) throw new Error('马甲 B 串到马甲 A 的外貌了');
+  const api = g.newApi('general');
+  const both = g.buildPrompt({ api, plan: { sender: 'user', contentType: 'mixed', shot: 'group',
+    subjects: [g.subjectForUser(mkA, 'group'), g.subjectForChar({ id: 'c1', name: '小雫', gender: 'female', faceLockText: 'silver hair' }, 'group')],
+    description: '合影' } });
+  if (both.positive.indexOf('马甲A (1girl') < 0 || both.positive.indexOf('小雫 (1girl') < 0) throw new Error('合影没做实体绑定');
+  if (both.positive.indexOf('red sneakers') < 0 || both.positive.indexOf('silver hair') < 0) throw new Error('两人外貌段缺失');
+  const onlyChar = g.buildPrompt({ api, plan: { sender: 'user', contentType: 'person', shot: 'selfie',
+    subjects: [g.subjectForChar({ id: 'c1', gender: 'female', faceLockText: 'silver hair' }, 'selfie')], description: '给 TA 拍一张' } });
+  if (onlyChar.positive.indexOf('black bob hair') >= 0) throw new Error('sender=user 却拼了 user 外貌');
+  const onlyUser = g.buildPrompt({ api, plan: { sender: 'char', contentType: 'person', shot: 'selfie',
+    subjects: [g.subjectForUser(mkA, 'selfie')], description: '拍你' } });
+  if (onlyUser.positive.indexOf('silver hair') >= 0) throw new Error('sender=char 却拼了 char 外貌');
+  if (onlyUser.positive.indexOf('peace sign') < 0 || onlyUser.positive.indexOf('1girl') < 0) throw new Error('user 主体的性别/锁脸没进');
+  const empty = g.buildPrompt({ api, plan: { sender: 'user', contentType: 'scene', shot: 'scene', subjects: [], description: '一杯咖啡' } });
+  if (empty.positive.indexOf('black bob hair') >= 0 || empty.positive.indexOf('silver hair') >= 0) throw new Error('空 subjects 不该拼任何锁脸');
+  const blank = g.subjectForUser({ id: 'u9', name: '' }, 'selfie');
+  if (blank.faceText !== '' || blank.name !== '我') throw new Error('空马甲要兜「我」且锁脸为空');
+  return 'ok';
+});
+
+/* B1 core.upsertUser：马甲外貌四字段各自独立保存/更新，旧数据兜空串。 */
+t('B1 upsertUser：马甲外貌四字段读写与兼容', () => {
+  const core = S.core;
+  const a = core.upsertUser({ name: 'B1甲', gender: 'female', faceLockText: 'bob', faceLockSelfie: 'peace', faceLockFull: 'red shoes' });
+  const b = core.upsertUser({ name: 'B1乙', gender: 'male', faceLockText: 'glasses' });
+  const ra = core.findUser(a.id);
+  const rb = core.findUser(b.id);
+  if (ra.gender !== 'female' || ra.faceLockText !== 'bob' || ra.faceLockSelfie !== 'peace' || ra.faceLockFull !== 'red shoes') {
+    throw new Error('甲的四字段没存上');
+  }
+  if (rb.faceLockText !== 'glasses' || rb.faceLockFull !== '' || rb.faceLockSelfie !== '') {
+    throw new Error('乙的空字段没兜空串');
+  }
+  core.upsertUser({ id: a.id, faceLockText: 'bob v2' });
+  const ra2 = core.findUser(a.id);
+  if (ra2.faceLockText !== 'bob v2' || ra2.faceLockSelfie !== 'peace') throw new Error('单字段更新丢了别的字段');
+  const legacy = core.upsertUser({ name: '老马甲' });
+  const rl = core.findUser(legacy.id);
+  if (rl.gender !== '' || rl.faceLockText !== '' || rl.faceLockSelfie === undefined || rl.faceLockFull === undefined) {
+    throw new Error('旧数据没标准化成空串');
+  }
+  return 'ok';
+});
+
+/* E1 视觉层本地实验：三模式独立、custom 空不偷偷回退默认、
+   审美负面仅 sleepy-default 生效、层内去重不跨层、legacy/含人物返回 null。 */
+t('E1 视觉实验：visualStyleText + buildSceneObjectExperimentPrompt', () => {
+  const g = S.imggen;
+  const api = g.newApi('general');
+  if (g.visualStyleText('general', 'legacy', '', 'scene') !== '') throw new Error('legacy 不该有视觉词');
+  if (g.visualStyleText('general', 'custom', '', 'scene') !== '') throw new Error('custom 空=没有审美词，不许回退默认');
+  if (g.visualStyleText('general', 'custom', 'flat art', 'scene') !== 'flat art') throw new Error('custom 词没透传');
+  if (g.visualStyleText('general', 'sleepy-default', '', 'person') !== '') throw new Error('人物类本批返回空');
+  const sd = g.buildSceneObjectExperimentPrompt({ api, description: '雨天窗边', contentType: 'scene', subjects: [], visualMode: 'sleepy-default', customVisualStyle: '', extras: [] });
+  if (!sd) throw new Error('sleepy-default 应出 prompt');
+  if (sd.positive.indexOf('natural realistic photography') < 0) throw new Error('没拼 General 视觉底座');
+  if (sd.positive.indexOf('empty of people') < 0) throw new Error('无人主体结构缺失');
+  if (sd.positive.indexOf('雨天窗边') < 0) throw new Error('description 缺失');
+  if (sd.positive.indexOf('masterpiece') !== 0) throw new Error('必要质量层应在最前');
+  if (sd.negative.indexOf('oversaturated colors') < 0) throw new Error('sleepy-default 该有审美负面');
+  if (sd.negative.indexOf('people') < 0) throw new Error('结构负面缺失');
+  const cu = g.buildSceneObjectExperimentPrompt({ api, description: '木桌早餐', contentType: 'scene', subjects: [], visualMode: 'custom', customVisualStyle: '', extras: [] });
+  if (cu.positive.indexOf('natural realistic photography') >= 0) throw new Error('custom 空词偷偷回退了 Sleepy 默认');
+  if (cu.negative.indexOf('oversaturated colors') >= 0) throw new Error('审美负面漏进 custom');
+  if (cu.negative.indexOf('person') < 0) throw new Error('custom 丢了结构负面');
+  const cu2 = g.buildSceneObjectExperimentPrompt({ api, description: '木桌早餐', contentType: 'scene', subjects: [], visualMode: 'custom', customVisualStyle: 'flat art, limited palette', extras: [] });
+  if (cu2.positive.indexOf('flat art') < 0 || cu2.positive.indexOf('limited palette') < 0) throw new Error('自定义视觉词没进');
+  const nai = g.buildSceneObjectExperimentPrompt({ api: g.newApi('nai'), description: '便利店门口', contentType: 'scene', subjects: [], visualMode: 'sleepy-default', extras: [] });
+  if (nai.positive.indexOf('slice-of-life') < 0) throw new Error('NAI 底座没按 kind 取');
+  if (nai.negative.indexOf('1girl') < 0 || nai.negative.indexOf('promotional poster') < 0) throw new Error('NAI 结构/审美负面不对');
+  if (g.buildSceneObjectExperimentPrompt({ api, visualMode: 'sleepy-default', subjects: [{ entityType: 'char', entityId: 'c1' }], description: 'x' }) !== null) throw new Error('含人物不进实验');
+  if (g.buildSceneObjectExperimentPrompt({ api, visualMode: 'legacy', subjects: [], description: 'x' }) !== null) throw new Error('legacy 应返回 null 走旧路');
+  const dup = g.buildSceneObjectExperimentPrompt({ api, description: 'a, a, b', contentType: 'scene', subjects: [], visualMode: 'sleepy-default', extras: [] });
+  if (dup.positive.indexOf('a, a') >= 0) throw new Error('层内完全相同词条没去重');
+  const m = g.visualExpMode();
+  if (m !== 'legacy' && m !== 'sleepy-default' && m !== 'custom') throw new Error('实验模式存储读取出错');
+  return 'ok';
+});
+
+/* 文字通道（/chat/completions）：从模型回复里抽图 —— markdown 图链 /
+   dataURI / 带后缀裸链三种都认，抽不到返回空（走报错契约给中转站反馈）。 */
+t('文字通道：extractImageFromChatText 三种回图形态 + newApi(chat)', () => {
+  const g = S.imggen;
+  if (g.extractImageFromChatText('好！![图](https://x.com/a.png?token=1) 给你') !== 'https://x.com/a.png?token=1') {
+    throw new Error('markdown 图链没抽到');
+  }
+  const d = g.extractImageFromChatText('data:image/png;base64,AAAAabcd');
+  if (d !== 'data:image/png;base64,AAAAabcd') throw new Error('dataURI 没抽到');
+  if (g.extractImageFromChatText('https://cdn.x.com/img/web/123.jpg') !== 'https://cdn.x.com/img/web/123.jpg') {
+    throw new Error('裸链没抽到');
+  }
+  if (g.extractImageFromChatText('抱歉我不会画画') !== '') throw new Error('纯文本不该抽出图');
+  const chat = g.newApi('chat');
+  if (chat.kind !== 'chat') throw new Error('chat kind 没建上');
+  if (chat.positivePreset.indexOf('{p}') < 0) throw new Error('文字通道没拷质量预设');
+  if (g.KINDS.chat.label !== '文字通道') throw new Error('KINDS 缺文字通道');
   return 'ok';
 });
 
@@ -3052,13 +3236,14 @@ t('通查①：线下装配也吃自定义卡（以前只有线上吃，用户�
 t('通查②：主动消息的 system 段有共享外壳 + K01 短字段 + I01', () => {
   const c = S.core.upsertChar({
     name: '主动甲', kind: 'main', content: '旧书店老板，话少。',
-    status: '在整理旧书', speech: '句子短，偶尔冒一句旧诗',
+    speech: '句子短，偶尔冒一句旧诗',
     gender: 'male', nationality: '中国', neverDo: '绝对不撒谎'
   });
   const u = S.core.activeUser() || S.core.userMasks()[0];
   const sys = S.proactiveEngine.buildSystem(c.id, u && u.id).join('\n');
   if (sys.indexOf('[角色声音]') < 0) throw new Error('主动消息没有共享外壳的角色声音');
-  if (sys.indexOf('当前状态：在整理旧书') < 0) throw new Error('主动消息看不见状态签名');
+  /* 状态签名已全量下线（2026-09-29）—— 反向断言：不许再注入 */
+  if (sys.indexOf('当前状态：') >= 0) throw new Error('状态签名已下线，主动消息却还在注入');
   if (sys.indexOf('说话与行为方式：句子短') < 0) throw new Error('主动消息看不见说话方式');
   if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('主动消息看不见红线');
   if (sys.indexOf('awareness_mode') < 0) throw new Error('主动消息没有 I01');
@@ -3185,12 +3370,13 @@ t('群线下协议：四类段落齐全，且写清「这是一篇文章」', ()
 
 t('通查④：群线下的 [PARTICIPANTS] 也带角色短字段（以前只给 content）', () => {
   const c = S.core.upsertChar({ name: '轮头短字段', kind: 'main', content: '旧书店老板。',
-    status: '在整理旧书', speech: '句子短', neverDo: '不撒谎' });
+    speech: '句子短', neverDo: '不撒谎' });
   const sess = { purpose: '', env: {}, systemSettings: {}, narrativeSettings: {},
     participants: [{ ownerId: c.id, kind: 'char', present: true, away: false }] };
   const sys = S.groupOfflineStore.buildSystem(sess);
   if (sys.indexOf('说话与行为方式：句子短') < 0) throw new Error('群线下看不见说话方式');
-  if (sys.indexOf('当前状态：在整理旧书') < 0) throw new Error('群线下看不见状态签名');
+  /* 状态签名已全量下线（2026-09-29）—— 反向断言 */
+  if (sys.indexOf('当前状态：') >= 0) throw new Error('状态签名已下线，群线下却还在注入');
   if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('群线下看不见红线');
   return { 段: '[PARTICIPANTS]' };
 });
@@ -4044,10 +4230,10 @@ t('项目4 P4-M3 默认「我」保护：无章共享兜底不可删', async () 
 
 /* 项目4 NPC 向量归属核查：doomedCharIds 递归角色树，主表 doomed = 向量命中集合。
    铁律（用户 2026-09-27）：
-     删单 NPC → doomed={NPC}（大号/别的皮套/别的 NPC 的向量必须留）；
-     删皮套 → doomed={皮套+其子 NPC}；
-     删大号 → doomed={大号+全部皮套+全部子 NPC}；
-     sandbox 口径 NPC（parentId=岛id）与 user 口径 NPC（parentId=马甲id）不在大号树里。 */
+     删单 NPC → doomed={NPC}（大号/别的皮套/别的 NPC 的向量必须留）。
+   2026-09-29（用户拍板）新增一条：**NPC 永不连坐** —— NPC 属于整座岛，
+     删皮套/删大号时挂在其名下的 NPC 收编归岛（parentType='sandbox'），
+     不进 doomed（主表与向量共用 doomedCharIds，两边自动一致）。 */
 t('项目4 P4-M11 doomedCharIds 递归角色树：单NPC/皮套/大号集合各自正确', async () => {
   const sb = S.core.createSandbox('archipelago', 'P4树岛');
   S.core.setActiveSandbox(sb.id);
@@ -4064,25 +4250,29 @@ t('项目4 P4-M11 doomedCharIds 递归角色树：单NPC/皮套/大号集合各�
 
   /* 删单 NPC：doomed 只有它自己（大号/别的皮套/别的 NPC 都不进集合） */
   if (!setEq(S.core.doomedCharIds(n1), [n1])) throw new Error('单 NPC doomed 该只有自己：' + JSON.stringify(S.core.doomedCharIds(n1)));
-  /* 删皮套：皮套 + 它下面的子 NPC，不含同 root 别的 NPC */
-  if (!setEq(S.core.doomedCharIds(f), [f, sn])) throw new Error('皮套 doomed 该={皮套,子NPC}：' + JSON.stringify(S.core.doomedCharIds(f)));
-  /* 删大号：大号 + 全部皮套 + 全部子 NPC（递归，含皮套下的子 NPC），不含马甲/岛NPC/用户NPC */
-  const wantD = [d, f, sn, n1, n2];
-  if (!setEq(S.core.doomedCharIds(d), wantD)) throw new Error('大号 doomed 该={大号,皮套,子NPC,NPC1,NPC2}：' + JSON.stringify(S.core.doomedCharIds(d)));
+  /* 删皮套：NPC 不连坐 → doomed 只有皮套自己（子 NPC 收编归岛） */
+  if (!setEq(S.core.doomedCharIds(f), [f])) throw new Error('皮套 doomed 该只有皮套（NPC 不连坐）：' + JSON.stringify(S.core.doomedCharIds(f)));
+  /* 删大号：大号 + 全部皮套；NPC 一律不进集合（含皮套下的子 NPC） */
+  const wantD = [d, f];
+  if (!setEq(S.core.doomedCharIds(d), wantD)) throw new Error('大号 doomed 该={大号,皮套}：' + JSON.stringify(S.core.doomedCharIds(d)));
+  if (S.core.doomedCharIds(d).indexOf(sn) >= 0) throw new Error('子 NPC 不该进 doomed（NPC 永不连坐）');
   if (S.core.doomedCharIds(d).indexOf(isl) >= 0) throw new Error('sandbox 口径 NPC 不该进大号 doomed');
   if (S.core.doomedCharIds(d).indexOf(un) >= 0) throw new Error('user 口径 NPC 不该进大号 doomed');
 
-  /* 主表隔离：删单 NPC 只删它自己，大号/皮套/别的 NPC 的 char 记录都在 */
-  await S.core.purgeChar(n1, sb.id);
-  if (!S.core.findChar(d)) throw new Error('删 NPC 后大号不该被删');
-  if (!S.core.findChar(f)) throw new Error('删 NPC 后皮套不该被删');
-  if (!S.core.findChar(sn)) throw new Error('删 NPC 后子 NPC 不该被删');
-  if (!S.core.findChar(n2)) throw new Error('删 NPC 后别的 NPC 不该被删');
-  if (S.core.findChar(n1)) throw new Error('删 NPC 后它自己该没');
-  if (!S.core.findChar(isl)) throw new Error('sandbox 口径 NPC 不该被连带删');
+  /* 主表隔离 + 收编：删大号 → 大号/皮套没了，名下 NPC 全活着且归岛 */
+  await S.core.purgeChar(d, sb.id);
+  if (S.core.findChar(d)) throw new Error('删大号后大号该没');
+  if (S.core.findChar(f)) throw new Error('删大号后皮套该没');
+  const adopted = [sn, n1, n2, isl].map((id) => S.core.findChar(id));
+  if (adopted.some((c) => !c)) throw new Error('删大号不许动任何 NPC');
+  adopted.forEach((c) => {
+    if (c.parentType !== 'sandbox' || c.parentId !== sb.id) {
+      throw new Error('NPC 该收编归岛：' + c.name + ' → ' + c.parentType + '/' + c.parentId);
+    }
+  });
   if (!S.core.findChar(un)) throw new Error('user 口径 NPC 不该被连带删');
   S.core._purgeSync.sandbox(sb.id);
-  return 'doomedCharIds 递归正确，主表删单 NPC 只删自己';
+  return 'doomedCharIds 递归正确；删大号连坐皮套、NPC 全部收编归岛';
 });
 
 /* 项目4 门禁三分支 + 跨岛守卫 + 隔离（串行 async，避免并发踩 win.indexedDB） */
@@ -4298,13 +4488,14 @@ t('composeRound：卡/成员/知识/历史/预算五段齐', () => {
 });
 
 t('通查③：群聊 [ENTITY_KNOWLEDGE] 也带角色短字段（以前只给 content）', () => {
-  S.core.upsertChar({ id: aiFix.m, status: '刚开完庭', speech: '说话慢，爱用长句', neverDo: '不失约' });
+  S.core.upsertChar({ id: aiFix.m, speech: '说话慢，爱用长句', neverDo: '不失约' });
   const r = S.groupAI.composeRound(aiFix.gid, { stimulus: '（通查）', budget: { actors: 2, msgs: 5 } });
   const sys = r.messages[0].content;
-  if (sys.indexOf('当前状态：刚开完庭') < 0) throw new Error('群里看不见状态签名');
+  /* 状态签名已全量下线（2026-09-29）—— 反向断言 */
+  if (sys.indexOf('当前状态：') >= 0) throw new Error('状态签名已下线，群聊却还在注入');
   if (sys.indexOf('说话与行为方式：说话慢') < 0) throw new Error('群里看不见说话方式');
   if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('群里看不见红线');
-  return { 命中: 3 };
+  return { 命中: 2 };
 });
 
 t('parseRoundJSON：围栏 JSON 能剥', () => {
@@ -5487,17 +5678,19 @@ t('心声 commit 回传记录，drop / dropLastAfter 删得掉（reroll 要按�
   return { 回传id: !!r1.id, 按id删: 1, 退路删: 1 };
 });
 
-t('genParams：timeoutSec 有 5 秒下限（老存档的 0 不会再变成 1 秒超时）', () => {
+t('genParams：timeoutSec 归一到 60s 下限（用户 2026-09-29：几秒就超时是老存档小值）', () => {
   S.store.set('chatDefaults', {});
   const g = S.api.genParams;
   const dirty0 = g({ baseUrl: 'x', model: 'm', timeoutSec: 0 }, {});
   const dirty1 = g({ baseUrl: 'x', model: 'm', timeoutSec: 1 }, {});
+  const small30 = g({ baseUrl: 'x', model: 'm', timeoutSec: 30 }, {});
   const ok120 = g({ baseUrl: 'x', model: 'm', timeoutSec: 120 }, {});
   const bare = g({ baseUrl: 'x', model: 'm' }, {});
-  const out = { 脏0: dirty0.timeoutSec, 脏1: dirty1.timeoutSec, 正常: ok120.timeoutSec, 缺省: bare.timeoutSec };
+  const out = { 脏0: dirty0.timeoutSec, 脏1: dirty1.timeoutSec, 小30: small30.timeoutSec, 正常: ok120.timeoutSec, 缺省: bare.timeoutSec };
   if (dirty0.timeoutSec !== 60) throw new Error('0 该回落 60，实 ' + dirty0.timeoutSec);
   if (dirty1.timeoutSec !== 60) throw new Error('1 该回落 60，实 ' + dirty1.timeoutSec);
-  if (ok120.timeoutSec !== 120) throw new Error('正常值不该被动，实 ' + ok120.timeoutSec);
+  if (small30.timeoutSec !== 60) throw new Error('30 该归一到 60，实 ' + small30.timeoutSec);
+  if (ok120.timeoutSec !== 120) throw new Error('正常大值不该被动，实 ' + ok120.timeoutSec);
   if (bare.timeoutSec !== 60) throw new Error('缺省该 60，实 ' + bare.timeoutSec);
   /* 其余参数不受影响：0 仍然是有效值（0 度温、maxTokens 0 是用户明确选的） */
   const zeroTemp = g({ baseUrl: 'x', model: 'm', temperature: 0 }, {});

@@ -1228,18 +1228,36 @@
         if (!Sleepy.imggen) { ctx.toast('生图引擎没加载', 'err'); return; }
         var env = session.env || {};
         var sceneBits = (env.location || '') + '，' + (env.timeOfDay || '') + '，' + (env.weather || '') + '的氛围';
-        var opts = {};
+        /* B0：三个键都显式传 ImagePlan —— 谁在画面里只看 subjects，
+           中文 description 不再靠 PERSON_RE 猜基底（以前 char/合影
+           会被误套「排人」的场景负面词）。env 照旧进 description。 */
+        var ch = core.findChar(session.charId);
+        var me = session.userId ? core.findUser(session.userId) : null;
+        var plan = null;
         if (kind === 'scene') {
-          opts.subject = sceneBits + '，电影感构图，无人物特写';
+          plan = {
+            sender: 'system', contentType: 'scene', shot: 'scene', subjects: [],
+            description: sceneBits + '，电影感构图，无人物特写'
+          };
         } else if (kind === 'char') {
-          opts.subject = charName + '在' + sceneBits + '的样子，叙事感';
+          plan = {
+            sender: 'system', contentType: 'person', shot: 'full',
+            subjects: ch ? [Sleepy.imggen.subjectForChar(ch, 'full')] : [],
+            description: (ch ? ch.name + '在' : '') + sceneBits + '的样子，叙事感'
+          };
         } else {
-          opts.subject = charName + '和我在' + sceneBits + '，两人的合影感，叙事感';
+          var subs = [];
+          if (me) subs.push(Sleepy.imggen.subjectForUser(me, 'group'));
+          if (ch) subs.push(Sleepy.imggen.subjectForChar(ch, 'group'));
+          plan = {
+            sender: 'user', contentType: 'mixed', shot: 'group', subjects: subs,
+            description: (ch ? ch.name + '和我' : '我们') + '在' + sceneBits + '，两人的合影感，叙事感'
+          };
         }
         ctx.toast('正在生成…', 'ok');
         pending = true;
         setBusy(true);
-        Sleepy.imggen.generate(opts).then(function (r) {
+        Sleepy.imggen.generate({ plan: plan }).then(function (r) {
           pending = false;
           setBusy(false);
           if (!r.ok) {

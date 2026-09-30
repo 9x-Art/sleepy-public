@@ -1825,6 +1825,25 @@
         if (msg.type === 'pat') {
           return h('div', 'msg-pat', msg.content || '拍了拍');
         }
+        /* 查岗：居中「系统镜头」卡（用户 2026-09-29 定稿）—— 这张图不是
+           任何人拍的（线上功能的窥视镜头），挂在 user 气泡里会读成
+           「我发了张 TA 的照片」。只换渲染载体：
+           存储仍是 role:'user'（noticed 隔离闸门 / 上下文装配 / plan 不动），
+           sender 语义照旧与真实归属一致。长按菜单照旧从卡上唤起；
+           左滑引用对系统卡无意义，不挂。 */
+        if (msg.type === 'checkin') {
+          var lens = h('div', 'msg-checkin-row');
+          lens.setAttribute('data-id', msg.id);
+          var lensKey = selKey(msg.id, 0);
+          if (selecting && selected[lensKey]) lens.classList.add('is-selected');
+          lens.appendChild(checkinCard(msg));
+          bindLongPress(lens, function () { openMenu(msg, null, lens); });
+          lens.addEventListener('click', function () {
+            if (wasLongPressed(lens)) return;
+            if (selecting) toggleSelect(lensKey);
+          });
+          return lens;
+        }
         var bubble = h('div', 'msg-bubble msg-' + role);
         bubble.setAttribute('data-id', msg.id);
 
@@ -1891,8 +1910,6 @@
           content.appendChild(transferCard(msg));
         } else if (msg.type === 'photo' || msg.type === 'file') {
           content.appendChild(attachCard(msg));
-        } else if (msg.type === 'checkin') {
-          content.appendChild(checkinCard(msg));
         } else if (msg.type === 'wj-share' || msg.type === 'wj-invite') {
           content.appendChild(wjCard(msg));
         } else if (msg.type === 'we-proposal') {
@@ -2024,6 +2041,9 @@
          被察觉时才标「TA 发现了」——没察觉的不标，悬念留给你自己品。 */
       function checkinCard(msg) {
         var box = h('div', 'msg-checkin');
+        /* 居中系统卡的抬头（用户 2026-09-29）：点明这是窥视镜头，
+           不是任何人发的消息 —— caption 也不再带「你悄悄看了一眼」前缀。 */
+        box.appendChild(h('div', 'msg-checkin-head', '偷看了一眼'));
         var img = h('img', 'msg-photo-img');
         img.alt = msg.caption || '查岗';
         img.addEventListener('error', function () {
@@ -2035,7 +2055,7 @@
           ? Sleepy.media.url(msg.mediaId)
           : Promise.resolve(msg.url || '');
         p.then(function (u) { if (u) img.src = u; });
-        box.appendChild(h('div', 'msg-checkin-cap', '你悄悄看了一眼：' + (msg.caption || '…')));
+        box.appendChild(h('div', 'msg-checkin-cap', msg.caption || '…'));
         if (msg.noticed) box.appendChild(h('span', 'msg-checkin-tag', 'TA 发现了'));
         return box;
       }
@@ -3253,11 +3273,14 @@
           /* 40% 被察觉 —— 程序掷骰，不问模型（模型会说谎式讨好） */
           var noticed = Math.random() < 0.4;
 
-          return Sleepy.imggen.generate({
-            subject: d.subject,
-            faceText: Sleepy.imggen.faceTextFor(ch, 'scene'),
-            gender: ch
-          }).then(function (r) {
+          /* B0：查岗画的是「TA 此刻在做什么」—— 主体是 char 还是纯场景
+             由导演的 subjects 决定，不再默认锁 char（TA 可能不在镜头里）。
+             导演没按新格式答 → legacyFallback，走老路（锁 char + scene 组）。 */
+          var plan = planFromDirector(d, ch, c, 'user');
+          var genReq = plan ? { plan: plan }
+            : { subject: d.subject, faceText: Sleepy.imggen.faceTextFor(ch, 'scene'), gender: ch };
+
+          return Sleepy.imggen.generate(genReq).then(function (r) {
             if (!r.ok) {
               ctx.toast(r.error.message || '生图失败了', 'err');
               return;
@@ -3269,8 +3292,9 @@
               type: 'checkin',
               mediaId: r.mediaId || '',
               url: r.url || '',
-              subject: d.subject,
+              subject: plan ? plan.description : d.subject,
               caption: d.caption,
+              plan: plan || null,
               noticed: noticed,
               content: d.caption,
               timestamp: Date.now()
@@ -3318,7 +3342,8 @@
             chBlock,
             '【任务】结合角色设定（身份/作息/生活半径）、下面的近期聊天、和现在的时间，想象 char 此刻正在做什么，输出一个静态画面。',
             '画面只属于 char 自己的生活场景（在家/在工作/在买东西/在路上……），不要出现 user，不要出现对话框或手机屏幕。',
-            '【输出】只返回一个 JSON：{"subject":"画面内容，英文 Danbooru 风格 tag，包含 1girl/1boy 或角色特征、服装、动作、场景、时间氛围","caption":"一句不超过 20 字的中文，说明你看到了什么"}',
+            '【输出】只返回一个 JSON：{"description":"画面内容，英文 Danbooru 风格 tag，包含角色特征、服装、动作、场景、时间氛围","contentType":"scene|object|person|mixed","shot":"auto|selfie|portrait|full|candid|group|scene","subjects":["char"],"caption":"一句不超过 20 字的中文，说明你看到了什么"}',
+            '【subjects 规则】只写画面里真实出现的人：TA 在镜头里写 ["char"]；TA 不在（只拍到房间/桌面/窗外）就 []。',
             '只输出 JSON 本体，不要解释。'
           ].filter(Boolean).join('\n\n');
           user = ctxLine;
@@ -3327,9 +3352,10 @@
             '你现在是「' + ch.name + '」本人，准备给对方发一张照片。',
             chBlock,
             '【任务】对方想让你发一张照片' + (intent ? '，意图：' + intent : '，没说具体想看什么——发一张你自己此刻愿意分享的') +
-              '。结合你的人设、此刻状态和近期聊天，决定拍什么（自拍/眼前的景物/在忙的东西都可以）。',
-            '【你也可以拒绝】按人设，如果你不爱自拍、正在忙、或不愿意发，可以拒绝——refuse 填你拒绝的原话（口语，符合人设），subject 和 caption 留空字符串。',
-            '【输出】只返回一个 JSON：{"subject":"画面内容，英文 Danbooru 风格 tag（1girl/1boy + 服装 + 动作 + 场景；自拍要带 selfie）","caption":"发图时配的一句话，口语","refuse":""}',
+              '。结合你的人设、此刻状态和近期聊天，决定拍什么（自拍/给对方拍一张/眼前的食物、宠物、景物都可以）。',
+            '【你也可以拒绝】按人设，如果你不爱自拍、正在忙、或不愿意发，可以拒绝——refuse 填你拒绝的原话（口语，符合人设），其余字段留空字符串或空数组。',
+            '【输出】只返回一个 JSON：{"description":"画面内容，英文 Danbooru 风格 tag（1girl/1boy + 服装 + 动作 + 场景；自拍要带 selfie）","contentType":"scene|object|person|mixed","shot":"auto|selfie|portrait|full|candid|group|scene","subjects":["user","char"],"caption":"发图时配的一句话，口语","refuse":""}',
+            '【subjects 规则】画面里真实出现谁就写谁：你自己出镜写 "char"，镜头对准对方写 "user"，合影写 ["user","char"]，食物/宠物/路景就 []——发什么由你定，不一定是自拍。',
             '只输出 JSON 本体，不要解释。'
           ].filter(Boolean).join('\n\n');
           user = ctxLine;
@@ -3337,7 +3363,8 @@
           sys = [
             '你是画面导演：把 user 的一句中文画面意图，转成一张图的英文 Danbooru 风格 tag 描述。',
             '保留原意的主体、动作、场景、氛围；补齐画面需要的要素（视角/光线/构图）。',
-            '【输出】只返回一个 JSON：{"subject":"英文 tag","caption":"一句不超过 15 字的中文图注"}',
+            '【输出】只返回一个 JSON：{"description":"英文 Danbooru 风格 tag 画面描述","contentType":"scene|object|person|mixed","shot":"auto|selfie|portrait|full|candid|group|scene","subjects":["user","char"],"caption":"一句不超过 15 字的中文图注"}',
+            '【subjects 规则】画面里真实出现谁就写谁："user"=发图的我，"char"=' + ch.name + '；两个都在就都写；纯风景/物品/宠物就 []。',
             '只输出 JSON 本体，不要解释。'
           ].join('\n');
           user = '[画面意图] ' + (intent || '');
@@ -3348,7 +3375,12 @@
           { role: 'user', content: user }
         ], {}).then(function (res) {
           if (!res.ok) return { ok: false, error: api.describeError(res) };
-          var out = { ok: true, subject: '', caption: '', refuse: '' };
+          /* B0：导演改吐结构化结果（description/contentType/shot/subjects）。
+             模型没按新格式来（还是裸 subject）→ legacyFallback=true，
+             调用方回退旧 subject 逻辑，页面不报错不中断。 */
+          var out = { ok: true, subject: '', caption: '', refuse: '',
+            description: '', contentType: '', shot: '', subjects: [],
+            legacyFallback: true };
           try {
             var t = String(res.content || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
             var i = t.indexOf('{'), j = t.lastIndexOf('}');
@@ -3357,9 +3389,22 @@
               out.subject = String((obj && obj.subject) || '').trim().slice(0, 400);
               out.caption = String((obj && obj.caption) || '').trim().slice(0, 40);
               out.refuse = String((obj && obj.refuse) || '').trim().slice(0, 120);
+              out.description = String((obj && obj.description) || '').trim().slice(0, 400);
+              if (obj && ['scene', 'object', 'person', 'mixed'].indexOf(obj.contentType) >= 0) {
+                out.contentType = obj.contentType;
+              }
+              if (obj && ['auto', 'selfie', 'portrait', 'full', 'candid', 'group', 'scene'].indexOf(obj.shot) >= 0) {
+                out.shot = obj.shot;
+              }
+              if (obj && Array.isArray(obj.subjects)) {
+                out.subjects = obj.subjects.filter(function (x, idx) {
+                  return (x === 'user' || x === 'char') && out.subjects.indexOf(x) < 0;
+                });
+              }
+              out.legacyFallback = !(out.description || out.subjects.length);
             }
           } catch (e) { /* 解析不动走兜底 */ }
-          if (!out.subject && !out.refuse) {
+          if (!out.subject && !out.description && !out.subjects.length && !out.refuse) {
             if (kind === 'checkin') {
               out.subject = ch.name + ', casual daily life, indoor';
               out.caption = '看到了 TA 的日常一幕';
@@ -3376,18 +3421,46 @@
         });
       }
 
+      /* 导演结果 → ImagePlan（B0）。subjects 里的 'char'/'user' 字符串
+         映射成真实实体（带 id / 锁脸 / 性别）；sender 由调用方按业务填 ——
+         发送者和画面主体在这里正式分家。legacyFallback（模型没按新格式答）
+         返回 null，调用方走旧 subject 逻辑。 */
+      function planFromDirector(out, ch, c, sender) {
+        if (!out || out.legacyFallback || out.refuse) return null;
+        var shot = out.shot || 'auto';
+        var KC = Sleepy.core;
+        var subUser = (c && c.userId && KC && KC.findUser ? KC.findUser(c.userId) : null) ||
+          (KC && KC.activeUser ? KC.activeUser() : null);
+        var subs = [];
+        (out.subjects || []).forEach(function (k) {
+          if (k === 'char' && ch) subs.push(Sleepy.imggen.subjectForChar(ch, shot));
+          else if (k === 'user' && subUser) subs.push(Sleepy.imggen.subjectForUser(subUser, shot));
+        });
+        return {
+          sender: sender,
+          contentType: out.contentType || (subs.length ? 'person' : 'scene'),
+          shot: shot,
+          subjects: subs,
+          description: out.description || out.subject || ''
+        };
+      }
+
       /* 生成 + 落消息（生图弹层 / TA 主动发图 / 重画 共用）。
-         opts: { subject, shot, caption, as: 'user'|'assistant', replaceId?, name?, preset? }
-         preset = 已生成好的一张 {mediaId, blob, url}（弹层「发送」用，不再花一次生成费） */
+         opts: { plan?, subject, shot, caption, as: 'user'|'assistant', replaceId?, name?, preset? }
+         plan = ImagePlan（B0）：带 plan 时按 plan 生成，as 只管落谁的气泡；
+         preset = 已生成好的一张 {mediaId, blob, url, plan?}（弹层「发送」用，
+         不再花一次生成费）。plan 存进消息，重画时不用重猜画面主体。 */
       function genAndDeliver(ch, opts) {
         var genP = opts.preset
           ? Promise.resolve({ ok: true, mediaId: opts.preset.mediaId, blob: opts.preset.blob, url: opts.preset.url })
-          : Sleepy.imggen.generate({
-              subject: opts.subject,
-              faceText: opts.as === 'assistant'
-                ? Sleepy.imggen.faceTextFor(ch, opts.shot) : '',
-              gender: opts.as === 'assistant' ? ch : null
-            });
+          : (opts.plan
+            ? Sleepy.imggen.generate({ plan: opts.plan })
+            : Sleepy.imggen.generate({
+                subject: opts.subject,
+                faceText: opts.as === 'assistant'
+                  ? Sleepy.imggen.faceTextFor(ch, opts.shot) : '',
+                gender: opts.as === 'assistant' ? ch : null
+              }));
         return genP.then(function (r) {
           if (!r.ok) return r;
           cachePhotoData(r.mediaId, r.blob);
@@ -3395,7 +3468,8 @@
             mediaId: r.mediaId || '',
             url: r.url || '',
             subject: opts.subject,
-            shot: opts.shot || ''
+            shot: opts.shot || '',
+            plan: opts.plan || null
           };
           if (opts.replaceId) {
             base.timestamp = Date.now();
@@ -3436,23 +3510,48 @@
         });
       }
 
-      /* TA 主动发图（回复里的 [生图:描述] 到这里落地） */
+      /* TA 主动发图（回复里的 [生图:描述] 到这里落地）。
+         B0：描述可以是一句话，也可以是结构化 JSON
+         （{"description":…,"contentType":…,"shot":…,"subjects":["user","char"]}）——
+         有 JSON 就按 plan 走（画面主体由 subjects 决定，TA 可以只发食物/路景）；
+         还是一句话 → legacy：按旧正则猜 shot、默认锁 char。 */
       function charSendPhoto(desc) {
         var c = getChat(chatId);
         var ch = c && c.characterId ? findCharacter(c.characterId) : null;
         if (!ch || !Sleepy.imggen || !Sleepy.imggen.activeApi()) return;
-        var shot = /selfie|自拍/i.test(desc) ? 'selfie' : '';
+        var parsed = Sleepy.imggen.parsePlanJson(desc);
+        var plan = null;
+        if (parsed) {
+          var KC = Sleepy.core;
+          var subUser = (c.userId && KC && KC.findUser ? KC.findUser(c.userId) : null) ||
+            (KC && KC.activeUser ? KC.activeUser() : null);
+          var subs = [];
+          parsed.subjects.forEach(function (k) {
+            if (k === 'char') subs.push(Sleepy.imggen.subjectForChar(ch, parsed.shot));
+            else if (k === 'user' && subUser) subs.push(Sleepy.imggen.subjectForUser(subUser, parsed.shot));
+          });
+          plan = {
+            sender: 'char',
+            contentType: parsed.contentType,
+            shot: parsed.shot,
+            subjects: subs,
+            description: parsed.description
+          };
+        }
         genAndDeliver(ch, {
-          subject: desc,
-          shot: shot,
-          caption: desc.slice(0, 30),
+          plan: plan,
+          subject: plan ? plan.description : desc,
+          shot: plan ? '' : (/selfie|自拍/i.test(desc) ? 'selfie' : ''),
+          caption: (plan ? plan.description : desc).slice(0, 30),
           as: 'assistant'
         }).then(function (r) {
           if (!r.ok) ctx.toast((r.error && r.error.message) || 'TA 想发图但没发出来', 'warn');
         });
       }
 
-      /* 重画：同 subject 重新生成，原地替换（caption 不变） */
+      /* 重画：同 subject 重新生成，原地替换（caption 不变）。
+         B0：新消息上存了 plan → 按 plan 重画（主体不变）；老消息没 plan
+         → legacy 老路（不迁移历史数据）。 */
       function redrawPhoto(msg) {
         if (pending) { ctx.toast('还在等回复', 'warn'); return; }
         var c = getChat(chatId);
@@ -3460,8 +3559,9 @@
         if (!ch || !Sleepy.imggen || !Sleepy.imggen.activeApi()) return;
         ctx.toast('重画中…', 'ok');
         genAndDeliver(ch, {
+          plan: msg.plan || null,
           subject: msg.subject,
-          shot: msg.shot || '',
+          shot: msg.plan ? '' : (msg.shot || ''),
           caption: msg.caption || '',
           as: msg.role === 'assistant' ? 'assistant' : 'checkin',
           replaceId: msg.id
@@ -3610,12 +3710,16 @@
               status.textContent = d.refused ? '' : (d.error || '没生成出来');
               return;
             }
-            var shot = /selfie/i.test(d.subject) ? 'selfie' : '';
-            return Sleepy.imggen.generate({
+            /* B0：画面主体看导演给的 subjects（user/char/合影/纯场景都行），
+               不再默认「user 模式=锁 char 反之」；解析失败走 legacy 老路。 */
+            var plan = planFromDirector(d, ch, c, mode === 'char' ? 'char' : 'user');
+            var shot = /selfie/i.test(d.subject || '') ? 'selfie' : '';
+            var genReq = plan ? { plan: plan } : {
               subject: d.subject,
               faceText: mode === 'char' ? Sleepy.imggen.faceTextFor(ch, shot) : '',
               gender: mode === 'char' ? ch : null
-            }).then(function (r) {
+            };
+            return Sleepy.imggen.generate(genReq).then(function (r) {
               busy = false;
               bGen.disabled = false;
               if (!r.ok) {
@@ -3623,8 +3727,9 @@
                 return;
               }
               cur = {
-                subject: d.subject, caption: d.caption,
-                blob: r.blob, mediaId: r.mediaId, url: r.url || ''
+                subject: plan ? plan.description : d.subject, caption: d.caption,
+                blob: r.blob, mediaId: r.mediaId, url: r.url || '',
+                plan: plan
               };
               objectUrl = r.url || URL.createObjectURL(r.blob);
               status.textContent = '';
@@ -3639,10 +3744,11 @@
           keep.url = objectUrl;
           genAndDeliver(ch, {
             subject: keep.subject,
-            shot: /selfie/i.test(keep.subject) ? 'selfie' : '',
+            shot: keep.plan ? '' : (/selfie/i.test(keep.subject) ? 'selfie' : ''),
             caption: keep.caption,
             name: keep.caption,
             as: mode === 'char' ? 'assistant' : 'user',
+            plan: keep.plan || null,
             /* 已生成过的直接复用，不再花一次生成费 */
             preset: keep
           }).then(function (r) {

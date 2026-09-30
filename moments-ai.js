@@ -82,7 +82,7 @@
       if (m[1] === '发') sawPost = true;
       if (!rest) return;
       if (m[1] === '发') body.push(rest);
-      else if (m[1] === '图') img = rest.slice(0, 120);
+      else if (m[1] === '图') img = rest.slice(0, 240);   /* B0：结构化 JSON 需要更长，120 切得断 */
       else reason.push(rest);
     });
 
@@ -135,7 +135,7 @@
   function baseSys(ch) {
     var out = ['你是「' + ch.name + '」。'];
     if (ch.content) out.push(String(ch.content).slice(0, 600));
-    if (ch.status) out.push('你现在的状态：' + ch.status);
+    /* 状态签名已下线（2026-09-29）—— 不再注入 */
     out.push('');
     out.push('现在是' + timeWord() + '。');
     var mem = memLines(ch.id);
@@ -177,7 +177,8 @@
           '[因为] 为什么想发这一条（一句话，写给你自己看，别人看不到）\n' +
           (canPic
             ? '想配一张图的话再加一行（别每条都配，真的拍了/想晒才配）：\n' +
-              '[图] 画面描述（一句话：你镜头里的样子、动作、场景）\n'
+              '[图] {"description":"画面描述，英文 tag 风格","contentType":"scene|object|person|mixed","shot":"auto|selfie|portrait|full|candid|group|scene","subjects":["user","char"]}\n' +
+              '  （subjects 只写画面里真实出现的人：你是 "char"，用户是 "user"；食物/风景/宠物就留 []；写不了 JSON 才退回一句话描述）\n'
             : '') +
           '不想发就只回：[不发]'
       }
@@ -220,15 +221,36 @@
         if (item) Sleepy.momentsTab.rememberMoment(item, who);
 
         /* 配图：画出来再挂上（图库存失败就算了，动态本身照发）。
-           自拍/近景走 selfie 锁脸组，其余走全身/场景组。 */
+           B0：[图] 里带结构化 JSON → 按 plan 画（主体由 subjects 决定，
+           可能是自拍/他拍/纯风景）；还是一句话 → legacy：按正则猜 shot
+           并默认锁 char（旧行为，标 legacyFallback 供验收定位）。 */
         if (item && p.imgDesc && Sleepy.imggen &&
             Sleepy.imggen.readEnabled() && Sleepy.imggen.activeApi()) {
-          var shot = /selfie|自拍|自拍|近照/i.test(p.imgDesc) ? 'selfie' : '';
-          Sleepy.imggen.generate({
-            subject: p.imgDesc,
-            faceText: Sleepy.imggen.faceTextFor(ch, shot),
-            gender: ch
-          }).then(function (r) {
+          var parsed = Sleepy.imggen.parsePlanJson(p.imgDesc);
+          var genOpts;
+          if (parsed) {
+            var bigUser = (core.defaultUserOfSandbox && sb)
+              ? core.defaultUserOfSandbox(sb) : null;
+            if (!bigUser && core.activeUserOnIsland) bigUser = core.activeUserOnIsland();
+            var subs = [];
+            parsed.subjects.forEach(function (k) {
+              if (k === 'char') subs.push(Sleepy.imggen.subjectForChar(ch, parsed.shot));
+              else if (k === 'user' && bigUser) subs.push(Sleepy.imggen.subjectForUser(bigUser, parsed.shot));
+            });
+            genOpts = { plan: {
+              sender: 'char', contentType: parsed.contentType, shot: parsed.shot,
+              subjects: subs, description: parsed.description
+            } };
+          } else {
+            var shot = /selfie|自拍|近照/i.test(p.imgDesc) ? 'selfie' : '';
+            genOpts = {
+              subject: p.imgDesc,
+              faceText: Sleepy.imggen.faceTextFor(ch, shot),
+              gender: ch,
+              legacyFallback: true
+            };
+          }
+          Sleepy.imggen.generate(genOpts).then(function (r) {
             if (r.ok && r.mediaId) {
               Sleepy.momentsTab.setMedia(item.id, { mediaId: r.mediaId, w: 0, h: 0 });
               pokeRefresh();

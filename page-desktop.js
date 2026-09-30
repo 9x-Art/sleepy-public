@@ -633,8 +633,9 @@
       char: c,
       user: u,
       name: c ? c.name : (roster ? '还没选人' : '还没有角色'),
-      status: (c && c.status) ||
-        (c ? '在线' : (roster ? '从桌面下拉或切号器选一位' : '去浮岛开一间房')),
+      /* 状态签名已下线（2026-09-29）：第二行恒为「在线」；
+         角色卡这块展示等组件商城重做时再议。 */
+      status: c ? '在线' : (roster ? '从桌面下拉或切号器选一位' : '去浮岛开一间房'),
       mood: mood,
       battery: c && typeof c.battery === 'number' ? c.battery : 40
     };

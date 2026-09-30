@@ -660,20 +660,37 @@
       if (!x || seen[x]) return;
       seen[x] = true;
       out.push(x);
-      allChars().forEach(function (c) { if (c.parentId === x) walk(c.id); });
+      allChars().forEach(function (c) {
+        /* 2026-09-29（用户拍板）：删除**永不连坐 NPC** —— NPC 属于整座岛，
+           不属于任何一方。挂在将被删的皮套/大号名下的 NPC 由 cleanupChar
+           收编归岛，不进 doomed（主表与向量共用本函数，两边自动一致）。 */
+        if ((c.kind || '') === 'npc') return;
+        if (c.parentId === x) walk(c.id);
+      });
     })(id);
     return out;
   }
 
-  /* 删除一个大号时，挂在它名下的皮套和 NPC 不能变成孤儿
-     （孤儿在「谁挂在谁名下」的视图里会直接消失）。一起删掉。
+  /* 删除角色（大号/皮套/NPC 均走这里）：清 doomed 家谱 + 断掉的对话/关系/记忆。
+     2026-09-29 起家谱**不含 NPC** —— 挂在 doomed 名下的 char 口径 NPC 改判
+     归岛（parentType='sandbox'，parentId=它的岛），不跟着死。
      ⚠️ 项目4（2026-09-27）：从「同步裸删」升级为异步 purge 门禁，
      UI 一律走 purgeChar / purgeFace。本函数保留为门禁通过后的 cleanup，
      不再对外导出。doomed 用 doomedCharIds（递归），与向量侧一致。 */
-  function cleanupChar(id) {
+  function cleanupChar(id, sbId) {
     var doomed = {};
     doomedCharIds(id).forEach(function (cid) { doomed[cid] = true; });
-    var next = allChars().filter(function (c) { return !doomed[c.id]; });
+    var next = allChars()
+      .map(function (c) {
+        /* 家谱断了但人不删：NPC 收编归岛。parentId 优先用调用方给的岛 id，
+           没有就用 NPC 自己身上的章（sandboxId）—— 兜底 _purgeSyncChar 没有 sbId。 */
+        if ((c.kind || '') === 'npc' && doomed[c.parentId]) {
+          var home = sbId || c.sandboxId;
+          if (home) return Object.assign({}, c, { parentId: home, parentType: 'sandbox' });
+        }
+        return c;
+      })
+      .filter(function (c) { return !doomed[c.id]; });
     saveChars(next);
 
     /* 相关的对话和关系一并清掉，否则聊天列表点进去是空壳 */
@@ -690,8 +707,9 @@
   }
 
   /* 删大号 / NPC：按「doomed 角色树」+ 岛清主表和向量。
-     doomed = doomedCharIds(该 id)（递归：皮套 + char口径子 NPC 全带）。
-     sandbox 口径 NPC（parentId=岛id）不在此树里 —— 它们是岛的成员，删大号不动它们。
+     doomed = doomedCharIds(该 id)（递归：皮套全带；**NPC 一律不连坐**，
+     2026-09-29 用户拍板 —— 挂在 doomed 名下的 NPC 由 cleanupChar 收编归岛）。
+     sandbox 口径 NPC（parentId=岛id）本就不在此树里 —— 它们是岛的成员。
      向量侧 forgetCharSet(fromCharIds=同款 doomed + sandboxId) —— 主表 doomed 与向量命中
      **严格一致**，不再按 charId=rootOf 一刀切（那张删法会误清同 root 整池，见实现注释）。 */
   function purgeChar(charId, sbId) {
@@ -705,12 +723,12 @@
 
     var gate = purgeVecGate();
     if (!gate.ok) return Promise.resolve({ ok: false, why: gate.why });
-    var doCleanup = function () { return cleanupChar(charId); };
+    var doCleanup = function () { return cleanupChar(charId, sbId); };
     if (gate.nodb) return Promise.resolve(doCleanup());
 
     var MV = global.Sleepy.memoryVec;
     /* 按 doomedCharIds（递归家谱）删向量 —— 与主表 doomed 完全一致。
-       单 NPC 只删 {NPC}，大号连坐 {大号+全部皮套+全部子NPC}，别岛由 sandboxId 隔离保留。 */
+       单 NPC 只删 {NPC}，大号连坐 {大号+全部皮套}（NPC 不连坐），别岛由 sandboxId 隔离保留。 */
     return MV.forgetCharSet({ charIds: doomedCharIds(charId), sandboxId: sbId }).then(function (n) {
       return doCleanup();
     }, function (err) {
@@ -718,7 +736,7 @@
     });
   }
 
-  /* 删单个皮套：按「皮套 + 其下 char口径子 NPC」的 doomed 集合同 root + 岛清。
+  /* 删单个皮套：按「皮套 doomed 集合」同 root + 岛清（NPC 不连坐，收编归岛）。
      ⚠️ 铁律：同 root 别的皮套、别岛同 root 的块**必须保留**。
      早期实现按 charId=rootOf 一刀切 → 会把大号整池一起清；后改成三维
      {charId=root, fromCharId=sub, sandboxId} → 又漏删子 NPC（其块 fromCharId=NPC 而非皮套）。
@@ -738,7 +756,7 @@
 
     var gate = purgeVecGate();
     if (!gate.ok) return Promise.resolve({ ok: false, why: gate.why });
-    var doCleanup = function () { return cleanupChar(subId); };
+    var doCleanup = function () { return cleanupChar(subId, sbId); };
     if (gate.nodb) return Promise.resolve(doCleanup());
 
     var MV = global.Sleepy.memoryVec;
@@ -816,6 +834,12 @@
         region: has(data, 'region') ? data.region : '',
         timezone: has(data, 'timezone') ? data.timezone : '',
         isDefault: !!data.isDefault,
+        /* B1 生图外貌：只喂生图管线的 ImagePlan subjects，**不进聊天 Prompt**。
+           旧马甲没这些键 → 空字符串兜底（读取侧统一按空处理，无破坏性迁移）。 */
+        gender: has(data, 'gender') ? data.gender : '',
+        faceLockText: has(data, 'faceLockText') ? data.faceLockText : '',
+        faceLockSelfie: has(data, 'faceLockSelfie') ? data.faceLockSelfie : '',
+        faceLockFull: has(data, 'faceLockFull') ? data.faceLockFull : '',
         /* 岛章：调用方显式给了就照写（配置台「在本岛建马甲」），
            没给才盖当前房的章（tagScope）。以前 new-item 分支根本不收
            sandboxId，跨岛开着的配置台建出来会盖错章。 */
