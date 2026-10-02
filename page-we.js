@@ -114,6 +114,21 @@
       b.classList.toggle('is-on', on);
       if (on) b.setAttribute('aria-current', 'page');
       else b.removeAttribute('aria-current');
+      /* 提议角标：只挂收藏馆 tab —— char 提议了而 user 还没处理时，
+         不进收藏馆也能在底栏看见。countPending 是 scoped 口径（本岛 pending）。 */
+      if (b.__weTabId === 'collection') {
+        var n = 0;
+        try {
+          n = (Sleepy.weProposals && Sleepy.weProposals.countPending)
+            ? Sleepy.weProposals.countPending() : 0;
+        } catch (e) { /* 提议模块没就绪不当回事 */ }
+        var dot = b.querySelector('.we-tab-badge');
+        if (n > 0) {
+          if (!dot) { dot = h('i', 'we-tab-badge'); b.appendChild(dot); }
+          dot.textContent = String(Math.min(n, 9) + (n > 9 ? '+' : ''));
+          dot.setAttribute('aria-label', n + ' 条待确认提议');
+        } else if (dot && dot.parentNode) dot.parentNode.removeChild(dot);
+      }
     });
   }
 
@@ -191,6 +206,10 @@
     };
     if (rec.confirmedBy) entry.confirmedBy = String(rec.confirmedBy);
     if (rec.confirmedAt) entry.confirmedAt = rec.confirmedAt;
+    /* C1 藏品实物化：照片类藏品带「未显影」出厂态 —— 详情页拍立得组件
+       首次长按显影后再存 developed:true（page-collection.js 写回）。
+       老记录没有 developed 字段 → 详情按「已显影」兼容（不打扰存量藏品）。 */
+    if (kindOf(rec) === 'photo') entry.developed = rec.developed === true;
     /* 写入必须带当前 sandboxId —— 由 tagScope 盖章（不手写）。 */
     core.tagScope(entry, sandboxId);
 
@@ -198,6 +217,29 @@
     list.push(entry);
     store.set(WE_KEY, list);
     return entry;
+  }
+
+  /* C1：就地补写一条共同记录的少量展示字段（白名单）。
+     用于票根背面留言补齐（memoUser / memoChar）与拍立得显影标记（developed）；
+     C2 贴纸工坊后续写 stickers 也走这里。
+     纪律：**只允许当前房 scoped 可见的 id**（跟详情页 findInScope 同口径，
+     杜绝跨岛改数据）；白名单外字段一律丢弃；命中即盖 updatedAt。 */
+  var WE_PATCH_FIELDS = ['memoUser', 'memoChar', 'developed', 'stickers'];
+  function wePatch(id, fields) {
+    if (!id || !fields || typeof fields !== 'object') return { ok: false, why: 'bad-args' };
+    var list = arr(store.get(WE_KEY));
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i] || list[i].id !== id) continue;
+      /* 范围卫兵：当前房读不到 = 不属于这里，绝不改 */
+      if (core.scoped([list[i]]).length !== 1) return { ok: false, why: 'out-of-scope' };
+      WE_PATCH_FIELDS.forEach(function (k) {
+        if (Object.prototype.hasOwnProperty.call(fields, k)) list[i][k] = fields[k];
+      });
+      list[i].updatedAt = Date.now();
+      store.set(WE_KEY, list);
+      return { ok: true };
+    }
+    return { ok: false, why: 'not-found' };
   }
 
   /* 新增记录里当前身份可读到的 source 候选：只给「当前角色 + 当前 user」的引用。
@@ -443,6 +485,101 @@
     return d.getFullYear() + '.' + p(d.getMonth() + 1) + '.' + p(d.getDate());
   }
 
+  /* ============================ 群岛选人闸（2026-10-02） ============================
+   群岛从浮岛降落时**有意不替人选身份**（landInto，身份留给切号器/桌面下拉），
+   老版 We 这时候进来是个死胡同空态（「这里还没有确定的关系对象」没有下一步）。
+   这里补一道闸，对齐日历 viewSyncSandbox 的群岛纪律：
+     · 身份已齐（char + user 都在本岛名册）→ 直接放行；
+     · 孤岛 / 群岛单大号 → 自动归位（降落纪律：大号 + isDefault 马甲）；
+     · 群岛多人 → We 语境选人页，点选 = **进入身份**（switchTo 全局生效，
+       与切号器同语义）—— 不是 We 私有视图状态，否则 We 显示 A、
+       聊天列表却是 B，精神分裂。选完顺手重放岛视觉 + 重画常驻桌面。
+   时光 / 收藏馆经 Sleepy.weGate 共用同一道闸。 */
+  var weGateView = { sbId: null };
+
+  function weGateMains() {
+    var sb = core.activeSandbox();
+    if (!sb || !core.charsOfSandbox) return [];
+    return core.charsOfSandbox(sb.id).filter(function (c) {
+      return (c.kind || 'main') === 'main';
+    });
+  }
+
+  /* 头像底色：id 派生暖调（与日历选人页同思路，同一人永远同一张脸）；
+     core.setAvatarBg 异步挂真头像（有图时盖上去）。 */
+  var WE_PICK_TONES = ['linear-gradient(145deg,#8C7355,#C0A483)',
+    'linear-gradient(145deg,#9A6E62,#C9A091)',
+    'linear-gradient(145deg,#7E7A5E,#B3AE8B)',
+    'linear-gradient(145deg,#8A6E7C,#BCA0AC)',
+    'linear-gradient(145deg,#87745A,#BCA98B)'];
+  function wePickTone(id) {
+    var s = String(id || ''); var hh = 5381;
+    for (var i = 0; i < s.length; i++) hh = ((hh << 5) + hh + s.charCodeAt(i)) >>> 0;
+    return WE_PICK_TONES[hh % WE_PICK_TONES.length];
+  }
+
+  function weGatePaint(ctx, host, mains, bigMe, repaint) {
+    host.appendChild(h('div', 'we-pick-hero-kicker', 'ARCHIPELAGO'));
+    host.appendChild(h('h2', 'we-pick-hero-title', '想和谁一起翻开 We？'));
+    host.appendChild(h('p', 'we-pick-hero-note',
+      '群岛上每个人有各自的时光与收藏。选一位，We 就为你们两个打开。'));
+    var list = h('div', 'we-pick-list');
+    mains.forEach(function (ch) {
+      var name = String(ch.name || '').trim() || '他';
+      var b = h('button', 'we-pick-card');
+      b.type = 'button';
+      var av = h('span', 'we-pick-avatar');
+      av.textContent = name.slice(0, 1);
+      av.style.background = wePickTone(ch.id);
+      if (core.setAvatarBg) { try { core.setAvatarBg(av, ch); } catch (e) { /* 桩没有 */ } }
+      b.appendChild(av);
+      var info = h('span', 'we-pick-info');
+      info.appendChild(h('b', '', name));
+      info.appendChild(h('span', '', '进入 TA 的 We'));
+      b.appendChild(info);
+      b.appendChild(h('span', 'we-pick-go', '›'));
+      b.onclick = function () {
+        core.switchTo(ch.id, bigMe ? bigMe.id : undefined);
+        /* 换身份 = 换视觉（岛覆盖 > 全局）；桌面是常驻底层，一并重画 */
+        if (Sleepy.appearance && Sleepy.appearance.apply) {
+          try { Sleepy.appearance.apply(); } catch (e) { /* 桩没有 */ }
+        }
+        if (Sleepy.__homeCtx && Sleepy.__homeCtx.repaint) {
+          try { Sleepy.__homeCtx.repaint(); } catch (e) { /* 桩没有 */ }
+        }
+        if (ctx.toast) ctx.toast('和「' + name + '」打开 We', 'ok');
+        /* we / we-time 的 render 不设 ctx.__paint —— 重画必须走调用方
+           显式传进来的 repaint（'collection' 系页才有 ctx.__paint） */
+        if (repaint) repaint();
+      };
+      list.appendChild(b);
+    });
+    host.appendChild(list);
+  }
+
+  /* 返回 true = 已接管渲染（调用方把容器挂进 DOM 后直接 return）。
+     repaint：身份选完后的重绘回调（当前页自己的 paint 闭包）。 */
+  function weGateApply(ctx, host, repaint) {
+    var sb = core.activeSandbox();
+    if (!sb) return false;
+    if (weGateView.sbId !== sb.id) weGateView.sbId = sb.id;   /* 换岛：预留重置位 */
+    var char = core.activeCharOnIsland();
+    var user = core.activeUserOnIsland();
+    if (char && user) return false;
+    var mains = weGateMains();
+    if (!mains.length) return false;                          /* 空岛 → 原空态兜 */
+    var bigMe = core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null;
+    if (!core.needsCharPick(sb)) {
+      /* 孤岛 / 单大号：归位不出选人页（对齐日历 §2.1） */
+      core.switchTo(mains[0].id, bigMe ? bigMe.id : undefined);
+      return false;
+    }
+    var hero = h('div', 'we-pick-hero');
+    weGatePaint(ctx, hero, mains, bigMe, repaint);
+    host.appendChild(hero);
+    return true;
+  }
+
   /* ============================ 首页渲染（编辑式排版） ============================
      结构对齐 We 首页 Demo v1 的真实视觉语言，数据全部来自真实 core 出口：
        · 封面出血图 + 叠字（kicker / cover-title / cover-sub，渐变色块当图）
@@ -472,11 +609,14 @@
     }
     var sid = sb.id;
 
+    /* 群岛选人闸：身份没定时先选人（孤岛/单大号在这里自动归位） */
+    if (weGateApply(ctx, out, function () { paint(ctx); })) return;
+
     var user = core.activeUserOnIsland();
     var char = core.activeCharOnIsland();
     if (!user || !char) {
-      out.appendChild(empty(ctx, '这里还没有确定的关系对象',
-        '在这座岛先选好角色和你自己，We 才能开始。'));
+      out.appendChild(empty(ctx, '这座岛还没有可以一起记事的人',
+        '先给岛上添一位角色，We 才能开始。'));
       return;
     }
 
@@ -499,6 +639,8 @@
     /* ---- 封面：整幅出血图 + 叠字（渐变色块模拟，无假图） ---- */
     var cover = h('div', 'we-cover');
     cover.appendChild(h('div', 'we-cover-vert', 'OUR SPACE'));
+    /* 馆藏戳记：右下角一枚透印章，像手账扉页上的收藏印 */
+    cover.appendChild(h('span', 'we-cover-stamp', '共 同 留 存'));
 
     var ct = h('div', 'we-cover-txt');
     /* kicker：关系时长（用「第 N 个星期」这种编辑式短语，数不出来就退成群岛类型） */
@@ -554,18 +696,21 @@
     }
     out.appendChild(upSec);
 
-    /* ---- 03 最近时光：错位拍立得 ---- */
+    /* ---- 03 最近时光：错位拍立得（真实照片，无图退纸纹底） ---- */
     var rSec = section('最近时光', '03');
     if (recent.length) {
       var strip = h('div', 'we-polaroid');
       recent.slice(0, 6).forEach(function (it, i) {
         var pl = h('figure', 'we-polaroid-card');
-        /* 渐变色块当「照片位」，按序取不同色相（无假图） */
-        pl.appendChild(h('i', 'we-polaroid-photo we-ph' + (i % 3)));
+        var ph = h('i', 'we-polaroid-photo we-ph' + (i % 3));
+        pl.appendChild(ph);
         var line = String(it.line || '').trim();
         var em = h('em', '', (fmtDay(it.at) || '此刻') + (line ? ' · ' + line.slice(0, 10) : ''));
         pl.appendChild(em);
         strip.appendChild(pl);
+        /* strip 已在 DOM 里（out 先 insert 进 body 再建内容），
+           这里才能按「挂进 DOM 后才加载」的纪律铺真图 */
+        fillThumb(ph, it.mediaId);
       });
       rSec.appendChild(strip);
     } else {
@@ -1110,11 +1255,13 @@
         '先在桌面选一间房，再回来看时光。'));
       return;
     }
+    /* 群岛选人闸（与首页同一道） */
+    if (weGateApply(ctx, paper, function () { paintTime(ctx); })) return;
     var user = core.activeUserOnIsland();
     var char = core.activeCharOnIsland();
     if (!user || !char) {
-      paper.appendChild(empty(ctx, '这里还没有确定的关系对象',
-        '在这座岛先选好角色和你自己，时光才会开始。'));
+      paper.appendChild(empty(ctx, '这座岛还没有可以一起回看的人',
+        '先给岛上添一位角色，时光才会开始。'));
       return;
     }
 
@@ -1244,6 +1391,7 @@
   Sleepy.weStore = {
     list: weList,
     add: weAdd,
+    patch: wePatch,
     KEY: WE_KEY,
     KINDS: WE_KINDS,
     kindOf: kindOf,

@@ -315,6 +315,10 @@
       timeoutSec: 60,
       positivePreset: base.positive,
       negativePreset: base.negative,
+      /* B2 图片锁脸：参考图支持方式由用户按服务方能力显式声明
+         （none=不支持/未核实，默认）；'edits'=通用 /images/edits，
+         'chat'=文字通道多模态送图。NAI 暂不支持。 */
+      refSupport: 'none',
       enabled: true
     };
   }
@@ -503,7 +507,22 @@
       visual = styleMode === 'builtin' ? scenePack.sceneObjectPositive : customStyle;
     } else {
       identityBlocks = subs.map(function (s) {
-        return identitySegmentFor(s, n > 1);
+        var seg = identitySegmentFor(s, n > 1);
+        /* B2 图片锁脸约束句：按主体逐份、标注参考图编号与名字（§5），
+           直接进身份层 —— 身份层不走 joinLayers 的按逗号切词去重，
+           长句不会被拆碎。只是提示词引导，不是检测器。 */
+        var ref = (opts.imageRefs || []).filter(function (r) {
+          return r.key === refKeyFor(s);
+        })[0];
+        if (ref && seg) {
+          seg += ' Reference image ' + ref.refNo + ' is ' + (s.name || 'this character')
+            + '\'s face reference: use it only for facial identity and physical features '
+            + '(face, hairstyle, hair color, skin, body type); where the text description '
+            + 'and the reference conflict about appearance, follow the reference. '
+            + 'Ignore the reference image for pose, expression, clothing, background '
+            + 'and rendering style — the text description governs those.';
+        }
+        return seg;
       }).filter(Boolean);
       if (n === 1) {
         structure = singlePack.structure;
@@ -1666,18 +1685,343 @@
     return Promise.reject(err('生图返回格式不对', '没在 zip 里找到文件条目'));
   }
 
+  /* ==================== C2 贴纸工坊（2026-10-02 施工单 §四） ====================
+     定稿词逐字落库（实施单原文，禁改写）：
+     · both  = 双人 CP 六情绪（big hug / cheek pinch / good morning /
+               good night / super happy / pouting and head pat）
+     · single_male / single_female = 单人高频情绪（good morning / good night /
+               hug request / pouting angry / super happy / gentle comfort|shy blush）
+     自定义模式：只替换 `Sticker N` 六段正文（实施单：不允许覆盖模板级约束
+     —— 6 格、die-cut、白底、无道具），base 与负面词不动。 */
+  var STICKER_PROMPT_VERSION = 'c2-v1';
+
+  var STICKER_BOTH_BASE =
+    'masterpiece, best quality, cute chibi couple sticker sheet, exactly 6 separate mini die-cut stickers arranged in a clean 3 by 2 grid, all six stickers fully visible with generous empty margins on every side, no sticker touching or crossing the canvas edge. Use the two reference characters consistently in every sticker. Preserve only their recognizable facial features, hairstyles, hair colors, clothing colors, and character identities from the reference images. Do not add animal traits unless they are explicitly present in the character design. The characters are ordinary human chibi characters by default, with normal human ears and no animal features. Keep the same two people throughout the entire sheet. Cute 2.5-head-tall chibi proportions, clean anime lineart, soft pastel colors, expressive faces, simple uncluttered compositions. Each sticker must have its own completely separate thick smooth white die-cut outline. The outlines must not merge between stickers. Pure solid white background. Focus on emotion, facial expression, and clear body language. Keep every hand, arm, leg, and foot anatomically separate and clearly visible.';
+
+  var STICKER_BOTH_SLICES = [
+    'Sticker 1, "big hug": the girl jumps into the boy\'s arms, the boy supports her with both arms, the girl wraps both arms around his neck, no props, no extra limbs.',
+    'Sticker 2, "cheek pinch": the boy uses exactly one hand to gently pinch one of the girl\'s cheeks, his other hand stays clearly visible beside his body, the girl\'s hands stay down, no props, no extra hands.',
+    'Sticker 3, "good morning": both characters have messy sleepy hair and cheerful sleepy faces, the girl waves with one hand, the boy yawns with one hand covering his mouth, no cups, no food, no objects.',
+    'Sticker 4, "good night": both characters sleep peacefully side by side under one simple fluffy blanket, only their upper bodies and faces are visible above the blanket, no extra legs, no duplicated bodies, no objects.',
+    'Sticker 5, "super happy": both characters stand side by side with both arms raised in celebration, eyes closed in joyful smiles, surrounded by a few small hearts and sparkles, no props, no complicated overlapping poses.',
+    'Sticker 6, "pouting and head pat": the girl stands with both arms crossed and puffed cheeks, the boy uses exactly one hand to gently pat the top of her head, his other hand stays down beside his body, both faces clearly visible, no extra hands.',
+    'Clean separation between all six stickers, complete bodies where applicable, natural hand and foot structure, readable silhouette, polished stationery sticker pack design, soft cute romantic atmosphere.'
+  ].join(' ');
+
+  var STICKER_SINGLE_BASE =
+    'masterpiece, best quality, cute chibi sticker sheet, exactly 6 separate mini die-cut stickers arranged in a clean 3 by 2 grid, all six stickers fully visible with generous empty margins on every side, no sticker touching or crossing the canvas edge. Use the reference character consistently in every sticker. Preserve only their recognizable facial features, hairstyle, hair color, clothing colors, and character identity from the reference image. Do not add animal traits unless they are explicitly present in the character design. Ordinary human chibi character by default, with normal human ears and no animal features. Cute 2.5-head-tall proportions, clean anime lineart, soft pastel colors, expressive face, simple uncluttered compositions. Each sticker must have its own completely separate thick smooth white die-cut outline. Pure solid white background. Focus on emotion, facial expression, and clear body language. Keep every hand, arm, leg, and foot anatomically separate and clearly visible.';
+
+  var STICKER_MALE_SLICES = [
+    'Sticker 1, "good morning": messy bedhead, sleepy but gentle expression, rubbing one eye with exactly one hand, the other hand clearly visible beside his body, no cup and no props.',
+    'Sticker 2, "good night": sleeping peacefully while hugging one simple soft pillow, only the upper body is visible, no extra legs, no duplicated body.',
+    'Sticker 3, "hug request": standing with both arms opened toward the viewer, looking forward with an affectionate expectant expression, no extra arms and no props.',
+    'Sticker 4, "pouting angry": arms crossed, puffed cheeks, slightly narrowed eyes, tiny steam lines above his head, no objects.',
+    'Sticker 5, "super happy": both arms raised in celebration, eyes closed in a bright joyful smile, a few small hearts and sparkles only.',
+    'Sticker 6, "gentle comfort": one hand giving a small friendly wave while the other hand rests clearly beside his body, soft reassuring smile, no complicated pose.',
+    'Clean separation between all six stickers, complete readable silhouettes, natural human anatomy, polished stationery sticker pack design, soft cute romantic atmosphere.'
+  ].join(' ');
+
+  var STICKER_FEMALE_SLICES = [
+    'Sticker 1, "good morning": slightly messy hair, sleepy cheerful expression, waving with exactly one hand, the other hand clearly visible beside her body, no cup and no props.',
+    'Sticker 2, "good night": sleeping peacefully while hugging one simple soft pillow, only the upper body is visible, no extra legs, no duplicated body.',
+    'Sticker 3, "hug request": standing with both arms opened toward the viewer, looking up with an affectionate expectant expression, no extra arms and no props.',
+    'Sticker 4, "pouting angry": arms crossed, puffed cheeks, cute frustrated expression, tiny steam lines above her head, no objects.',
+    'Sticker 5, "super happy": both arms raised in celebration, eyes closed in a bright joyful smile, a few small hearts and sparkles only.',
+    'Sticker 6, "shy blush": both hands held near her cheeks, visible blush, bashful smile, hands not covering or merging with the face, no complicated pose.',
+    'Clean separation between all six stickers, complete readable silhouettes, natural human anatomy, polished stationery sticker pack design, soft cute romantic atmosphere.'
+  ].join(' ');
+
+  /* 负面词：both 版比 single 版多「overlapping stickers, characters fused together」等
+     双人项 —— 与实施单两个负面词原文一致，不合并。 */
+  var STICKER_NEG_BOTH =
+    'photorealistic, realistic human proportions, 3d render, complex detailed background, noisy background, gradient background, broken white border, merged borders, extra arms, extra hands, extra legs, extra feet, duplicated limbs, missing limbs, fused limbs, tangled arms, twisted wrists, malformed fingers, hand merged with face, hand merged with hair, hand merged with clothing, duplicated face, duplicated body, deformed anatomy, impossible pose, unclear silhouette, characters fused together, overlapping stickers, cropped sticker, cut-off body, sticker touching canvas edge, sticker outside the canvas, partial sticker, cat ears, animal ears, fox ears, rabbit ears, furry ears, animal tail, horns, fantasy creature traits, prop duplication, cup, mug, food, complicated background, text, watermark, blurry, low resolution';
+
+  var STICKER_NEG_SINGLE =
+    'photorealistic, realistic human proportions, 3d render, complex detailed background, noisy background, gradient background, broken white border, merged borders, extra arms, extra hands, extra legs, extra feet, duplicated limbs, missing limbs, fused limbs, tangled arms, twisted wrists, malformed fingers, hand merged with face, hand merged with hair, hand merged with clothing, duplicated face, duplicated body, deformed anatomy, impossible pose, unclear silhouette, cropped sticker, cut-off body, sticker touching canvas edge, sticker outside the canvas, partial sticker, cat ears, animal ears, fox ears, rabbit ears, furry ears, animal tail, horns, fantasy creature traits, prop duplication, cup, mug, food, complicated background, text, watermark, blurry, low resolution';
+
+  /* 自定义情绪段的模板级约束尾巴（实施单：不许覆盖） */
+  var STICKER_CUSTOM_TAIL =
+    'Clean separation between all six stickers, complete readable silhouettes, natural human anatomy, polished stationery sticker pack design, soft cute romantic atmosphere.';
+
+  /* 自定义六段拼接：lines = 6 句单行英文动作描述（工坊页已限 80 字符/句、无换行）。
+     输出仍保持 "Sticker N:" 形状，便于模型按格产出；空槽兜一句中性表达。 */
+  function stickerCustomSlices(lines) {
+    var out = [];
+    for (var i = 0; i < 6; i++) {
+      var t = String((lines || [])[i] || '').trim().replace(/\s+/g, ' ');
+      out.push('Sticker ' + (i + 1) + ': ' +
+        (t || 'a simple cheerful chibi expression') + ', no props.');
+    }
+    out.push(STICKER_CUSTOM_TAIL);
+    return out.join(' ');
+  }
+
+  /* 工坊生成（施工单 §四）：定稿词/自定义词**原样直发**，不进 buildFormalPrompt；
+     参考图链路全复用 B2（intent → resolveRefData → requestGeneralEdits/requestChat）。
+     返回协议：成功 {ok, mediaId, blob, width, height, subjectKeys, promptVersion}；
+     失败 {ok:false, code, stage, message}（error:{message} 双带，兼容现有 toast 口）。 */
+  function stickerFail(code, stage, message) {
+    var e = err(message);
+    return { ok: false, code: code, stage: stage, message: message, error: e };
+  }
+
+  function generateStickerSheet(opts) {
+    opts = opts || {};
+    var api = opts.api || activeApi();
+    if (!api) {
+      return Promise.resolve(stickerFail('REQUEST_FAILED', 'generate', '还没有配置生图接口'));
+    }
+    var subjects = (opts.subjects && opts.subjects.length) ? opts.subjects : null;
+    if (!subjects) {
+      return Promise.resolve(stickerFail('MISSING_REFERENCE', 'resolve-ref', '没有可锁脸的主体'));
+    }
+    var prompt = String(opts.prompt || '').trim();
+    var negativePrompt = String(opts.negativePrompt || '').trim();
+    if (!prompt) {
+      return Promise.resolve(stickerFail('REQUEST_FAILED', 'generate', '贴纸提示词是空的'));
+    }
+    if (api.kind === 'nai') {
+      /* 施工单 §四.5：NAI 明确失败，绝不静默降级成无参考图生图 */
+      return Promise.resolve(stickerFail('NAI_UNSUPPORTED', 'resolve-ref',
+        'NAI 暂不支持图片锁脸，贴纸没有生成 —— 换一个开了参考图支持的接口'));
+    }
+    if (!refChannelSupported(api)) {
+      return Promise.resolve(stickerFail('UNSUPPORTED_REF', 'resolve-ref',
+        '当前接口「' + (api.name || api.kind) + '」未开启参考图支持，贴纸没有生成 —— '
+        + '去 设置 → 生图 → 接口编辑里按服务方能力选择支持方式'));
+    }
+    /* 锁脸是工坊的硬需求：所有主体都必须带参考图。locks 缺省全 true
+       （显式 true 覆盖存档开关；缺图主体会进 intent.warns，逐个点名）。 */
+    var intent = imageRefIntentFor({ subjects: subjects }, opts.imageLocks || null);
+    if (!intent.any || intent.items.length < subjects.length) {
+      var missing = [];
+      subjects.forEach(function (s) {
+        var k = refKeyFor(s);
+        var hit = intent.items.some(function (it) { return it.key === k; });
+        if (!hit) missing.push(s.name || k);
+      });
+      if (!missing.length) missing = intent.warns.length ? intent.warns : ['参考图未设置'];
+      return Promise.resolve(stickerFail('MISSING_REFERENCE', 'resolve-ref',
+        '参考图缺失：' + missing.join('、') + ' —— 先去资料页设置锁脸图，贴纸没有生成'));
+    }
+    return resolveRefData(intent.items).then(function (refs) {
+      if (typeof console !== 'undefined' && console.info) {
+        console.info('[Sleepy][贴纸工坊] 参考图 ' + refs.items.length +
+          ' 张拉取完成，开始生成（两次独立请求）');
+      }
+      var built = { positive: prompt, negative: negativePrompt };
+      var send = api.kind === 'general'
+        ? requestGeneralEdits(api, built, refUrlsOf(refs), opts.size)
+        : requestChat(api, built, null, refUrlsOf(refs));
+      return send.then(function (blob) {
+        return storeBlobResult(blob, opts.size,
+          { name: '贴纸整版 ' + new Date().toLocaleString(), kind: 'sticker-sheet' });
+      }).then(function (r) {
+        /* storeBlobResult 图库挂了也返回 ok:true + mediaId:''（一次性 url）——
+           贴纸没有 mediaId 就没法切片入库，必须按 STORE_FAILED 收口 */
+        if (!r || !r.ok || !r.mediaId) {
+          return stickerFail('STORE_FAILED', 'store',
+            (r && r.warn) || (r && r.error && r.error.message) || '贴纸整版落库失败');
+        }
+        if (typeof console !== 'undefined' && console.info) {
+          console.info('[Sleepy][贴纸工坊] 整版生成完成 mediaId=' + r.mediaId);
+        }
+        return {
+          ok: true,
+          mediaId: r.mediaId,
+          blob: r.blob,
+          width: r.width || 0,
+          height: r.height || 0,
+          subjectKeys: intent.items.map(refKeyFor),
+          promptVersion: STICKER_PROMPT_VERSION
+        };
+      });
+    }).catch(function (e) {
+      /* 图源解析/发送失败：统一收口，绝不静默降级成无图请求 */
+      var msg = String((e && e.message) || e);
+      return stickerFail('REQUEST_FAILED', 'generate', '贴纸生成失败：' + msg);
+    });
+  }
+
   /* ---------------------------- 调接口 ----------------------------
      generate(opts) → Promise<{ok:true, mediaId, blob} | {ok:false, error:{message, detail}}>
      opts = { plan(优先), subject, faceText, extras, api, size }
      带 plan 时 subject/faceText/gender 被忽略 —— 一切以 plan 为准。
      generateBuilt(opts)：E1 实验专用 —— 调用方已拼好最终 prompt，
      直接进请求+落库，不再过 buildPrompt（保住 legacy 路径分毫不动）。 */
+  /* -------------------- B2 图片锁脸（2026-10-02 施工单） --------------------
+     三件事分家（§1）：sender 只管归属；plan.subjects 只管画面里有谁；
+     每主体图片锁脸开关只决定是否为该主体附带参考图 —— 开关不改 subjects、
+     不改人数、不改 sender、不强改镜头。 */
+
+  /* 主体稳定键（§2）：user 绑 maskId、char/NPC 绑实体 id，带类型命名空间
+     防撞 —— 同名角色不共用状态，数组顺序不作身份键。 */
+  function refKeyFor(s) {
+    s = s || {};
+    return (s.entityType === 'user' ? 'user:' : 'char:') + String(s.entityId || '');
+  }
+
+  /* 接口能力（§5）：不在 kind 上想当然 —— 由接口配置的 refSupport 显式声明
+     （设置 → 生图 → 接口编辑；'none' 默认＝未核实＝不支持）。 */
+  function refChannelSupported(api) {
+    api = api || {};
+    if (api.kind === 'general') return api.refSupport === 'edits';
+    if (api.kind === 'chat') return api.refSupport === 'chat';
+    return false;
+  }
+
+  /* 意图解析（同步、零 IO）：逐主体算「本次是否带参考图」——
+     本次显式 true/false > 已保存的 faceLockImageOn > false（§3 优先级；
+     显式 false 绝不被 || 或默认值重新打开）。图源也在这里定型：
+     本地图（faceLockImageMedia）优先，URL（faceLockImage）备用，
+     两者都没有 → 该主体视为未设置、不带图（不报错，UI 显示未设置）。
+     关闭/未启用的主体**不读取任何资料**。 */
+  function imageRefIntentFor(planIn, locks) {
+    var plan = normalizePlan(planIn);
+    var core = (typeof Sleepy !== 'undefined') ? Sleepy.core : null;
+    var items = [];
+    var warns = [];
+    plan.subjects.forEach(function (s, idx) {
+      var key = refKeyFor(s);
+      var override = (locks && Object.prototype.hasOwnProperty.call(locks, key))
+        ? locks[key] : undefined;
+      var rec = core ? ((s.entityType === 'user')
+        ? core.findUser(s.entityId) : core.findChar(s.entityId)) : null;
+      var savedOn = !!(rec && rec.faceLockImageOn === true);
+      var active = (override !== undefined) ? !!override : savedOn;
+      if (!active) return;
+      var sourceType = (rec && rec.faceLockImageMedia) ? 'media'
+        : (rec && rec.faceLockImage ? 'url' : 'none');
+      if (sourceType === 'none') {
+        warns.push((s.name || key) + ' 启用了图片锁脸但还没设置参考图，这张按无图处理');
+        return;
+      }
+      items.push({
+        key: key,
+        subjectIndex: idx,
+        name: s.name || (s.entityType === 'user' ? '我' : '角色'),
+        sourceType: sourceType,
+        mediaId: (rec && rec.faceLockImageMedia) || '',
+        url: (rec && rec.faceLockImage) || ''
+      });
+    });
+    return { any: items.length > 0, items: items, warns: warns,
+      names: items.map(function (it) { return it.name; }) };
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '')); };
+      fr.onerror = function () { reject(new Error('图片读不出来')); };
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  /* 图源解析（异步，唯一 IO 段）：失败 → 明确到主体的报错，
+     由 generate 在发送前整体失败（零生成请求、不自动换来源、不做无图兜底）。
+     参考图下载与生成是两次独立请求 —— 计数在 UI 层分别呈现。 */
+  function resolveRefData(items) {
+    return Promise.all(items.map(function (it) {
+      var fail = function (msg) {
+        var e = err('图片锁脸失败：' + it.name, msg + ' —— 这张没有生成，'
+          + '不会自动改用别的来源或无图兜底。');
+        e.refSubject = it.name;
+        throw e;
+      };
+      var p;
+      if (it.sourceType === 'media') {
+        p = (Sleepy.media && Sleepy.media.get)
+          ? Sleepy.media.get(it.mediaId).then(function (rec) {
+              if (!rec || !rec.blob) return fail('参考图在图库里找不到了（可能被清理）');
+              return blobToDataUrl(rec.blob);
+            }, function () { return fail('参考图读取失败'); })
+          : Promise.reject('图库不可用');
+      } else {
+        p = fetch(it.url, { mode: 'cors' }).then(function (r) {
+          if (!r.ok) return fail('参考图网址拉取失败 HTTP ' + r.status);
+          return r.blob().then(blobToDataUrl,
+            function () { return fail('参考图网址内容读不出来'); });
+        }, function () {
+          return fail('参考图网址拉取失败（跨域或网络不通）—— 可改用「选本地图」');
+        });
+      }
+      return p.then(function (dataUrl) {
+        return { key: it.key, name: it.name, dataUrl: dataUrl };
+      });
+    })).then(function (refs) { return { items: refs }; });
+  }
+
+  function refUrlsOf(resolved) {
+    return (resolved && resolved.items ? resolved.items : []).map(function (it) {
+      return it.dataUrl;
+    });
+  }
+
+  /* general + edits：multipart /images/edits（OpenAI 兼容系参考图标准位）。
+     仅在接口 refSupport==='edits' 且有启用参考图时使用；字段名按服务方契约，
+     常见为 image[]（gpt-image-1 支持多张）。edits 不接 negative_prompt 字段
+     —— 负面并进 prompt 末尾并注明，不悄悄丢弃。 */
+  function requestGeneralEdits(api, built, refUrls, sizeStr) {
+    var base = String(api.baseUrl || '').trim().replace(/\/+$/, '');
+    var url = /\/images\/edits$/i.test(base) ? base
+      : (base ? base + '/images/edits' : '');
+    if (!url || !api.model) {
+      return Promise.reject(err('接口没配好', !url ? '先填接口地址' : '先填模型名'));
+    }
+    var size = String(sizeStr || api.size || '1024x1024');
+    var fd = new FormData();
+    fd.append('model', api.model);
+    fd.append('prompt', built.positive +
+      (built.negative ? '\n\nDo not include: ' + built.negative : ''));
+    fd.append('n', '1');
+    fd.append('size', size);
+    fd.append('response_format', 'b64_json');
+    /* dataURL → blob 必须在发送前完成：fetch(dataURL) 是异步的，
+       串行收集后再发，保证附件齐全且顺序稳定。 */
+    return Promise.all(refUrls.map(function (u) {
+      return fetch(u).then(function (r) { return r.blob(); });
+    })).then(function (blobs) {
+      blobs.forEach(function (b, i) {
+        fd.append('image[]', b, 'reference-' + (i + 1) + '.png');
+      });
+      var headers = {};
+      if (api.apiKey) headers['Authorization'] = 'Bearer ' + api.apiKey;
+      return fetchWithTimeout(url, { method: 'POST', headers: headers, body: fd })
+        .then(function (r) {
+          return r.text().then(function (txt) {
+            if (!r.ok) return Promise.reject(err('接口报错 HTTP ' + r.status, txt));
+            var data = null;
+            try { data = JSON.parse(txt); } catch (e) { /* 落到下面 */ }
+            var item = data && data.data && data.data[0];
+            if (!item) return Promise.reject(err('返回里没有图片数据', txt));
+            if (item.b64_json) return b64ToBlob(item.b64_json, txt);
+            if (item.url) {
+              return fetchWithTimeout(item.url, {}, null).then(function (r2) {
+                if (!r2.ok) return Promise.reject(err('图片下载失败 HTTP ' + r2.status, item.url));
+                return r2.blob();
+              }, function (e) {
+                return Promise.reject(err('图片下载失败（链接抓不动）',
+                  item.url + '\n' + ((e && e.message) || e)));
+              });
+            }
+            return Promise.reject(err('返回里既没有 b64 也没有 url', txt));
+          });
+        }, function (e) { return Promise.reject(netErr(e)); });
+    });
+  }
+
+  /* -------------------- B2 图片锁脸（2026-10-02 施工单） -------------------- */
+
   function generate(opts) {
     opts = opts || {};
     var api = opts.api || activeApi();
     if (!api) {
       return Promise.resolve({ ok: false, error: err('还没有配置生图接口', '去 设置 → 生图 添加一个') });
     }
+    /* B2 图片锁脸（2026-10-02 施工单）：意图快照在请求开始时就固定 ——
+       调用方中途改 opts 不影响在途请求（§3 快照要求）。 */
+    var locks = opts.imageLocks ? JSON.parse(JSON.stringify(opts.imageLocks)) : null;
     /* 正式接入（2026-10-01 施工单 v1）：plan 分支先走正式拼接器（内置/自定义）。
        一个咽喉覆盖全部正式入口 —— chat 标签 / 弹层 / 查岗 / 重画 / 日记 /
        朋友圈 / 线下键都从 generate({plan}) 进来。
@@ -1685,6 +2029,21 @@
        - NAI → null 回落 legacy（既有能力原样保留，如实回落不冒充新词生效）。
        无 plan（试一张 legacy 档 + AI 解析失败兜底）照走旧路，分毫不动。 */
     if (opts.plan) {
+      var intent = imageRefIntentFor(opts.plan, locks);
+      if (intent.any && api.kind === 'nai') {
+        /* §5：启用图片锁脸却选到未支持通道 → 阻止并提示；用户明确关闭
+           本次图片锁脸后才走原无图路径。零请求、不做无图兜底。 */
+        return Promise.resolve({ ok: false, error: err('NAI 暂不支持图片锁脸，这张没有生成',
+          '画面里启用了图片锁脸（' + intent.names.join('、') + '）。NAI 通道暂不接参考图'
+          + '（img2img/vibe 都不是只锁脸的机制）。关闭本次图片锁脸后可按原无图路径生成。') });
+      }
+      if (intent.any && !refChannelSupported(api)) {
+        return Promise.resolve({ ok: false, error: err('当前接口未开启参考图支持，这张没有生成',
+          '画面里启用了图片锁脸（' + intent.names.join('、') + '），但接口「'
+          + (api.name || api.kind) + '」的「参考图支持」是「不支持」。'
+          + '去 设置 → 生图 → 接口编辑里按服务方能力选择支持方式；'
+          + '或关闭本次图片锁脸后按原无图路径生成。') });
+      }
       if (api.kind === 'nai') {
         /* NAI 正式编译（2026-10-02 施工单）：校验失败 / 模型不支持 / 编译抛错
            → 明确报错零请求，一律不回落 legacy。 */
@@ -1705,8 +2064,45 @@
         return Promise.resolve({ ok: false, error: formal.error });
       }
       if (formal && formal.ok) {
-        return requestAndStore(api,
-          { positive: formal.positive, negative: formal.negative }, opts.size);
+        if (!intent.any) {
+          /* 无参考图 → 原路径逐字节同形（不打 edits、不加约束句、不读图） */
+          return requestAndStore(api,
+            { positive: formal.positive, negative: formal.negative }, opts.size);
+        }
+        /* B2：有启用的参考图 → 先校验（上面已完成、零 IO），再解析图源，
+           失败明确到主体、零生成请求（不自动换来源、不做无图兜底）。 */
+        return resolveRefData(intent.items).then(function (refs) {
+          var withRefs = buildFormalPrompt({ api: api, plan: opts.plan,
+            extras: opts.extras,
+            imageRefs: refs.items.map(function (it, i) {
+              return { key: it.key, refNo: i + 1, name: it.name };
+            }) });
+          if (withRefs && withRefs.ok === false) {
+            return { ok: false, error: withRefs.error };
+          }
+          var built = { positive: withRefs.positive, negative: withRefs.negative };
+          var send = api.kind === 'general'
+            ? requestGeneralEdits(api, built, refUrlsOf(refs), opts.size)
+            : requestChat(api, built, null, refUrlsOf(refs));
+          return send.then(function (blob) {
+            return storeBlobResult(blob, opts.size);
+          }).then(function (r) {
+            r.refCount = refs.items.length;
+            if (typeof console !== 'undefined' && console.info) {
+              console.info('[Sleepy][图片锁脸] 附件 ' + refs.items.length
+                + ' 张（参考图拉取与生成是两次独立请求）');
+            }
+            return r;
+          });
+        }).catch(function (e) {
+          /* 图源解析/发送失败：统一收口成 {ok:false,error}（报错已点名主体），
+             绝不静默降级成无图请求。 */
+          if (e && typeof e === 'object' && e.detail !== undefined && e.message) {
+            return { ok: false, error: e };
+          }
+          return { ok: false, error: err('图片锁脸失败，这张没有生成',
+            String((e && e.message) || e)) };
+        });
       }
     }
     var built = buildPrompt({
@@ -1730,6 +2126,22 @@
     return requestAndStore(api,
       { positive: String(opts.positive || ''), negative: String(opts.negative || '') },
       opts.size);
+  }
+
+  function storeBlobResult(blob, sizeStr, meta) {
+    var size = String(sizeStr || '1024x1024').split('x');
+    var w = Math.max(64, parseInt(size[0], 10) || 1024);
+    var hgt = Math.max(64, parseInt(size[1], 10) || 1024);
+    var m = meta || {};
+    return media.put(blob, { name: m.name || ('生图 ' + new Date().toLocaleString()),
+      kind: m.kind || 'image', w: w, h: hgt })
+      .then(function (id) { return { ok: true, mediaId: id, blob: blob, width: w, height: hgt }; },
+        function (e) {
+          /* 图库不可用（IndexedDB 被拦等）：图已经拿到了，别浪费 —— 临时地址直接给出去 */
+          return { ok: true, mediaId: '', blob: blob,
+            url: global.URL.createObjectURL(blob),
+            warn: '图库没存上（' + ((e && e.message) || e) + '），这张是一次性的' };
+        });
   }
 
   function requestAndStore(api, built, sizeStr) {
@@ -1894,7 +2306,7 @@
     return '';
   }
 
-  function requestChat(api, built, ctrl) {
+  function requestChat(api, built, ctrl, refUrls) {
     var base = String(api.baseUrl || '').trim().replace(/\/+$/, '');
     var url = /\/chat\/completions$/i.test(base) ? base
       : (base ? base + '/chat/completions' : '');
@@ -1906,12 +2318,20 @@
     var content = '请生成一张图片：' + built.positive +
       (built.negative ? '\n\n画面里不要出现这些要素：' + built.negative : '') +
       '\n\n只返回图片本身（markdown 图片、图片链接或 base64 数据都可以），不要多余解释。';
+    var message = { role: 'user', content: content };
+    /* B2：有参考图 → 多模态 content parts（复用 page-chat 聊天带图形态）；
+       参考图为 dataURL/URL，主体归属由提示词里的 Reference image N 标注。 */
+    if (refUrls && refUrls.length) {
+      message.content = [{ type: 'text', text: content }].concat(refUrls.map(function (u) {
+        return { type: 'image_url', image_url: { url: u } };
+      }));
+    }
     return fetchWithTimeout(url, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({
         model: api.model,
-        messages: [{ role: 'user', content: content }],
+        messages: [message],
         stream: false
       })
     }, ctrl).then(function (r) {
@@ -2056,6 +2476,26 @@
     imgStyleCustom: imgStyleCustom,
     setImgStyleCustom: setImgStyleCustom,
     buildFormalPrompt: buildFormalPrompt,
+    /* B2 图片锁脸（2026-10-02 施工单） */
+    refKeyFor: refKeyFor,
+    imageRefIntentFor: imageRefIntentFor,
+    refChannelSupported: refChannelSupported,
+    /* C2 贴纸工坊（2026-10-02 修正施工单）：定稿词常量 + 整版生成 */
+    STICKER_PROMPTS: {
+      VERSION: STICKER_PROMPT_VERSION,
+      BOTH_BASE: STICKER_BOTH_BASE,
+      BOTH_SLICES: STICKER_BOTH_SLICES,
+      SINGLE_BASE: STICKER_SINGLE_BASE,
+      MALE_SLICES: STICKER_MALE_SLICES,
+      FEMALE_SLICES: STICKER_FEMALE_SLICES,
+      NEG_BOTH: STICKER_NEG_BOTH,
+      NEG_SINGLE: STICKER_NEG_SINGLE,
+      customSlices: stickerCustomSlices,
+      composeBoth: function () { return STICKER_BOTH_BASE + ' ' + STICKER_BOTH_SLICES; },
+      composeMale: function () { return STICKER_SINGLE_BASE + ' ' + STICKER_MALE_SLICES; },
+      composeFemale: function () { return STICKER_SINGLE_BASE + ' ' + STICKER_FEMALE_SLICES; }
+    },
+    generateStickerSheet: generateStickerSheet,
     /* NAI 正式编译器（2026-10-02 施工单）与共用校验 */
     buildFormalNaiRequest: buildFormalNaiRequest,
     validatePlanSubjects: validatePlanSubjects,

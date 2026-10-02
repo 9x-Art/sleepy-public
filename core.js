@@ -342,6 +342,9 @@
     var scoped = ['chats', 'memories', 'links', 'photos', 'diaries',
                   'todos', 'favorites', 'weEntries', 'weProposals', 'userMasks', 'characters', 'moments',
                   'wallet', 'stickers', 'offlineSessions',
+                  /* 贴纸工坊断点索引（page-collection skSheetIndex*）：
+                     records 带 sandboxId（tagScope），删房跟着清 */
+                  'stickerSheets',
                   'groups', 'groupMembers', 'groupMessages', 'offlineHandoffs',
                   'groupOfflineSessions',
                   /* 查手机系统（phone.js / 施工卡-查手机-v1）：
@@ -840,6 +843,12 @@
         faceLockText: has(data, 'faceLockText') ? data.faceLockText : '',
         faceLockSelfie: has(data, 'faceLockSelfie') ? data.faceLockSelfie : '',
         faceLockFull: has(data, 'faceLockFull') ? data.faceLockFull : '',
+        /* B2 图片锁脸（2026-10-02）：URL 与本地图（mediaId）两来源并存，
+           本地优先；faceLockImageOn 是「授权随生图请求上传」的持久开关 ——
+           存图不等于授权（施工单 §3），自动入口只认显式 true。 */
+        faceLockImage: has(data, 'faceLockImage') ? data.faceLockImage : '',
+        faceLockImageMedia: has(data, 'faceLockImageMedia') ? data.faceLockImageMedia : '',
+        faceLockImageOn: !!data.faceLockImageOn,
         /* 岛章：调用方显式给了就照写（配置台「在本岛建马甲」），
            没给才盖当前房的章（tagScope）。以前 new-item 分支根本不收
            sandboxId，跨岛开着的配置台建出来会盖错章。 */

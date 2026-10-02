@@ -352,6 +352,111 @@
     return f;
   }
 
+  /* 图片锁脸字段（B2 · 2026-10-02 施工单）：网址 + 本地图两来源并存，
+     本地优先；存档只存 mediaId/URL（不存 base64/objectURL）。
+     faceLockImageOn 是「授权随生图请求上传」的持久开关 —— 存图不等于授权
+     （施工单 §3：首次勾选时知情），自动入口只认显式 true。
+     768 最大边长：头像 320 对脸部细节太粗（shrink 已支持传参）。
+     用法：f.img = faceLockImageField(existing, {toast}); 保存时取
+     f.img.get()（网址）+ f.img.getMedia()（mediaId）+ f.img.getOn()（授权）。 */
+  function faceLockImageField(existing, opts) {
+    opts = opts || {};
+    var toast = opts.toast || function () {};
+    var f = textField({
+      label: opts.label || '图片锁脸（网址，可不填）',
+      hint: '贴图片网址，或在下面选一张本地图。只锁脸和长相特征，不锁姿势表情',
+      value: existing ? (existing.faceLockImage || '') : '',
+      placeholder: 'https://…',
+      inputmode: 'url'
+    });
+    var mediaId = (existing && existing.faceLockImageMedia) || '';
+    var on = !!(existing && existing.faceLockImageOn);
+
+    var file = h('input');
+    file.type = 'file';
+    file.accept = 'image/*';
+    file.style.display = 'none';
+
+    var state = h('span', 'av-local-state');
+    var preview = h('img', 'av-local-preview');
+    preview.style.cssText = 'display:none;width:56px;height:56px;object-fit:cover;'
+      + 'border-radius:8px;margin-top:6px;vertical-align:top;';
+    var clearBtn = button('移除本地图', 'ghost', function () {
+      mediaId = '';
+      paintState();
+    });
+    clearBtn.style.display = mediaId ? '' : 'none';
+
+    function paintState() {
+      clearBtn.style.display = mediaId ? '' : 'none';
+      if (mediaId && Sleepy.media && Sleepy.media.url) {
+        state.textContent = '已选本地图（保存后生效）· 生图时采用本地图';
+        try {
+          preview.src = Sleepy.media.url(mediaId);
+          preview.style.display = '';
+        } catch (e) { preview.style.display = 'none'; }
+      } else if (String(f.get() || '').trim()) {
+        state.textContent = '采用网址';
+        preview.style.display = 'none';
+      } else {
+        state.textContent = '未设置';
+        preview.style.display = 'none';
+      }
+    }
+
+    file.addEventListener('change', function () {
+      var picked = file.files && file.files[0];
+      file.value = '';
+      if (!picked) return;
+      if (!Sleepy.media || !Sleepy.media.shrink || !Sleepy.media.put) {
+        toast('图库没就绪，选不了本地图', 'err');
+        return;
+      }
+      toast('正在处理图片…');
+      Sleepy.media.shrink(picked, 768).then(function (r) {
+        return Sleepy.media.put(r.blob,
+          { name: '图片锁脸', kind: 'faceLock', w: r.w, h: r.h });
+      }).then(function (mid) {
+        mediaId = mid;
+        paintState();
+        toast('选好了，别忘了保存', 'ok');
+      }, function () {
+        toast('这张图读不出来', 'err');
+      });
+    });
+
+    var pickBtn = button('选本地图', 'ghost', function () { file.click(); });
+    var actions = h('div', 'btn-row av-local');
+    actions.appendChild(pickBtn);
+    actions.appendChild(clearBtn);
+    actions.appendChild(state);
+
+    /* 授权开关（§3）：存图 ≠ 授权上传；首次勾选给知情说明。 */
+    var onBox = h('input');
+    onBox.type = 'checkbox';
+    onBox.checked = on;
+    onBox.addEventListener('change', function () {
+      if (onBox.checked && !on) {
+        toast('开启后，带 TA 的生图请求会把这张参考图发给当前接口服务方', 'warn');
+      }
+      on = onBox.checked;
+    });
+    var onRow = h('label', 'set-field');
+    onRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
+    onRow.appendChild(onBox);
+    onRow.appendChild(h('span', '', '生图时使用这张参考图（把图发给接口服务方）'));
+
+    f.el.appendChild(actions);
+    f.el.appendChild(preview);
+    f.el.appendChild(onRow);
+    f.el.appendChild(file);
+
+    paintState();
+    f.getMedia = function () { return mediaId; };
+    f.getOn = function () { return on; };
+    return f;
+  }
+
   /* 头像框（点框换图）—— 给编辑页的同学录排版用。
      跟 avatarFieldLocal 的差别：那边是「地址输入框 + 选本地图」两件控件、
      每个都是一条框；这边只有**一个方头像**，点框 = 选本地图，
@@ -1281,16 +1386,9 @@
       ui.bindLabel(f.gender, genderSel);
       g3.card.appendChild(f.gender);
 
-      f.faceLockImage = textField({
-        label: '图片锁脸（地址）',
-        value: existing ? (existing.faceLockImage || '') : '',
-        /* 这格目前**没有任何地方读**（生图锁脸用的是 faceLockSelfie/faceLockFull
-           文字特征，见 imggen.js faceLockOf）。别接图库 —— 会变成新的「只写不读」。
-           等生图支持参考图（img2img）时再接。 */
-        hint: '预留 · 生图锁脸目前用下面的文字特征，这格还没接进生图',
-        placeholder: 'https://…',
-        inputmode: 'url'
-      });
+      /* B2 图片锁脸（2026-10-02 施工单）：URL + 本地图两来源、授权开关。
+         替换原来的「预留 · 零消费」URL 文本框。 */
+      f.faceLockImage = faceLockImageField(existing, { toast: ctx.toast });
       g3.card.appendChild(f.faceLockImage.el);
       body.appendChild(g3.wrap);
 
@@ -1414,7 +1512,9 @@
           faceLockSelfie: String(f.faceLockSelfie.get() || '').trim(),
           faceLockFull: String(f.faceLockFull.get() || '').trim(),
           gender: genderSel.value || '',
-          faceLockImage: String(f.faceLockImage.get() || '').trim()
+          faceLockImage: String(f.faceLockImage.get() || '').trim(),
+          faceLockImageMedia: f.faceLockImage.getMedia(),
+          faceLockImageOn: f.faceLockImage.getOn()
         };
 
         /* 全部按房建（2026-09-21 拍板：大号也是每岛一份，没有全局大号）。
@@ -1941,6 +2041,11 @@
       });
       gLooks.card.appendChild(f.faceLockFull.el);
 
+      /* B2 图片锁脸（2026-10-02 施工单）：马甲也吃同一套 —— URL + 本地图 +
+         授权开关，字段与 char 同名同义、每件马甲独立。 */
+      f.faceLockImage = faceLockImageField(existing, { toast: ctx.toast });
+      gLooks.card.appendChild(f.faceLockImage.el);
+
       form.appendChild(gLooks.wrap);
 
       /* 这是我的大号（用户 2026-09-21）：每座岛只认一件，
@@ -2009,6 +2114,10 @@
           faceLockText: String(f.faceLockText.get() || '').trim(),
           faceLockSelfie: String(f.faceLockSelfie.get() || '').trim(),
           faceLockFull: String(f.faceLockFull.get() || '').trim(),
+          /* B2 图片锁脸：URL + 本地图 + 授权开关（与 char 同名同义） */
+          faceLockImage: String(f.faceLockImage.get() || '').trim(),
+          faceLockImageMedia: f.faceLockImage.getMedia(),
+          faceLockImageOn: f.faceLockImage.getOn(),
           avatar: String(f.avatar.get() || '').trim(),
           avatarMedia: f.avatar.getMedia(),
           isDefault: f.big.get(),

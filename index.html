@@ -234,6 +234,9 @@
 <!-- We 收藏馆（门厅 + 藏品详情）：依赖 page-we.js 导出的 weStore（kind 兼容）。
      注册 'collection' 页，We 首页「去收藏馆 →」打开它。不占桌面格。 -->
 <script src="page-collection.js" defer></script>
+<!-- C2 贴纸工坊切片器（固定 3×2 + 四角 flood-fill）：纯函数 + canvas 包装，
+     无依赖；工坊页（page-collection.js）运行时取 Sleepy.stickerCut。 -->
+<script src="sticker-cut.js" defer></script>
 <!-- 开屏（冷启动遮罩）。**必须排最后**：page-chat-settings.js 末尾的
      Sleepy.bootHome() 已经跑过，桌面渲染完成，遮罩下面是有内容的，
      摘掉遮罩那一下才不会白屏。 -->

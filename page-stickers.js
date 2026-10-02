@@ -51,8 +51,83 @@
      拿过滤过的列表回写会把别的房的、全局的表情整批抹掉（S4a 踩过的坑）。 */
   function visible() {
     var sid = core.scopeId();
+    return all().filter(legacyVisible);
+  }
+
+  /* ==================== C2 贴纸工坊：归属可见性（2026-10-02） ====================
+     施工单口径（修正单 §一/§三）：
+     · 身份映射（不新增第二套身份概念）：本产品里「user」就是一件马甲（userMasks 表），
+       所以 context.maskId = core.activeUserOnIsland()，ownerUserId 记的也是
+       **创建贴纸时那件马甲的 id**；charId = 会话绑定的 characterId 或当前岛 char。
+     · 老数据（手写/批量导入）没有 owner 字段 → legacyVisible() 原逻辑；
+     · C2 条目（存在任一 owner 字段或 kind==='sticker'）→ c2OwnerVisible()，
+       **global 对 C2 专属贴纸永不生效**（禁止 `global || ownerMatched` 的混写）；
+     · ownerMaskIds 为空数组 = 未选择任何马甲 = 不可见（不默认解释成「全部」）；
+     · 群聊只放 user 单人（char 单人/双人不进群；allowInGroups 本批恒 false）。 */
+
+  function hasOwn(o, k) {
+    return !!o && Object.prototype.hasOwnProperty.call(o, k);
+  }
+  function ownerArr(v) { return Array.isArray(v) ? v : []; }
+
+  function isC2(s) {
+    return !!s && (s.kind === 'sticker' ||
+      hasOwn(s, 'ownerCharId') || hasOwn(s, 'ownerUserId') || hasOwn(s, 'ownerMaskIds'));
+  }
+
+  function legacyVisible(s) {
+    var sid = core.scopeId();
+    return s.global || !sid || s.sandboxId === sid;
+  }
+
+  /* C2 owner 判定。ctx = {scope:'chat'|'group'|'collection', charId, maskId, groupId}
+     （userId 与 maskId 同体，见上）。
+     部署前核查修正（2026-10-02）：
+     · ownerUserId 语义 = **创建时那件马甲的 id**（user 侧归属凭据）。本产品没有
+       马甲之上的第二套 user 实体，双人贴纸的「user 侧」按**本岛**口径放行 ——
+       「我」切马甲不改变「我们俩」，可见性不再要求马甲相等（岛隔离仍由上层把）；
+     · 群聊：本批 char 单人 / 双人 / user 单人**都不默认进群**，
+       只允许 allowInGroups === true 显式放行（缺省/false 一律拒），
+       且即便放行也仅限 user 单人身份命中（施工单 §一.1 硬口径）。 */
+  function c2OwnerVisible(s, ctx) {
+    var maskId = ctx.maskId || null;
+    if (ctx.scope === 'group') {
+      if (s.allowInGroups !== true) return false;
+      if (s.ownerCharId || s.ownerUserId) return false;
+      return !!maskId && ownerArr(s.ownerMaskIds).indexOf(maskId) >= 0;
+    }
+    if (s.ownerCharId && s.ownerUserId) {
+      /* 双人：char 匹配即可 —— user 侧按本岛口径（见上），马甲切换不影响 */
+      return !!ctx.charId && s.ownerCharId === ctx.charId;
+    }
+    if (s.ownerCharId) return !!ctx.charId && s.ownerCharId === ctx.charId;
+    return !!maskId && ownerArr(s.ownerMaskIds).indexOf(maskId) >= 0;
+  }
+
+  /* 统一读取出口：所有面板 / char 匹配池 / 群聊 / 藏品抽屉都从这里拿。
+     ctx 缺省字段用当前身份补；**无 scope 的调用不放行 C2 专属**（宁严勿泄）。
+     读出口永远从 all() 过滤 —— 过滤结果绝不回写。 */
+  function getVisibleStickers(ctx) {
+    ctx = ctx || {};
+    var sid = core.scopeId();
+    if (ctx.scope && !ctx.maskId && core.activeUserOnIsland) {
+      var u = core.activeUserOnIsland();
+      ctx.maskId = u ? u.id : null;
+    }
+    if (ctx.scope && ctx.scope !== 'group' && !ctx.charId && core.activeCharOnIsland) {
+      var c = core.activeCharOnIsland();
+      ctx.charId = c ? c.id : null;
+    }
     return all().filter(function (s) {
-      return s.global || !sid || s.sandboxId === sid;
+      if (isC2(s)) {
+        if (ctx.scope !== 'chat' && ctx.scope !== 'group' && ctx.scope !== 'collection') {
+          return false;
+        }
+        /* 岛隔离仍适用：C2 贴纸只属于创建它的那座岛 */
+        if (sid && s.sandboxId && s.sandboxId !== sid) return false;
+        return c2OwnerVisible(s, ctx);
+      }
+      return legacyVisible(s);
     });
   }
 
@@ -196,6 +271,54 @@
     return { ok: true, item: added[0] };
   }
 
+  /* C2 工坊入库（施工单 §六）：rec 由工坊页组装齐
+     （kind:'sticker' / sheetId / sliceIndex / emotion / matchKey / owner…），
+     媒体必须已各自 media.put 完成，这里一次性整批写入。
+     纪律同 addBatch：all() 读全量、tagScope 盖房章、绝不碰过滤结果。 */
+  function addSheetStickers(records) {
+    var list = all();
+    var added = [];
+    (records || []).forEach(function (rec) {
+      if (!rec || !rec.mediaId) return;
+      var r = Object.assign({}, rec);
+      if (!r.id) r.id = core.newId('st');
+      if (!hasOwn(r, 'global')) r.global = false;
+      r.at = r.at || Date.now();
+      core.tagScope(r);
+      list.push(r);
+      added.push(r);
+    });
+    if (added.length) save(list);
+    return added;
+  }
+
+  /* C2：按 sheetId 删整版（切片条目；切片媒体本体由调用方决定是否回收） */
+  function removeSheet(sheetId) {
+    var hit = [];
+    var keep = all().filter(function (s) {
+      if (s && s.sheetId === sheetId) { hit.push(s); return false; }
+      return true;
+    });
+    if (!hit.length) return 0;
+    save(keep);
+    if (Sleepy.media) {
+      hit.forEach(function (s) {
+        if (s.mediaId) Sleepy.media.remove(s.mediaId)['catch'](function () { /* 忽略 */ });
+      });
+    }
+    return hit.length;
+  }
+
+  /* 按 id 取单条（工坊本批管理用）：找不到返回 null。读 all() 全量——
+     管理场景不做可见性过滤（自己存的自己能看见）。 */
+  function findId(id) {
+    var list = all();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
   function remove(id) {
     var hit = null;
     var keep = all().filter(function (s) {
@@ -279,12 +402,14 @@
        输入的每个字都出现过       30                  （打一半也能命中）
 
      同分的新的在前。纯函数（内部读的是当前沙盒可见的那份），方便单测。 */
-  function match(query, limit) {
+  function match(query, limit, ctx) {
     var q = String(query || '').trim().toLowerCase();
     if (!q) return [];
 
     var out = [];
-    visible().forEach(function (s) {
+    /* C2：聊天调用点带 chat 上下文 → char 专属贴纸只在自己的会话里被推荐 */
+    var pool = ctx ? getVisibleStickers(ctx) : visible();
+    pool.forEach(function (s) {
       var n = String(s.name || '').trim().toLowerCase();
       if (!n) return;
 
@@ -311,8 +436,10 @@
      聊天每次请求前会把它塞进 system（见 page-chat 的 buildMessages）。
      **只列名字**（名字就是解释）—— 模型不需要知道 URL，甚至不需要知道
      这图长什么样；它只管「想发哪个意思」。 */
-  function replySpec() {
-    var names = visible().map(function (s) { return String(s.name || '').trim(); })
+  function replySpec(ctx) {
+    /* C2：说明书按会话上下文出 —— char 看到的是「自己能发的那些」 */
+    var pool = ctx ? getVisibleStickers(ctx) : visible();
+    var names = pool.map(function (s) { return String(s.name || '').trim(); })
       .filter(function (n) { return n; }).slice(0, 40);
     if (!names.length) return '';
     return '【表情包】你手边有这些表情（名字就是它的意思）：' + names.join('、') + '。\n' +
@@ -674,7 +801,9 @@
       var openGroups = {};
 
       function rebuild() {
-        var list = visible();
+        /* 管理视图：legacy（本房+全局）∪ C2 owner 匹配 —— 统一出口 */
+        var list = Sleepy.stickers.getVisibleStickers
+          ? getVisibleStickers({ scope: 'collection' }) : visible();
         var names = groupsOf(list);
         listWrap.innerHTML = '';
         if (!list.length) {
@@ -797,10 +926,16 @@
     pickTextFile: pickTextFile,
     groupFromFileName: groupFromFileName,
     visible: visible,
+    /* C2 贴纸工坊：统一上下文可见性 + 工坊写口 */
+    getVisibleStickers: getVisibleStickers,
+    isC2: isC2,
+    addSheetStickers: addSheetStickers,
+    removeSheet: removeSheet,
     groupsOf: groupsOf,
     groupOf: groupOf,
     parseLines: parseLines,
     add: add,
+    findId: findId,
     addBatch: addBatch,
     pickLocalFiles: pickLocalFiles,
     srcOf: srcOf,

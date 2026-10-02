@@ -1005,8 +1005,17 @@
         inp.click();
       }
 
-      /* ---- 表情包（照私聊：按组分的面板，点一张就发） ---- */
+      /* ---- 表情包（照私聊：按组分的面板，点一张就发） ----
+         C2：群聊只放 user 单人贴纸（char 单人/双人不进群，修正施工单 §一）；
+         身份命中 = 当前发消息的账号（currentAccountId）在 ownerMaskIds 里。 */
       function stickerPool() {
+        if (Sleepy.stickers && Sleepy.stickers.getVisibleStickers) {
+          return Sleepy.stickers.getVisibleStickers({
+            scope: 'group',
+            groupId: groupId,
+            maskId: currentAccountId()
+          });
+        }
         return (Sleepy.stickers && Sleepy.stickers.visible) ? Sleepy.stickers.visible() : [];
       }
       function stickerSrc(s) {

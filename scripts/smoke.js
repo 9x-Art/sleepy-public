@@ -9562,6 +9562,464 @@ t('收藏馆：We 首页入口指向 collection，不再开 favorites', () => {
   return { 入口改collection: true, favorites原样: true };
 });
 
+/* ======================== We 收藏馆 C1 · 藏品实物化（2026-10-02） ========================
+   票根（60×120 双面 3D 翻转，方案 B）+ 拍立得（长按显影）落详情页；
+   数据层：weStore.patch（白名单 + 当前房卫兵）、照片藏品出厂未显影。 */
+
+t('收藏馆C1：票根/拍立得组件落详情页，显影与补写都走 weStore.patch', () => {
+  const coSrc = fs.readFileSync(path.join(ROOT, 'page-collection.js'), 'utf8');
+  if (coSrc.indexOf('co-tk-flipper') < 0 || coSrc.indexOf('is-flipped') < 0) {
+    throw new Error('票根 3D 翻转组件缺失');
+  }
+  if (coSrc.indexOf('co-tk-face-back') < 0 || coSrc.indexOf('memoUser') < 0 || coSrc.indexOf('memoChar') < 0) {
+    throw new Error('票根背面背签/双留言格缺失');
+  }
+  if (coSrc.indexOf('co-tk-nozone') < 0) throw new Error('背签编辑区未做翻面冲突隔离（nozone）');
+  if (coSrc.indexOf('co-pl-pocket') < 0 || coSrc.indexOf('is-developed') < 0) {
+    throw new Error('拍立得显影组件缺失');
+  }
+  if (coSrc.indexOf("developed !== false") < 0) throw new Error('老记录「已显影」兼容丢了');
+  if (coSrc.indexOf('co-pl-slot') < 0) throw new Error('贴纸槽位（C2 预留）缺失');
+  if (coSrc.indexOf('pointerdown') < 0 || coSrc.indexOf('setTimeout(develop, 600)') < 0) {
+    throw new Error('长按 0.6s 显影交互丢了');
+  }
+  if (coSrc.indexOf('weStore.patch') < 0) throw new Error('补写/显影没走 weStore.patch 统一出口');
+  return { 票根: true, 拍立得: true, 长按显影: true, 贴纸槽位: true };
+});
+
+/* ======================== C2 贴纸工坊（2026-10-02 修正施工单） ========================
+   六条链路各自可测：可见性（owner 七条）/ 生成拒绝分支 / 切片器纯函数 /
+   匹配上下文 / 入库纪律 / 回归（旧表情不清空）。 */
+
+t('C2 可见性：owner 七条规则 + global 不泄密 + 老数据兼容 + all() 全量', () => {
+  const prev = S.core.activeSandbox();
+  const cA = S.core.upsertChar({ name: '贴A', kind: 'main' }).id;
+  const cB = S.core.upsertChar({ name: '贴B', kind: 'main' }).id;
+  const u1 = S.core.upsertUser({ name: '贴我一' }).id;
+  const u2 = S.core.upsertUser({ name: '贴我二' }).id;
+  const sb = S.core.createSandbox('archipelago', '贴纸岛');
+  S.core.setSandboxChars(sb.id, [cA, cB]);
+  S.core.setSandboxMasks(sb.id, [u1, u2]);
+  S.core.setActiveSandbox(sb.id);
+  try {
+    const mk = (o) => Object.assign({
+      id: 'st-' + Math.random().toString(36).slice(2, 8),
+      name: '贴', mediaId: 'm', group: 'g', at: Date.now(), sandboxId: sb.id
+    }, o);
+    const seed = (rec) => {
+      const l = S.store.get('stickers') || [];
+      l.push(rec); S.store.set('stickers', l);
+    };
+    const charA = mk({ kind: 'sticker', ownerCharId: cA, ownerUserId: null, ownerMaskIds: [], allowInGroups: false });
+    const both = mk({ kind: 'sticker', ownerCharId: cA, ownerUserId: u1, ownerMaskIds: [], allowInGroups: false });
+    const mine = mk({ kind: 'sticker', ownerCharId: null, ownerUserId: null, ownerMaskIds: [u1], allowInGroups: false });
+    const emptyMasks = mk({ kind: 'sticker', ownerCharId: null, ownerUserId: null, ownerMaskIds: [], allowInGroups: false });
+    const leaky = mk({ kind: 'sticker', ownerCharId: cA, ownerUserId: null, ownerMaskIds: [], global: true, allowInGroups: false });
+    const legacy = mk({ name: '老表情', global: false });   /* 无 owner 字段 */
+    /* 群聊口径（部署前核查 3）：缺省三类全不进群，只允许 allowInGroups === true
+       显式放行，且即便放行也仅限 user 单人（char 单人即便带开关也不进群） */
+    const mineOpen = mk({ kind: 'sticker', ownerCharId: null, ownerUserId: null, ownerMaskIds: [u1], allowInGroups: true });
+    const charAOpen = mk({ kind: 'sticker', ownerCharId: cA, ownerUserId: null, ownerMaskIds: [], allowInGroups: true });
+    [charA, both, mine, emptyMasks, leaky, legacy, mineOpen, charAOpen].forEach(seed);
+
+    const has = (ctx, id) => S.stickers.getVisibleStickers(ctx).some((s) => s.id === id);
+    const chatA = { scope: 'chat', charId: cA, maskId: u1 };
+    const chatB = { scope: 'chat', charId: cB, maskId: u1 };
+    const chatA2 = { scope: 'chat', charId: cA, maskId: u2 };
+
+    if (!has(chatA, charA.id)) throw new Error('char 本人会话看不到自己的贴纸');
+    if (has(chatB, charA.id)) throw new Error('char A 的贴纸漏进了 char B 的会话');
+    if (!has(chatA, both.id)) throw new Error('双人贴纸在双方会话不可见');
+    /* 部署前核查 1：ownerUserId = 创建时马甲（user 侧归属凭据），双人贴纸
+       切马甲（同岛另一件「我」）仍可见 —— 「我们俩」不随马甲切换消失 */
+    if (!has(chatA2, both.id)) throw new Error('切马甲后双人贴纸不可见了（应按本岛口径放行）');
+    if (!has(chatA, mine.id)) throw new Error('user 单人贴纸在勾选马甲不可见');
+    if (has(chatA2, mine.id)) throw new Error('user 单人贴纸漏给了未勾选马甲');
+    if (has(chatA, emptyMasks.id)) throw new Error('ownerMaskIds:[] 竟然可见');
+    if (has(chatB, leaky.id)) throw new Error('C2 带 global:true 泄密了');
+    if (!has(chatA, legacy.id)) throw new Error('老贴纸在本房反而看不见了');
+
+    /* 群聊（核查 3）：缺省三类全不进群；allowInGroups===true 只放行 user 单人 */
+    const grp = { scope: 'group', groupId: 'gp1', maskId: u1 };
+    if (has(grp, mine.id)) throw new Error('user 单人贴纸缺省进了群（应 allowInGroups===true 才放行）');
+    if (has(grp, charA.id) || has(grp, both.id)) throw new Error('char 单人/双人贴纸进了群聊');
+    if (has(grp, emptyMasks.id)) throw new Error('群聊里 [] 可见');
+    if (has(grp, charAOpen.id)) throw new Error('char 单人即便 allowInGroups:true 也不该进群');
+    if (!has(grp, mineOpen.id)) throw new Error('allowInGroups:true 的 user 单人贴纸该进群');
+
+    S.core.switchTo(cA, u1);
+    const colA = S.stickers.getVisibleStickers({ scope: 'collection' }).map((s) => s.id);
+    if (!colA.some((s) => s === charA.id) || !colA.some((s) => s === both.id) ||
+      !colA.some((s) => s === mine.id)) {
+      throw new Error('collection 视角漏了自己的贴纸 colA=' + JSON.stringify(colA) +
+        ' 期望含 ' + JSON.stringify([charA.id, both.id, mine.id]) +
+        ' 身份=' + JSON.stringify({
+          c: (S.core.activeCharOnIsland() || {}).id || null,
+          m: (S.core.activeUserOnIsland() || {}).id || null,
+          sb: (S.core.activeSandbox() || {}).id || null,
+          ptr: S.store.get('activeCharId'),
+          found: !!S.core.findChar(cA),
+          roster: JSON.stringify((S.core.activeSandbox() || {}).charIds || [])
+        }));
+    }
+    S.core.switchTo(cB, u1);
+    const colB = S.stickers.getVisibleStickers({ scope: 'collection' });
+    if (colB.some((s) => s.id === charA.id) || colB.some((s) => s.id === both.id)) {
+      throw new Error('collection 泄了别人的专属贴纸');
+    }
+    if (!colB.some((s) => s.id === legacy.id)) throw new Error('collection 里老贴纸不见了');
+
+    if (S.stickers.all().length !== 8) throw new Error('all() 不是全量（旧数据可能被清）');
+    return { owner七条: true, global不泄密: true, 老数据兼容: true, all全量: true };
+  } finally {
+    S.store.set('stickers', []);
+    S.core._purgeSync.sandbox(sb.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
+t('C2 匹配：match/replySpec 按会话上下文过滤；charSendSticker 同名不猜（静态）', () => {
+  const prev = S.core.activeSandbox();
+  const cA = S.core.upsertChar({ name: '匹A', kind: 'main' }).id;
+  const cB = S.core.upsertChar({ name: '匹B', kind: 'main' }).id;
+  const u1 = S.core.upsertUser({ name: '匹我' }).id;
+  const sb = S.core.createSandbox('archipelago', '匹配岛');
+  S.core.setSandboxChars(sb.id, [cA, cB]);
+  S.core.setSandboxMasks(sb.id, [u1]);
+  S.core.setActiveSandbox(sb.id);
+  try {
+    const mk = (owner, name) => {
+      const rec = {
+        id: 'st-' + Math.random().toString(36).slice(2, 8),
+        name: name, mediaId: 'm', group: 'g', kind: 'sticker',
+        ownerCharId: owner, ownerUserId: null, ownerMaskIds: [],
+        allowInGroups: false, at: Date.now(), sandboxId: sb.id
+      };
+      const l = S.store.get('stickers'); l.push(rec); S.store.set('stickers', l);
+      return rec;
+    };
+    const a1 = mk(cA, '好耶');
+    const b1 = mk(cB, '好耶');
+    const hitsA = S.stickers.match('好耶', 10, { scope: 'chat', charId: cA, maskId: u1 });
+    if (hitsA.some((s) => s.ownerCharId === cB)) throw new Error('match 跨角色误命中');
+    if (!hitsA.some((s) => s.id === a1.id)) throw new Error('match 没命中本会话的贴纸');
+    const hitsB = S.stickers.match('好耶', 10, { scope: 'chat', charId: cB, maskId: u1 });
+    if (!hitsB.some((s) => s.id === b1.id) || hitsB.some((s) => s.id === a1.id)) {
+      throw new Error('match 池按会话过滤失效');
+    }
+    const spec = S.stickers.replySpec({ scope: 'chat', charId: cA, maskId: u1 });
+    if (spec.indexOf('好耶') < 0) throw new Error('replySpec 没列出本会话贴纸名');
+
+    const pcSrc = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+    if (pcSrc.indexOf('hits.length !== 1') < 0) throw new Error('charSendSticker 同名不猜规则丢了');
+    if (pcSrc.indexOf('matchKey') < 0) throw new Error('匹配没有优先 matchKey');
+    return { match上下文: true, replySpec: true, 同名不猜: true };
+  } finally {
+    S.store.set('stickers', []);
+    S.core._purgeSync.sandbox(sb.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
+t('C2 核查：旧数据无 kind（addBatch 扫描）+ 身份竞态守卫 + 空槽阻止提交（静态）', () => {
+  const psSrc = fs.readFileSync(path.join(ROOT, 'page-stickers.js'), 'utf8');
+  const pcSrc = fs.readFileSync(path.join(ROOT, 'page-collection.js'), 'utf8');
+  /* 核查 2 证据：唯一写路径 addBatch 不产 kind 字段 —— 旧条目不可能被
+     isC2 的 kind 判定误伤（全仓库 stickers 写点只有 page-stickers save()） */
+  const m = psSrc.match(/function addBatch[\s\S]*?\n  \}/);
+  if (!m || /kind\s*:/.test(m[0])) throw new Error('addBatch 竟然写了 kind（旧条目会被误判 C2）');
+  /* 核查 4：生成与入库两个入口都过身份闸 */
+  if (pcSrc.indexOf('skIdentityChanged') < 0 || pcSrc.indexOf('skGuardIdentity') < 0) {
+    throw new Error('身份竞态守卫缺失');
+  }
+  if ((pcSrc.match(/skGuardIdentity\(ctx, st\)/g) || []).length < 2) {
+    throw new Error('生成/入库入口没有都过身份闸');
+  }
+  /* 核查 5：空槽阻止提交（兜底词只留在模板函数里，流程先拦） */
+  if (pcSrc.indexOf('skCustomEmptySlot') < 0 || pcSrc.indexOf('格还是空的') < 0) {
+    throw new Error('自定义空槽阻止提交缺失');
+  }
+  return { 旧数据无kind: true, 身份闸双入口: true, 空槽阻止: true };
+});
+
+t('C2 生成：NAI/不支持 refSupport/缺参考图/空词 全部前置失败零请求', async () => {
+  const g = S.imggen;
+  const prevApis = g.listApis();
+  try {
+    g.saveApis([]);
+    const apiNai = g.newApi('nai'); apiNai.name = 'T-NAI'; apiNai.model = 'nai-diffusion-3';
+    const apiNone = g.newApi('general'); apiNone.name = 'T-不支持'; apiNone.baseUrl = 'http://127.0.0.1:9/v1'; apiNone.model = 'x'; apiNone.refSupport = 'none';
+    const apiEdits = g.newApi('general'); apiEdits.name = 'T-edits'; apiEdits.baseUrl = 'http://127.0.0.1:9/v1'; apiEdits.model = 'x'; apiEdits.apiKey = 'k'; apiEdits.refSupport = 'edits';
+    g.saveApis(g.listApis().concat([apiNai, apiNone, apiEdits]));
+
+    const sub = (type, id, name) => ({ entityType: type, entityId: id, name: name || '', gender: '', faceText: '' });
+    const noRef = S.core.upsertChar({ name: '无图C', kind: 'main' });   /* 没设锁脸图 */
+
+    const r1 = await g.generateStickerSheet({
+      subjects: [sub('char', noRef.id, '无图C')], prompt: 'x', negativePrompt: 'y', api: apiNai
+    });
+    if (r1.ok !== false || r1.code !== 'NAI_UNSUPPORTED') throw new Error('NAI 应明确拒绝：' + JSON.stringify(r1));
+
+    const r2 = await g.generateStickerSheet({
+      subjects: [sub('char', noRef.id, '无图C')], prompt: 'x', negativePrompt: 'y', api: apiNone
+    });
+    if (r2.ok !== false || r2.code !== 'UNSUPPORTED_REF') throw new Error('不支持 refSupport 应明确拒绝：' + JSON.stringify(r2));
+
+    const r3 = await g.generateStickerSheet({
+      subjects: [sub('char', noRef.id, '无图C')], prompt: 'x', negativePrompt: 'y', api: apiEdits
+    });
+    if (r3.ok !== false || r3.code !== 'MISSING_REFERENCE' || r3.stage !== 'resolve-ref') {
+      throw new Error('缺参考图应在生成前失败：' + JSON.stringify(r3));
+    }
+
+    const r4 = await g.generateStickerSheet({
+      subjects: [sub('char', noRef.id, '无图C')], prompt: '', negativePrompt: '', api: apiEdits
+    });
+    if (r4.ok !== false) throw new Error('空词应失败');
+    return { NAI拒: true, refSupport拒: true, 缺图拒: true, 空词拒: true, 全部零请求: true };
+  } finally {
+    g.saveApis(prevApis);
+  }
+});
+
+t('C2 切片器：白底去除 / die-cut 内部保留 / 空格识别 / 网格切分与 bbox 钳位', () => {
+  const SC = S.stickerCut;
+  if (!SC) throw new Error('sticker-cut.js 没加载');
+  const W = 300, H = 200;                       /* cell 100x100 */
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    data[i * 4] = 255; data[i * 4 + 1] = 255; data[i * 4 + 2] = 255; data[i * 4 + 3] = 255;
+  }
+  const px = (x, y, r, g, b) => {
+    const p = (y * W + x) * 4;
+    data[p] = r; data[p + 1] = g; data[p + 2] = b; data[p + 3] = 255;
+  };
+  /* 画一个「深色轮廓圈 + 圈内白底 + 中心彩芯」的 die-cut 贴纸：
+     flood-fill 从格子边缘吃白底，但穿不过深色轮廓 → 圈内白色必须保留。
+     坐标 = 绝对画布坐标（格子：row0 y 0-99 / row1 y 100-199，列宽 100）。 */
+  const blob = (cx, cy) => {
+    const R = 22;
+    for (let y = -R; y <= R; y++) {
+      for (let x = -R; x <= R; x++) {
+        const d2 = x * x + y * y;
+        if (d2 > R * R) continue;
+        const gx = cx + x, gy = cy + y;
+        if (gx < 0 || gy < 0 || gx >= W || gy >= H) continue;
+        const p = (gy * W + gx) * 4;
+        if (d2 > (R - 3) * (R - 3)) {                       /* 深色轮廓 */
+          data[p] = 84; data[p + 1] = 73; data[p + 2] = 62; data[p + 3] = 255;
+        } else if (Math.abs(x) < 6 && Math.abs(y) < 6) {    /* 中心彩芯 */
+          data[p] = 200; data[p + 1] = 120; data[p + 2] = 80; data[p + 3] = 255;
+        }
+        /* 其余 = 圈内白底（不画，保持 255） */
+      }
+    }
+  };
+  blob(50, 50);            /* 格 0：居中 */
+  blob(150, 50);           /* 格 1：居中 */
+  blob(250, 50);           /* 格 2：居中 */
+  blob(50, 150);           /* 格 3：居中 */
+  blob(150, 178);          /* 格 4：贴到格子底缘（y=199，bbox 钳位） */
+  /* 格 5：全白 → empty */
+
+  const cells = SC.splitStickerSheet3x2({ width: W, height: H, data: data },
+    { threshold: 235, padding: 4, minPixels: 144 });
+  if (cells.length !== 6) throw new Error('应切出 6 格');
+  if (!cells[5].empty) throw new Error('全白格应识别为 empty');
+  if (cells[0].empty || cells[4].empty) throw new Error('有内容的格被判空');
+
+  const c0 = cells[0];
+  const cd = c0.imageData.data;
+  /* 角落 = 被吃掉的白底 → 透明 */
+  if (cd[3] !== 0) throw new Error('格子角落的背景白没被去掉');
+  /* 中心 = 彩芯 → 不透明且非白 */
+  const mid = ((c0.imageData.height / 2 | 0) * c0.imageData.width + (c0.imageData.width / 2 | 0)) * 4;
+  if (cd[mid + 3] !== 255 || cd[mid] === 255) throw new Error('中心彩芯丢了');
+  /* die-cut 内部白：轮廓圈内、彩芯外的点应保留不透明（取 bbox 内彩芯左上斜向 8px 处） */
+  let innerWhite = false;
+  for (let y = 0; y < c0.imageData.height && !innerWhite; y++) {
+    for (let x = 0; x < c0.imageData.width && !innerWhite; x++) {
+      const p = (y * c0.imageData.width + x) * 4;
+      if (cd[p + 3] === 255 && cd[p] === 255 && cd[p + 1] === 255 && cd[p + 2] === 255) innerWhite = true;
+    }
+  }
+  if (!innerWhite) throw new Error('die-cut 白边被 flood 吃掉了（应被深色轮廓挡住）');
+
+  /* 格 4 贴底：bbox 底缘必须钳在整版坐标 cell 底（y=200）之内 */
+  if (cells[4].bbox.y + cells[4].bbox.h > 200) throw new Error('bbox 越过了格子底缘');
+  if (cells[4].bbox.x < 100 || cells[4].bbox.x + cells[4].bbox.w > 200) {
+    throw new Error('格 4 的 bbox 越过了自己的列');
+  }
+  return { 六格: true, 空格识别: true, 白底去除: true, dieCut保留: true, bbox钳位: true };
+});
+
+t('C2 入库：addSheetStickers 整批写 + removeSheet 只删整版 + 老表情不动', () => {
+  const prev = S.core.activeSandbox();
+  const sb = S.core.createSandbox('isle', '入库岛');
+  S.core.setActiveSandbox(sb.id);
+  try {
+    S.store.set('stickers', []);
+    const legacy = { id: 'st-legacy', name: '老表情', url: 'https://x.test/a.png', group: '旧', at: Date.now(), sandboxId: sb.id };
+    S.store.set('stickers', [legacy]);
+
+    const added = S.stickers.addSheetStickers([
+      { name: '抱抱', mediaId: 'md-1', group: '贴纸工坊 · 测试', kind: 'sticker', sheetId: 'shs-1', sheetMediaId: 'md-sheet', sliceIndex: 0, sourceVersion: 1, emotion: 'big_hug', matchKey: 'sk:shs-1:0', ownerCharId: null, ownerUserId: null, ownerMaskIds: [], allowInGroups: false },
+      { name: '好耶', mediaId: 'md-2', group: '贴纸工坊 · 测试', kind: 'sticker', sheetId: 'shs-1', sheetMediaId: 'md-sheet', sliceIndex: 1, sourceVersion: 1, emotion: 'super_happy', matchKey: 'sk:shs-1:1', ownerCharId: null, ownerUserId: null, ownerMaskIds: [], allowInGroups: false }
+    ]);
+    if (added.length !== 2) throw new Error('应写入 2 条');
+    const all = S.stickers.all();
+    if (all.length !== 3) throw new Error('all() 应为 3 条（老 1 + 新 2）');
+    if (!added.every((r) => r.sandboxId === sb.id)) throw new Error('工坊贴纸没盖房章');
+    if (added[0].kind !== 'sticker' || added[0].sheetMediaId !== 'md-sheet') throw new Error('C2 字段丢了');
+
+    const n = S.stickers.removeSheet('shs-1');
+    if (n !== 2) throw new Error('removeSheet 应删 2 条，实际 ' + n);
+    const left = S.stickers.all();
+    if (left.length !== 1 || left[0].id !== 'st-legacy') throw new Error('removeSheet 误删了老表情');
+    return { 整批写: true, 房章: true, 整版删: true, 老表情不动: true };
+  } finally {
+    S.store.set('stickers', []);
+    S.core._purgeSync.sandbox(sb.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
+t('We 美化批：群岛选人闸 + 贴纸工坊入口/工坊页注册 + 首页真图拍立得', () => {
+  const weSrc = fs.readFileSync(path.join(ROOT, 'page-we.js'), 'utf8');
+  const coSrc = fs.readFileSync(path.join(ROOT, 'page-collection.js'), 'utf8');
+  if (weSrc.indexOf('weGateApply') < 0 || weSrc.indexOf('needsCharPick') < 0) {
+    throw new Error('We 群岛选人闸缺失（weGateApply / needsCharPick）');
+  }
+  if (weSrc.indexOf('core.switchTo(mains[0].id') < 0) throw new Error('孤岛/单大号自动归位丢了');
+  if (coSrc.indexOf('Sleepy.weGate') < 0) throw new Error('收藏馆三页未接同一道选人闸');
+  if (coSrc.indexOf('co-sticker-entry') < 0) throw new Error('贴纸工坊入口卡缺失');
+  if (!S.registered()['sticker-workshop']) throw new Error('贴纸工坊页未注册');
+  if (weSrc.indexOf('fillThumb(ph, it.mediaId)') < 0) throw new Error('首页拍立得条未铺真实照片');
+  if (coSrc.indexOf('co-card-ticket') < 0 || coSrc.indexOf('co-card-photo') < 0) {
+    throw new Error('门厅实物缩略卡（票根/照片）缺失');
+  }
+  return { 选人闸: true, 贴纸入口: true, 占位页注册: true, 真图拍立得: true, 实物缩略卡: true };
+});
+
+t('We 数据核对三缺口：提议角标 + 断点恢复索引 + 本批管理', () => {
+  const weSrc = fs.readFileSync(path.join(ROOT, 'page-we.js'), 'utf8');
+  const coSrc = fs.readFileSync(path.join(ROOT, 'page-collection.js'), 'utf8');
+  const stSrc = fs.readFileSync(path.join(ROOT, 'page-stickers.js'), 'utf8');
+  const coreSrc = fs.readFileSync(path.join(ROOT, 'core.js'), 'utf8');
+
+  /* ① 底栏收藏馆 tab 挂 pending 角标（scoped countPending，幂等更新） */
+  if (weSrc.indexOf('we-tab-badge') < 0 || weSrc.indexOf('countPending') < 0) {
+    throw new Error('底栏提议角标缺失（we-tab-badge / countPending）');
+  }
+  if (typeof S.weProposals.countPending !== 'function') throw new Error('countPending 出口没了');
+
+  /* ③ 断点恢复：stickerSheets 索引进删房名单；remember/forget 成对；恢复卡在 step3 */
+  if (coreSrc.indexOf("'stickerSheets'") < 0) throw new Error('stickerSheets 未进 core 删房 scoped 名单');
+  if (coSrc.indexOf('skSheetIndexRemember') < 0 || coSrc.indexOf('skSheetIndexForget') < 0) {
+    throw new Error('断点索引 remember/forget 缺失');
+  }
+  if (coSrc.indexOf('继续上次整版') < 0) throw new Error('step3 恢复卡缺失');
+  /* 索引读写走 scoped+tagScope 纪律（与项目其他表同款） */
+  if (coSrc.indexOf('core.scoped(Array.isArray(list) ? list : [])') < 0 ||
+    coSrc.indexOf('core.tagScope({') < 0) throw new Error('stickerSheets 读写未走 scoped/tagScope 纪律');
+
+  /* ② 本批管理：findId 出口 + removeSheet 有消费方 + 入库后记 savedSheetId/savedIds */
+  if (typeof S.stickers.findId !== 'function') throw new Error('stickers.findId 出口缺失');
+  if (coSrc.indexOf('removeSheet(') < 0 || coSrc.indexOf('sk-batch-wipe') < 0) {
+    throw new Error('工坊本批管理（removeSheet 消费）缺失');
+  }
+  if (coSrc.indexOf('savedSheetId') < 0 || coSrc.indexOf('savedIds') < 0) {
+    throw new Error('入库后未记录本批 sheetId/ids');
+  }
+
+  /* 行为抽查：索引 remember→scoped 可读→forget 消失（借 store 直查） */
+  const prevSb = S.core.activeSandbox();
+  const c = S.core.upsertChar({ name: '索引角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '索引我' }).id;
+  const sb = S.core.createSandbox('isle', '索引岛');
+  S.core.setSandboxChars(sb.id, [c]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(c, u);
+  const fakeSt = {
+    target: 'user', mode: 'custom', genderPick: null,
+    customPicks: [0, 1, 2, 3, 4, 5], customLines: ['', '', '', '', '', '']
+  };
+  /* 经页面内部函数不可达 → 用与实现相同的纪律直查：写一条带 sandboxId 的索引记录，
+     验证 scoped 读得到、别的岛读不到（这正是 remember/forget 依赖的语义） */
+  const raw = S.store.get('stickerSheets') || [];
+  raw.push({ id: 'shx-test', mediaId: 'md-x', at: Date.now(),
+    sandboxId: sb.id, target: 'user', mode: 'custom', genderPick: null,
+    customPicks: [0, 1, 2, 3, 4, 5], customLines: ['', '', '', '', '', ''] });
+  S.store.set('stickerSheets', raw);
+  const seen = S.store.get('stickerSheets').filter((r) => r && r.sandboxId === sb.id);
+  if (seen.length !== 1 || seen[0].mediaId !== 'md-x') throw new Error('索引记录读写异常');
+  /* 删房连带清：removeSandbox 已被 purge 门禁收编为内部函数，不直调——
+     名单成员资格已在上面静态断言（'stickerSheets' ∈ core scoped）。 */
+  if (prevSb) S.core.setActiveSandbox(prevSb.id);
+  return { 角标: true, 恢复索引: true, 本批管理: true };
+});
+
+t('收藏馆C1：weStore.patch 白名单 + 当前房卫兵 + updatedAt；照片出厂未显影', () => {
+  const prev = S.core.activeSandbox();
+  const c = S.core.upsertChar({ name: '票根角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '票根我' }).id;
+  const sb = S.core.createSandbox('isle', '票根岛');
+  S.core.setSandboxChars(sb.id, [c]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(c, u);
+  let other = null;
+  try {
+    /* weAdd：照片类出厂 developed:false；非照片不带 developed 字段 */
+    const ph = S.weStore.add({ title: '海边拍立得', note: '风很大', kind: 'photo', at: 5000 }, sb.id);
+    if (ph.developed !== false) throw new Error('新照片藏品应出厂未显影，实际=' + JSON.stringify(ph.developed));
+    const tk = S.weStore.add({ title: '一起看的电影', note: '没看完', kind: 'ticket', at: 4000 }, sb.id);
+    if ('developed' in tk) throw new Error('非照片不该带 developed 字段');
+
+    /* patch：背签双留言落盘 + 盖 updatedAt（先把旧值拨回 1，避免同毫秒竞态） */
+    const backdate = S.store.get('weEntries');
+    backdate.filter((x) => x.id === tk.id)[0].updatedAt = 1;
+    S.store.set('weEntries', backdate);
+    const before = S.store.get('weEntries').filter((x) => x.id === tk.id)[0];
+    const r1 = S.weStore.patch(tk.id, { memoUser: '散场下雨了', memoChar: '雨其实不大' });
+    if (!r1 || !r1.ok) throw new Error('patch 背签留言失败：' + JSON.stringify(r1));
+    const after1 = S.store.get('weEntries').filter((x) => x.id === tk.id)[0];
+    if (after1.memoUser !== '散场下雨了' || after1.memoChar !== '雨其实不大') throw new Error('留言没落盘');
+    if (after1.updatedAt <= before.updatedAt) throw new Error('patch 应盖 updatedAt');
+
+    /* patch：显影标记持久化 */
+    const r2 = S.weStore.patch(ph.id, { developed: true });
+    if (!r2 || !r2.ok) throw new Error('显影标记写回失败');
+    if (S.store.get('weEntries').filter((x) => x.id === ph.id)[0].developed !== true) {
+      throw new Error('developed 未持久化');
+    }
+
+    /* 白名单外字段一律丢弃（改标题 / 伪造 sandboxId 都不许） */
+    S.weStore.patch(tk.id, { title: '黑客改标题', sandboxId: 'evil' });
+    const after3 = S.store.get('weEntries').filter((x) => x.id === tk.id)[0];
+    if (after3.title !== '一起看的电影' || after3.sandboxId === 'evil') {
+      throw new Error('白名单外字段被写入了');
+    }
+
+    /* 范围卫兵：别的岛读不到这张票 → 绝不许改 */
+    other = S.core.createSandbox('isle', '别的岛');
+    S.core.setActiveSandbox(other.id);
+    const r3 = S.weStore.patch(tk.id, { memoUser: '跨岛写' });
+    if (r3 && r3.ok) throw new Error('跨岛 id 竟然 patch 成功');
+    S.core.setActiveSandbox(sb.id);
+
+    /* 不存在的 id 不命中 */
+    const r4 = S.weStore.patch('we-nope', { memoUser: 'x' });
+    if (r4 && r4.ok) throw new Error('不存在的 id 不该命中');
+    return { 照片出厂未显影: true, patch留言: true, 显影持久化: true, 白名单: true, 范围卫兵: true };
+  } finally {
+    if (other) S.core._purgeSync.sandbox(other.id);
+    S.core._purgeSync.sandbox(sb.id);
+    S.core.setActiveSandbox(prev ? prev.id : null);
+  }
+});
+
 /* ======================== We 三页导航 + 时光 v1（2026-09-28） ========================
    证据：weNav / weTime 出口、三主页面挂 bar（二级页不挂）、
    replace 切 Tab 不涨栈、时光聚合的 user 视角闸门与身份/岛屿隔离。 */

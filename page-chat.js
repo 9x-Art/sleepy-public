@@ -2665,7 +2665,7 @@
         /* 表情包说明书：手上有哪些表情、想发的时候怎么写（[表情:名字]）。
            没有表情时不加这一段 —— 别平白多一段指令，模型容易照猫画虎瞎编。 */
         if (Sleepy.stickers && Sleepy.stickers.replySpec) {
-          var spec = Sleepy.stickers.replySpec();
+          var spec = Sleepy.stickers.replySpec(stickerCtx());
           if (spec) out.unshift({ role: 'system', content: spec });
         }
         /* 发图说明：生图接口可用才注入（引擎路径走 genimg 槽，这里同步） */
@@ -3607,6 +3607,39 @@
         intent.rows = 2;
         intent.placeholder = '想画什么，一句话就行（比如：便利店的深夜窗边）';
 
+        /* B2 图片锁脸（2026-10-02 施工单 §2）：逐人开关，user 发起不等于自拍。
+           底层就是「我」「TA」两个独立布尔；谁在画面里谁的有效（不在画面里的
+           开关不产生参考图）。默认勾选状态读各自已保存的授权
+           （faceLockImageOn），本次勾选只覆盖本次请求，不改资料。 */
+        var core2 = Sleepy.core;
+        var meMask = (c.userId && core2.findUser) ? core2.findUser(c.userId) : null;
+        var meHasImg = !!(meMask && (meMask.faceLockImageMedia || meMask.faceLockImage));
+        var chHasImg = !!(ch && (ch.faceLockImageMedia || ch.faceLockImage));
+        var lockRow = h('div', 'gen-locks');
+        lockRow.style.cssText = 'display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 6px;';
+        function lockToggle(label, rec) {
+          var lb = h('label');
+          lb.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;';
+          var cb = h('input');
+          cb.type = 'checkbox';
+          cb.checked = !!(rec && rec.faceLockImageOn);
+          lb.appendChild(cb);
+          lb.appendChild(h('span', '', label));
+          var hint = h('span', '', (!rec || !(rec.faceLockImageMedia || rec.faceLockImage))
+            ? '（未设置参考图）' : '');
+          hint.style.cssText = 'opacity:.55;';
+          lb.appendChild(hint);
+          lockRow.appendChild(lb);
+          return cb;
+        }
+        var cbMe = lockToggle('用我的图片锁脸', meHasImg ? meMask : null);
+        var cbChar = lockToggle('用TA的图片锁脸', chHasImg ? ch : null);
+        var lockHint = h('p', 'gen-status', '');
+        lockHint.style.cssText = 'font-size:11px;opacity:.6;margin:0 0 6px;';
+        lockHint.textContent = '勾选后参考图会随生图请求发给接口「'
+          + (Sleepy.imggen.activeApi() ? (Sleepy.imggen.activeApi().name || '') : '')
+          + '」；接口需在设置里开启「参考图支持」。';
+
         var preview = h('div', 'gen-preview');
         preview.appendChild(h('p', 'gen-preview-empty', '生成后会在这里预览'));
 
@@ -3625,6 +3658,8 @@
 
         card.appendChild(tabs);
         card.appendChild(intent);
+        card.appendChild(lockRow);
+        card.appendChild(lockHint);
         card.appendChild(preview);
         card.appendChild(status);
         card.appendChild(row);
@@ -3731,6 +3766,14 @@
               faceText: mode === 'char' ? Sleepy.imggen.faceTextFor(ch, shot) : '',
               gender: mode === 'char' ? ch : null
             };
+            /* B2：本次勾选作为逐人覆盖传下去 —— 不在画面里的主体，
+               开关不产生参考图（解析器按 subjects 求交集）。 */
+            if (plan) {
+              var locks = {};
+              if (meMask) locks['user:' + meMask.id] = !!cbMe.checked;
+              if (ch) locks['char:' + ch.id] = !!cbChar.checked;
+              genReq.imageLocks = locks;
+            }
             return Sleepy.imggen.generate(genReq).then(function (r) {
               busy = false;
               bGen.disabled = false;
@@ -3854,7 +3897,22 @@
          匹配用的是每张表情的**解释**（name）—— 所以「url 要对应文字解释」
          那件事不只是给人看的，也是给这里用的。 */
 
+      /* C2 贴纸工坊（2026-10-02）：池子带 chat 上下文走统一可见性出口 ——
+         char 单人贴纸只在与该 char 的会话出现、双人贴纸只在你们俩的会话、
+         user 单人贴纸按马甲命中；老表情照旧（global + 本房）。 */
+      function stickerCtx() {
+        var c = getChat(chatId);
+        var ch = c && c.characterId ? findCharacter(c.characterId) : null;
+        return {
+          scope: 'chat',
+          charId: ch ? ch.id : null,
+          maskId: (c && c.userId) || null
+        };
+      }
       function stickerPool() {
+        if (Sleepy.stickers && Sleepy.stickers.getVisibleStickers) {
+          return Sleepy.stickers.getVisibleStickers(stickerCtx());
+        }
         return (Sleepy.stickers && Sleepy.stickers.visible) ? Sleepy.stickers.visible() : [];
       }
 
@@ -3933,19 +3991,24 @@
         var q = String(name || '').trim().toLowerCase();
         if (!q) return null;
         var pool = stickerPool();
-        var hit = null;
-        pool.forEach(function (s) {
-          if (hit) return;
-          if (String(s.name || '').trim().toLowerCase() === q) hit = s;
+        /* 施工单 §七：优先 matchKey → 再按名字唯一命中；同名多个候选不猜
+           （不跨角色、不随机挑），无匹配保持「当它没发」。 */
+        var hits = pool.filter(function (s) {
+          return String(s.matchKey || '').trim().toLowerCase() === q;
         });
-        if (!hit) {
-          pool.forEach(function (s) {
-            if (hit) return;
-            var n = String(s.name || '').trim().toLowerCase();
-            if (n && (n.indexOf(q) >= 0 || q.indexOf(n) >= 0)) hit = s;
+        if (hits.length !== 1) {
+          hits = pool.filter(function (s) {
+            return String(s.name || '').trim().toLowerCase() === q;
           });
         }
-        if (!hit) return null;      /* 名字对不上就当它没发，不猜 */
+        if (hits.length !== 1) {
+          hits = pool.filter(function (s) {
+            var n = String(s.name || '').trim().toLowerCase();
+            return n && (n.indexOf(q) >= 0 || q.indexOf(n) >= 0);
+          });
+        }
+        if (hits.length !== 1) return null;   /* 0 个或多个候选都不发 */
+        var hit = hits[0];
 
         var msg = {
           id: newId(),
@@ -3970,7 +4033,7 @@
           suggestBar.classList.remove('is-on');
           return;
         }
-        var hits = Sleepy.stickers.match(q, 14);
+        var hits = Sleepy.stickers.match(q, 14, stickerCtx());
         if (!hits.length) { suggestBar.classList.remove('is-on'); return; }
 
         suggestBar.classList.add('is-on');

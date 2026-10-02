@@ -365,6 +365,25 @@
 
     f.timeoutSec = numField({ label: '超时（秒）', hint: '最小 60 —— 小于 60 的值运行时也会按 60 跑', value: api.timeoutSec, min: 60, max: 600, step: 10 });
     g.card.appendChild(f.timeoutSec.el);
+
+    /* B2 图片锁脸（2026-10-02 施工单 §5）：参考图支持由用户按服务方能力
+       显式声明，不做 kind 上的想当然。none = 不支持/未核实（默认）——
+       图片锁脸启用时会明确拦下提示，绝不盲发。 */
+    f.refSupport = h('div', 'set-field');
+    f.refSupport.appendChild(h('label', 'set-label', '参考图支持（图片锁脸用）'));
+    var refSel = h('select', 'set-select');
+    [['none', '不支持 / 未核实（默认）'],
+     ['edits', '通用：支持 /images/edits 参考图（general 接口选这个）'],
+     ['chat', '文字通道：多模态送图（chat 接口选这个）']].forEach(function (o) {
+      var op = h('option', '', o[1]);
+      op.value = o[0];
+      if ((api.refSupport || 'none') === o[0]) op.selected = true;
+      refSel.appendChild(op);
+    });
+    f.refSupport.appendChild(refSel);
+    f.refSupport.appendChild(h('p', 'set-hint',
+      'NAI 暂不支持图片锁脸。按服务方实际能力选，选错会在生图时报原文错误。'));
+    g.card.appendChild(f.refSupport);   /* 裸 div 没有 .el —— 直接挂自身 */
     body.appendChild(g.wrap);
 
     /* ---------- 内置预设（可改） ---------- */
@@ -1169,6 +1188,7 @@
         timeoutSec: Math.round(f.timeoutSec.get()) || 60,
         positivePreset: f.positivePreset.get(),
         negativePreset: f.negativePreset.get(),
+        refSupport: f.refSupport ? f.refSupport.querySelector('select').value : 'none',
         enabled: f.enabled.get()
       };
     }

@@ -12972,6 +12972,12 @@ button.cal-ev:active{background:var(--g-glass-2);}
 
 /* ---- 来源状态条 ---- */
 .co-src-box{margin-top:14px;padding:12px 14px;border:1px solid rgba(27,25,23,.22)}
+/* 拍立得详情的说明栏变体：样张 v1 的黄铜左边线引文风格 */
+.co-src-box.co-src-memo{
+  border:1px solid rgba(176,138,94,.28);
+  border-left:2px solid var(--g-accent, #B08A5E);
+  background:var(--g-accent-soft, rgba(176,138,94,.06));
+}
 .co-src-line{font-size:12.5px;line-height:1.6;color:var(--text-dim)}
 .co-src-line.co-src-live{color:var(--g-accent-deep, var(--g-accent))}
 .co-src-line.co-src-gone{color:#a05a2c}
@@ -13070,6 +13076,464 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .msg-wep-btn:active{opacity:.85}
 
 /* ============================================================
+   We 收藏馆 C1 · 藏品实物化（2026-10-02）
+   —— 票根（60×120 双面 3D 翻转，方案 B 纯大字票务块）+ 拍立得（长按显影）。
+   两件实物同坐「墨黑展台」(.co-stage)：展台自带焦糖顶光，
+   通到屏缘（负 margin，.page-inner 左右 22px 纪律）。
+   实物本体的纸色 / 墨色 / 朱砂是**材质色**，不走主题变量
+   （票就是泛黄道林纸，四主题下都该是它自己）；
+   只有展台光晕借 --g-accent 系。老牛皮道林纸色板来自定稿样张 v3/v1。
+   ============================================================ */
+
+/* ---- 墨黑展台（票根 + 拍立得共用）：焦糖顶光 + 45° 黑卡织纹 ---- */
+.co-stage{
+  --co-stage-bg:#241e18;
+  margin:18px -22px 0;
+  padding:26px 20px 22px;
+  display:flex;flex-direction:column;align-items:center;
+  background:
+    radial-gradient(ellipse at 50% 12%, rgba(176,138,94,.16) 0%, transparent 72%),
+    repeating-linear-gradient(45deg, rgba(255,255,255,.014) 0 2px, transparent 2px 6px),
+    linear-gradient(180deg,#2a231c 0%, var(--co-stage-bg) 100%);
+}
+
+/* ============ 票根 ============ */
+.co-tk-flipper{
+  width:240px;height:480px;position:relative;flex:none;
+  transform-style:preserve-3d;perspective:1200px;
+  transition:transform .65s cubic-bezier(.2,.85,.32,1.12);
+  cursor:pointer;
+}
+.co-tk-flipper.is-flipped{transform:rotateY(180deg)}
+.co-tk-face{
+  position:absolute;inset:0;
+  backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  background:#f2ebd9;border:1px solid #d8cba8;border-radius:4px;
+  box-shadow:0 1px 2px rgba(0,0,0,.2),0 10px 28px rgba(0,0,0,.35),
+    inset 0 0 16px rgba(138,102,60,.18),inset 0 0 4px rgba(138,102,60,.25);
+  display:flex;flex-direction:column;overflow:hidden;
+  color:#26201a;
+}
+/* 纸张纤维：细横纹 + 微暗角，multiply 压进纸里 */
+.co-tk-face::before{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:6;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(80,50,20,.022) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 20% 15%, rgba(255,255,255,.4) 0%, transparent 60%),
+    radial-gradient(circle at 85% 85%, rgba(110,75,40,.08) 0%, transparent 70%);
+  mix-blend-mode:multiply;
+}
+.co-tk-face-back{transform:rotateY(180deg)}
+
+/* 底部连续半圆波浪冲压齿边：radial 圆点咬穿，透出展台底色 */
+.co-tk-scallop{
+  position:absolute;left:0;right:0;bottom:-1px;height:12px;z-index:10;
+  pointer-events:none;background-repeat:repeat-x;background-size:16px 12px;
+  background-image:radial-gradient(circle at 8px 12px, var(--co-stage-bg) 6.5px, transparent 7px);
+}
+
+/* -- 正面：方案 B 纯复古大字票务 -- */
+.co-tk-front{padding:14px 14px 12px}
+.co-tk-masthead{
+  border-bottom:2px solid #26201a;padding-bottom:6px;
+  display:flex;justify-content:space-between;align-items:baseline;
+}
+.co-tk-masthead b{
+  font-family:var(--ff-serif);font-size:10px;font-weight:700;letter-spacing:.14em;
+  white-space:nowrap;
+}
+.co-tk-masthead span{font-family:var(--ff-mono, monospace);font-size:7.5px;letter-spacing:.1em;color:#756a5d;white-space:nowrap}
+.co-tk-subserial{
+  display:flex;justify-content:space-between;
+  font-family:var(--ff-mono, monospace);font-size:8px;color:#756a5d;
+  padding:5px 0 6px;border-bottom:1px dotted rgba(70,52,32,.22);
+}
+.co-tk-body{
+  flex:1;display:flex;flex-direction:column;justify-content:center;
+  padding:10px 0 6px;text-align:center;min-height:0;
+}
+/* 标题+票务格整体往垂直中间收（用户 2026-10-02） */
+.co-tk-titlegroup{display:flex;flex-direction:column;align-items:center;gap:4px}
+.co-tk-ornament{font-family:var(--ff-serif);font-size:7px;letter-spacing:.3em;color:#a63426}
+.co-tk-title{
+  font-family:var(--ff-serif);font-size:27px;font-weight:800;line-height:1.25;
+  letter-spacing:.06em;color:#26201a;padding:0 4px;margin:6px 0 4px;
+  text-shadow:0 0.5px 0 rgba(0,0,0,.1);
+  white-space:pre-wrap;word-break:break-word;
+}
+.co-tk-suben{
+  font-family:var(--ff-serif);font-size:8.5px;letter-spacing:.18em;
+  color:#756a5d;text-transform:uppercase;margin-top:2px;
+}
+.co-tk-divider{
+  width:60%;height:1px;margin:6px auto 0;
+  background:linear-gradient(90deg, transparent, rgba(70,52,32,.22), transparent);
+}
+/* 工业粗线票务大字格：左日期 / 右剧情字段（有真的用真的） */
+.co-tk-grid{
+  display:grid;grid-template-columns:1fr 1fr;
+  border:1px solid #26201a;margin-top:6px;background:rgba(255,255,255,.2);
+}
+.co-tk-gridcell{
+  padding:5px 6px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;min-width:0;
+}
+.co-tk-gridcell:first-child{border-right:1px solid #26201a}
+.co-tk-grid-k{font-family:var(--ff-serif);font-size:7.5px;letter-spacing:.2em;color:#756a5d;text-transform:uppercase}
+.co-tk-grid-v{
+  font-family:var(--ff-serif);font-size:14px;font-weight:800;letter-spacing:.02em;
+  color:#26201a;line-height:1.3;margin-top:1px;max-width:100%;
+  font-variant-numeric:tabular-nums;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.co-tk-hallrow{
+  margin-top:10px;
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-size:9px;letter-spacing:.1em;color:#54493e;padding-top:5px;gap:8px;
+}
+.co-tk-hallrow b{font-family:var(--ff-serif);color:#26201a;font-weight:700}
+/* 中腰咬口撕孔：左右圆弧冲孔 + 密集虚线
+   （坑：结构是 i + i + div，右咬口必须 nth-child(2)，
+     用 last-child 会落不到 i 上——两个咬口曾叠在左边） */
+.co-tk-perf{position:relative;height:18px;display:flex;align-items:center;margin:4px 0;z-index:7}
+.co-tk-perf i{
+  position:absolute;width:14px;height:14px;background:var(--co-stage-bg);
+  border-radius:50%;box-shadow:inset 0 0 2px rgba(0,0,0,.5);
+}
+.co-tk-perf i:first-child{left:-7px}
+.co-tk-perf i:nth-child(2){right:-7px}
+.co-tk-perf-line{width:100%;margin:0 12px;border-top:1.5px dashed rgba(70,52,32,.35)}
+.co-tk-stub{padding-top:6px;display:flex;justify-content:space-between;align-items:flex-end}
+.co-tk-barcode{display:flex;flex-direction:column;gap:3px}
+.co-tk-barcode-art{
+  width:105px;height:26px;opacity:.85;
+  background:repeating-linear-gradient(90deg,
+    #26201a 0px, #26201a 1.5px, transparent 1.5px, transparent 3px,
+    #26201a 3px, #26201a 5px, transparent 5px, transparent 6.5px,
+    #26201a 6.5px, #26201a 7.5px, transparent 7.5px, transparent 10px,
+    #26201a 10px, #26201a 12px, transparent 12px, transparent 14px,
+    #26201a 14px, #26201a 15px);
+}
+.co-tk-barcode-no{font-family:var(--ff-mono, monospace);font-size:7.5px;letter-spacing:.2em;color:#756a5d}
+/* 透印暗红双圈朱砂章 */
+.co-tk-stamp{
+  width:64px;height:64px;flex:none;position:relative;
+  border:1.5px solid #a63426;border-radius:50%;color:#a63426;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  transform:rotate(-14deg);mix-blend-mode:multiply;opacity:.85;
+  box-shadow:0 0 1px #a63426;
+}
+.co-tk-stamp::after{content:"";position:absolute;inset:3px;border:.8px dashed #a63426;border-radius:50%}
+.co-tk-stamp small{font-size:6px;letter-spacing:.16em;font-family:var(--ff-serif)}
+.co-tk-stamp b{font-size:13.5px;font-weight:700;font-family:var(--ff-serif);line-height:1.1;margin:1px 0}
+.co-tk-stamp em{font-style:normal;font-family:var(--ff-mono, monospace);font-size:6.5px;letter-spacing:.1em}
+
+/* -- 背面：手写档案表格（补写交互在 memo 格） -- */
+.co-tk-back{padding:16px 14px 14px}
+.co-tk-backhead{
+  display:flex;justify-content:space-between;align-items:baseline;
+  border-bottom:2px solid #26201a;padding-bottom:5px;margin-bottom:10px;
+}
+.co-tk-backhead b{font-family:var(--ff-serif);font-size:11px;letter-spacing:.2em;font-weight:700}
+.co-tk-backhead span{font-family:var(--ff-mono, monospace);font-size:8px;color:#756a5d}
+.co-tk-archive{
+  flex:1;display:flex;flex-direction:column;
+  border:1px solid #26201a;background:rgba(255,255,255,.15);min-height:0;
+}
+.co-tk-reason{
+  border-bottom:1px solid #26201a;padding:8px 10px;flex:1.25;
+  display:flex;flex-direction:column;min-height:0;
+}
+.co-tk-cell-k{font-family:var(--ff-serif);font-size:8.5px;letter-spacing:.15em;color:#756a5d;margin-bottom:4px}
+.co-tk-quote{
+  font-family:"Kaiti SC","STKaiti","KaiTi",var(--ff-serif);
+  font-size:12.5px;line-height:1.7;color:#2b221b;flex:1;
+  display:flex;flex-direction:column;justify-content:center;
+  white-space:pre-wrap;word-break:break-word;
+}
+.co-tk-quote-by{font-size:9px;color:#756a5d;text-align:right;margin-top:4px;letter-spacing:.08em}
+.co-tk-split{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #26201a;flex:1.4;min-height:0}
+.co-tk-splitcol{padding:8px 9px;display:flex;flex-direction:column;min-width:0}
+.co-tk-splitcol:first-child{border-right:1px solid #26201a}
+.co-tk-splitcol .co-tk-split-who{
+  font-family:var(--ff-serif);font-size:9px;font-weight:700;letter-spacing:.12em;
+  color:#a63426;margin-bottom:4px;
+}
+.co-tk-memo-wrap{flex:1;display:flex;flex-direction:column;min-height:0}
+.co-tk-memo{
+  flex:1;width:100%;text-align:left;border:0;background:transparent;padding:0;
+  font-family:"Kaiti SC","STKaiti","KaiTi",var(--ff-serif);
+  font-size:11px;line-height:1.6;color:#352b22;cursor:pointer;
+  display:flex;flex-direction:column;justify-content:center;
+  white-space:pre-wrap;word-break:break-word;
+}
+.co-tk-memo.is-empty{
+  color:rgba(84,73,62,.55);font-style:normal;
+  border-bottom:1.5px dashed rgba(70,52,32,.35);
+  align-self:flex-start;flex:0 0 auto;padding:2px 2px 3px;
+}
+.co-tk-memo-editor{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0}
+.co-tk-memo-editor textarea{
+  width:100%;flex:1;min-height:56px;resize:none;
+  border:1px solid rgba(70,52,32,.4);border-radius:2px;
+  background:rgba(255,255,255,.55);padding:6px 8px;
+  font-family:"Kaiti SC","STKaiti","KaiTi",var(--ff-serif);
+  font-size:11.5px;line-height:1.6;color:#2b221b;
+}
+.co-tk-memo-acts{display:flex;gap:6px}
+.co-tk-memo-acts button{
+  flex:1;padding:6px 0;font-size:10.5px;letter-spacing:.06em;
+  font-family:inherit;cursor:pointer;border-radius:2px;
+  border:1px solid rgba(70,52,32,.4);background:transparent;color:#54493e;
+}
+.co-tk-memo-acts button.is-primary{background:#a63426;border-color:#a63426;color:#f6efe2}
+.co-tk-backstub{padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.co-tk-backrow{display:flex;justify-content:space-between;gap:8px;font-size:9px;color:#54493e}
+.co-tk-backrow em{font-style:normal;font-family:var(--ff-mono, monospace);color:#756a5d;flex:none}
+/* 翻面提示（展台上的一行小字，不进票面） */
+.co-tk-hint{
+  margin-top:14px;display:flex;align-items:center;gap:8px;
+  color:#8c8273;font-size:11px;letter-spacing:.08em;
+}
+
+/* ============ 拍立得 ============ */
+.co-pl-mount{position:relative;padding:12px}
+/* 四枚黄铜三角插角：双色斜切 + 投影，咬住相纸四角 */
+.co-pl-corner{
+  position:absolute;width:22px;height:22px;z-index:20;pointer-events:none;
+  filter:drop-shadow(0 2px 3px rgba(0,0,0,.5));
+  background:linear-gradient(135deg,#c4a562 0%,#c4a562 49%,#a08246 51%,#a08246 100%);
+}
+.co-pl-corner.is-tl{top:0;left:0;clip-path:polygon(0 0,100% 0,0 100%)}
+.co-pl-corner.is-tr{top:0;right:0;clip-path:polygon(0 0,100% 0,100% 100%)}
+.co-pl-corner.is-bl{bottom:0;left:0;clip-path:polygon(0 0,0 100%,100% 100%)}
+.co-pl-corner.is-br{bottom:0;right:0;clip-path:polygon(100% 0,100% 100%,0 100%)}
+.co-pl-frame{
+  width:min(270px, 76vw);background:#f4efe4;padding:14px 14px 18px;border-radius:3px;
+  box-shadow:0 2px 5px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.45),inset 0 0 1px rgba(255,255,255,.8);
+  position:relative;transform:rotate(-1.2deg);
+}
+.co-pl-frame::after{content:"";position:absolute;inset:4px;border:1px solid rgba(0,0,0,.035);border-radius:2px;pointer-events:none}
+/* 胶片感光区：button（可长按），未显影 = 灰蒙模糊 + 乳白药水层 */
+.co-pl-pocket{
+  display:block;width:100%;height:242px;position:relative;overflow:hidden;
+  background:#0d0b09;border:1px solid rgba(0,0,0,.18);border-radius:2px;
+  cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  transition:box-shadow .6s ease;
+}
+.co-pl-photo{
+  display:block;width:100%;height:100%;object-fit:cover;
+  background:
+    radial-gradient(circle at 50% 62%, rgba(224,164,104,.6) 0%, transparent 62%),
+    linear-gradient(160deg,#4a3c2e 0%,#201810 100%);
+  filter:brightness(.25) contrast(1.4) saturate(.2) blur(3px);
+  transition:filter 1.6s cubic-bezier(.2,.8,.3,1);
+}
+.co-pl-photo.has-img{background-size:cover;background-position:center}
+/* 无图藏品：药水层退常规混合，才有样张那层「灰蒙药膜」
+   （color-burn 在近黑底上会显不出来） */
+.co-pl-photo.is-empty + .co-pl-chem{mix-blend-mode:normal;opacity:.75}
+.co-pl-pocket.is-developed .co-pl-photo{filter:brightness(1.02) contrast(1.06) saturate(1.1) blur(0)}
+.co-pl-pocket.is-developed{cursor:default}
+/* 手心捂热：长按时相纸内圈泛起体温暖光 */
+.co-pl-pocket.is-warming{box-shadow:inset 0 0 34px rgba(216,104,68,.4)}
+/* 乳白药水化学层：显影时消融扩散 */
+.co-pl-chem{
+  position:absolute;inset:0;display:block;pointer-events:none;
+  background:radial-gradient(circle at 50% 60%, rgba(240,235,220,.88) 0%, rgba(200,185,160,.95) 70%);
+  mix-blend-mode:color-burn;opacity:.9;
+  transition:opacity 1.8s ease-out, transform 1.8s ease-out;
+}
+.co-pl-pocket.is-developed .co-pl-chem{opacity:0;transform:scale(1.1)}
+/* 相纸表面流光高光 */
+.co-pl-glare{
+  position:absolute;inset:0;display:block;pointer-events:none;z-index:5;
+  background:linear-gradient(125deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,.05) 35%, transparent 55%);
+  mix-blend-mode:overlay;opacity:.7;
+}
+/* 宽下巴：手写金句 + 日期 + char 手绘涂鸦 + 贴纸槽位 */
+.co-pl-chin{margin-top:14px;min-height:58px;position:relative;display:flex;flex-direction:column;justify-content:space-between}
+.co-pl-hand{
+  font-family:"Kaiti SC","STKaiti","KaiTi",var(--ff-serif);
+  font-size:14.5px;line-height:1.45;color:#1e1914;letter-spacing:.04em;
+  padding-right:52px;white-space:pre-wrap;word-break:break-word;
+}
+.co-pl-meta{display:flex;justify-content:space-between;align-items:flex-end;margin-top:6px}
+.co-pl-date{font-family:var(--ff-serif);font-size:9.5px;letter-spacing:.14em;color:#6e6559}
+.co-pl-doodle{display:flex;align-items:center;gap:4px}
+.co-pl-doodle-tag{
+  font-family:var(--ff-serif);font-size:8px;letter-spacing:.1em;color:#b83b26;
+  border:1px solid rgba(184,59,38,.3);padding:1px 4px;border-radius:3px;transform:rotate(-6deg);
+}
+.co-pl-spark{display:block;width:22px;height:22px;transform:rotate(12deg)}
+.co-pl-spark svg{display:block;width:100%;height:100%;fill:none;stroke:#b83b26;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+/* 贴纸槽位：C2 贴纸工坊的预留接口（38px 虚线圆） */
+.co-pl-slot{
+  position:absolute;right:-6px;bottom:-8px;width:38px;height:38px;
+  display:flex;align-items:center;justify-content:center;
+  border:1px dashed rgba(184,152,88,.55);border-radius:50%;
+  font-size:7.5px;letter-spacing:.08em;color:#826832;
+  background:rgba(255,255,255,.4);transform:rotate(8deg);cursor:pointer;
+  font-family:inherit;padding:0;
+}
+.co-pl-slot:active{opacity:.7}
+
+/* ============================================================
+   We 美化批（2026-10-02，finesse 精修层）
+   —— 不动色锁（焦糖 + 米白纸 + 衬线），只抬材质：戳记 / 冲孔 /
+      真图拍立得 / 实物缩略卡 / 群岛选人闸 / 贴纸工坊占位。
+   反 AI 红线：无渐变字、阴影全部带色、纸孔透的是纸底变量不是纯白。
+   ============================================================ */
+
+/* ---- 群岛选人闸（We 语境的选人页） ---- */
+.we-pick-hero{padding:34px 0 8px}
+.we-pick-hero-kicker{
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.3em;
+  color:var(--g-accent-deep, var(--g-accent));margin-bottom:10px;
+}
+.we-pick-hero-title{
+  font-family:var(--ff-serif);font-size:24px;line-height:1.3;
+  font-weight:400;color:var(--text);margin:0 0 9px;
+}
+.we-pick-hero-note{
+  font-size:12px;line-height:1.7;color:var(--text-dim);margin:0 0 22px;
+}
+.we-pick-list{display:flex;flex-direction:column;gap:10px}
+.we-pick-card{
+  display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+  padding:13px 14px;cursor:pointer;font-family:inherit;
+  background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.22);border-radius:0;
+  box-shadow:2px 2px 0 rgba(27,25,23,.05);
+}
+.we-pick-card:active{transform:translateY(1px);box-shadow:1px 1px 0 rgba(27,25,23,.05)}
+.we-pick-avatar{
+  flex:none;width:44px;height:44px;border-radius:50%;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--ff-serif);font-size:17px;color:#fdfaf4;
+  background-size:cover;background-position:center;
+  box-shadow:inset 0 0 0 1px rgba(27,25,23,.18);
+}
+.we-pick-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.we-pick-info b{
+  font-family:var(--ff-serif);font-weight:500;font-size:15px;color:var(--text);
+}
+.we-pick-info span{font-size:10.5px;letter-spacing:.08em;color:var(--text-faint, var(--text-dim))}
+.we-pick-go{
+  flex:none;font-family:var(--ff-serif);font-size:18px;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+
+/* ---- 封面戳记：手账扉页的透印收藏章（右下角，微旋） ---- */
+.we-cover-stamp{
+  position:absolute;right:18px;bottom:64px;z-index:2;
+  padding:5px 9px;transform:rotate(-8deg);
+  font-family:var(--ff-serif);font-size:9px;letter-spacing:.22em;
+  color:rgba(246,243,236,.78);
+  border:1px solid rgba(246,243,236,.55);border-radius:2px;
+  box-shadow:inset 0 0 0 1px rgba(246,243,236,.18);
+}
+
+/* ---- 首页拍立得条：真图挂上后的胶片质感 + 带色阴影 ---- */
+.we-polaroid-card{
+  box-shadow:2px 3px 0 rgba(138,102,60,.16), 0 6px 14px rgba(27,25,23,.08);
+}
+.we-polaroid-photo.has-img{
+  filter:saturate(.88) contrast(1.03);
+  border:1px solid rgba(27,25,23,.16);
+}
+
+/* ---- 首页票根条：中缝冲孔（透纸底，不是纯白） ---- */
+.we-stub{position:relative}
+.we-stub::before,.we-stub::after{
+  content:"";position:absolute;width:12px;height:12px;border-radius:50%;
+  background:var(--we-paper, var(--g-accent-pale));
+  border:1px solid rgba(27,25,23,.85);
+  right:-1px;margin-right:-7px;z-index:2;
+}
+.we-stub::before{top:-7px}
+.we-stub::after{bottom:-7px}
+
+/* ---- 门厅实物缩略卡 ---- */
+/* 票根卡：右缘存根冲孔条（竖向虚线 + 半圆咬口） */
+.co-card-ticket{position:relative;padding-right:26px}
+.co-card-ticket::after{
+  content:"";position:absolute;top:6px;bottom:6px;right:8px;width:8px;
+  background-image:radial-gradient(circle at 4px 4px, transparent 2.6px, rgba(176,138,94,.5) 3px, transparent 3.4px);
+  background-size:8px 12px;background-repeat:repeat-y;
+  border-left:1px dashed rgba(176,138,94,.45);
+}
+/* 照片卡：一条真实胶片位（mini 拍立得白框 + 微旋） */
+.co-thumb{
+  display:block;height:86px;margin-top:9px;
+  background:
+    radial-gradient(120% 100% at 20% 15%, rgba(176,138,94,.16) 0%, transparent 60%),
+    repeating-linear-gradient(0deg, rgba(27,25,23,.02) 0 1px, transparent 1px 3px),
+    var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.16);
+  background-size:cover;background-position:center;
+  transform:rotate(-.6deg);
+  box-shadow:1px 2px 0 rgba(138,102,60,.14);
+}
+.co-thumb.has-img{border-color:rgba(27,25,23,.26)}
+
+/* ---- 贴纸工坊入口卡（门厅常驻，不依赖馆藏） ---- */
+.co-sticker-entry{
+  display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+  margin-top:14px;padding:13px 14px;cursor:pointer;font-family:inherit;
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+  border:1px dashed rgba(176,138,94,.5);border-radius:0;
+}
+.co-sticker-entry:active{opacity:.85}
+.co-sticker-badge{position:relative;flex:none;width:40px;height:40px}
+.co-sticker-chip{
+  position:absolute;width:22px;height:22px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  border:2.5px solid rgba(255,255,255,.92);
+  box-shadow:0 2px 5px rgba(27,25,23,.18);
+}
+.co-sticker-chip.is-a{left:0;top:4px;background:var(--g-accent, #B08A5E);transform:rotate(-10deg)}
+.co-sticker-chip.is-b{left:12px;top:0;background:var(--g-accent-deep, #8a6a44);transform:rotate(7deg)}
+.co-sticker-chip.is-c{left:20px;top:12px;background:#a63426;transform:rotate(-4deg);opacity:.85}
+.co-sticker-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.co-sticker-copy b{
+  font-family:var(--ff-serif);font-weight:500;font-size:14.5px;color:var(--text);
+}
+.co-sticker-copy span{font-size:10.5px;letter-spacing:.05em;color:var(--text-dim)}
+.co-sticker-go{
+  flex:none;font-family:var(--ff-serif);font-size:11px;letter-spacing:.1em;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+
+/* ---- 贴纸工坊占位页：墨黑展台上的三枚示意 die-cut ---- */
+.co-sk-stage{padding:30px 20px 26px}
+.co-sk-tray{
+  display:flex;align-items:center;justify-content:center;gap:14px;
+  min-height:96px;
+}
+.co-sk-sticker{
+  display:flex;align-items:center;justify-content:center;
+  width:74px;height:74px;border-radius:50%;
+  font-family:var(--ff-serif);font-size:13px;letter-spacing:.06em;
+  border:4px solid rgba(255,255,255,.94);
+  box-shadow:0 4px 12px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.3);
+}
+.co-sk0{background:#c89a68;color:#3a2c1c;transform:rotate(-9deg)}
+.co-sk1{background:#f4efe4;color:#54493e;transform:rotate(6deg)}
+.co-sk2{background:#a63426;color:#f6efe2;transform:rotate(-3deg)}
+.co-sk-cap{
+  margin:16px 0 0;font-size:10px;letter-spacing:.1em;
+  color:#8c8273;text-align:center;
+}
+
+/* ---- 时光页日期头：卷宗式（日期后拖一条焦糖渐细线） ---- */
+.we-time-day::after{
+  content:"";flex:1;height:1px;align-self:center;
+  background:linear-gradient(90deg, rgba(176,138,94,.4), transparent);
+}
+
+
+/* ============================================================
    We 三页导航底栏（we-tabbar）+ 时光页（v1，2026-09-28）
    ------------------------------------------------------------
    三主页面（'we' / 'we-time' / 'collection'）挂同一条底栏：
@@ -13109,6 +13573,15 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .we-tab.is-on{color:var(--text)}
 .we-tab.is-on .we-tab-line{background:var(--g-accent-deep, var(--g-accent))}
+/* 收藏馆 tab 的提议角标：char 提议了而 user 没处理时在底栏可见 */
+.we-tab-badge{
+  position:absolute;top:4px;right:calc(50% - 26px);z-index:2;
+  min-width:15px;height:15px;padding:0 4px;border-radius:999px;
+  display:flex;align-items:center;justify-content:center;
+  background:#a63426;color:#f6efe2;
+  font-family:var(--ff-serif);font-style:normal;font-size:9px;line-height:1;
+  box-shadow:0 1px 3px rgba(0,0,0,.2);
+}
 .we-tab-add{
   flex:none;display:flex;align-items:center;justify-content:center;
   width:44px;border:0;background:none;
@@ -13153,3 +13626,432 @@ button.cal-ev:active{background:var(--g-glass-2);}
   0%{background-color:rgba(176,138,94,.24);outline:2px solid var(--g-accent-deep, var(--g-accent));outline-offset:2px;}
   100%{background-color:transparent;outline-color:transparent;outline-offset:2px;}
 }
+
+/* ============================================================
+   C2 贴纸工坊（2026-10-02）：五步流 + 切片预览 + 抽屉 + 实贴
+   视觉沿用 We 纸面/衬线/焦糖；反 AI 红线同前批。
+   ============================================================ */
+
+/* 步骤条 */
+.sk-steps{display:flex;gap:7px;align-items:center;margin:16px 0 4px}
+.sk-step-dot{
+  width:8px;height:8px;border-radius:50%;flex:none;
+  background:transparent;border:1px solid rgba(27,25,23,.35);
+}
+.sk-step-dot.is-on{background:var(--g-accent, #B08A5E);border-color:var(--g-accent, #B08A5E)}
+
+/* 三态 / 套系选择卡 —— 「选择卡本身是贴纸」（impeccable bolder 轮）：
+   die-cut 白边 + 纸色身体 + 每张微旋 + 硬阴影；选定 = 立正 + 盖章 */
+.sk-target{
+  position:relative;
+  display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  margin-top:14px;padding:15px 15px 14px;cursor:pointer;font-family:inherit;
+  background:var(--surface-solid, #fbf9f4);
+  border:0;border-radius:12px;
+  box-shadow:0 0 0 3.5px rgba(255,255,255,.95), 0 5px 12px rgba(27,25,23,.14);
+  transform:rotate(-1deg);
+  transition:transform .25s cubic-bezier(.22,1,.36,1), box-shadow .25s ease;
+}
+.sk-target:nth-of-type(2){transform:rotate(.9deg)}
+.sk-target:nth-of-type(3){transform:rotate(-.5deg)}
+.sk-target:active{transform:rotate(0) scale(.985)}
+.sk-target.is-char{background:#f3ead8}
+.sk-target.is-user{background:#fbf7ee}
+.sk-target.is-both{background:#f7e9e2}
+.sk-target.is-on{
+  transform:rotate(0) scale(1.015);
+  box-shadow:0 0 0 3.5px rgba(255,255,255,.95),
+    0 0 0 5px var(--g-accent, #B08A5E), 0 8px 18px rgba(27,25,23,.16);
+  z-index:2;
+}
+/* 选定章：右上一枚斜盖的朱砂小印 */
+.sk-target.is-on::after{
+  content:"选定";position:absolute;right:8px;top:-9px;z-index:3;
+  transform:rotate(7deg);
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.18em;
+  color:#f6efe2;background:#a63426;padding:3px 9px;border-radius:2px;
+  box-shadow:0 2px 5px rgba(27,25,23,.25);
+}
+.sk-target-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.sk-target-copy b{font-family:var(--ff-serif);font-weight:600;font-size:15.5px;color:var(--text)}
+.sk-target-copy span{font-size:10.5px;letter-spacing:.04em;color:var(--text-dim)}
+.sk-ref{
+  flex:none;font-size:10px;letter-spacing:.06em;padding:2px 8px;
+  border:1px solid rgba(27,25,23,.25);color:var(--text-dim);
+  background:rgba(255,255,255,.6);border-radius:2px;
+}
+.sk-ref.is-ok{color:var(--g-accent-deep, var(--g-accent));border-color:rgba(176,138,94,.5)}
+.sk-ref.is-miss{color:#a05a2c;border-color:rgba(160,90,44,.5)}
+
+.sk-miss-row{
+  display:flex;align-items:center;gap:10px;margin-top:10px;
+  padding:10px 12px;border:1px dashed rgba(160,90,44,.5);
+  font-size:11.5px;color:#a05a2c;line-height:1.5;
+}
+.sk-miss-row span{flex:1;min-width:0}
+.sk-miss-go{
+  flex:none;border:0;background:none;cursor:pointer;padding:4px 0;
+  font-family:var(--ff-serif);font-size:11.5px;letter-spacing:.08em;color:#a05a2c;
+}
+
+.sk-back{
+  display:inline-block;margin:14px 0 2px;padding:4px 0;
+  border:0;background:none;cursor:pointer;
+  font-family:var(--ff-serif);font-size:11.5px;letter-spacing:.1em;
+  color:var(--text-dim);
+}
+.sk-next{
+  display:block;width:100%;margin-top:16px;padding:11px 0;
+  font-family:var(--ff-serif);font-size:13px;letter-spacing:.14em;
+  color:#fff;background:var(--g-accent, #B08A5E);
+  border:0;border-radius:0;cursor:pointer;
+}
+.sk-next:disabled{opacity:.45;cursor:default}
+.sk-next:active:not(:disabled){opacity:.85}
+
+.sk-gender-row{display:flex;align-items:center;gap:9px;margin-top:12px;flex-wrap:wrap}
+.sk-gender-label{font-size:11.5px;color:var(--text-dim);letter-spacing:.04em}
+.sk-gender-btn{
+  padding:5px 12px;font-size:11px;letter-spacing:.08em;cursor:pointer;
+  font-family:inherit;color:var(--text);
+  background:var(--surface-solid, #fbf9f4);border:1px solid rgba(27,25,23,.28);border-radius:0;
+}
+.sk-gender-btn.is-on{
+  background:var(--g-accent, #B08A5E);border-color:var(--g-accent, #B08A5E);color:#fff;
+}
+
+.sk-slot-tip{font-size:11px;line-height:1.6;color:var(--text-dim);margin:12px 0 2px}
+.sk-slot{display:flex;align-items:center;gap:8px;margin-top:8px}
+.sk-slot-no{flex:none;width:38px;font-family:var(--ff-serif);font-size:10.5px;letter-spacing:.08em;color:var(--text-faint, var(--text-dim))}
+.sk-slot-sel{
+  flex:none;width:96px;padding:7px 6px;font-family:inherit;font-size:11.5px;
+  color:var(--text);background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.28);border-radius:0;appearance:none;
+}
+.sk-slot-input{
+  flex:1;min-width:0;padding:7px 9px;font-family:inherit;font-size:12px;
+  color:var(--text);background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.28);border-radius:0;
+}
+.sk-slot-input:focus,.sk-slot-sel:focus{outline:none;border-color:var(--g-accent, #B08A5E)}
+
+.sk-geninfo{
+  margin-top:12px;padding:11px 13px;border:1px solid rgba(27,25,23,.22);
+  background:var(--surface-solid, #fbf9f4);
+}
+.sk-geninfo p{margin:3px 0;font-size:12px;color:var(--text-dim)}
+.sk-err{
+  margin:12px 0 0;padding:10px 12px;font-size:12px;line-height:1.6;color:#a05a2c;
+  border:1px dashed rgba(160,90,44,.55);white-space:pre-wrap;word-break:break-word;
+}
+.sk-ok{
+  margin:12px 0 0;padding:10px 12px;font-size:12.5px;line-height:1.6;
+  color:var(--g-accent-deep, var(--g-accent));
+  border:1px solid rgba(176,138,94,.5);
+}
+
+/* 切片预览 */
+.sk-cut-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px}
+.sk-cut-cell{
+  position:relative;aspect-ratio:1/1;overflow:hidden;
+  background:
+    radial-gradient(120% 100% at 20% 15%, rgba(176,138,94,.14) 0%, transparent 60%),
+    repeating-linear-gradient(0deg, rgba(27,25,23,.02) 0 1px, transparent 1px 3px),
+    var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.18);
+  display:flex;align-items:center;justify-content:center;
+}
+.sk-cut-cell.is-empty{border:1px dashed rgba(160,90,44,.6)}
+.sk-cut-cell.is-removed{opacity:.35}
+.sk-cut-img{max-width:100%;max-height:100%;object-fit:contain}
+.sk-cut-tag{font-size:10px;color:#a05a2c;letter-spacing:.06em;padding:0 6px;text-align:center}
+.sk-cut-rm{
+  display:block;width:100%;margin-top:6px;padding:6px 0;
+  font-family:inherit;font-size:10.5px;letter-spacing:.06em;cursor:pointer;
+  color:var(--text-dim);background:transparent;
+  border:1px dashed rgba(27,25,23,.3);border-radius:0;
+}
+.sk-cut-cell .sk-cut-rm{position:absolute;left:0;right:0;bottom:0;margin:0;
+  background:rgba(251,249,244,.92);border:0;border-top:1px solid rgba(27,25,23,.14)}
+.sk-recut{display:flex;align-items:center;gap:10px;margin-top:14px}
+.sk-threshold{flex:1;min-width:0;accent-color:var(--g-accent, #B08A5E)}
+.sk-recut .sk-cut-rm{width:auto;flex:none;padding:6px 12px}
+
+.sk-save-owner{margin-top:12px;padding:11px 13px;border:1px solid rgba(27,25,23,.22);background:var(--surface-solid, #fbf9f4)}
+.sk-save-owner p{margin:2px 0;font-size:12px;line-height:1.65;color:var(--text-dim)}
+.sk-mask-pick{
+  display:flex;align-items:center;gap:8px;margin-top:8px;
+  font-size:12.5px;color:var(--text);cursor:pointer;
+}
+
+/* 贴纸抽屉（实贴）：页面内 absolute，同 we-drawer 范式 */
+.sk-drawer{position:absolute;inset:0;z-index:60}
+.sk-drawer-scrim{position:absolute;inset:0;background:rgba(0,0,0,.28)}
+.sk-drawer-sheet{
+  position:absolute;left:0;right:0;bottom:0;
+  background:var(--surface-solid);
+  border-radius:16px 16px 0 0;
+  padding:18px 20px calc(env(safe-area-inset-bottom) + 16px);
+  box-shadow:0 -8px 30px rgba(0,0,0,.12);
+  max-height:72%;overflow-y:auto;
+}
+.sk-drawer-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sk-drawer-title{font-size:14.5px;font-weight:600;color:var(--text);font-family:var(--ff-serif)}
+.sk-drawer-close{
+  border:0;background:var(--bg-2);color:var(--text-dim);
+  width:28px;height:28px;border-radius:50%;font-size:13px;line-height:1;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit;
+}
+.sk-drawer-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}
+.sk-drawer-cell{
+  display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 7px;
+  background:var(--surface-solid, #fbf9f4);cursor:pointer;font-family:inherit;
+  border:1px solid rgba(27,25,23,.2);border-radius:0;
+}
+.sk-drawer-cell:active{opacity:.8}
+.sk-drawer-img{width:100%;height:74px;object-fit:contain}
+.sk-drawer-name{
+  font-size:10px;letter-spacing:.06em;color:var(--text-dim);
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* 已贴进拍立得的贴纸：右下角，随机微旋（角度存在数据里，渲染不猜） */
+.co-pl-pasted{
+  position:absolute;right:6px;bottom:8px;width:56px;height:56px;object-fit:contain;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));
+  pointer-events:none;z-index:30;
+}
+.co-pl-pasted + .co-pl-pasted{right:44px;bottom:22px}
+
+/* ============================================================
+   C2 工坊美化（2026-10-02 海报轮）：横幅 / 卡片圆章 / 槽位 / 和纸胶带
+   ============================================================ */
+
+/* 海报式横幅：墨黑展台语言压进工坊页顶，die-cut 圆章做视觉锚 */
+.sk-hero{
+  position:relative;display:flex;align-items:center;gap:16px;
+  margin:0 -22px 2px;padding:20px 22px 18px;
+  background:
+    radial-gradient(120% 90% at 20% 15%, #d8c3a5 0%, transparent 55%),
+    radial-gradient(100% 100% at 85% 80%, #7d8b86 0%, transparent 60%),
+    linear-gradient(200deg,#b9a488 0%,#8a8378 45%,#4f524c 100%);
+  overflow:hidden;
+}
+.sk-hero-seal{
+  flex:none;width:46px;height:46px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  border:1.5px solid rgba(246,243,236,.78);color:#f6f3ec;
+  font-family:var(--ff-serif);font-size:19px;
+  transform:rotate(-8deg);position:relative;
+}
+.sk-hero-seal::after{
+  content://////;position:absolute;inset:3px;
+  border:.8px dashed rgba(246,243,236,.6);border-radius:50%;
+}
+.sk-hero-txt{flex:1;min-width:0}
+.sk-hero-kicker{
+  font-family:var(--ff-serif);font-size:9px;letter-spacing:.3em;
+  color:rgba(246,243,236,.85);margin-bottom:5px;
+}
+.sk-hero-title{
+  font-family:var(--ff-serif);font-size:21px;line-height:1.2;
+  color:#f6f3ec;margin-bottom:5px;
+}
+.sk-hero-sub{font-size:10.5px;letter-spacing:.08em;color:rgba(246,243,236,.82)}
+
+/* 三态卡的小圆章（TA=焦糖 / 我=深驼 / 双人=朱砂双点） */
+.sk-card-chip{
+  flex:none;width:26px;height:26px;border-radius:50%;
+  border:2.5px solid rgba(255,255,255,.92);
+  box-shadow:0 2px 5px rgba(27,25,23,.18);
+}
+.sk-card-chip.is-char{background:var(--g-accent, #B08A5E)}
+.sk-card-chip.is-user{background:#8a6a44}
+.sk-card-chip.is-both{
+  background:
+    radial-gradient(circle at 32% 42%, var(--g-accent, #B08A5E) 0 42%, transparent 46%),
+    radial-gradient(circle at 66% 60%, #a63426 0 42%, transparent 46%),
+    #f4efe4;
+}
+
+/* 自定义槽：选中预设后整行点亮 */
+.sk-slot.has-preset .sk-slot-sel{
+  border-color:var(--g-accent, #B08A5E);
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+}
+.sk-slot.has-preset .sk-slot-no{color:var(--g-accent-deep, var(--g-accent))}
+
+/* 切片预览格：顶部一条和纸胶带（微旋，随格数交错方向） */
+.sk-cut-cell::before{
+  content:"";position:absolute;top:-5px;left:50%;z-index:3;
+  width:34px;height:11px;margin-left:-17px;
+  background:rgba(176,138,94,.4);
+  transform:rotate(-3deg);
+}
+.sk-cut-cell:nth-child(even)::before{transform:rotate(3deg)}
+
+/* impeccable bolder 轮补充：横幅放大 + DIY 钢印 + 步骤缝线 */
+.sk-hero{padding:26px 22px 22px}
+.sk-hero-tag{
+  position:absolute;right:14px;top:12px;
+  transform:rotate(6deg);
+  border:1.5px dashed rgba(246,243,236,.65);border-radius:2px;
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.24em;
+  color:#f6f3ec;padding:4px 9px 4px 11px;
+}
+/* 步骤条：缝线穿圆点 */
+.sk-steps{
+  position:relative;justify-content:space-between;gap:0;
+  max-width:220px;margin:18px auto 4px;padding:0 6px;
+}
+.sk-steps::before{
+  content:"";position:absolute;left:12px;right:12px;top:50%;
+  border-top:1.5px dashed rgba(176,138,94,.55);
+}
+.sk-step-dot{
+  position:relative;z-index:1;
+  background:var(--we-paper, var(--g-accent-pale));
+}
+.sk-step-dot.is-on{background:var(--g-accent, #B08A5E)}
+.sk-card-chip.is-char{transform:rotate(-9deg)}
+.sk-card-chip.is-user{transform:rotate(6deg)}
+
+
+/* ============================================================
+   C2 工坊面板 v3（2026-10-02 部署前调色：与 We 同族和谐光版）
+   结构沿用 demo（面板/字徽章卡/小节头/特征框/chips），颜色全部
+   回到 We 语言：米白卡 + 焦糖描边 + 硬边小阴影，不再用墨黑面板。
+   ============================================================ */
+.sk-panel{
+  margin:0 0 6px;padding:14px 12px 16px;
+  background:var(--surface-solid, #fbf9f4);
+  border:1px solid rgba(27,25,23,.22);border-radius:12px;
+  box-shadow:2px 2px 0 rgba(27,25,23,.05);
+}
+.sk-panel .sk-steps::before{border-color:rgba(176,138,94,.45)}
+.sk-panel .sk-step-dot{border-color:rgba(27,25,23,.35);background:var(--surface-solid, #fbf9f4)}
+.sk-panel .sk-step-dot.is-on{background:var(--g-accent, #B08A5E);border-color:var(--g-accent, #B08A5E)}
+
+.sk-sec-head{display:flex;align-items:baseline;justify-content:space-between;margin:2px 2px 10px}
+.sk-sec-label{font-size:12.5px;color:var(--text);letter-spacing:.05em}
+.sk-sec-note{font-size:10px;letter-spacing:.1em;color:var(--g-accent-deep, var(--g-accent))}
+
+.sk-panel .sk-target{
+  background:var(--g-accent-pale, #F7F2EA);border-radius:10px;
+  box-shadow:none;transform:none;margin-top:10px;
+  border:1px solid rgba(27,25,23,.18);
+}
+.sk-panel .sk-target:nth-of-type(2),
+.sk-panel .sk-target:nth-of-type(3){transform:none}
+.sk-panel .sk-target.is-on{
+  border-color:var(--g-accent, #B08A5E);transform:none;
+  box-shadow:0 0 0 2px rgba(176,138,94,.2);
+}
+.sk-panel .sk-target-copy b{color:var(--text)}
+.sk-panel .sk-target-copy span{color:var(--text-dim)}
+.sk-panel .sk-ref{background:transparent}
+
+.sk-glyph{
+  flex:none;width:36px;height:36px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--ff-serif);font-size:15px;
+}
+.sk-glyph.is-char{
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+  color:var(--g-accent-deep, var(--g-accent));
+  border:1px solid rgba(176,138,94,.45);
+}
+.sk-glyph.is-user{
+  background:rgba(27,25,23,.06);color:var(--text-dim);
+  border:1px solid rgba(27,25,23,.2);
+}
+.sk-glyph.is-both{background:#a63426;color:#f6efe2;border:1px solid rgba(166,52,38,.4)}
+
+.sk-feature{
+  margin-top:12px;padding:11px 12px;border-radius:10px;
+  border:1px solid rgba(176,138,94,.4);
+  background:var(--g-accent-soft, rgba(176,138,94,.12));
+}
+.sk-feature p{margin:0;font-size:11.5px;line-height:1.7;color:var(--text)}
+.sk-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+.sk-chip{
+  font-size:10px;letter-spacing:.1em;
+  color:var(--g-accent-deep, var(--g-accent));
+  border:1px solid rgba(176,138,94,.5);border-radius:999px;padding:3px 10px;
+}
+
+.sk-panel .sk-next{
+  background:var(--g-accent, #B08A5E);border-radius:10px;
+}
+.sk-panel .sk-next:disabled{opacity:.45}
+.sk-panel .sk-back{color:var(--text-dim)}
+.sk-panel .sk-gender-label,.sk-panel .sk-slot-tip{color:var(--text-dim)}
+.sk-panel .sk-geninfo,.sk-panel .sk-save-owner{
+  background:var(--g-accent-pale, #F7F2EA);
+  border-color:rgba(27,25,23,.18);
+}
+
+/* 步骤 4 纸质整版卡：白边相纸 + 衬线题签（demo SHEET EXCLUSIVE 语言） */
+.sk-sheet-card{
+  margin-top:12px;padding:10px 10px 8px;
+  background:#fbf9f4;border:1px solid rgba(27,25,23,.22);border-radius:4px;
+  box-shadow:2px 3px 0 rgba(27,25,23,.06);
+  transform:rotate(-.6deg);
+}
+.sk-sheet-img{display:block;width:100%;background:#fff;border:1px solid rgba(27,25,23,.14)}
+.sk-sheet-cap{
+  margin-top:7px;text-align:center;
+  font-family:var(--ff-serif);font-size:9px;letter-spacing:.22em;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+
+/* ============================================================
+   C2 收尾三缺口（2026-10-02 18:30）：角标 / 恢复卡 / 本批管理
+   ============================================================ */
+
+/* 断点恢复卡（step 3）：浅驼底虚线框，语言同 sk-geninfo 家族 */
+.sk-resume{
+  display:flex;align-items:center;gap:10px;margin-top:12px;
+  padding:11px 13px;border:1px dashed rgba(176,138,94,.55);
+  border-radius:10px;background:var(--g-accent-soft, rgba(176,138,94,.12));
+}
+.sk-resume-txt{flex:1;min-width:0;font-size:11.5px;line-height:1.6;color:var(--text-dim)}
+.sk-resume-go{
+  flex:none;border:0;background:none;cursor:pointer;padding:4px 0;
+  font-family:var(--ff-serif);font-size:12px;letter-spacing:.08em;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+
+/* 本批管理（step 5 成功后） */
+.sk-batch{
+  margin-top:12px;padding:12px 13px;border-radius:10px;
+  border:1px solid rgba(27,25,23,.18);
+  background:var(--g-accent-pale, #F7F2EA);
+}
+.sk-batch .sk-sec-label{display:block;margin-bottom:9px}
+.sk-batch-row{
+  display:flex;align-items:center;gap:10px;
+  padding:7px 0;border-top:1px solid rgba(176,138,94,.25);
+}
+.sk-batch-row:first-of-type{border-top:0}
+.sk-batch-thumb{
+  flex:none;width:40px;height:40px;object-fit:contain;
+  background:#fff;border:1px solid rgba(27,25,23,.14);border-radius:8px;
+}
+.sk-batch-name{
+  flex:1;min-width:0;font-size:12.5px;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.sk-batch-del{
+  flex:none;width:30px;height:26px;border:1px solid rgba(166,52,38,.4);
+  border-radius:8px;background:transparent;color:#a63426;
+  font-size:11px;cursor:pointer;font-family:inherit;
+}
+.sk-batch-del:active{background:rgba(166,52,38,.1)}
+.sk-batch-wipe{
+  display:block;width:100%;margin-top:10px;padding:8px 0;
+  border:1px dashed rgba(166,52,38,.5);border-radius:8px;
+  background:transparent;color:#a63426;
+  font-family:var(--ff-serif);font-size:11.5px;letter-spacing:.06em;cursor:pointer;
+}
+.sk-batch-wipe:active{background:rgba(166,52,38,.08)}

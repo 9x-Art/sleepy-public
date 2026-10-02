@@ -1589,21 +1589,79 @@
         var au = (core.activeUserOnIsland && core.activeUserOnIsland()) || null;
         if (au) subs.push(Sleepy.imggen.subjectForUser(au, 'group'));
       }
-      var plan = {
-        sender: 'system', contentType: 'mixed', shot: 'group', subjects: subs,
-        description: (env.location || '') + '，' + who + '在场，' +
-          (env.timeOfDay || '') + '，' + (env.weather || '') + '的氛围，电影感构图'
-      };
-      ctx.toast('正在生成…', 'ok');
-      pending = true;
-      setBusy(true);
-      Sleepy.imggen.generate({ plan: plan }).then(function (r) {
-        pending = false;
-        setBusy(false);
-        if (!r.ok) { ctx.toast('✗ ' + ((r.error && r.error.message) || '生成失败'), 'err'); return; }
-        appendMessage(id, { role: 'photo', mediaId: r.mediaId || '', url: r.url || '' });
-        session = find(id);
-        fillMessages(body.querySelector('.off-chat-scroll'));
+      /* B2（2026-10-02 施工单 §2）：群岛生图逐人开关 —— 每个在场者一行
+         （默认 = 各自已保存的授权 faceLockImageOn），勾选只覆盖本次请求；
+         没设置参考图的人照常可勾，解析时不带图并注明。 */
+      var rows = subs.map(function (s) {
+        var rec = s.entityType === 'user'
+          ? core.findUser(s.entityId) : core.findChar(s.entityId);
+        return { subject: s, rec: rec,
+          label: (s.name || '?') + (rec && rec.kind === 'npc' ? '（NPC）' : '') };
+      });
+      var sheet = h('div', 'off-overlay');
+      var box = h('div', 'off-sheet');
+      box.appendChild(h('div', 'off-sheet-handle'));
+      box.appendChild(h('div', 'off-sheet-title', '图片锁脸 · 选这次带参考图的人'));
+      var list = h('div');
+      var boxes = rows.map(function (r) {
+        var lb = h('label');
+        lb.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;';
+        var cb = h('input');
+        cb.type = 'checkbox';
+        cb.checked = !!(r.rec && r.rec.faceLockImageOn === true);
+        lb.appendChild(cb);
+        lb.appendChild(h('span', '', r.label));
+        var st = h('span', '',
+          (r.rec && (r.rec.faceLockImageMedia || r.rec.faceLockImage))
+            ? '' : '（未设置参考图）');
+        st.style.cssText = 'opacity:.55;font-size:12px;';
+        lb.appendChild(st);
+        list.appendChild(lb);
+        return cb;
+      });
+      box.appendChild(list);
+      var tip = h('p', '',
+        '勾选后参考图会随生图请求发给接口服务方；接口需在设置里开启「参考图支持」。');
+      tip.style.cssText = 'font-size:12px;opacity:.6;';
+      box.appendChild(tip);
+      var btns = h('div', 'btn-row');
+      var cancel = h('button', 'off-sheet-cancel', '取消');
+      cancel.type = 'button';
+      var ok = h('button', 'off-sheet-cancel', '生成');
+      ok.type = 'button';
+      ok.style.background = 'var(--g-accent)';
+      ok.style.color = '#fff';
+      btns.appendChild(cancel);
+      btns.appendChild(ok);
+      box.appendChild(btns);
+      sheet.appendChild(box);
+      document.body.appendChild(sheet);
+      function closeSheet() { if (sheet.parentNode) sheet.parentNode.removeChild(sheet); }
+      sheet.addEventListener('click', function (e) { if (e.target === sheet) closeSheet(); });
+      cancel.addEventListener('click', closeSheet);
+      ok.addEventListener('click', function () {
+        closeSheet();
+        var locks = {};
+        rows.forEach(function (r, i) {
+          locks[(r.subject.entityType === 'user' ? 'user:' : 'char:')
+            + r.subject.entityId] = boxes[i].checked;
+        });
+        var plan = {
+          sender: 'system', contentType: 'mixed', shot: 'group', subjects: subs,
+          description: (env.location || '') + '，' + who + '在场，' +
+            (env.timeOfDay || '') + '，' + (env.weather || '') + '的氛围，电影感构图'
+        };
+        ctx.toast('正在生成…', 'ok');
+        pending = true;
+        setBusy(true);
+        Sleepy.imggen.generate({ plan: plan, imageLocks: locks }).then(function (r) {
+          pending = false;
+          setBusy(false);
+          if (!r.ok) { ctx.toast('✗ ' + ((r.error && r.error.message) || '生成失败'), 'err'); return; }
+          appendMessage(id, { role: 'photo', mediaId: r.mediaId || '', url: r.url || '' });
+          session = find(id);
+          fillMessages(body.querySelector('.off-chat-scroll'));
+        });
       });
     }
 
