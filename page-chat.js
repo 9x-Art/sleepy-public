@@ -3397,6 +3397,9 @@
                 out.shot = obj.shot;
               }
               if (obj && Array.isArray(obj.subjects)) {
+                /* subjectsDeclared：白名单过滤**之前**的原始声明数 ——
+                   正式拼接器拿它严格对账，非法引用也算「解析不了的人」 */
+                out.subjectsDeclared = obj.subjects.length;
                 out.subjects = obj.subjects.filter(function (x, idx) {
                   return (x === 'user' || x === 'char') && out.subjects.indexOf(x) < 0;
                 });
@@ -3441,7 +3444,13 @@
           contentType: out.contentType || (subs.length ? 'person' : 'scene'),
           shot: shot,
           subjects: subs,
-          description: out.description || out.subject || ''
+          description: out.description || out.subject || '',
+          /* 正式接入（2026-10-01）：模型**解析前**声明的主体数随 plan 对账 ——
+             声明与解析数不等（少人 / 多人 / 非法引用）都明确报错零请求，
+             不静默换人、减员或降级成无人图（返修单 v2 §5：严格相等）。
+             未声明（legacyFallback 等）→ undefined，不做人数对账。 */
+          expectedSubjectCount: (out.subjectsDeclared != null)
+            ? out.subjectsDeclared : undefined
         };
       }
 
@@ -3535,7 +3544,10 @@
             contentType: parsed.contentType,
             shot: parsed.shot,
             subjects: subs,
-            description: parsed.description
+            description: parsed.description,
+            /* 正式接入：解析前声明数（含被白名单滤掉的非法引用）随 plan 对账 */
+            expectedSubjectCount: (parsed.subjectsDeclared != null)
+              ? parsed.subjectsDeclared : undefined
           };
         }
         genAndDeliver(ch, {

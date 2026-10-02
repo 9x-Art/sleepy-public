@@ -239,7 +239,11 @@
             });
             genOpts = { plan: {
               sender: 'char', contentType: parsed.contentType, shot: parsed.shot,
-              subjects: subs, description: parsed.description
+              subjects: subs, description: parsed.description,
+              /* 正式接入：解析前声明数（含被白名单滤掉的非法引用）随 plan 对账，
+                 声明与解析数不等就明确报错零请求，不静默减员。 */
+              expectedSubjectCount: (parsed.subjectsDeclared != null)
+                ? parsed.subjectsDeclared : undefined
             } };
           } else {
             var shot = /selfie|自拍|近照/i.test(p.imgDesc) ? 'selfie' : '';

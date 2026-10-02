@@ -304,6 +304,9 @@ function withIdbLock(fn) {
   return run;
 }
 
+/* 子串出现次数（03/04 视觉层「恰好一份」断言用） */
+function countOf(s, n) { return String(s || '').split(n).length - 1; }
+
 function t(label, fn) {
   let r;
   try {
@@ -2656,6 +2659,258 @@ t('B1 subjectForUser：马甲自己的外貌 + shot 分档 + 实体边界', () =
   return 'ok';
 });
 
+/* ==================== 正式生图：内置 / 自定义（2026-10-01 施工单 v1） ==================== */
+/* 路由：0→01；1→02；2→03；3~4→04；custom 只换视觉层；校验不过 → 明确报错。 */
+t('buildFormalPrompt：人数路由 01/02/03/04 + 底座词逐字命中', () => {
+  const g = S.imggen;
+  const api = g.newApi('general');
+  const mk = (id, name, gender, faceText) => ({ entityType: 'char', entityId: id, name, gender, faceText });
+  /* 01 内置：场景词进、结构排人、负面带排人组 */
+  const r01 = g.buildFormalPrompt({ api, plan: { contentType: 'scene', shot: 'scene', subjects: [], description: '雨夜窗边' } });
+  if (!r01.ok) throw new Error('01 应当通过：' + (r01.error || {}).message);
+  if (r01.debug.base !== '01-scene') throw new Error('01 底座标签不对');
+  if (r01.positive.indexOf('empty of people') < 0 || r01.positive.indexOf('natural realistic photography') < 0) throw new Error('01 内置词没进');
+  if (r01.negative.indexOf('people') < 0 || r01.negative.indexOf('lowres') < 0) throw new Error('01 负面少了质量/排人');
+  /* 02 内置男 / 女 C 正式 v2：身份优先词逐字在；单人结构在；审美负面不注入 */
+  const rM = g.buildFormalPrompt({ api, plan: { contentType: 'person', shot: 'selfie', subjects: [mk('c1', '小雫', 'male', 'short black hair')], description: '对镜自拍' } });
+  if (!rM.ok || rM.debug.base !== '02-male-v2') throw new Error('02 男路由不对：' + JSON.stringify(rM.debug && rM.debug.base));
+  if (rM.positive.indexOf("described male character's face") < 0) throw new Error('男性正式 v2 没进');
+  if (rM.positive.indexOf('idealized adult male face') >= 0) throw new Error('正式路径不该再拼实验旧词');
+  if (rM.positive.indexOf('soft dimensional daylight') >= 0) throw new Error('正式 v2 不该再有 daylight 定向');
+  if (rM.positive.indexOf('retaining the stated age') < 0) throw new Error('stated age 要保留（不自动补成年）');
+  if (rM.positive.indexOf('solo, exactly one person') < 0 || rM.positive.indexOf('close-up selfie shot') < 0) throw new Error('单人结构/镜头层没进');
+  if (rM.positive.indexOf('1boy') < 0 || rM.positive.indexOf('short black hair') < 0) throw new Error('身份段没进');
+  if (rM.negative.indexOf('plastic skin') >= 0) throw new Error('02 不该带审美负面（定稿态 noAesthetic）');
+  if (rM.negative.indexOf('extra person') < 0) throw new Error('02 缺单人结构负面');
+  const rF = g.buildFormalPrompt({ api, plan: { contentType: 'person', shot: 'full', subjects: [mk('c1', '小雫', 'female', 'silver hair')], description: '站在海边' } });
+  if (!rF.ok || rF.debug.base !== '02-female-c-v2') throw new Error('02 女路由不对');
+  if (rF.positive.indexOf('strikingly beautiful female character') < 0) throw new Error('女性正式 v2 没进');
+  if (rF.positive.indexOf('strikingly beautiful adult woman') >= 0) throw new Error('正式路径不该再拼实验旧词');
+  if (rF.positive.indexOf('East Asian') >= 0) throw new Error('正式 v2 不该再有族裔兜底');
+  if (rF.positive.indexOf('Keep makeup light') >= 0) throw new Error('正式 v2 不该再有默认妆容句');
+  /* 02 内置 + 性别未指定 → 中性底座（返修 v2 §1：不再因性别报错） */
+  const rN = g.buildFormalPrompt({ api, plan: { contentType: 'person', shot: 'auto', subjects: [mk('c1', '小雫', '', 'scales on arms, fish tail')], description: '一条人鱼' } });
+  if (!rN.ok || rN.debug.base !== '02-neutral-v1') throw new Error('未知性别该走中性底座：' + JSON.stringify(rN.debug && rN.debug.base));
+  if (rN.positive.indexOf('do not replace them with a standardized human appearance') < 0) throw new Error('中性词没进');
+  if (rN.positive.indexOf('scales on arms, fish tail') < 0) throw new Error('物种描述要原样保留');
+  if (rN.positive.indexOf('solo, exactly one subject') < 0 || rN.positive.indexOf('exactly one person') >= 0) throw new Error('中性结构没替换 person');
+  if (rN.positive.indexOf('without imposing a gender, an adult age, a human anatomy, a daylight setting') < 0) throw new Error('中性否定句缺失');
+  if (rN.negative.indexOf('deformed face') >= 0) throw new Error('中性负面不该有人体脸型三连');
+  if (rN.negative.indexOf('extra person') < 0) throw new Error('中性负面该保留防增人');
+  if (rN.positive.indexOf('1girl') >= 0 || rN.positive.indexOf('1boy') >= 0) throw new Error('未知性别不许被系统补性别 tag（核查1 反向断言）');
+  /* 02 custom：只换视觉层；空 custom 合法不回退内置 */
+  const rC = g.buildFormalPrompt({ api, styleMode: 'custom', customStyle: 'flat graphic illustration, limited palette',
+    plan: { contentType: 'person', shot: 'auto', subjects: [mk('c1', '小雫', 'male', '')], description: '站着' } });
+  if (!rC.ok || rC.debug.base !== '02-custom') throw new Error('02 custom 路由不对');
+  if (rC.positive.indexOf('flat graphic illustration') < 0) throw new Error('custom 词没进');
+  if (rC.positive.indexOf("described male character's face") >= 0) throw new Error('custom 不该混内置审美词');
+  const rCE = g.buildFormalPrompt({ api, styleMode: 'custom', customStyle: '',
+    plan: { contentType: 'person', shot: 'auto', subjects: [mk('c1', '小雫', 'female', '')], description: '站着' } });
+  if (!rCE.ok) throw new Error('空 custom 该合法');
+  if (rCE.positive.indexOf('strikingly beautiful female character') >= 0) throw new Error('空 custom 回退成内置了');
+  /* 03：双人结构 + 名字绑定 + 相同外貌不去重 + 双人内置视觉层恰好一份 */
+  const r03 = g.buildFormalPrompt({ api, plan: { contentType: 'mixed', shot: 'group',
+    subjects: [mk('c1', '小雫', 'female', 'silver hair'), mk('u1', '我', 'female', 'silver hair')], description: '并肩看海' } });
+  if (!r03.ok || r03.debug.base !== '03') throw new Error('03 路由不对');
+  if (r03.positive.indexOf('Exactly two people are present') < 0) throw new Error('双人结构词没进');
+  if (countOf(r03.positive, 'the two described people') !== 1) throw new Error('03 双人视觉层没有恰好一份');
+  if (countOf(r03.positive, 'Render both people with equally careful facial detail') !== 1) throw new Error('03 视觉层正文缺失');
+  if (countOf(r03.positive, 'keeping both people\'s faces readable') !== 1) throw new Error('03 视觉层第三段缺失');
+  if (r03.positive.split('silver hair').length !== 3) throw new Error('两个身份相同的特征被跨主体去重了');
+  if (r03.positive.indexOf('小雫 (1girl') < 0 || r03.positive.indexOf('我 (1girl') < 0) throw new Error('双人没做名字绑定');
+  if (r03.positive.indexOf("described male character's face") >= 0 || r03.positive.indexOf('strikingly beautiful female character') >= 0
+    || r03.positive.indexOf('standardized human appearance') >= 0) throw new Error('双人不该拼单人/中性词');
+  if (r03.negative !== 'lowres, worst quality, low quality, jpeg artifacts, blurry') throw new Error('03 负面该只有质量层：' + r03.negative);
+  /* 03 custom：内置双人词不混入 */
+  const r03c = g.buildFormalPrompt({ api, styleMode: 'custom', customStyle: 'crayon sketch style',
+    plan: { contentType: 'mixed', shot: 'group',
+      subjects: [mk('c1', '小雫', 'female', 'silver hair'), mk('u1', '我', 'female', '')], description: '并肩看海' } });
+  if (!r03c.ok || r03c.debug.base !== '03-custom') throw new Error('03 custom 路由不对');
+  if (r03c.positive.indexOf('crayon sketch style') < 0) throw new Error('03 custom 词没进');
+  if (r03c.positive.indexOf('the two described people') >= 0) throw new Error('03 custom 混入了内置双人词');
+  /* 04：四人 + 群像结构 + 多人视觉层恰好一份 */
+  const four = [mk('c1', 'A', 'female', 'a-hair'), mk('c2', 'B', 'male', 'b-hair'), mk('c3', 'C', 'female', 'c-hair'), mk('u1', 'D', 'male', 'd-hair')];
+  const r04 = g.buildFormalPrompt({ api, plan: { contentType: 'mixed', shot: 'group', subjects: four, description: '四人合影' } });
+  if (!r04.ok || r04.debug.base !== '04') throw new Error('04 路由不对');
+  if (r04.positive.indexOf('Exactly the described number of people') < 0) throw new Error('群像结构词没进');
+  if (countOf(r04.positive, 'Render every person with equally careful facial detail') !== 1) throw new Error('04 视觉层没有恰好一份');
+  if (countOf(r04.positive, 'keeping every person\'s face readable') !== 1) throw new Error('04 视觉层第三段缺失');
+  if (r04.positive.indexOf('both people') >= 0) throw new Error('04 混进了双人版视觉词');
+  ['A (1girl', 'B (1boy', 'C (1girl', 'D (1boy'].forEach((k) => {
+    if (r04.positive.indexOf(k) < 0) throw new Error('四人身份块缺 ' + k);
+  });
+  /* 04 custom 空/非空：均无内置词 */
+  const r04c = g.buildFormalPrompt({ api, styleMode: 'custom', customStyle: 'ink wash painting',
+    plan: { contentType: 'mixed', shot: 'group', subjects: four, description: '四人合影' } });
+  if (!r04c.ok || r04c.positive.indexOf('ink wash painting') < 0
+    || r04c.positive.indexOf('Render every person') >= 0) throw new Error('04 custom 混入了内置多人词');
+  const r04e = g.buildFormalPrompt({ api, styleMode: 'custom', customStyle: '',
+    plan: { contentType: 'mixed', shot: 'group', subjects: four, description: '四人合影' } });
+  if (!r04e.ok || r04e.positive.indexOf('Render every person') >= 0) throw new Error('04 空 custom 混入了内置多人词');
+  return 'ok';
+});
+
+/* 校验关口：重复引用 / 预期人数对账 / 超 4 人 / 0人报person / NAI 不接 —— 全部零请求形状 */
+t('buildFormalPrompt：校验拦截逐条 + NAI 回落 null', () => {
+  const g = S.imggen;
+  const api = g.newApi('general');
+  const mk = (id, name, gender, faceText) => ({ entityType: 'char', entityId: id, name, gender, faceText });
+  /* 重复身份引用 */
+  const dup = g.buildFormalPrompt({ api, plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', ''), mk('c1', '甲', 'female', '')], description: 'x' } });
+  if (dup.ok !== false || dup.error.message.indexOf('重复') < 0) throw new Error('重复引用没拦：' + (dup.error || {}).message);
+  /* 外貌相同但身份不同 → 合法（§五.3） */
+  const sameFace = g.buildFormalPrompt({ api, plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', 'silver hair'), mk('c2', '乙', 'female', 'silver hair')], description: 'x' } });
+  if (!sameFace.ok) throw new Error('不同身份相同外貌不该拦');
+  /* 预期主体数对账（返修 v2：严格相等）：声明 2 解析出 1 → 拦 */
+  const lack = g.buildFormalPrompt({ api, plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', '')], description: 'x', expectedSubjectCount: 2 } });
+  if (lack.ok !== false || lack.error.message.indexOf('解析不了') < 0) throw new Error('预期人数对账没拦');
+  /* 声明 1 解析出 1 → 不拦 */
+  const ok1 = g.buildFormalPrompt({ api, plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', '')], description: 'x', expectedSubjectCount: 1 } });
+  if (!ok1.ok) throw new Error('对账相等不该拦');
+  /* 声明 0 + 有人 → 矛盾（声明小于解析数也拦） */
+  const extra = g.buildFormalPrompt({ api, plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', '')], description: 'x', expectedSubjectCount: 0 } });
+  if (extra.ok !== false || extra.error.message.indexOf('对不上') < 0) throw new Error('声明0却有人没拦');
+  /* 声明 0 + 没人 + scene → 合法（absent 与显式 0 都允许） */
+  const ok0d = g.buildFormalPrompt({ api, plan: { contentType: 'scene', subjects: [], description: 'x', expectedSubjectCount: 0 } });
+  if (!ok0d.ok) throw new Error('显式声明 0 该合法');
+  /* 声明格式非法（非整数 / 负数）→ 拦 */
+  const badFmt = g.buildFormalPrompt({ api, plan: { contentType: 'scene', subjects: [], description: 'x', expectedSubjectCount: 'x' } });
+  if (badFmt.ok !== false || badFmt.error.message.indexOf('格式') < 0) throw new Error('声明格式非法没拦');
+  const negFmt = g.buildFormalPrompt({ api, plan: { contentType: 'scene', subjects: [], description: 'x', expectedSubjectCount: -1 } });
+  if (negFmt.ok !== false || negFmt.error.message.indexOf('格式') < 0) throw new Error('负数声明没拦');
+  /* absent（未声明）→ 不做人数对账（程序自造主体的入口） */
+  const absent = g.buildFormalPrompt({ api, plan: { contentType: 'scene', subjects: [], description: 'x' } });
+  if (!absent.ok) throw new Error('未声明不该对账');
+  /* 超 4 人 */
+  const five = [1, 2, 3, 4, 5].map((i) => mk('c' + i, '人' + i, 'female', ''));
+  const over = g.buildFormalPrompt({ api, plan: { contentType: 'mixed', subjects: five, description: 'x' } });
+  if (over.ok !== false || over.error.message.indexOf('最多') < 0) throw new Error('超 4 人没拦');
+  /* 0 人 + person → 语义不明 */
+  const ghost = g.buildFormalPrompt({ api, plan: { contentType: 'person', subjects: [], description: 'x' } });
+  if (ghost.ok !== false || ghost.error.message.indexOf('没解析出来') < 0) throw new Error('0人报person没拦');
+  /* 0 人 + scene → 通过（01） */
+  const ok0 = g.buildFormalPrompt({ api, plan: { contentType: 'scene', subjects: [], description: 'x' } });
+  if (!ok0.ok) throw new Error('0人场景该通过');
+  /* NAI：buildFormalPrompt 纯函数层守卫不变（generate 已分流到 buildFormalNaiRequest） */
+  const nai = g.buildFormalPrompt({ api: g.newApi('nai'), plan: { contentType: 'scene', subjects: [], description: 'x' } });
+  if (nai !== null) throw new Error('NAI 应返回 null（纯函数层守卫）');
+  /* parsePlanJson：subjectsDeclared 必须是白名单过滤**前**的原始声明数 */
+  const pj = g.parsePlanJson('{"description":"x","subjects":["char","dog","user"]}');
+  if (!pj || pj.subjects.length !== 2 || pj.subjectsDeclared !== 3) {
+    throw new Error('subjectsDeclared 不是解析前声明数：' + JSON.stringify(pj && pj.subjectsDeclared));
+  }
+  const pj0 = g.parsePlanJson('{"description":"x","subjects":[]}');
+  if (!pj0 || pj0.subjectsDeclared !== 0) throw new Error('显式空声明该是 0 而不是 absent');
+  /* extras 全局去重仍生效；身份块不去重（两条 silver hair 身份 + description 里的 silver hair 全保留） */
+  const rD = g.buildFormalPrompt({ api, plan: { contentType: 'mixed', subjects: [mk('c1', '甲', 'female', 'silver hair'), mk('c2', '乙', 'male', 'silver hair')], description: '两人都 silver hair' } });
+  if (rD.positive.split('silver hair').length !== 4) throw new Error('身份块被跨层去重了');
+  return 'ok';
+});
+
+/* buildFormalNaiRequest：NAI 正式编译器（2026-10-02 施工单）纯函数层 */
+t('buildFormalNaiRequest：V3 身份进 input / V4 char_captions / 预设消费 / 拒绝边界', () => {
+  const g = S.imggen;
+  const mk = (id, name, gender, faceText) => ({ entityType: 'char', entityId: id, name, gender, faceText });
+  const v3 = { kind: 'nai', model: 'nai-diffusion-3', positivePreset: '', negativePreset: '' };
+  const v4 = { kind: 'nai', model: 'nai-diffusion-4-5-full', positivePreset: '', negativePreset: '' };
+
+  /* V3 单人：身份标记进 input、无 V4 字段、ucPreset 语义不受本函数影响 */
+  const r1 = g.buildFormalNaiRequest({ api: v3,
+    plan: { contentType: 'person', shot: 'full',
+      subjects: [mk('c1', '甲', 'female', 'qzx银发标记')], description: 'qzx场景' },
+    extras: ['qzx词条E'] });
+  if (!r1.ok) throw new Error('V3 单人该通过：' + JSON.stringify(r1.error));
+  if (r1.request.positive.indexOf('qzx银发标记') < 0 || r1.request.positive.indexOf('1girl') < 0
+    || r1.request.positive.indexOf('full body') < 0) throw new Error('V3 单人身份/镜头没进 input');
+  if (r1.request.positive.indexOf('qzx场景') < 0 || r1.request.positive.indexOf('qzx词条E') < 0) {
+    throw new Error('V3 描述/extras 没进 input');
+  }
+  if (r1.request.v4Prompt || r1.request.v4NegativePrompt) throw new Error('V3 不该有 V4 字段');
+  if (r1.debug.multiCharacter !== 'single') throw new Error('单人 debug 不对');
+
+  /* V3 双人：两位标记都进 input，顺序描述（降级标注） */
+  const r2 = g.buildFormalNaiRequest({ api: v3,
+    plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', 'qzx标记A'), mk('c2', '乙', 'male', 'qzx标记B')], description: 'x' } });
+  if (r2.request.positive.indexOf('qzx标记A') < 0 || r2.request.positive.indexOf('qzx标记B') < 0) {
+    throw new Error('V3 双人身份丢了');
+  }
+  if (r2.request.positive.indexOf('1girl') < 0 || r2.request.positive.indexOf('1boy') < 0) {
+    throw new Error('V3 双人人数聚合不对');
+  }
+  if (r2.debug.multiCharacter !== 'sequential-degraded') throw new Error('V3 多人该标降级');
+
+  /* V4.5 双人：char_captions 逐主体、顺序对应、负面只有 base、use_* 显式 */
+  const r3 = g.buildFormalNaiRequest({ api: v4,
+    plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', 'qzx标记A'), mk('c2', '乙', 'male', 'qzx标记B')], description: 'x' } });
+  const vp = r3.request.v4Prompt;
+  if (!vp || vp.caption.char_captions.length !== 2
+    || vp.caption.char_captions[0].char_caption.indexOf('qzx标记A') < 0
+    || vp.caption.char_captions[1].char_caption.indexOf('qzx标记B') < 0) {
+    throw new Error('V4 char_captions 不对');
+  }
+  if (vp.caption.char_captions.some((c) => c.char_caption.indexOf('1girl') >= 0 || c.char_caption.indexOf('1boy') >= 0)) {
+    throw new Error('char_captions 里混入了带数字的人数 tag');
+  }
+  if (vp.use_coords !== false || vp.use_order !== true || 'legacy_uc' in vp) {
+    throw new Error('use_coords/use_order/legacy_uc 处理不对');
+  }
+  if (vp.caption.base_caption !== r3.request.positive) throw new Error('base_caption 与 input 不同值');
+  const vn = r3.request.v4NegativePrompt;
+  if (!vn || vn.caption.base_caption !== r3.request.negative || vn.caption.char_captions.length !== 0) {
+    throw new Error('v4_negative_prompt 形状不对');
+  }
+  if (vp.caption.char_captions.some((c) => 'centers' in c)) throw new Error('不该发 centers');
+
+  /* 人数聚合：1girl + 2girls 主体 → 3girls（同性别合并、单复数分支） */
+  const rAgg = g.buildFormalNaiRequest({ api: v3,
+    plan: { contentType: 'person', subjects: [mk('a', '', 'female', ''), mk('b', '', 'female', ''), mk('c', '', 'female', '')], description: 'x' } });
+  if (rAgg.request.positive.indexOf('3girls') < 0) throw new Error('3girls 聚合不对');
+
+  /* 未知性别：不贡献人数 tag、不丢主体、coverage=partial */
+  const rU = g.buildFormalNaiRequest({ api: v3,
+    plan: { contentType: 'person', subjects: [mk('u', '未', '', 'qzx未知标记'), mk('f', '', 'female', '')], description: 'x' } });
+  if (rU.debug.countCoverage !== 'partial') throw new Error('未知性别该标 partial');
+  if (rU.request.positive.indexOf('qzx未知标记') < 0) throw new Error('未知性别主体被丢了');
+  if (rU.request.positive.indexOf('1other') >= 0) throw new Error('未知性别不该冒充 1other');
+
+  /* 接口预设沿用现有消费契约：自定义词不失效；空回填出厂词；出厂词不双份 */
+  const custom = { kind: 'nai', model: 'nai-diffusion-3',
+    positivePreset: '{p}, qzx正预设Q', negativePreset: 'qzx负预设N, lowres' };
+  const rP = g.buildFormalNaiRequest({ api: custom,
+    plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', '')], description: 'x' } });
+  if (rP.request.positive.indexOf('qzx正预设Q') < 0) throw new Error('自定义正预设词失效了');
+  if (rP.request.negative.indexOf('qzx负预设N') < 0) throw new Error('自定义负预设词失效了');
+  if (rP.request.negative.split('lowres').length !== 2) throw new Error('出厂词被重复追加了');
+  const rB = g.buildFormalNaiRequest({ api: v3,
+    plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', '')], description: 'x' } });
+  if (rB.request.negative.indexOf('very displeasing') < 0) throw new Error('空预设该按现有契约回填出厂词');
+  if (rB.request.negative.split('watermark').length !== 2) throw new Error('watermark 该去重成一份');
+
+  /* 拒绝边界：校验复用 + 模型不支持 → 明确报错，无 null 形态 */
+  const rDup = g.buildFormalNaiRequest({ api: v3,
+    plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', ''), mk('c1', '甲', 'female', '')], description: 'x' } });
+  if (rDup.ok || rDup.error.message !== '画面主体重复了') throw new Error('校验没复用（重复主体）');
+  const rBad = g.buildFormalNaiRequest({ api: { kind: 'nai', model: 'nai-unknown', positivePreset: '', negativePreset: '' },
+    plan: { contentType: 'person', subjects: [mk('c1', '甲', 'female', '')], description: 'x' } });
+  if (rBad.ok || rBad.error.message.indexOf('模型') < 0) throw new Error('不支持的模型该明确报错');
+  return 'ok';
+});
+
+/* 配置字段：默认 builtin、非法值回落、切换不清空 custom 原文 */
+t('imgStyleMode / imgStyleCustom：默认与保留', () => {
+  const g = S.imggen;
+  g.setImgStyleCustom('my custom words');
+  g.setImgStyleMode('custom');
+  if (g.imgStyleMode() !== 'custom' || g.imgStyleCustom() !== 'my custom words') throw new Error('custom 读写不对');
+  g.setImgStyleMode('builtin');
+  if (g.imgStyleMode() !== 'builtin') throw new Error('builtin 切换不对');
+  if (g.imgStyleCustom() !== 'my custom words') throw new Error('切换清空了 custom 原文');
+  g.setImgStyleMode('nonsense');
+  if (g.imgStyleMode() !== 'builtin') throw new Error('非法值要回落 builtin');
+  g.setImgStyleCustom('');
+  return 'ok';
+});
+
 /* B1 core.upsertUser：马甲外貌四字段各自独立保存/更新，旧数据兜空串。 */
 t('B1 upsertUser：马甲外貌四字段读写与兼容', () => {
   const core = S.core;
@@ -2712,6 +2967,447 @@ t('E1 视觉实验：visualStyleText + buildSceneObjectExperimentPrompt', () => 
   if (dup.positive.indexOf('a, a') >= 0) throw new Error('层内完全相同词条没去重');
   const m = g.visualExpMode();
   if (m !== 'legacy' && m !== 'sleepy-default' && m !== 'custom') throw new Error('实验模式存储读取出错');
+  return 'ok';
+});
+
+/* E2 单人角色视觉层（2026-09-30 返修口径）：
+   - 真实单主体才注入（不固定 subjects:[]、不靠关键词猜人）；
+   - 通用层不写死 adult / rested，也不排皱纹、排疲态；
+   - **男性校准两组词（malePositive / maleNegative）当前一律不进 prompt** ——
+     没有可靠的结构化依据判断身份有没有写年龄/胡须/沧桑/疲态，注入会反向覆盖事实；
+     常量与函数保留作扩展位置（本测试也断言它们还在）；
+   - 手只有**明确可见**才给词，unspecified / hidden 一个字都不加；
+   - custom（空/非空）都不注入 Sleepy 默认审美与男性校准，但保留身份/结构/镜头/防增人；
+   - 多主体、legacy、无人、npc 一律返回 null。
+   全部用独立测试夹具（字面量），不碰用户真实角色资料。 */
+t('E2 单人视觉实验：真实身份读取 + 层序 + 男性校准暂停 + custom 退出默认审美', () => {
+  const g = S.imggen;
+  const api = g.newApi('general');
+  const male = { entityType: 'char', entityId: 'c1', name: '阿岩', gender: 'male', faceText: 'black hair, stubble beard, tired eyes' };
+  const female = { entityType: 'user', entityId: 'u1', name: '我', gender: 'female', faceText: 'long hair' };
+  /* 明确年长 / 有胡须 / 沧桑 / 疲态的夹具：用来证明默认模式也不反向覆盖事实 */
+  const aged = {
+    entityType: 'char', entityId: 'c2', name: '老陈', gender: 'male',
+    faceText: 'middle-aged man, greying beard, weathered skin, deep nasolabial folds, tired eyes'
+  };
+  const AGED_DESC = '站在门口，神情疲惫，胡须没修剪';
+
+  /* 本轮暂停注入的男性校准词（两种模式、正负面都不许出现） */
+  const CALIB = [
+    'defined but not weathered features',
+    'facial hair only when specified by the identity description',
+    'unintended aging',
+    'unintentionally weathered face',
+    'overly rugged features',
+    'thick beard when unspecified'
+  ];
+  const noCalib = (b, tag) => CALIB.forEach((w) => {
+    if (b.positive.indexOf(w) >= 0 || b.negative.indexOf(w) >= 0) {
+      throw new Error(tag + ' 注入了男性校准词：' + w);
+    }
+  });
+  /* 扩展位置仍在：常量不许被删空 */
+  ['general', 'nai'].forEach((k) => {
+    if (!g.SLEEPY_SINGLE_STYLE[k].malePositive || !g.SLEEPY_SINGLE_STYLE[k].maleNegative) {
+      throw new Error(k + ' 的男性校准常量要留着当扩展位置');
+    }
+    if (typeof g.singleSubjectGenderAdjustment !== 'function' || typeof g.singleSubjectGenderNegative !== 'function') {
+      throw new Error('男性校准两个函数要留着当扩展位置');
+    }
+  });
+
+  const sd = g.buildSingleSubjectExperimentPrompt({
+    api, description: '站在窗边', shot: 'portrait', subjects: [male],
+    visualMode: 'sleepy-default', customVisualStyle: '', hands: 'visible', extras: []
+  });
+  if (!sd) throw new Error('真实单主体应拿到实验 prompt');
+  if (sd.positive.indexOf('1boy') < 0) throw new Error('性别没读出 1boy');
+  if (sd.positive.indexOf('stubble beard') < 0 || sd.positive.indexOf('tired eyes') < 0) throw new Error('身份事实被通用层覆盖');
+  if (sd.positive.indexOf('solo, exactly one person') < 0) throw new Error('单人主体结构没进');
+  if (sd.positive.indexOf('half-body portrait') < 0) throw new Error('镜头层没进');
+  if (sd.positive.indexOf('站在窗边') < 0) throw new Error('description 没进');
+  if (sd.positive.indexOf('natural realistic portrait photography') < 0) throw new Error('按 shot 取的单人底座没进');
+  /* 手可见 → 统一手部段（2026-10-01 起全分支同一段，不再按分支分男女审美段／结构版） */
+  if (sd.positive.indexOf('Anatomically coherent hands') >= 0) throw new Error('手可见也不该追加系统手部段');
+  if (/adult|rested and present/.test(sd.positive)) throw new Error('通用层写了 adult / rested —— 会改写年龄与精神状态事实');
+  if (sd.negative.indexOf('exaggerated wrinkles') >= 0 || sd.negative.indexOf('heavy fatigue') >= 0) throw new Error('通用负面排皱纹/排疲态会改写身份事实');
+  if (sd.negative.indexOf('extra person') < 0) throw new Error('防随机增人的结构负面没进');
+  if (sd.negative.indexOf('plastic skin') < 0) throw new Error('sleepy-default 应有审美型负面');
+  noCalib(sd, 'sleepy-default 男性主体');
+
+  /* 女性不注入男性校准（校准关着，这一条是兜底） */
+  const sf = g.buildSingleSubjectExperimentPrompt({
+    api, description: '坐在沙发上', shot: 'candid', subjects: [female],
+    visualMode: 'sleepy-default', extras: []
+  });
+  if (sf.positive.indexOf('1girl') < 0) throw new Error('女性性别没读出 1girl');
+  noCalib(sf, 'sleepy-default 女性主体');
+
+  /* 默认模式：明确年长 / 胡须 / 沧桑 / 疲态 → 事实保留，且没有反向词被额外注入 */
+  ['general', 'nai'].forEach((k) => {
+    const b = g.buildSingleSubjectExperimentPrompt({
+      api: g.newApi(k), description: AGED_DESC, shot: 'portrait', subjects: [aged],
+      visualMode: 'sleepy-default', extras: []
+    });
+    ['middle-aged man', 'greying beard', 'weathered skin', 'deep nasolabial folds', 'tired eyes']
+      .forEach((w) => { if (b.positive.indexOf(w) < 0) throw new Error(k + ' 默认模式丢掉了身份事实：' + w); });
+    if (b.positive.indexOf(AGED_DESC) < 0) throw new Error(k + ' 默认模式丢掉了 description');
+    noCalib(b, k + ' 默认模式（年长/胡须/沧桑/疲态夹具）');
+  });
+
+  /* 手部三态一律不追加系统手部段（2026-10-01 定点返修：同步男性最终状态）：
+     unspecified / hidden 本来就不追加；visible 也**同样不追加** ——
+     手的出现与动作交给 description，界面与 debug 仍如实记 visible。 */
+  const un = g.buildSingleSubjectExperimentPrompt({
+    api, description: '全身站在街边', shot: 'full', subjects: [male],
+    visualMode: 'sleepy-default', hands: 'unspecified', extras: []
+  });
+  if (un.positive.indexOf('hands') >= 0) throw new Error('未指定时不许追加手部词');
+  const hid = g.buildSingleSubjectExperimentPrompt({
+    api, description: '自拍', shot: 'selfie', subjects: [male],
+    visualMode: 'sleepy-default', hands: 'hidden', extras: []
+  });
+  if (hid.positive.indexOf('hands') >= 0) throw new Error('明确不入镜时不许追加手部词');
+  const vis = g.buildSingleSubjectExperimentPrompt({
+    api, description: '自拍', shot: 'selfie', subjects: [male],
+    visualMode: 'sleepy-default', hands: 'visible', extras: []
+  });
+  if (vis.positive.indexOf('Anatomically coherent hands') >= 0) throw new Error('手可见（默认模式）不该再追加系统手部段');
+  if (vis.positive.indexOf('naturally long fingers') >= 0) throw new Error('旧修长手指审美词没退休');
+  /* 同输入同参数，唯一差集是 hands：两版 positive 必须逐字一致（手部段都为
+     空）—— 这里另配一对夹具，不用上面 shots/description 都不同的那两组 */
+  const visPair = g.buildSingleSubjectExperimentPrompt({
+    api, description: '自拍', shot: 'selfie', subjects: [male],
+    visualMode: 'sleepy-default', hands: 'visible', extras: []
+  });
+  const unPair = g.buildSingleSubjectExperimentPrompt({
+    api, description: '自拍', shot: 'selfie', subjects: [male],
+    visualMode: 'sleepy-default', hands: 'unspecified', extras: []
+  });
+  if (visPair.positive !== unPair.positive) throw new Error('visible 与 unspecified 的 positive 应逐字一致（手部段均为空）');
+  if (vis.debug.hands !== 'visible') throw new Error('visible 的选择被改写了');
+  if (vis.debug.handsVersion !== 'off') throw new Error('手可见时手部词版本标识应为 off（关闭）');
+
+  /* custom（空 / 非空）：无默认视觉词、无男性校准；保留身份/结构/镜头/防增人（手部结构版已退休） */
+  ['general', 'nai'].forEach((k) => {
+    [['', '空 custom'], ['flat graphic illustration, limited color palette', '非空 custom']].forEach((c) => {
+      const b = g.buildSingleSubjectExperimentPrompt({
+        api: g.newApi(k), description: '站在窗边', shot: 'full', subjects: [male],
+        visualMode: 'custom', customVisualStyle: c[0], hands: 'visible', extras: []
+      });
+      const lookWords = (k === 'general')
+        ? ['natural realistic full-body photography', 'visually pleasing but unposed']
+        : ['full-body slice-of-life illustration', 'grounded and unembellished'];
+      lookWords.forEach((w) => {
+        if (b.positive.indexOf(w) >= 0) throw new Error(k + ' ' + c[1] + ' 注入了 Sleepy 默认视觉词：' + w);
+      });
+      if (b.positive.indexOf('naturally long fingers') >= 0 || b.positive.indexOf('knuckle definition') >= 0) {
+        throw new Error(k + ' ' + c[1] + ' 不该注入修长手指／骨节审美');
+      }
+      if (b.positive.indexOf('Anatomically coherent hands') >= 0) throw new Error(k + ' ' + c[1] + ' 手可见时不该追加系统手部段');
+      if (b.positive.indexOf('1boy') < 0) throw new Error(k + ' ' + c[1] + ' 必须保留身份');
+      if (b.positive.indexOf('full-body shot') < 0) throw new Error(k + ' ' + c[1] + ' 必须保留镜头');
+      if (b.positive.indexOf('站在窗边') < 0) throw new Error(k + ' ' + c[1] + ' 必须保留 description');
+      if (b.positive.indexOf('solo, exactly one ' + (k === 'general' ? 'person' : 'character')) < 0) {
+        throw new Error(k + ' ' + c[1] + ' 必须保留单人结构');
+      }
+      if (b.negative.indexOf('extra person') < 0) throw new Error(k + ' ' + c[1] + ' 必须保留防随机增人');
+      if (b.negative.indexOf('plastic skin') >= 0) throw new Error(k + ' ' + c[1] + ' 不该注入审美型负面');
+      noCalib(b, k + ' ' + c[1]);
+      if (c[0] && b.positive.indexOf('flat graphic illustration') < 0) throw new Error(k + ' custom 词没透传');
+    });
+  });
+
+  /* 身份读取沿用 B0/B1：锁脸按 shot 分档，user 读马甲自己那份 */
+  const chRec = { id: 'c9', name: 'X', gender: 'male', faceLockText: 'silver hair', faceLockSelfie: 'red eyes', faceLockFull: 'tall' };
+  const bSelfie = g.buildSingleSubjectExperimentPrompt({
+    api, description: '站在门口', shot: 'selfie',
+    subjects: [g.subjectForChar(chRec, 'selfie')], visualMode: 'sleepy-default', extras: []
+  });
+  if (bSelfie.positive.indexOf('red eyes') < 0) throw new Error('selfie 没取自拍锁脸组');
+  if (bSelfie.positive.indexOf('tall') >= 0) throw new Error('selfie 不该取全身锁脸组');
+  const bFull = g.buildSingleSubjectExperimentPrompt({
+    api, description: '站在门口', shot: 'full',
+    subjects: [g.subjectForChar(chRec, 'full')], visualMode: 'sleepy-default', extras: []
+  });
+  if (bFull.positive.indexOf('tall') < 0) throw new Error('full 没取全身锁脸组');
+  const bUser = g.buildSingleSubjectExperimentPrompt({
+    api, description: '拿着咖啡', shot: 'selfie',
+    subjects: [g.subjectForUser({ id: 'u9', name: '小A', gender: 'female', faceLockText: 'bob hair', faceLockSelfie: 'green eyes' }, 'selfie')],
+    visualMode: 'sleepy-default', hands: 'visible', extras: []
+  });
+  if (bUser.positive.indexOf('1girl') < 0 || bUser.positive.indexOf('green eyes') < 0) throw new Error('马甲身份读取不对');
+
+  /* NAI 同构，且不写死数量词 */
+  const nai = g.buildSingleSubjectExperimentPrompt({
+    api: g.newApi('nai'), description: '便利店门口', shot: 'candid',
+    subjects: [male], visualMode: 'sleepy-default', extras: []
+  });
+  if (nai.positive.indexOf('slice-of-life illustration') < 0) throw new Error('NAI 单人底座没按 kind 取');
+  if (nai.negative.indexOf('duplicate character') < 0) throw new Error('NAI 结构负面不对');
+  if (nai.negative.indexOf('1girl') >= 0 || nai.negative.indexOf('1boy') >= 0) throw new Error('NAI 单人不写死数量词');
+  noCalib(nai, 'NAI sleepy-default');
+
+  /* 临时单人（普通底座测试）：没岛 / 没角色 / 没马甲也能用；
+     不读任何真实身份、不造 entityId、不装成 char|user；性别只在实验里拼。 */
+  const TEMP_DESC = '35 岁的男人，灰白短发，眼角有细纹，穿着旧夹克，站在阳台上';
+  const g_buildTemp = (kind, gender) => g.buildSingleSubjectExperimentPrompt({
+    api: g.newApi(kind), description: TEMP_DESC, shot: 'portrait', tempSingle: true,
+    gender: gender, visualMode: 'sleepy-default', extras: []
+  });
+  [['', '不指定'], ['male', '男'], ['female', '女']].forEach((g) => {
+    const b = g_buildTemp('general', g[0]);
+    if (b.positive.indexOf('solo, exactly one person') < 0) throw new Error('临时单人缺单人结构');
+    const wantTag = g[0] === 'male' ? '1boy' : (g[0] === 'female' ? '1girl' : '');
+    if (wantTag && b.positive.indexOf(wantTag) < 0) throw new Error('临时单人没拼出 ' + wantTag);
+    if (!wantTag && (b.positive.indexOf('1boy') >= 0 || b.positive.indexOf('1girl') >= 0)) {
+      throw new Error('不指定性别时不该硬塞 tag');
+    }
+    /* 年龄 / 外貌描述原样透传 */
+    if (b.positive.indexOf(TEMP_DESC) < 0) throw new Error('描述没透传（' + g[1] + '）');
+    if (b.debug.subjectSource !== 'temp-single') throw new Error('subjectSource 不是 temp-single');
+    if (b.debug.entityId !== '') throw new Error('临时单人编了 entityId');
+    /* 单人路径不能带 01 的无人排人词 */
+    ['empty of people', 'no human subject', 'no people, no human figure', 'human']
+      .forEach((w) => { if (b.negative.indexOf(w) >= 0) throw new Error('单人负面混进了无人排人词：' + w); });
+    noCalib(b, '临时单人 ' + g[1]);
+  });
+  /* 临时单人**不看** subjects：同时塞一个真实男性身份也必须被无视 */
+  const tempShadow = g.buildSingleSubjectExperimentPrompt({
+    api, description: '站在窗边', shot: 'portrait', tempSingle: true, gender: 'female',
+    subjects: [male], visualMode: 'sleepy-default', extras: []
+  });
+  if (tempShadow.positive.indexOf('1girl') < 0) throw new Error('临时单人应只用自己选的性别');
+  if (tempShadow.positive.indexOf('stubble beard') >= 0) throw new Error('临时单人读了真实身份外貌');
+  if (tempShadow.positive.indexOf('1boy') >= 0) throw new Error('临时单人被传入的 subjects 串了性别');
+  /* 临时单人 × NAI × 镜头 × 手部 × custom 空 */
+  const tempNai = g.buildSingleSubjectExperimentPrompt({
+    api: g.newApi('nai'), description: '坐在窗边', shot: 'candid', tempSingle: true,
+    gender: 'male', visualMode: 'sleepy-default', hands: 'visible', extras: []
+  });
+  if (tempNai.positive.indexOf('slice-of-life illustration') < 0) throw new Error('临时单人 NAI 底座没按 kind 取');
+  if (tempNai.positive.indexOf('candid shot') < 0) throw new Error('临时单人镜头层没进');
+  /* 临时单人手可见也不追加系统手部段（全分支同步关闭） */
+  if (tempNai.positive.indexOf('Anatomically coherent hands') >= 0) throw new Error('临时单人手可见不该追加系统手部段');
+  const tempCu = g.buildSingleSubjectExperimentPrompt({
+    api, description: '坐在窗边', shot: 'full', tempSingle: true, gender: '',
+    visualMode: 'custom', customVisualStyle: '', hands: 'visible', extras: []
+  });
+  if (tempCu.positive.indexOf('natural realistic full-body photography') >= 0) throw new Error('临时单人 custom 空回退了默认');
+  if (tempCu.positive.indexOf('Anatomically coherent hands') >= 0) throw new Error('临时单人 custom 不该追加系统手部段');
+  if (tempCu.negative.indexOf('plastic skin') >= 0) throw new Error('临时单人 custom 注入了审美负面');
+  noCalib(tempCu, '临时单人 custom');
+  /* 临时单人的存储 */
+  if (['', 'female', 'male'].indexOf(g.singleExpGender()) < 0) throw new Error('临时单人性别实验态读取出错');
+
+  /* ---- 施工单 v2 §3/§5/§6：男性视觉底座替换（只限 General 临时男 + sleepy-default）---- */
+  const MALE_LOOK = g.SLEEPY_TEMP_MALE_LOOK;
+  const MALE_MARK = 'beautifully idealized adult male face';
+  if (!MALE_LOOK || MALE_LOOK.indexOf(MALE_MARK) < 0) throw new Error('男性底座常量丢了或被改写');
+  if (MALE_LOOK.indexOf('窗边') >= 0 || MALE_LOOK.indexOf('花束') >= 0) {
+    throw new Error('测试内容被写进了默认常量');
+  }
+  const mkTemp = (kind, gender, mode, custom, hands) => g.buildSingleSubjectExperimentPrompt({
+    api: g.newApi(kind), description: '窗边的男人，灰色上衣', shot: 'portrait',
+    tempSingle: true, gender: gender, visualMode: mode, customVisualStyle: custom || '',
+    hands: hands || 'unspecified', extras: []
+  });
+
+  const sdMale = mkTemp('general', 'male', 'sleepy-default');
+  if (sdMale.debug.visualLayer !== 'temp-male-v2') throw new Error('新男性分支没被路由');
+  const maleCnt = sdMale.positive.split(MALE_MARK).length - 1;
+  if (maleCnt !== 1) throw new Error('男性底座应恰好一份，实际 ' + maleCnt + ' 份');
+  if (sdMale.positive.indexOf(MALE_LOOK) < 0) throw new Error('胜出原文没逐字落进 positive（空白被改了？）');
+  /* 替换，不是叠加：旧 general.look[shot] 一句都不许再出现 */
+  ['natural realistic portrait photography', 'visually pleasing but unposed', 'believable facial proportions']
+    .forEach((w) => { if (sdMale.positive.indexOf(w) >= 0) throw new Error('旧的默认视觉词仍在叠加：' + w); });
+  /* 镜头 / description / 单人结构 / 必要质量层各自保留 */
+  if (sdMale.positive.indexOf('half-body portrait') < 0) throw new Error('镜头层没了');
+  if (sdMale.positive.indexOf('窗边的男人，灰色上衣') < 0) throw new Error('description 没了');
+  if (sdMale.positive.indexOf('solo, exactly one person') < 0) throw new Error('单人结构没了');
+  if (sdMale.positive.indexOf('masterpiece, best quality, highly detailed') < 0) throw new Error('必要质量层没了');
+  /* 负面沿用 custom 组成：不加审美负面、不加新词 */
+  if (sdMale.negative.indexOf('plastic skin') >= 0 || sdMale.negative.indexOf('overly airbrushed skin') >= 0
+    || sdMale.negative.indexOf('stiff pose') >= 0) throw new Error('新分支不该带审美负面');
+  if (sdMale.negative.indexOf('extra person') < 0) throw new Error('结构负面没了');
+  noCalib(sdMale, '男性新底座');
+  /* 与「custom = 第五节原文」等价（同输入、hands=unspecified） */
+  const cuMale = mkTemp('general', 'male', 'custom', MALE_LOOK);
+  if (cuMale.positive !== sdMale.positive) throw new Error('custom 原文 vs 新默认分支：positive 不等价');
+  if (cuMale.negative !== sdMale.negative) throw new Error('custom 原文 vs 新默认分支：negative 不等价');
+  /* 其他路由维持现状 */
+  /* 女性 2026-10-01 起走定稿 C 版（替换默认 look，不是叠加） */
+  const femRoute0 = mkTemp('general', 'female', 'sleepy-default');
+  if (femRoute0.positive.indexOf('strikingly beautiful adult woman') < 0) throw new Error('女性没走 C 版底座');
+  if (femRoute0.positive.indexOf('natural realistic portrait photography') >= 0) throw new Error('女性旧默认视觉词还在叠加');
+  if (mkTemp('general', 'female', 'sleepy-default').positive.indexOf(MALE_MARK) >= 0) throw new Error('女性被串了男性词');
+  if (mkTemp('general', '', 'sleepy-default').positive.indexOf(MALE_MARK) >= 0) throw new Error('性别不指定不该走男性底座');
+  if (mkTemp('nai', 'male', 'sleepy-default').positive.indexOf(MALE_MARK) >= 0) throw new Error('NAI 不该走男性底座');
+  if (mkTemp('general', 'male', 'custom').positive.indexOf(MALE_MARK) >= 0) throw new Error('custom 空不该偷加新底座');
+  const realMale = g.buildSingleSubjectExperimentPrompt({
+    api, description: '站在窗边', shot: 'portrait', subjects: [male],
+    visualMode: 'sleepy-default', extras: []
+  });
+  if (realMale.positive.indexOf(MALE_MARK) >= 0) throw new Error('真实身份不该走临时男性分支');
+  if (realMale.negative.indexOf('plastic skin') < 0) throw new Error('其他默认分支的审美负面不该被动');
+  /* 路由的两个出口 */
+  const genApi = g.newApi('general');
+  if (!g.tempMaleLookOn({ tempSingle: true, gender: 'male', visualMode: 'sleepy-default', api: genApi })) throw new Error('tempMaleLookOn 判定错');
+  if (g.tempMaleLookOn({ tempSingle: true, gender: 'male', visualMode: 'sleepy-default', api: g.newApi('nai') })) throw new Error('NAI 不该命中男性底座');
+  if (g.tempMaleLookOn({ tempSingle: true, gender: 'female', visualMode: 'sleepy-default', api: genApi })) throw new Error('女性不该命中');
+  if (g.singleVisualLayerOf({ tempSingle: true, gender: 'male', visualMode: 'sleepy-default', api: genApi }) !== 'temp-male-v2') throw new Error('视觉层版本标签错');
+  if (g.singleVisualLayerOf({ tempSingle: true, gender: 'male', visualMode: 'custom', api: genApi }) !== 'custom') throw new Error('custom 的标签不该变');
+  /* 手部三态在新分支上仍然按显式选择注入 */
+  if (mkTemp('general', 'male', 'sleepy-default', '', 'hidden').positive.indexOf('hands') >= 0) throw new Error('手明确不入镜时不该有手部词');
+
+  /* ---- 女性定稿 C 版（2026-10-01 投票定稿）：General 临时女 + sleepy-default ---- */
+  const FEMALE_LOOK = g.SLEEPY_TEMP_FEMALE_LOOK;
+  const FEMALE_MARK = 'strikingly beautiful adult woman';
+  if (!FEMALE_LOOK || FEMALE_LOOK.indexOf(FEMALE_MARK) < 0) throw new Error('女性 C 版常量丢了或被改写');
+  if (FEMALE_LOOK.indexOf('窗边') >= 0 || FEMALE_LOOK.indexOf('花束') >= 0) {
+    throw new Error('测试内容被写进了默认常量');
+  }
+  /* 用户要求强调的「设定优先」必须在正文里 */
+  if (FEMALE_LOOK.indexOf('do not replace them with a default face') < 0) throw new Error('C 版丢了「设定优先」那句');
+  const sdFemale = mkTemp('general', 'female', 'sleepy-default');
+  if (sdFemale.debug.visualLayer !== 'temp-female-c') throw new Error('女性分支没被路由到 C 版');
+  const femCnt = sdFemale.positive.split(FEMALE_MARK).length - 1;
+  if (femCnt !== 1) throw new Error('C 版应恰好一份，实际 ' + femCnt + ' 份');
+  if (sdFemale.positive.indexOf(FEMALE_LOOK) < 0) throw new Error('C 版原文没逐字落进 positive（空白被改了？）');
+  /* 替换，不是叠加 */
+  ['natural realistic portrait photography', 'visually pleasing but unposed', 'believable facial proportions']
+    .forEach((w) => { if (sdFemale.positive.indexOf(w) >= 0) throw new Error('旧的默认视觉词仍在叠加：' + w); });
+  /* 镜头 / description / 女性 tag 各自保留 */
+  if (sdFemale.positive.indexOf('half-body portrait') < 0) throw new Error('镜头层没了');
+  if (sdFemale.positive.indexOf('窗边的男人，灰色上衣') < 0) throw new Error('description 没了');
+  if (sdFemale.positive.indexOf('1girl') < 0) throw new Error('女性性别 tag 没了');
+  /* 负面（2026-10-01 收尾）：女性 C **与 custom C 对齐** —— 命中 femaleLook 时
+     传 noAesthetic=true，同样只留「必要质量负面 + 结构负面」，不追加
+     negativeAesthetic（plastic skin / overly airbrushed skin / stiff pose /
+     forced smile 这一组）。
+     ⚠️ 只改 buildSingleSubjectExperimentPrompt 里那一次传参
+     （maleLook || femaleLook）：没动 negativeAesthetic 常量、没放开 maleLook，
+     男性分支 / custom / NAI / 真实身份 / 性别未指定 / legacy 一律没变。 */
+  if (sdFemale.negative.indexOf('plastic skin') >= 0) throw new Error('女性 C 仍追加了审美负面，没与 custom C 对齐');
+  if (sdFemale.negative.indexOf('extra person') < 0) throw new Error('女性 C 的结构负面没了');
+  /* A/B 逐字相等验收：同样描述 / 镜头 / hands，custom 填完整 C  vs  默认命中 C。
+     ⚠️ 这不是「历史投票请求重现」—— 旧的手部结构段（well-proportioned hands …）
+     早已停用，两边请求都不再携带它。 */
+  const cuFemaleC = mkTemp('general', 'female', 'custom', FEMALE_LOOK, 'visible');
+  if (cuFemaleC.debug.visualLayer !== 'custom') throw new Error('custom 填 C 不该被路由到 C 版（它是 custom 路）');
+  if (sdFemale.positive !== cuFemaleC.positive) throw new Error('custom C 与默认 C 的 positive 不逐字相等');
+  if (sdFemale.negative !== cuFemaleC.negative) throw new Error('custom C 与默认 C 的 negative 不逐字相等');
+  /* 审美负面常量本身仍在（没被删、也没被全局改） */
+  if (g.SLEEPY_SINGLE_STYLE.general.negativeAesthetic.indexOf('plastic skin') < 0) throw new Error('negativeAesthetic 常量被改了');
+  /* 不串到别的分支 */
+  if (sdFemale.positive.indexOf(MALE_MARK) >= 0) throw new Error('女性被串了男性词');
+  if (mkTemp('general', '', 'sleepy-default').positive.indexOf(FEMALE_MARK) >= 0) throw new Error('性别不指定不该走女性 C 版');
+  if (mkTemp('nai', 'female', 'sleepy-default').positive.indexOf(FEMALE_MARK) >= 0) throw new Error('NAI 不该走女性 C 版');
+  if (mkTemp('general', 'female', 'custom').positive.indexOf(FEMALE_MARK) >= 0) throw new Error('custom 空不该偷加 C 版');
+  if (realMale.positive.indexOf(FEMALE_MARK) >= 0) throw new Error('真实身份不该命中女性 C 版');
+  /* 路由两个出口 */
+  if (!g.tempFemaleLookOn({ tempSingle: true, gender: 'female', visualMode: 'sleepy-default', api: genApi })) throw new Error('tempFemaleLookOn 判定错');
+  if (g.tempFemaleLookOn({ tempSingle: true, gender: 'male', visualMode: 'sleepy-default', api: genApi })) throw new Error('male 不该命中女性路由');
+  if (g.singleVisualLayerOf({ tempSingle: true, gender: 'female', visualMode: 'sleepy-default', api: genApi }) !== 'temp-female-c') throw new Error('女性视觉层版本标签错');
+
+  /* ---- 手部附加词整体关闭（2026-10-01 定点返修：同步男性最终状态）----
+     口径：visible / hidden / unspecified **一律不追加系统手部段**；
+     旧审美段、旧结构版、统一段都不补位；用户自定义视觉词 / description /
+     身份资料里的手部表述原样保留，不删不改不新增。 */
+  const HANDS_UNI = g.SLEEPY_HANDS_UNIFIED;
+  const OLD_MARK = 'naturally long fingers';
+  const OLD_MARK2 = 'subtle visible knuckle definition';
+  const STRUCT_MARK = 'well-proportioned hands';
+  const NEW_MARK = 'Anatomically coherent hands';
+  /* 1. 三个常量都还在（退休但保留，当历史对照与重新启用位置） */
+  if (!HANDS_UNI || HANDS_UNI.indexOf(NEW_MARK) < 0) throw new Error('统一手部段常量丢了');
+  if (HANDS_UNI.indexOf(OLD_MARK) >= 0 || HANDS_UNI.indexOf(OLD_MARK2) >= 0) throw new Error('统一段里还留着被要求去掉的旧词');
+  if (HANDS_UNI.indexOf('比耶') >= 0 || HANDS_UNI.indexOf('peace sign') >= 0) throw new Error('具体动作不许写进通用底座');
+  if (g.SLEEPY_SINGLE_STYLE.general.handsPositive.indexOf(OLD_MARK) < 0) throw new Error('历史对照段（handsPositive）没了');
+  if (g.SLEEPY_SINGLE_STYLE.general.handsStructure.indexOf(STRUCT_MARK) < 0) throw new Error('历史对照段（handsStructure）没了');
+  if (g.SLEEPY_SINGLE_STYLE.nai.handsPositive.indexOf(OLD_MARK) < 0) throw new Error('NAI 历史对照段没了');
+
+  const maleVis = mkTemp('general', 'male', 'sleepy-default', '', 'visible');
+  const maleNo = mkTemp('general', 'male', 'sleepy-default', '', 'unspecified');
+  /* 2. visible 也返回空串：与 unspecified **逐字相等**（唯一差集＝本来就没有的手部段） */
+  if (maleVis.positive !== maleNo.positive) {
+    throw new Error('visible 与 unspecified 的 positive 应逐字一致（手部段均为空），实际有差异');
+  }
+  if (maleVis.debug.handsVersion !== 'off') throw new Error('手部词版本标识应为 off（关闭），实际：' + maleVis.debug.handsVersion);
+  if (maleNo.debug.handsVersion !== 'none') throw new Error('unspecified 的版本标识应是 none');
+  /* 3. 系统手部段一份都没有：统一段 / 旧审美段 / 旧结构版 全分支都查 */
+  [['临时男 v2', maleVis], ['临时女 C', mkTemp('general', 'female', 'sleepy-default', '', 'visible')],
+    ['性别未指定', mkTemp('general', '', 'sleepy-default', '', 'visible')],
+    ['custom', mkTemp('general', 'male', 'custom', '', 'visible')],
+    ['NAI', mkTemp('nai', 'male', 'sleepy-default', '', 'visible')]]
+    .forEach((pair) => {
+      const p = pair[1].positive;
+      if (p.indexOf(NEW_MARK) >= 0) throw new Error(pair[0] + ' 分支还注入了统一手部段');
+      if (p.indexOf(OLD_MARK) >= 0 || p.indexOf(OLD_MARK2) >= 0) throw new Error(pair[0] + ' 分支还注入了旧手部审美段');
+      if (p.indexOf(STRUCT_MARK) >= 0) throw new Error(pair[0] + ' 分支还注入了旧手部结构版');
+      if (p.indexOf('clean natural nails') >= 0) throw new Error(pair[0] + ' 分支还注入了旧手部审美段的另一半');
+    });
+  /* 4. 真实身份分支同样不追加；且不被串到女性 C 版 */
+  const realVis = g.buildSingleSubjectExperimentPrompt({
+    api, description: '站在窗边', shot: 'portrait', subjects: [male],
+    visualMode: 'sleepy-default', hands: 'visible', extras: []
+  });
+  if (realVis.positive.indexOf(NEW_MARK) >= 0 || realVis.positive.indexOf(OLD_MARK) >= 0) {
+    throw new Error('真实身份分支还在追加手部词');
+  }
+  if (realVis.positive.indexOf(FEMALE_MARK) >= 0) throw new Error('真实身份不该命中女性 C 版');
+  /* 5. 既有结构约束没被误删：负面里防乱肢体 / 排人的那几条仍在（措辞不变） */
+  if (realVis.negative.indexOf('extra person') < 0) throw new Error('结构负面（防增人）被删了');
+  if (realVis.negative.indexOf('deformed face') < 0) throw new Error('结构负面（防崩脸）被删了');
+  if (maleVis.negative.indexOf('extra person') < 0) throw new Error('新男性分支的结构负面被删了');
+  /* 6. 用户原文保留：自定义视觉词 / description / 身份资料里的手部表述原样在 */
+  /* 注意：自定义视觉词只在 custom 模式生效（sleepy-default 走 look[shot]），
+     所以这一条要用 custom 来验，别拿 sleepy-default 当夹具 */
+  const USER_HAND_TXT = 'her hands are clasped together, wearing a silver ring';
+  const cuHand = mkTemp('general', 'female', 'custom', USER_HAND_TXT, 'visible');
+  if (cuHand.positive.indexOf(USER_HAND_TXT) < 0) throw new Error('用户自定义视觉词里的手部表述被删了');
+  if (cuHand.positive.indexOf('窗边的男人，灰色上衣') < 0) throw new Error('description 被删了');
+  const realHand = g.buildSingleSubjectExperimentPrompt({
+    api, description: '握着一杯热咖啡，手背有疤', shot: 'portrait', subjects: [{ ...male }],
+    visualMode: 'sleepy-default', hands: 'visible', extras: []
+  });
+  if (realHand.positive.indexOf('握着一杯热咖啡，手背有疤') < 0) throw new Error('身份资料里的手部描述被删了');
+  /* 7. hidden / unspecified：系统手部段同样为空，hands 记录仍按原选择 */
+  ['hidden', 'unspecified'].forEach((h) => {
+    const b = mkTemp('general', 'male', 'sleepy-default', '', h);
+    if (b.positive.indexOf(NEW_MARK) >= 0 || b.positive.indexOf(OLD_MARK) >= 0) {
+      throw new Error(h + ' 时不该有任何手部词');
+    }
+    if (b.debug.handsVersion !== 'none') throw new Error(h + ' 的版本标识应是 none');
+    if (b.debug.hands !== h) throw new Error(h + ' 的选择没被如实记录');
+  });
+  /* 8. 手明确可见 ≠ 不可见：下拉记 visible 就不能被伪装，参数回显也不许说"未加" */
+  if (maleNo.debug.hands === 'visible') throw new Error('未指定不该被记成 visible');
+  if (maleVis.debug.hands !== 'visible') throw new Error('visible 不该被改写成别的值');
+  if (maleVis.debug.handsVersion === 'none') throw new Error('visible 不能把「系统无手部词」说成「没选过可见」');
+  /* 9. 负面没被加新词 */
+  ['zombie', 'skeleton', 'withered', 'grey skin', 'green skin', 'extra fingers', 'extra limbs'].forEach((w) => {
+    if (maleVis.negative.indexOf(w) >= 0) throw new Error('负面被加了新词：' + w);
+  });
+
+  /* 守卫：legacy / 无人 / 多主体 / npc */
+  const G = { api, description: 'x', shot: 'full', visualMode: 'sleepy-default' };
+  if (g.buildSingleSubjectExperimentPrompt(Object.assign({}, G, { subjects: [male], visualMode: 'legacy' })) !== null) throw new Error('legacy 应返回 null 走旧路');
+  if (g.buildSingleSubjectExperimentPrompt(Object.assign({}, G, { subjects: [] })) !== null) throw new Error('没人走 01，单人应返回 null');
+  if (g.buildSingleSubjectExperimentPrompt(Object.assign({}, G, { subjects: [male, female] })) !== null) throw new Error('多主体不注入单人底座');
+  if (g.buildSingleSubjectExperimentPrompt(Object.assign({}, G, { subjects: [{ entityType: 'npc', entityId: 'n1' }] })) !== null) throw new Error('npc 没有 B0 主体类型：返回 null，不许伪装成 char');
+
+  /* 01｜场景与物品本批不受影响（回归） */
+  const scene = g.buildSceneObjectExperimentPrompt({
+    api, description: '雨天窗边', contentType: 'scene', subjects: [],
+    visualMode: 'sleepy-default', extras: []
+  });
+  if (!scene || scene.positive.indexOf('empty of people') < 0) throw new Error('01 场景/物品路径被 E2 改坏了');
+
+  /* 实验态存储读取 */
+  if (['unspecified', 'visible', 'hidden'].indexOf(g.singleExpHands()) < 0) throw new Error('手部实验态读取出错');
+  if (['auto', 'selfie', 'portrait', 'full', 'candid'].indexOf(g.singleExpShot()) < 0) throw new Error('镜头实验态读取出错');
+  if (typeof g.singleExpSubjectRef() !== 'string') throw new Error('主体实验态读取出错');
   return 'ok';
 });
 

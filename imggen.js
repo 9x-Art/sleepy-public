@@ -144,11 +144,21 @@
   function normalizePlan(plan) {
     plan = plan || {};
     var subs = Array.isArray(plan.subjects) ? plan.subjects : [];
+    /* expectedSubjectCount（正式接入 2026-10-01；返修单 v2 §5 修正）：
+       模型**声明**要画几个人，由构造 plan 的入口随 plan 带进来 ——
+       **必须取自解析前的原始声明**（filter/去重之前），不能拿 filter 后的
+       subjects.length 冒充。区分 absent（未声明，undefined）与显式 0：
+       显式声明的有效非负整数要与解析数**严格相等**，少人（有人解析不了）
+       和多人（声明与事实矛盾）都拦。 */
+    var hasExpected = plan.expectedSubjectCount !== undefined
+      && plan.expectedSubjectCount !== null;
     return {
       sender: PLAN_SENDERS.indexOf(plan.sender) >= 0 ? plan.sender : 'system',
       contentType: PLAN_CONTENT_TYPES.indexOf(plan.contentType) >= 0 ? plan.contentType : 'person',
       description: String(plan.description || '').trim(),
       shot: PLAN_SHOTS.indexOf(plan.shot) >= 0 ? plan.shot : 'auto',
+      expectedSubjectCount: hasExpected ? plan.expectedSubjectCount : undefined,
+      hasExpectedSubjectCount: hasExpected,
       subjects: subs.map(function (s) {
         s = s || {};
         return {
@@ -165,23 +175,30 @@
     };
   }
 
+  /* 单个主体的身份段（正式接入 2026-10-01 拆出的**唯一实现**）：
+     性别 tag + 锁脸词；withName=true 时前缀名字保持「谁长什么样」的对应。
+     subjectTextForPlan 按主体数决定要不要名字，正式拼接器按同一规则逐块取 ——
+     两处共用这一份，别再抄第三份。 */
+  function identitySegmentFor(s, withName) {
+    s = s || {};
+    var bits = [];
+    var g = genderTagOf(s.gender);
+    if (g) bits.push(g);
+    if (s.faceText) bits.push(String(s.faceText).replace(/^\s*,\s*/, ''));
+    var seg = bits.join(', ');
+    if (!seg) return '';
+    return (withName && s.name) ? (s.name + ' (' + seg + ')') : seg;
+  }
+
   /* 人物身份段：每个主体独立一段（性别 tag + 锁脸词），多人时前缀名字
      保持「谁长什么样」的对应。**身份段永不合并去重** —— 两个人都有
      「silver hair」是两份不同的特征，parts.indexOf 式去重只许用在
      description/extras 这类全局词上。 */
   function subjectTextForPlan(plan) {
     var subs = normalizePlan(plan).subjects;
-    var segs = subs.map(function (s) {
-      var bits = [];
-      var g = genderTagOf(s.gender);
-      if (g) bits.push(g);
-      if (s.faceText) bits.push(s.faceText.replace(/^\s*,\s*/, ''));
-      var seg = bits.join(', ');
-      if (!seg) return '';
-      /* 单主体不写名字（中文名进 tag 管线是噪音）；多主体必须绑定 */
-      return (subs.length > 1 && s.name) ? (s.name + ' (' + seg + ')') : seg;
-    }).filter(Boolean);
-    return segs.join(', ');
+    return subs.map(function (s) {
+      return identitySegmentFor(s, subs.length > 1);
+    }).filter(Boolean).join(', ');
   }
 
   /* 帮调用方造 subjects。char 按 shot 取锁脸分组；
@@ -233,7 +250,10 @@
       contentType: PLAN_CONTENT_TYPES.indexOf(obj.contentType) >= 0
         ? obj.contentType : (subs.length ? 'person' : 'scene'),
       shot: PLAN_SHOTS.indexOf(obj.shot) >= 0 ? obj.shot : 'auto',
-      subjects: subs
+      subjects: subs,
+      /* 解析前的原始声明数（filter 之前）—— 正式拼接器用它严格对账，
+         白名单滤掉的非法引用也算「解析不了的人」，不许静默减员。 */
+      subjectsDeclared: Array.isArray(obj.subjects) ? obj.subjects.length : null
     };
   }
 
@@ -352,6 +372,412 @@
     return store.set('sleepy_img_visual_exp_custom', String(t || ''));
   }
 
+  /* --------------------- 正式生图视觉层（内置 / 自定义） ---------------------
+     2026-10-01 施工单 v1 §四：正式路径只有两档，用户只选「内置」或「自定义」。
+     **独立字段**，不与实验区的 visualExpMode/visualExpCustom 混用：
+     - sleepy_img_style_mode    'builtin' | 'custom'（新用户无配置默认 builtin）
+     - sleepy_img_style_custom  自定义视觉词原文
+     已有选择和原文照旧保留；切换**不清空** custom 文本（切走再切回来还在）。
+     内置模式不提供内置词编辑（§一：内置词暂不提供编辑）。 */
+  var IMG_STYLE_MODES = ['builtin', 'custom'];
+  function imgStyleMode() {
+    var v = store.get('sleepy_img_style_mode');
+    return IMG_STYLE_MODES.indexOf(v) >= 0 ? v : 'builtin';
+  }
+  function setImgStyleMode(m) {
+    return store.set('sleepy_img_style_mode',
+      IMG_STYLE_MODES.indexOf(m) >= 0 ? m : 'builtin');
+  }
+  function imgStyleCustom() {
+    return String(store.get('sleepy_img_style_custom') || '');
+  }
+  function setImgStyleCustom(t) {
+    return store.set('sleepy_img_style_custom', String(t || ''));
+  }
+
+  /* 正式拼接器（施工单 §五 校验 + §七 层序）。唯一入口：imggen.generate 的
+     plan 分支 —— chat 标签 / 生图弹层 / 查岗 / 重画 / 日记 / 朋友圈 / 线下键
+     全部经它生效，不用逐入口改。
+     buildFormalPrompt(opts) →
+       { ok:true, positive, negative, debug }   拼好了，交给 requestAndStore
+     | { ok:false, error:{message,detail} }     校验不过 → **零请求**，明确报错
+     | null                                     NAI 等不接的组合 → 调用方回落 legacy
+     层序（§七）：必要质量 → 人数结构 → 独立主体身份块 → 合法镜头 → 共同画面描述
+     → 内置或自定义视觉层 → 适用负面。身份块**永不参与跨层去重**（不同身份
+     外貌文本相同是合法的，§五.3）；description / 视觉层 / extras 之间的全局
+     去重沿用 legacy 口径（joinLayers）。
+     底座路由（§五）：0 人→01；1 人→02（男 / 女 C）；2 人→03；3～4 人→04；
+     超过 4 人明确报错不截断。custom 只换视觉层；空 custom 合法 —— 保留结构与
+     必要质量层，不回退内置。系统附加手部正向段**恒空**（§七，与实验路径一致）；
+     用户描述 / custom 里的手部原文照常保留。 */
+  /* §五 主体校验（2026-10-02 从 buildFormalPrompt 抽出共用）：
+     General（buildFormalPrompt）与 NAI（buildFormalNaiRequest）两个编译器
+     共用这一份，不抄第三份。只读 plan、不改状态；
+     返回 { ok:true, plan, subs, n } | { ok:false, error }。 */
+  function validatePlanSubjects(planIn) {
+    var plan = normalizePlan(planIn);
+    var subs = plan.subjects;
+    var n = subs.length;
+
+    /* —— §五 校验：任何一条不过 → 明确报错、零生图请求 —— */
+    /* 1. 重复身份引用：同一实体出现两次（不同身份外貌文本相同是合法的，
+          只看 entityType+entityId；空 id 不参与 —— 群像临时主体没有 id）。 */
+    var seenId = {};
+    for (var i = 0; i < n; i++) {
+      var si = subs[i];
+      if (!si.entityId) continue;
+      var key = si.entityType + ':' + si.entityId;
+      if (seenId[key]) {
+        return { ok: false, error: err('画面主体重复了',
+          '「' + (si.name || si.entityType) + '」在画面主体里出现两次。'
+          + '同一个身份只报一次；两个不同的人就算外貌描述一样也要各自引用。') };
+      }
+      seenId[key] = true;
+    }
+    /* 2. 声明主体数与解析结果**严格相等**（返修单 v2 §5）：
+          - absent（程序自造主体的入口，无模型声明）→ 不做人数对账，
+            但身份引用仍逐个校验；
+          - 显式声明必须是有效非负整数，格式不对 → 拦；
+          - 声明 < 解析（有人解析不了：失效 / 越界 / 资料缺失）→ 拦，不静默减员；
+          - 声明 > 解析（声明与事实矛盾 / 列表被截断）→ 同样拦。 */
+    if (plan.hasExpectedSubjectCount) {
+      var declared = plan.expectedSubjectCount;
+      if (typeof declared !== 'number' || !isFinite(declared)
+        || Math.floor(declared) !== declared || declared < 0) {
+        return { ok: false, error: err('画面主体声明格式不对，这张没有生成',
+          '声明的主体数（' + declared + '）不是有效的非负整数 —— 拒绝生成，'
+          + '不会按猜的人数继续。重试或换画面再试。') };
+      }
+      if (declared !== n) {
+        return { ok: false, error: err(declared > n
+          ? '画面里有人解析不了，这张没有生成'
+          : '画面主体数和声明对不上，这张没有生成',
+          '模型声明要画 ' + declared + ' 个人，实际只解析出 ' + n + ' 个。'
+          + (declared > n
+            ? '可能有人不在当前场域、身份引用失效或资料缺失。'
+            : '解析结果比声明多，属于矛盾（可能是引用重复或列表异常）。')
+          + '不会静默换人、减员或降级成无人图；重试或换画面再试。') };
+      }
+    }
+    /* 3. 人数上限：超过 4 人本轮明确不支持，不能截断。 */
+    if (n > GROUP_MAX) {
+      return { ok: false, error: err('一次最多画 ' + GROUP_MAX + ' 个人',
+        '这张要画 ' + n + ' 人，超出本轮多人底座（' + GROUP_MIN + '～' + GROUP_MAX
+        + ' 人）的范围。不会悄悄截掉谁再画 —— 请减少画面里的人数。') };
+    }
+    /* 4. 0 人却报 person/mixed：主体缺失导致语义不明，不降级成无人图。 */
+    if (n === 0 && plan.contentType !== 'scene' && plan.contentType !== 'object') {
+      return { ok: false, error: err('画面说有人，但一个主体都没解析出来',
+        'contentType 是「' + plan.contentType + '」却没有任何可用主体。'
+        + '不会静默画成空场景；请让 TA 重报画面，或改成场景／物品描述。') };
+    }
+    return { ok: true, plan: plan, subs: subs, n: n };
+  }
+
+  function buildFormalPrompt(opts) {
+    opts = opts || {};
+    var api = opts.api || {};
+    /* NAI 已由 generate 分流到 buildFormalNaiRequest（2026-10-02 施工单）；
+       本守卫保留为纯函数层保护：直接调用者拿到 null，不会误用 General 词。 */
+    if (api.kind === 'nai') return null;
+
+    var kind = 'general';
+    var scenePack = SLEEPY_VISUAL_STYLE[kind];
+    var singlePack = SLEEPY_SINGLE_STYLE[kind];
+    var styleMode = IMG_STYLE_MODES.indexOf(opts.styleMode) >= 0
+      ? opts.styleMode : imgStyleMode();
+    var customStyle = String(opts.customStyle != null ? opts.customStyle : imgStyleCustom()).trim();
+
+    var v = validatePlanSubjects(opts.plan);
+    if (!v.ok) return { ok: false, error: v.error };
+    var plan = v.plan;
+    var subs = v.subs;
+    var n = v.n;
+
+    /* —— 底座路由 + 视觉层 —— */
+    var baseTag, structure, visual, identityBlocks = [];
+    var frame = '';
+    if (n === 0) {
+      baseTag = '01-scene';
+      structure = scenePack.sceneObjectStructure;
+      visual = styleMode === 'builtin' ? scenePack.sceneObjectPositive : customStyle;
+    } else {
+      identityBlocks = subs.map(function (s) {
+        return identitySegmentFor(s, n > 1);
+      }).filter(Boolean);
+      if (n === 1) {
+        structure = singlePack.structure;
+        frame = singlePack.frame[plan.shot] || '';
+        if (styleMode === 'builtin') {
+          /* 返修单 v2 §1：未知／其他性别**不再是拒绝理由** —— 走中性底座
+             neutral-subject-v1（不填性别/年龄/物种/五官，外貌跟随设定）。
+             男 / 女 → 各自的正式 v2 词（返修单 §3 最小保真修订版；
+             实验旧词不进正式路径）。身份引用无效等真错误仍零请求拒绝。 */
+          baseTag = subs[0].gender === 'male' ? '02-male-v2'
+            : subs[0].gender === 'female' ? '02-female-c-v2' : '02-neutral-v1';
+          visual = subs[0].gender === 'male' ? SLEEPY_FORMAL_MALE_LOOK_V2
+            : subs[0].gender === 'female' ? SLEEPY_FORMAL_FEMALE_LOOK_V2
+            : SLEEPY_NEUTRAL_SUBJECT_V1;
+          if (baseTag === '02-neutral-v1') {
+            /* 非人/未知性别主体的结构与负面最小适配（§2 审计）：person→subject，
+               去掉人体脸型三连 —— 鱼尾不是缺腿，非人附肢不是人体错误。 */
+            structure = SLEEPY_NEUTRAL_STRUCTURE_V1;
+          }
+        } else {
+          baseTag = '02-custom';
+          visual = customStyle;
+        }
+      } else {
+        baseTag = (n === 2 ? '03' : '04') + (styleMode === 'custom' ? '-custom' : '');
+        /* 03/04 内置视觉层（2026-10-01 用户找回原稿，见常量处注释）：
+           builtin 按人数各追加一次（two→TWO_LOOK / 3~4→GROUP_LOOK）；
+           custom 只透传用户词、不注入内置段。系统手部段恒空。 */
+        structure = n === 2 ? TWO_SUBJECT_STRUCTURE : GROUP_SUBJECT_STRUCTURE;
+        visual = styleMode === 'custom' ? customStyle
+          : (n === 2 ? SLEEPY_FORMAL_TWO_LOOK_V1 : SLEEPY_FORMAL_GROUP_LOOK_V1);
+      }
+    }
+
+    /* —— 层序拼装 —— */
+    var global = joinLayers([plan.description, visual, (opts.extras || []).join(', ')]
+      .filter(function (t) { return String(t || '').trim(); }));
+    var positive = [
+      scenePack.qualityPositive,
+      structure,
+      identityBlocks.join(', '),
+      frame,
+      global
+    ].filter(Boolean).join(', ');
+
+    /* —— 负面（§七：沿用已核准实验分支的负面组成，不混 legacy 整表）——
+       01：质量 + 结构（排人）；02：质量 + 单人结构（定稿态 noAesthetic，
+       中性档用中性负面）；03/04：只留质量负面。 */
+    var negative = joinLayers([scenePack.qualityNegative,
+      n === 0 ? scenePack.sceneObjectNegativeStructural
+        : (n === 1 ? (baseTag === '02-neutral-v1'
+          ? SLEEPY_NEUTRAL_NEGATIVE_V1
+          : singlePack.negativeStructural) : '')
+    ]);
+
+    var debug = {
+      path: 'formal',
+      base: baseTag,
+      visualVersion: baseTag,
+      styleMode: styleMode,
+      custom: customStyle ? '(有)' : '(空)',
+      kind: kind,
+      shot: plan.shot,
+      personCount: n,
+      expectedSubjectCount: plan.expectedSubjectCount,
+      subjects: subs.map(function (s) {
+        return { entityType: s.entityType, entityId: s.entityId, name: s.name,
+          gender: s.gender || '(未填)', faceText: s.faceText ? '(有)' : '(空)' };
+      }),
+      handsVersion: 'off',
+      positive: positive,
+      negative: negative
+    };
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[Sleepy][正式生图]', debug);
+    }
+    return { ok: true, positive: positive, negative: negative, debug: debug };
+  }
+
+  /* -------------------- NAI 正式编译器（2026-10-02 施工单） --------------------
+     generate 的 plan 分流：general/chat → buildFormalPrompt；nai → 本函数。
+     返回 { ok:true, request:{ positive, negative, v4Prompt?, v4NegativePrompt? } }
+        | { ok:false, error } —— **没有 null 形态**：不支持的组合是明确报错，
+     由 generate 零请求回传，绝不静默回落 legacy；编译抛错由 generate 的
+     try/catch 兜住（同样零请求、不回落）。
+
+     模型分支（只认 NAI_MODELS 现有四个，不扩新版本）：
+     - nai-diffusion-3：只发 input + negative_prompt，不发任何 V4 字段；
+       多人身份按**顺序描述**进 input（降级形态，非独立绑定，debug 标明）；
+     - 其余（V4 / V4.5 full/curated）：另发 v4_prompt / v4_negative_prompt，
+       每人一格 char_captions。
+
+     接口预设消费（选 C 语义，2026-10-02 第二轮定稿）：
+     - positivePreset / negativePreset **沿用现有消费契约**（与 legacy 同款：
+       `api.xxx || BUILTIN_PRESET.nai.xxx`，空串/未配置都回填出厂词）——
+       已有 NAI 接口的自定义预设词**不静默失效**，也不覆盖存储内容；
+     - 预设**就是质量层**：本编译器不再另抄一份质量词，不会把同一套出厂词
+       追加两遍；结构负面与预设负面做**词条级跨层去重**（dedupeTerms），
+       重复的 watermark 等只出现一份；
+     - ucPreset 维持 0（requestNai 现状）；不新增官方 UC 清单；
+     - builtin/custom 视觉层与接口预设**分别处理**：视觉层只进 core，
+       预设只当质量层，不混作一项。
+
+     身份消费（subjects 来自上游 subjectForChar / subjectForUser，锁脸沿用）：
+     - V4/V4.5：每人一格 char_captions（不带数字的 girl/boy + 该主体锁脸 tag；
+       未知性别**不写性别词也不丢主体**——保留档位保顺序）；
+     - V3：每人外貌按顺序进 input（已知性别配不带数字的 girl/boy；
+       未知性别只写外貌）；
+     - 人数 tag 只聚合**已知性别**：female/male 分别计数，1→'1girl'、
+       ≥2→'Ngirls'；未知性别不贡献人数 tag（debug.countCoverage 记录）。
+     ⚠️ 结构词只是文本引导，不是人数/绑定检测器；顺序连排不冒充已实现绑定。 */
+  function buildFormalNaiRequest(opts) {
+    opts = opts || {};
+    var api = opts.api || {};
+    var model = String(api.model || '');
+    if (NAI_MODELS.indexOf(model) < 0) {
+      return { ok: false, error: err('NAI 接口模型没配好，这张没有生成',
+        '模型名是「' + (model || '(空)') + '」，不在支持的模型名单（'
+        + NAI_MODELS.join(' / ') + '）里。不会回落旧拼接路径；去 设置 → 生图 补模型名。') };
+    }
+    var isV4 = model !== 'nai-diffusion-3';
+
+    var v = validatePlanSubjects(opts.plan);
+    if (!v.ok) return { ok: false, error: v.error };
+    var plan = v.plan;
+    var subs = v.subs;
+    var n = v.n;
+
+    var styleMode = IMG_STYLE_MODES.indexOf(opts.styleMode) >= 0
+      ? opts.styleMode : imgStyleMode();
+    var customStyle = String(opts.customStyle != null ? opts.customStyle : imgStyleCustom()).trim();
+
+    /* —— 人数聚合（只数已知性别；未知性别不贡献、不丢主体） —— */
+    var girls = 0, boys = 0, unknown = 0;
+    subs.forEach(function (s) {
+      if (s.gender === 'female') girls++;
+      else if (s.gender === 'male') boys++;
+      else unknown++;
+    });
+    function naiCountTag(c, one, many) {
+      return c === 1 ? one : (c > 1 ? c + many : '');
+    }
+    var countTags = [naiCountTag(girls, '1girl', 'girls'),
+      naiCountTag(boys, '1boy', 'boys')].filter(Boolean);
+
+    /* —— 镜头 tag（只说取景；auto/未知 shot 不产词） —— */
+    var NAI_FRAME = { auto: '', selfie: 'selfie, close-up', portrait: 'portrait, upper body',
+      full: 'full body', candid: 'candid' };
+    var frameTag = NAI_FRAME[plan.shot] || '';
+
+    /* —— 视觉层（builtin 候选草案 / custom 透传；空串 = 合法空，不回退） —— */
+    var visual;
+    if (styleMode === 'custom') {
+      visual = customStyle;
+    } else if (n === 0) {
+      visual = 'scenery, no humans, detailed background, soft lighting, highly detailed';
+    } else if (unknown === n) {
+      visual = 'detailed, soft lighting, detailed background';  /* 全未知性别：不塞人类词 */
+    } else {
+      visual = 'detailed face, detailed eyes, natural skin texture, soft lighting, detailed background';
+    }
+
+    /* —— 身份 / 主体段 —— */
+    var coreHead = [];
+    var subjectSegments = [];
+    if (n === 0) {
+      coreHead.push('no humans');
+    } else if (n === 1) {
+      coreHead.push('solo');
+    } else if (countTags.length) {
+      coreHead.push(countTags.join(', '));
+    }
+    if (frameTag) coreHead.push(frameTag);
+    if (n === 1) {
+      /* 单人：identitySegmentFor 自带 1girl/1boy + 锁脸，不再单独加人数 tag */
+      subjectSegments.push(identitySegmentFor(subs[0], false));
+    } else if (n > 1) {
+      if (isV4) {
+        /* V4：外貌进 char_captions，base 不重复身份段（人数 tag 已在 base） */
+      } else {
+        /* V3 顺序描述（降级）：每人 girl/boy（不带数字）+ 外貌 tag 按顺序连排；
+           未知性别只写外貌。顺序近似，不是独立绑定。 */
+        subs.forEach(function (s) {
+          var bits = [];
+          var gw = s.gender === 'female' ? 'girl' : (s.gender === 'male' ? 'boy' : '');
+          if (gw) bits.push(gw);
+          if (s.faceText) bits.push(String(s.faceText).replace(/^\s*,\s*/, ''));
+          if (bits.length) subjectSegments.push(bits.join(', '));
+        });
+      }
+    }
+    if (subjectSegments.length) coreHead.push(subjectSegments.join(', '));
+
+    var core = joinLayers(coreHead.concat([
+      plan.description,
+      visual,
+      (opts.extras || []).join(', ')
+    ]).filter(function (t) { return String(t || '').trim(); }));
+
+    /* —— 接口预设 = 质量层（沿用现有消费契约：空/未配置回填出厂词） —— */
+    var posPreset = api.positivePreset || BUILTIN_PRESET.nai.positive;
+    var positive = posPreset.indexOf('{p}') >= 0
+      ? posPreset.replace('{p}', core)
+      : (core ? posPreset + ', ' + core : posPreset);
+
+    var negPreset = api.negativePreset || BUILTIN_PRESET.nai.negative;
+    /* 结构负面（按档；预设已带质量词，不再另抄质量词） */
+    var structureNeg;
+    if (n === 0) {
+      structureNeg = '1girl, 1boy, human, person, face, portrait, selfie, watermark, logo, signature';
+    } else if (n === 1 && unknown === 1) {
+      structureNeg = 'extra person, duplicate person, watermark, signature, username, text';
+    } else if (n === 1) {
+      structureNeg = 'extra person, duplicate person, bad anatomy, deformed face, asymmetrical eyes, watermark, signature, username, text';
+    } else {
+      structureNeg = 'multiple views, out of frame, crowd, watermark, signature, text';
+    }
+    var negative = dedupeTerms(negPreset + ', ' + structureNeg);
+
+    /* —— V4 请求字段（schema：image.V4ConditionInput / V4ExternalCaption /
+       V4ExternalCharacterCaption；全部无 default —— 不用未验证默认：
+       use_coords/use_order 显式传，centers / legacy_uc 省略不发；
+       use_coords=false + use_order=true 是本地实现选择（不做坐标定位、
+       按列表顺序，与官方多人文档的顺序行为一致），远端实际行为待真图验证） —— */
+    var request = { positive: positive, negative: negative };
+    if (isV4) {
+      var charCaptions = subs.map(function (s) {
+        var bits = [];
+        var gw = s.gender === 'female' ? 'girl' : (s.gender === 'male' ? 'boy' : '');
+        if (gw) bits.push(gw);
+        if (s.faceText) bits.push(String(s.faceText).replace(/^\s*,\s*/, ''));
+        return { char_caption: bits.join(', ') };
+      });
+      request.v4Prompt = {
+        caption: { base_caption: positive, char_captions: charCaptions },
+        use_coords: false,
+        use_order: true
+      };
+      request.v4NegativePrompt = {
+        caption: { base_caption: negative, char_captions: [] },
+        use_coords: false,
+        use_order: true
+      };
+    }
+
+    var debug = {
+      path: 'formal-nai',
+      kind: 'nai',
+      model: model,
+      isV4: isV4,
+      styleMode: styleMode,
+      custom: customStyle ? '(有)' : '(空)',
+      shot: plan.shot,
+      personCount: n,
+      girls: girls,
+      boys: boys,
+      unknown: unknown,
+      countCoverage: unknown ? 'partial' : 'full',
+      multiCharacter: !isV4 ? (n > 1 ? 'sequential-degraded' : 'single')
+        : (n > 1 ? 'char_captions' : 'char_captions'),
+      presetSource: {
+        positive: api.positivePreset ? 'api' : 'builtin',
+        negative: api.negativePreset ? 'api' : 'builtin'
+      },
+      positive: positive,
+      negative: negative
+    };
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[Sleepy][NAI 正式]', debug);
+    }
+    return { ok: true, request: request, debug: debug };
+  }
+
+
   /* Sleepy 场景/物品视觉底座（E1 实验草案，**不是正式替换词**）：
      与 BUILTIN_SCENE 完全独立、互不覆写。四件分开：
      正向视觉词 / 无人主体结构 / 结构负面（排人等，custom 也保留）/
@@ -438,6 +864,667 @@
     };
     if (typeof console !== 'undefined' && console.info) {
       console.info('[Sleepy][视觉实验]', debug);
+    }
+    return { positive: positive, negative: negative, debug: debug };
+  }
+
+  /* --------------------- E2 单人角色视觉层本地实验 ---------------------
+     01｜场景与物品已封板，本批**只加单人这一档**，两者常量互不覆写。
+     实验字段同样只走 localStorage，不进接口配置 / 不进导出：
+     - sleepy_img_single_exp_subject  'char:<id>' | 'user:<id>' | '@temp' | ''
+                                      （空=没人走 01；@temp=临时单人，不读身份）
+     - sleepy_img_single_exp_shot     auto | selfie | portrait | full | candid
+     - sleepy_img_single_exp_hands    'unspecified' | 'visible' | 'hidden'
+     - sleepy_img_single_exp_gender   临时单人的性别 '' | 'female' | 'male'
+
+     主体有两**类**，实验函数里必须分得清清楚楚（2026-09-30 入口调整）：
+     ① 真实身份（锁脸联调）：只认**本岛名册**（角色 / 我的马甲）经
+        subjectForChar / subjectForUser 读出来的那一份。缺字段就空着（B1 口径），
+        绝不静默换成别的身份。
+     ② 临时单人（普通底座测试）：没有岛、没有角色、没有马甲时也能用。
+        **不读任何真实身份**、不装成 entityType:'char'/'user'、不编 entityId、
+        不落库；性别只在实验局部由 genderTagOf 生成，年龄/外貌/服装/动作
+        全部交给「想画什么」那段 description。
+     两条路都不靠 description 里的中英文关键词去「猜这里有个人」。 */
+  var VISUAL_EXP_HANDS = ['unspecified', 'visible', 'hidden'];
+  var SINGLE_EXP_SHOTS = ['auto', 'selfie', 'portrait', 'full', 'candid'];
+  /* 与 genderTagOf / 角色卡下拉同一套真实枚举，不另造档位 */
+  var TEMP_SINGLE_GENDERS = ['', 'female', 'male'];
+  /* 临时单人在「主体」下拉里的哨兵值。它不是 entityType，也不是 id ——
+     真身份分支永远不会看到它（page-imggen 在调实验函数前就分好路了）。 */
+  var TEMP_SINGLE_REF = '@temp';
+
+  /* 临时双人在「主体」下拉里的哨兵值（2026-10-01 · 03 临时双人测试入口）。
+     与 TEMP_SINGLE_REF 同理：它不是 entityType、不是 id —— 真身份分支
+     （buildSingleSubjectExperimentPrompt 的真实主体路）永远看不到它。
+     ⚠️ 临时双人**不读任何角色 / 马甲资料**：人物外貌、年龄、衣着全由
+     page-imggen 的「人物A / 人物B」两个独立输入框承载，只进下面这个
+     buildTwoSubjectExperimentPrompt，不写真实角色存储，也不伪造 user/char 引用，
+     不改 ImagePlan 契约。临时标签不构成跨图锁脸。 */
+  var TEMP_TWO_REF = '@temp-two';
+
+  /* 临时多人群像在「主体」下拉里的哨兵值（2026-10-01 · 04 临时多人群像测试）。
+     与 TEMP_TWO_REF 同构：不是 entityType、不是 id。
+     ⚠️ 多人**不读任何群岛 / 角色 / 马甲资料**：每个人的外貌、年龄、衣着由
+     page-imggen 的「人物A/B/C(/D)」四个独立输入框承载，只进
+     buildGroupSubjectExperimentPrompt，不写真实角色存储、不建岛、不伪造
+     user/char 引用、不改 ImagePlan 契约。多人临时标签同样不构成跨图锁脸。 */
+  var TEMP_GROUP_REF = '@temp-group';
+  /* 本轮人数上下限：3～4 人。UI 只允许点到 4 就停，这里再硬拦一次
+     （纯函数层兜底，不依赖页面）。 */
+  var GROUP_MIN = 3;
+  var GROUP_MAX = 4;
+  var GROUP_LABELS = ['A', 'B', 'C', 'D'];
+
+  function singleExpSubjectRef() {
+    var v = store.get('sleepy_img_single_exp_subject');
+    return typeof v === 'string' ? v : '';
+  }
+  function setSingleExpSubjectRef(ref) {
+    return store.set('sleepy_img_single_exp_subject', String(ref || ''));
+  }
+  function singleExpShot() {
+    var v = store.get('sleepy_img_single_exp_shot');
+    return SINGLE_EXP_SHOTS.indexOf(v) >= 0 ? v : 'auto';
+  }
+  function setSingleExpShot(s) {
+    return store.set('sleepy_img_single_exp_shot', SINGLE_EXP_SHOTS.indexOf(s) >= 0 ? s : 'auto');
+  }
+  function singleExpHands() {
+    var v = store.get('sleepy_img_single_exp_hands');
+    return VISUAL_EXP_HANDS.indexOf(v) >= 0 ? v : 'unspecified';
+  }
+  function setSingleExpHands(v) {
+    return store.set('sleepy_img_single_exp_hands',
+      VISUAL_EXP_HANDS.indexOf(v) >= 0 ? v : 'unspecified');
+  }
+  /* 临时单人的性别（真实枚举 '' / 'female' / 'male'）。只服务临时单人模式，
+     选真实身份时这一项不参与 —— 身份带自己的 gender。 */
+  function singleExpGender() {
+    var v = store.get('sleepy_img_single_exp_gender');
+    return TEMP_SINGLE_GENDERS.indexOf(v) >= 0 ? v : '';
+  }
+  function setSingleExpGender(g) {
+    return store.set('sleepy_img_single_exp_gender',
+      TEMP_SINGLE_GENDERS.indexOf(g) >= 0 ? g : '');
+  }
+
+  /* 单人视觉底座（02 实验草案，**不是正式替换词**）。
+     按实施单「纠正补充 §五」落位，与草案原卡的差别都在这里：
+     - 不写死 adult / rested，也不排皱纹、排疲态 —— 年龄、胡须、皮肤、
+       疲态、表情一律以身份层为准，通用层不许反着改；
+     - 男性校准只做「避免**额外**老化」，不强制年轻、无胡须或精神饱满；
+     - 人物类不用 subtle imperfections（会被模型读成皱纹和粗糙）。
+     必要质量层直接复用 01 的 SLEEPY_VISUAL_STYLE[].quality*（不另抄一份）。 */
+  var SLEEPY_SINGLE_STYLE = {
+    general: {
+      structure: 'solo, exactly one person, single subject',
+      /* 镜头层：只说取景，不带审美 —— custom 也保留（实施单 §十二） */
+      frame: {
+        auto: '',
+        selfie: 'close-up selfie shot',
+        portrait: 'half-body portrait',
+        full: 'full-body shot',
+        candid: 'candid shot'
+      },
+      /* 视觉审美层：仅 sleepy-default 消费 */
+      look: {
+        auto: 'natural realistic photography, believable proportions, natural posture, natural skin texture, soft natural light, realistic depth, soft natural color, visually pleasing but unposed',
+        selfie: 'natural realistic photography, believable facial proportions, natural skin texture, clear relaxed eyes, relaxed facial muscles, soft natural light, realistic depth, soft natural color, visually pleasing but unposed',
+        portrait: 'natural realistic portrait photography, believable facial proportions, natural skin texture, clear relaxed eyes, relaxed posture, soft directional light, realistic depth, natural color, visually pleasing but unposed',
+        full: 'natural realistic full-body photography, believable body proportions, natural posture, relaxed shoulders, authentic clothing texture, believable spatial relationships, natural light, realistic depth, soft natural color, visually pleasing but unposed',
+        candid: 'natural realistic candid photography, believable facial and body proportions, natural skin texture, relaxed posture, authentic movement, soft natural light, realistic depth, lived-in atmosphere, soft natural color, visually pleasing but unposed'
+      },
+      malePositive: 'defined but not weathered features, facial hair only when specified by the identity description',
+      maleNegative: 'unintended aging, unintentionally weathered face, overly rugged features, thick beard when unspecified',
+      handsPositive: 'well-proportioned hands, naturally long fingers, subtle visible knuckle definition, relaxed graceful hand posture, clean natural nails, realistic hands that interact naturally with nearby objects',
+      /* custom 版：只留「不改身份的比例 / 接触关系」这类结构要求 ——
+         「修长、骨感、干净指甲」是 sleepy-default 的审美方向，不是结构。 */
+      handsStructure: 'well-proportioned hands, relaxed natural hand posture, realistic hands that interact naturally with nearby objects',
+      negativeStructural: 'extra person, duplicate person, random passerby, unwanted character, deformed face, asymmetrical eyes, distorted facial proportions, text, watermark, logo',
+      negativeAesthetic: 'plastic skin, overly airbrushed skin, stiff pose, forced smile'
+    },
+    nai: {
+      structure: 'solo, exactly one character, single subject',
+      frame: {
+        auto: '',
+        selfie: 'close-up selfie shot',
+        portrait: 'half-body portrait',
+        full: 'full-body shot',
+        candid: 'candid shot'
+      },
+      look: {
+        auto: 'natural slice-of-life illustration, believable proportions, natural posture, natural skin rendering, gentle natural lighting, harmonious natural colors, grounded and unembellished',
+        selfie: 'natural slice-of-life illustration, believable facial proportions, natural skin rendering, clear relaxed eyes, relaxed facial muscles, gentle natural lighting, tactile materials, harmonious natural colors, grounded and unembellished',
+        portrait: 'natural character portrait illustration, believable facial proportions, natural skin rendering, clear relaxed eyes, detailed but unexaggerated features, relaxed posture, gentle directional lighting, harmonious natural colors, grounded and unembellished',
+        full: 'natural full-body slice-of-life illustration, believable body proportions, natural posture, relaxed shoulders, tactile clothing materials, believable spatial relationships, gentle natural lighting, grounded composition, harmonious natural colors, unembellished',
+        candid: 'natural candid slice-of-life illustration, believable facial and body proportions, natural skin rendering, relaxed posture, authentic movement, gentle natural lighting, detailed environment, tactile materials, grounded and unembellished'
+      },
+      malePositive: 'defined but not weathered features, facial hair only when specified by the identity description',
+      maleNegative: 'unintended aging, unintentionally weathered face, overly rugged features, thick beard when unspecified',
+      handsPositive: 'well-proportioned hands, naturally long fingers, subtle visible knuckle definition, relaxed elegant hand posture, clean natural nails, realistic hands that interact naturally with nearby objects',
+      handsStructure: 'well-proportioned hands, relaxed natural hand posture, realistic hands that interact naturally with nearby objects',
+      negativeStructural: 'extra person, duplicate character, random character, unwanted figure, deformed face, asymmetrical eyes, distorted facial proportions, text, watermark, logo',
+      negativeAesthetic: 'plastic skin, stiff pose, forced smile'
+    }
+  };
+
+  /* General · 临时单人 · 显式 male · sleepy-default 的**替换**视觉底座
+     （2026-09-30 施工单 v2 §5：用户在 custom 实验里认可后迁回来的原文，逐字保存）。
+     ⚠️ 它是**替换**旧的 general.look[shot]，不是叠加 —— 路由见 tempMaleLookOn。
+     只服务「试一张实验 + General + sleepy-default + 临时单人 + 显式 male」这一条路；
+     女性 / 性别未指定 / NAI / 真实身份 / 01 无人 / legacy / custom 全部维持现状。
+     这里的 daylight、发型与面部设计会形成默认倾向：夜景、既定发型脸型属于
+     **后续保真适配项**，本轮不把它声明成适配所有场景与身份的通用规则，
+     也不把窗边 / 灰衣服 / 25 岁 / 花束 / 摩托车这些测试内容写进默认常量。
+     段落之间的换行按拼接器的空白规范合成一个空格，其余逐字未改。 */
+  var SLEEPY_TEMP_MALE_LOOK = [
+    'A beautifully idealized adult male face with a photorealistic finish, combining the refined facial beauty of a romance illustration with believable human skin and dimensionality.',
+    'An elegantly tapered facial outline, softly sculpted cheekbones, a clean and refined jawline, and a well-proportioned chin that is neither broad nor excessively pointed. Elongated almond-shaped eyes with clearly defined eyelids, subtly emphasized lash lines, expressive dark irises, and delicately shaped eyebrows. A straight, finely defined nose bridge with a neat, softly sculpted tip. Beautifully shaped lips with a distinct cupid\'s bow and a softly full lower lip.',
+    'A balance of delicate beauty and adult masculine definition, with harmonious facial proportions and a distinctive, memorable appearance. Fine, even skin texture, subtle natural translucency, and polished beauty retouching. Airy, layered hair softly framing the face.',
+    'Prioritize exquisite facial design and visual appeal while retaining the stated age. Keep the face photographic rather than drawn, with soft dimensional daylight and believable everyday surroundings.'
+  ].join(' ');
+
+  /* 女性定稿底座（2026-10-01）：用户在多张真图投票后定稿选的 C 版，逐字保存。
+     适用面与男性那一份**完全对称**：试一张实验 + General + sleepy-default
+     + 临时单人 + 显式 female，命中即**替换**旧的 general.look[shot]（不是叠加）。
+     命中之外的分支（性别未指定 / NAI / 真实身份 / custom 之外的一切）维持现状。
+
+     这段正文已经写死「Follow the description … do not replace them with a
+     default face」—— 即用户要求强调的**设定优先**，不另补一条重复的词，
+     程序也不对描述里的外貌做二次改写。
+
+     ⚠️ 三点如实标注，别当成通用规则往外扩：
+     1. 它写死 `adult woman` 与 `East Asian` 默认族裔 —— 只服务这条实验分支，
+        真实身份保真适配、未成年人、其他族裔默认都是**后续项**；
+     2. 命中后负面**仍沿用 sleepy-default 那套审美负面**（plastic skin / stiff pose 等），
+        与男性分支的 noAesthetic 不同 —— 本轮只替换视觉层，负面不动；
+     3. `cinematic photograph` / `depth of field` 会把夜景或既有构图往电影感推，
+        与男性那一份同理，属**后续保真适配项**，本轮不声明为通用规则。（上面那段正文
+        里的双空格是 C 版原文自带，逐字保留，拼接时会按空白规范合成单空格。） */
+  var SLEEPY_TEMP_FEMALE_LOOK = 'A cinematic photograph of a strikingly beautiful adult woman, with the idealized, refined visual appeal of a lead actress in a live-action romance drama or a live-action anime adaptation. Realistic photography, not illustration.  Follow the description for facial features, hairstyle, makeup, outfit, expression and mood; do not replace them with a default face. Render whatever is described at its most attractive and harmonious: balanced, delicate proportions, clear expressive eyes, and clean, luminous skin with soft natural texture, polished but never plastic. Keep makeup light and natural unless the description says otherwise.  Natural, flattering light that belongs to the scene, soft photographic rendering with a gentle film-like quality, and natural depth of field. She feels caught in a genuine moment within a real, detailed environment. If ethnicity is not specified, default to an East Asian appearance.';
+
+  /* --------------------- 正式生图底座 v2（2026-10-01 返修单 v2 §2/§3） ---------------------
+     与上面两份实验历史词**分开版本化**：旧词原样保留、只服务实验路径（tempLookOn 那套），
+     正式路径（buildFormalPrompt）只消费下面三份。三份都是**新正式候选，未做真图验收**，
+     不冒称延续旧真图结论；新旧全文与差异见《验收-正式生图接入返修-v2.md》。
+
+     男性正式 v2 —— 以实验胜出全文为底的最小保真修订（返修单 §3 锚点逐句）：
+     - 删除整段写死脸型 / 眼形 / 鼻唇 / 发型的特征模板，换成身份优先句；
+     - adult male face → described male character's face；
+     - delicate beauty and adult masculine definition → refined beauty and the character's described appearance；
+     - 删除 Airy, layered hair softly framing the face.；
+     - soft dimensional daylight → soft dimensional lighting consistent with the described scene；
+     - 保留 retaining the stated age（不根据缺字段自动补成年）。 */
+  var SLEEPY_FORMAL_MALE_LOOK_V2 = [
+    'A beautifully idealized described male character\'s face with a photorealistic finish, combining the refined facial beauty of a romance illustration with believable human skin and dimensionality.',
+    'Preserve the supplied facial structure, eye shape, nose, lips, hairstyle, proportions, and distinguishing features. Refine their rendering without replacing them with a default face.',
+    'A balance of refined beauty and the character\'s described appearance, with harmonious facial proportions and a distinctive, memorable appearance. Fine, even skin texture, subtle natural translucency, and polished beauty retouching.',
+    'Prioritize exquisite facial design and visual appeal while retaining the stated age. Keep the face photographic rather than drawn, with soft dimensional lighting consistent with the described scene and believable everyday surroundings.'
+  ].join(' ');
+
+  /* 女性 C 正式 v2 —— 同为最小保真修订（返修单 §3）：
+     - strikingly beautiful adult woman → strikingly beautiful female character；
+     - 删除整句 East Asian 族裔兜底；
+     - balanced, delicate proportions → the character's stated proportions；
+     - clear expressive eyes → faithfully rendered eyes；
+     - clean, luminous skin with soft natural texture → the described complexion with soft natural texture；
+     - 删除默认妆容句（Keep makeup light…）。摄影美感与贴合场景光线的方向保留。 */
+  var SLEEPY_FORMAL_FEMALE_LOOK_V2 = 'A cinematic photograph of a strikingly beautiful female character, with the idealized, refined visual appeal of a lead actress in a live-action romance drama or a live-action anime adaptation. Realistic photography, not illustration. Follow the description for facial features, hairstyle, makeup, outfit, expression and mood; do not replace them with a default face. Render whatever is described at its most attractive and harmonious: the character\'s stated proportions, faithfully rendered eyes, and the described complexion with soft natural texture, polished but never plastic. Natural, flattering light that belongs to the scene, soft photographic rendering with a gentle film-like quality, and natural depth of field. She feels caught in a genuine moment within a real, detailed environment.';
+
+  /* 中性审美层 neutral-subject-v1（返修单 §2，本轮原创候选，尚未真图验收）：
+     适用于缺适用男女底座的单主体（性别未指定 / 非二元）或明确非人形态。
+     它**不填**身份、性别、年龄、物种或五官 —— 外貌跟随设定；也不能用于
+     custom 档（custom 只透传用户词，不注入此词）。只加一次，与人数结构分开。 */
+  var SLEEPY_NEUTRAL_SUBJECT_V1 = [
+    'Render the described subject with exceptional visual appeal and a carefully crafted photographic finish. Preserve the supplied identity, apparent age, species, body plan, proportions, facial features where present, and distinguishing traits; do not replace them with a standardized human appearance.',
+    'Bring refinement and expressive detail to the subject as described, with convincing dimensionality, nuanced surface texture, and coherent materials. Where skin, hair, scales, fur, or other surfaces are described, render those surfaces faithfully rather than substituting a default complexion or material.',
+    'Use flattering illumination motivated by the actual scene and its light sources. Preserve the requested framing, expression, action, mood, and environment. The image should feel vivid, visually compelling, and cohesive without imposing a gender, an adult age, a human anatomy, a daylight setting, or an unrequested relationship.'
+  ].join(' ');
+
+  /* 中性主体配套（返修单 §2 的结构 / 负面审计，最小适配，不建全物种库）：
+     - 结构：'person' → 'subject'（单主体不一定等于 one human person）；
+     - 负面：去掉人体脸型三连（deformed face / asymmetrical eyes /
+       distorted facial proportions —— 鱼尾不是缺腿，非人附肢不能被机械
+       当成人体错误），保留防增人 / 防杂人 / 防水印。 */
+  var SLEEPY_NEUTRAL_STRUCTURE_V1 = 'solo, exactly one subject, single subject';
+  var SLEEPY_NEUTRAL_NEGATIVE_V1 = 'extra person, duplicate person, random passerby, unwanted character, text, watermark, logo';
+
+  /* ---- 03 双人 / 04 多人 内置视觉层（2026-10-01 深夜用户找回原稿，逐字落库）----
+     用户确认这两段与 03/04 真图验证时所用的 custom 视觉原文**一致**——
+     同时更正此前两份报告「真图验证时 custom 为空」的表述：那是无依据推断，作废。
+     版本化：SLEEPY_FORMAL_TWO_LOOK_V1（03）/ SLEEPY_FORMAL_GROUP_LOOK_V1（04）。
+     消费规则：**仅**正式 builtin、主体校验全部通过后，按 2 人 / 3～4 人分别
+     追加**一次**；人数结构、独立身份块、画面描述照旧在前，审美词不替代结构词。
+     custom 档不注入这两段（custom 只透传用户词），也不覆盖用户已存的自定义文本。
+     不拼男女单人词 / 中性词；系统手部附加段仍恒空；旧实验记录与实验路径不动。
+     ⚠️ 两段含 human presence 与面部/皮肤表达 —— 只证明人物画面形态；
+     不能据此宣称**非人形态**的 03/04 已验收；与明确非人设定的适用性冲突
+     单列回报，不偷偷改写原稿。 */
+  var SLEEPY_FORMAL_TWO_LOOK_V1 = [
+    'A beautifully crafted cinematic photograph of the two described people, with refined, subtly idealized visual appeal and believable human presence. Realistic photography, not illustration.',
+    'Preserve each person\'s stated age, ethnicity, facial features, hairstyle, body type, makeup, clothing, expression, and distinguishing traits. Bring out the individual beauty of each person without replacing their features with a standard face or making them look younger than described. Render both people with equally careful facial detail and soft, convincing dimensionality. Skin has natural texture and translucency, polished but never plastic.',
+    'Use flattering photographic light that belongs to the described scene, with coherent color, shadows, and material detail across both people and their surroundings. Adapt the framing and depth of field to the requested composition, keeping both people\'s faces readable. Let the scene description determine the mood and interaction, with the feeling of a shared moment in a real, detailed environment.'
+  ].join(' ');
+
+  var SLEEPY_FORMAL_GROUP_LOOK_V1 = [
+    'A beautifully crafted cinematic photograph of the described people, with refined, subtly idealized visual appeal and believable human presence. Realistic photography, not illustration.',
+    'Preserve each person\'s stated age, ethnicity, facial features, hairstyle, body type, makeup, clothing, expression, and distinguishing traits. Bring out the individual beauty of each person without replacing their features with a standard face or making them look younger than described. Render every person with equally careful facial detail and soft, convincing dimensionality. Skin has natural texture and translucency, polished but never plastic.',
+    'Use flattering photographic light that belongs to the described scene, with coherent color, shadows, and material detail across the people and their surroundings. Adapt the framing and depth of field to the requested composition, keeping every person\'s face readable. Let the scene description determine the mood and interaction, with the feeling of a shared moment in a real, detailed environment.'
+  ].join(' ');
+
+
+  /* ⚠️ 已退休 —— **当前不参与任何拼接**（2026-10-01 定点返修）。
+     前身是 09-30 的临时男性手部候选段，10-01 短暂当过「全分支唯一手部段」，
+     返修后回到「关闭」状态：visibleHandsText 一律 return ''，
+     各分支不追加、旧的 general/nai handsPositive 与 handsStructure
+     也**不拿来补位**，本段同样不补位。
+
+     退休原因（两段都在同一份返修单里）：
+     1. 男性那一路已经定在「额外手部词返回空串」这个最终状态上，
+        把统一段推广全分支与「同步男性最终状态」不是一回事，已回退；
+     2. 关键结构约束 `well-proportioned hands, relaxed natural hand posture,
+        realistic hands that interact naturally with nearby objects`
+        （原 handsStructure）失去唯一出处 —— 已单列回报，**不自行重写补词**。
+
+     常量本身原样留着（含导出）当历史对照与重新启用位置，
+     不删、不改、不新增替代段，也不新增手部负面词。
+     动作归属始终由本次 description 决定 —— 不把「比耶」写进任何通用底座。 */
+  var SLEEPY_HANDS_UNIFIED = 'Anatomically coherent hands with balanced palm and finger proportions, softly modeled finger pads and natural joint contours. Hand and finger skin tones consistent with the person\'s complexion and the scene\'s lighting, with continuous natural shading from wrist to fingertips. A natural execution of the described gesture, with believable finger spacing and bending.';
+
+  /* 路由判定（施工单 v2 §3）—— **唯一出口**，别在别处再抄一份：
+     试一张实验路径 + General 接口 + sleepy-default + 临时单人 + 显式 male。
+     少一个条件就退回原来的视觉层；MALE_CALIBRATION_ENABLED 仍然 false，
+     与这组新词无关（那是旧防老校准，本单不重新启用）。 */
+  /* 两个底座路由的**共同实现**（2026-10-01 女性 C 版定稿后拆出来的），
+     **唯一出口**，别在别处再抄一份：
+     试一张实验路径 + General 接口 + sleepy-default + 临时单人 + 显式性别。
+     少一个条件就退回原来的视觉层；MALE_CALIBRATION_ENABLED 仍然 false。 */
+  function tempLookOn(opts, gender) {
+    opts = opts || {};
+    return opts.tempSingle === true && opts.gender === gender
+      && opts.visualMode === 'sleepy-default'
+      && !(opts.api && opts.api.kind === 'nai');
+  }
+  function tempMaleLookOn(opts) { return tempLookOn(opts, 'male'); }
+  function tempFemaleLookOn(opts) { return tempLookOn(opts, 'female'); }
+
+  /* 视觉层版本标签：给 UI 的「本次生成参数」显示用（走同一个判定，不另写一份） */
+  function singleVisualLayerOf(opts) {
+    opts = opts || {};
+    var mode = VISUAL_EXP_MODES.indexOf(opts.visualMode) >= 0 ? opts.visualMode : 'legacy';
+    if (mode === 'legacy') return 'legacy';
+    if (tempMaleLookOn(opts)) return 'temp-male-v2';
+    if (tempFemaleLookOn(opts)) return 'temp-female-c';
+    return mode;
+  }
+
+  /* 单人视觉层：只产「怎么画」，不产「画的是谁」。
+     custom → 透传用户词；空串的含义是「没有额外审美词」，**不是**回退 Sleepy 默认。 */
+  function singleSubjectVisualStyleText(apiKind, shot, visualMode, customText) {
+    if (visualMode === 'custom') return String(customText || '').trim();
+    if (visualMode !== 'sleepy-default') return '';
+    var pack = SLEEPY_SINGLE_STYLE[apiKind] || SLEEPY_SINGLE_STYLE.general;
+    return pack.look[shot] || pack.look.auto || '';
+  }
+
+  /* 男性默认变老校准 —— **当前是关着的**（2026-09-30 返修）。
+     为什么关：这两组词只按 `gender === 'male'` 就注入，而「这个角色到底
+     有没有被明确写成年长 / 有胡须 / 沧桑 / 疲惫」目前**没有可靠的结构化依据**
+     —— 手上只有一串自由文本（faceText / description）。这种条件下注入
+     `facial hair only when specified…`、`unintended aging`、`thick beard
+     when unspecified` 就是拿通用层去**反向覆盖身份事实**；
+     `when unspecified` 只是把判断丢给模型，不等于程序完成了条件判断，
+     「身份词还在字符串里」也不能证明它没被反向词覆盖。
+     → 本轮让 malePositive / maleNegative **两种模式都不进最终 prompt**，
+       函数与常量原样留在这儿当扩展位置：等有了结构化依据（年龄档 / 胡须字段 /
+       冲突检测）再打开，到时候只动 MALE_CALIBRATION_ENABLED 和这两个函数。
+     ⚠️ 这只是暂停有冲突风险的词，**不是取消「男性不额外老化」的审美目标**
+     —— General 真图仍然按年龄感观察，后续拿真图结果定向调整。 */
+  var MALE_CALIBRATION_ENABLED = false;
+
+  /* 性别校准（扩展位置）：只看这个 subject 自己存的 gender
+     （真实值 '' / 'female' / 'male'，见 genderTagOf），不看 sender、
+     不看描述关键词。male 才追加，female / 未填 → 空。 */
+  function singleSubjectGenderAdjustment(apiKind, subject) {
+    if (!MALE_CALIBRATION_ENABLED) return '';
+    var s = subject || {};
+    if (s.gender !== 'male') return '';
+    var pack = SLEEPY_SINGLE_STYLE[apiKind] || SLEEPY_SINGLE_STYLE.general;
+    return pack.malePositive;
+  }
+  function singleSubjectGenderNegative(apiKind, subject) {
+    if (!MALE_CALIBRATION_ENABLED) return '';
+    var s = subject || {};
+    if (s.gender !== 'male') return '';
+    var pack = SLEEPY_SINGLE_STYLE[apiKind] || SLEEPY_SINGLE_STYLE.general;
+    return pack.maleNegative;
+  }
+
+  /* 手部质量层（**唯一出口**：imggen.js buildSingleSubjectExperimentPrompt
+     的 positive 层序里调它，全部分支都从这一处走，改这里＝全分支生效）。
+
+     ⚠️ 当前行为（2026-10-01 定点返修后）：**恒返回空串**，与 hands 取值无关。
+     `unspecified / hidden / visible` 三种都不追加任何系统手部词 ——
+     这里不再存在「只有手可见才给词」的旧逻辑，别再按那个旧注释去改。
+
+     关闭范围只限**当前单人实验拼接路径**（buildSingleSubjectExperimentPrompt）。
+     legacy 路径（buildPromptForPlan）不走本函数，它自己的既有逻辑未动：
+     防多余肢体那串（extra fingers / fewer digits / extra limbs / malformed limbs）
+     仍在 BUILTIN_PRESET.general.negative 里，只进 legacy。
+
+     实际效果：hands 选项**不独立产生手部要求**；画面里手的出现与动作
+     由 description / 用户自定义视觉词（custom）／身份资料里的手部描述承载，
+     本函数不改写它们，也不新增任何替代手部段或手部负面词。
+     hands=visible 的**意图照旧记录**（UI 下拉、debug.hands、参数回显仍是
+     visible），只是「系统附加的手部词」这一层为空 —— 不许把 visible 改写成
+     hidden 来假装关闭。 */
+  function visibleHandsText(apiKind, hands, visualMode) {
+    return '';
+  }
+
+  /* 单人负面：结构负面（防随机增人 / 崩脸）两种模式都保留；
+     审美型负面（塑料皮肤、僵硬摆拍）只 sleepy-default 注入。
+     男性校准负面：走 singleSubjectGenderNegative，当前被
+     MALE_CALIBRATION_ENABLED 关着（见上面的说明），两种模式都不注入 ——
+     它一旦打开就可能在两种模式里反向覆盖身份事实，所以**不跟着 custom 走**，
+     也不算「结构约束」。
+
+     noAesthetic=true → 只要「必要质量负面 + 结构负面」这一份（施工单 v2 §6：
+     新男性分支沿用 custom 的负面组成，不叠加旧默认 negativeAesthetic，
+     也不新增负面词；其他分支不受影响）。 */
+  function singleSubjectNegativeText(apiKind, subject, visualMode, noAesthetic) {
+    var pack = SLEEPY_SINGLE_STYLE[apiKind] || SLEEPY_SINGLE_STYLE.general;
+    var layers = [pack.negativeStructural];
+    if (visualMode === 'sleepy-default' && !noAesthetic) layers.push(pack.negativeAesthetic);
+    var male = singleSubjectGenderNegative(apiKind, subject);
+    if (male) layers.push(male);
+    return layers.filter(Boolean).join(', ');
+  }
+
+  /* 单人实验拼接（实施单 §四 层序）：
+     positive = [必要质量层] + [单人主体结构] + [身份/性别层] + [面部状态校准]
+              + [镜头取景] + [description] + [视觉层(默认底座|自定义)] + [手部层] + [extras]
+     negative = [必要负面] + [结构负面] +（仅 sleepy-default）[审美负面]
+     第 4 层「面部状态校准」= singleSubjectGenderAdjustment，当前由
+     MALE_CALIBRATION_ENABLED 关着（返回空串），**层位保留、词不注入**。
+
+     主体两类，**显式分开、互不冒充**（2026-09-30 入口调整）：
+     - opts.tempSingle === true → 临时单人：不看也不读 opts.subjects，
+       性别只取 opts.gender（真实枚举 ''|'female'|'male'）经 genderTagOf，
+       身份段**只有性别 tag**，没有 entityType / entityId / 锁脸；
+     - 否则 → 真实身份：必须恰好 1 个主体，且 entityType 是 user / char
+       （npc 不是 B0 主体类型，返回 null，不伪装成 char），
+       身份段整段复用 B0 的 subjectTextForPlan（含 B1 锁脸），
+       **永不参与跨层去重**。
+     两种模式的其余层（质量 / 单人结构 / 镜头 / 视觉 / 手部 / extras）完全一致。
+
+     守卫：legacy → null；真实身份分支不满足条件 → null，调用方走旧路。 */
+  function buildSingleSubjectExperimentPrompt(opts) {
+    opts = opts || {};
+    var mode = VISUAL_EXP_MODES.indexOf(opts.visualMode) >= 0 ? opts.visualMode : 'legacy';
+    if (mode === 'legacy') return null;
+
+    var temp = opts.tempSingle === true;
+    var subject = null;   /* 真实身份分支用；临时分支保持 null，绝不造一个假主体 */
+    var gender = '';
+    if (temp) {
+      gender = TEMP_SINGLE_GENDERS.indexOf(opts.gender) >= 0 ? opts.gender : '';
+    } else {
+      var subjects = Array.isArray(opts.subjects) ? opts.subjects : [];
+      if (subjects.length !== 1) return null;
+      var raw = subjects[0] || {};
+      var entityType = (raw.entityType === 'user') ? 'user'
+        : (raw.entityType === 'char') ? 'char' : '';
+      if (!entityType) return null;
+      subject = {
+        entityType: entityType,
+        entityId: String(raw.entityId || ''),
+        name: String(raw.name || ''),
+        gender: String(raw.gender || ''),
+        faceText: String(raw.faceText || '').trim()
+      };
+      gender = subject.gender;
+    }
+
+    var api = opts.api || {};
+    var kind = (api.kind === 'nai') ? 'nai' : 'general';
+    var pack = SLEEPY_SINGLE_STYLE[kind];
+    var shot = SINGLE_EXP_SHOTS.indexOf(opts.shot) >= 0 ? opts.shot : 'auto';
+    /* 临时单人：身份层只有性别 tag；真实身份：走 B0 的 subjectTextForPlan（含 B1 锁脸） */
+    var identity = temp ? genderTagOf(gender) : subjectTextForPlan({ subjects: [subject] });
+    /* 施工单 v2 §3/§6：只有「临时单人 + 显式 male + General + sleepy-default」
+       用男性底座**替换**旧的 look[shot]（不是叠加），负面也退回 custom 那一套。
+       2026-10-01 女性定稿 C 版：**同一个判定**再挂一条 female 分支
+       （见 tempLookOn / tempFemaleLookOn），同样替换 look[shot]。
+       负面（本轮收尾）：女性 C 与 custom C **对齐** —— 命中时 both 传
+       noAesthetic=true，同样只留「必要质量负面 + 结构负面」，不追加
+       negativeAesthetic（plastic skin / overly airbrushed skin / stiff pose /
+       forced smile 这一组），与男性分支一致。
+       ⚠️ 这是**只作用于 femaleLook 这一次传参**，不是改 negativeAesthetic 常量、
+       也不是放开 maleLook：男性分支仍由 maleLook 单独命中。 */
+    var maleLook = tempMaleLookOn(opts);
+    var femaleLook = tempFemaleLookOn(opts);
+
+    var positive = joinLayers([
+      SLEEPY_VISUAL_STYLE[kind].qualityPositive,
+      pack.structure,
+      identity,
+      singleSubjectGenderAdjustment(kind, { gender: gender }),
+      pack.frame[shot] || '',
+      opts.description,
+      maleLook ? SLEEPY_TEMP_MALE_LOOK
+        : femaleLook ? SLEEPY_TEMP_FEMALE_LOOK
+        : singleSubjectVisualStyleText(kind, shot, mode, opts.customVisualStyle),
+      visibleHandsText(kind, opts.hands, mode),
+      (opts.extras || []).join(', ')
+    ]);
+    var negative = joinLayers([
+      SLEEPY_VISUAL_STYLE[kind].qualityNegative,
+      singleSubjectNegativeText(kind, { gender: gender }, mode, maleLook || femaleLook)
+    ]);
+    var debug = {
+      mode: mode, kind: kind, shot: shot, hands: opts.hands || 'unspecified',
+      visualLayer: femaleLook ? 'temp-female-c' : (maleLook ? 'temp-male-v2' : mode),
+      /* 手部词版本（2026-10-01 定点返修后只剩两态，与实际空串行为一致）：
+         off=系统附加手部段已关闭（visible 也返回空串，各分支一视同仁）
+         / none=一个字都没加（hidden 或 unspecified）。
+         ⚠️ 这是「系统有没有追加手部词」的状态，**不是** hands 的选择状态 ——
+         hands 仍按 opts.hands 原始记录，不许把 visible 改写成 hidden。 */
+      handsVersion: (opts.hands !== 'visible') ? 'none' : 'off',
+      subjectSource: temp ? 'temp-single' : 'identity',
+      entityType: temp ? '(临时单人，不读身份)' : subject.entityType,
+      entityId: temp ? '' : subject.entityId,
+      gender: gender || '(未填)',
+      faceText: temp ? '(不适用)' : (subject.faceText ? '(有)' : '(空)'),
+      positive: positive, negative: negative
+    };
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[Sleepy][单人视觉实验]', debug);
+    }
+    return { positive: positive, negative: negative, debug: debug };
+  }
+
+  /* -------------------- 临时双人实验拼接（03 勘察后新增） --------------------
+     buildTwoSubjectExperimentPrompt(opts) → { positive, negative, debug } | null
+
+     返回形状与 buildSingleSubjectExperimentPrompt **完全一致**
+     （generateBuilt 直接吃 positive/negative，网络栈不另写一套），
+     但它是**独立实现**：单人那条路一个字没动，subjects.length !== 1 的守卫
+     也**没有放宽** —— 双人不是「把单人放宽成两个」，是另一条实验路。
+
+     输入契约（**仅限本函数**，别拿去套正式 ImagePlan）：
+       opts.tempTwo       === true（必须显式声明是临时双人）
+       opts.tempSubjects  = [{ label:'A', description:'…' }, { label:'B', description:'…' }]
+       opts.description   共同画面描述（位置 / 视线 / 动作 / 接触写在里面，
+                          用「人物A / 人物B」指代；没有专用结构位，就是自然语言承担）
+       opts.visualMode   === 'custom'（本轮双人**只**支持 General + custom）
+       opts.customVisualStyle 用户自定义视觉词（可空；空 = 没有额外审美词，不回退）
+       opts.extras       勾选的词条
+       opts.api.kind     === 'general'
+
+     守卫（缺一项 → null；UI 显示原因，**一次请求都不发**，不静默减员）：
+       legacy / 非 custom 模式、NAI 或非 General 接口、tempTwo 不是 true、
+       人物数不是恰好 2、任一人物的描述为空、共同画面描述为空。
+     ⚠️ 不许 filter 掉空的那个人物后继续出图；一人 / 三人一律拒绝。
+        两人描述完全相同**不算无效**（可能是双胞胎），A / B 两段各自独立保留。
+
+     positive 层序（施工单 03 §二）：
+       [General qualityPositive] + [双人结构约束] + [Person A 块] + [Person B 块]
+       + [Scene 块（共同描述原文）] + [自定义视觉词] + [extras]
+     两个人物块**各自一层**、不互相覆盖、不做整块去重；用户原文不被自动补改。
+     「画面描述」这一层就是 Scene 块本身，不重复再拼一遍描述（避免同一句出现两次）。
+
+     negative：**只**复用 SLEEPY_VISUAL_STYLE.general.qualityNegative。
+       不沿用单人的 negativeStructural（含 extra person），也不沿用 legacy 整表 ——
+       本轮把人数与身份约束放在正向，免得「负面字段支持情况未知」变成「完全没有人数要求」。
+       那张 legacy 表里 old / elderly / wrinkle 与明确年长主体存在语义方向冲突
+       （见《验收-03双人关系图前置勘察-v1.md》），本轮**不删任何常量**，只是这条路不取用。
+
+     ⚠️ 这段是**文本引导**，不是串脸 / 人数 / 动作检测器：
+       两人是否真被画出来、手有没有归到对的人，只有真图能判断，本函数不声称能做到。
+
+     系统手部附加段**恒空**：不恢复 handsPositive / handsStructure / SLEEPY_HANDS_UNIFIED，
+     也不拼男女两个单人底座（那是单人实验的事）。用户描述与 custom 原文里
+     自带的手部内容照常保留，本函数不改写、不补词。 */
+  var TWO_SUBJECT_STRUCTURE = 'Exactly two people are present in the image: Person A and Person B. Keep each person\'s described appearance and clothing associated with that person. Follow the scene description for their positions, expressions, gaze, actions, and any physical contact. Do not add other people or invent a relationship or physical contact that is not described.';
+
+  function buildTwoSubjectExperimentPrompt(opts) {
+    opts = opts || {};
+    /* 本轮双人只走 experimental 两档里的 custom（施工单 §一 4 / §二 守卫） */
+    var mode = VISUAL_EXP_MODES.indexOf(opts.visualMode) >= 0 ? opts.visualMode : 'legacy';
+    if (mode !== 'custom') return null;
+
+    var api = opts.api || {};
+    var kind = (api.kind === 'nai') ? 'nai' : 'general';
+    if (kind !== 'general') return null;          /* 本轮不展开 NAI / 其他接口 */
+    if (opts.tempTwo !== true) return null;        /* 必须显式「临时双人」 */
+
+    var subs = Array.isArray(opts.tempSubjects) ? opts.tempSubjects : [];
+    if (subs.length !== 2) return null;            /* 恰好两个，不多不少 */
+    function descOf(v) {
+      if (!v) return '';
+      return String(v.description != null ? v.description : v.text || '').trim();
+    }
+    var a = descOf(subs[0]);
+    var b = descOf(subs[1]);
+    if (!a || !b) return null;                     /* 两个人物描述都必须非空 */
+    var scene = String(opts.description || '').trim();
+    if (!scene) return null;                       /* 共同画面描述非空 */
+
+    var customText = String(opts.customVisualStyle || '').trim();
+    var positive = joinLayers([
+      SLEEPY_VISUAL_STYLE[kind].qualityPositive,
+      TWO_SUBJECT_STRUCTURE,
+      'Person A（人物A）: ' + a,
+      'Person B（人物B）: ' + b,
+      'Scene（画面描述）: ' + scene,
+      customText,
+      (opts.extras || []).join(', ')
+    ]);
+    /* 系统负面只有必要质量负面 —— 理由见函数头（人数/身份约束放正向） */
+    var negative = joinLayers([SLEEPY_VISUAL_STYLE[kind].qualityNegative]);
+
+    var debug = {
+      mode: mode,
+      kind: kind,
+      /* 本轮镜头固定「按画面描述」，不产出任何隐含镜头词（连 shot 都是 auto） */
+      shot: 'auto',
+      visualLayer: 'custom',
+      customVisual: customText ? '(有)' : '(空)',
+      /* 系统手部附加段本轮为关闭态，与单人的 handsVersion=off 同义 */
+      handsVersion: 'off',
+      subjectSource: 'temp-two',
+      entityType: '(临时双人，不读身份)',
+      entityId: '',
+      personCount: 2,
+      positive: positive,
+      negative: negative
+    };
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[Sleepy][临时双人实验]', debug);
+    }
+    return { positive: positive, negative: negative, debug: debug };
+  }
+
+  /* ---- 04 临时多人群像（群像 3～4 人，临时虚构人物，不读群岛资料）———————
+     为什么**另起一个函数**而不是把 buildTwoSubjectExperimentPrompt 放宽：
+     1. 人数守卫语义不同 —— 双人「恰好 2」、多人「3～4」，共用会把已通过真图
+        的双人路径牵连进来；
+     2. 结构词不同（见下），镜头 / 人数 / 关系的表述不能互相污染；
+     3. 施工单要求「宁可新增清晰的多人函数，避免影响已通过的双人真图」。
+     与双人路径同享的只有**常量取值**（SLEEPY_VISUAL_STYLE 的 quality 层）与
+     joinLayers 去重，没有公共层需要抽取 —— 抽取会扩大改动面，不做。
+
+     本函数**不是**人数检测器 / 身份锁脸器 / 动作校验器：
+     结构词只是一段文本引导，画不画得出来、谁在哪边、手归到谁，只有真图能判断。
+
+     系统手部附加段**恒空**：不恢复 handsPositive / handsStructure /
+     SLEEPY_HANDS_UNIFIED，也不拼男女两个单人底座。人物描述里自己写到的手部
+     动作原样保留，本函数不改写、不补词、不删。 */
+  var GROUP_SUBJECT_STRUCTURE = 'Exactly the described number of people are present in the image. '
+    + 'Keep each person\'s appearance, clothing, and identity associated with that person. '
+    + 'Follow the group scene description for positions, expressions, gaze, actions, and relationships. '
+    + 'Do not merge identities, omit described people, add unrequested people, or invent '
+    + 'relationships and physical contact that are not described.';
+
+  function buildGroupSubjectExperimentPrompt(opts) {
+    opts = opts || {};
+    /* 与双人同档：本轮只走 experimental 里的 custom；legacy / sleepy-default 不接 */
+    var mode = VISUAL_EXP_MODES.indexOf(opts.visualMode) >= 0 ? opts.visualMode : 'legacy';
+    if (mode !== 'custom') return null;
+
+    var api = opts.api || {};
+    var kind = (api.kind === 'nai') ? 'nai' : 'general';
+    if (kind !== 'general') return null;          /* 本轮不展开 NAI / 其他接口 */
+    if (opts.tempGroup !== true) return null;     /* 必须显式「临时多人」 */
+
+    var subs = Array.isArray(opts.tempSubjects) ? opts.tempSubjects : [];
+    /* 人数区间硬守：少于 3 直接 null（不静默减成双人），多于 4 也 null */
+    var n = subs.length;
+    if (n < GROUP_MIN || n > GROUP_MAX) return null;
+
+    var people = [];
+    for (var i = 0; i < n; i++) {
+      var raw = (subs[i] && (subs[i].description != null ? subs[i].description : subs[i].text)) || '';
+      var d = String(raw).trim();
+      if (!d) return null;                        /* 任何一个人为空都不发 */
+      people.push('Person ' + GROUP_LABELS[i] + '（人物' + GROUP_LABELS[i] + '）: ' + d);
+    }
+
+    var scene = String(opts.description || '').trim();
+    if (!scene) return null;                      /* 共同画面描述非空 */
+
+    var customText = String(opts.customVisualStyle || '').trim();
+
+    var positive = joinLayers([
+      SLEEPY_VISUAL_STYLE[kind].qualityPositive,
+      GROUP_SUBJECT_STRUCTURE,
+      people.join(', '),
+      'Group scene（共同画面描述）: ' + scene,
+      customText,
+      (opts.extras || []).join(', ')
+    ]);
+    /* 与双人一致：只留必要质量负面，人数 / 身份 / 关系约束都放正向 */
+    var negative = joinLayers([SLEEPY_VISUAL_STYLE[kind].qualityNegative]);
+
+    var debug = {
+      mode: mode,
+      kind: kind,
+      /* 多人不使用单人镜头下拉：构图由共同描述承担，shot 固定 auto */
+      shot: 'auto',
+      visualLayer: 'custom',
+      customVisual: customText ? '(有)' : '(空)',
+      handsVersion: 'off',                        /* 系统手部附加段本轮恒空 */
+      subjectSource: 'temp-group',
+      personCount: n,
+      entityType: '(临时多人，不读群岛资料)',
+      entityId: '',
+      positive: positive,
+      negative: negative
+    };
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[Sleepy][临时多人群像实验]', debug);
     }
     return { positive: positive, negative: negative, debug: debug };
   }
@@ -591,6 +1678,37 @@
     if (!api) {
       return Promise.resolve({ ok: false, error: err('还没有配置生图接口', '去 设置 → 生图 添加一个') });
     }
+    /* 正式接入（2026-10-01 施工单 v1）：plan 分支先走正式拼接器（内置/自定义）。
+       一个咽喉覆盖全部正式入口 —— chat 标签 / 弹层 / 查岗 / 重画 / 日记 /
+       朋友圈 / 线下键都从 generate({plan}) 进来。
+       - 校验不过 → 明确报错、零请求（不静默换人 / 减员 / 降级无人）；
+       - NAI → null 回落 legacy（既有能力原样保留，如实回落不冒充新词生效）。
+       无 plan（试一张 legacy 档 + AI 解析失败兜底）照走旧路，分毫不动。 */
+    if (opts.plan) {
+      if (api.kind === 'nai') {
+        /* NAI 正式编译（2026-10-02 施工单）：校验失败 / 模型不支持 / 编译抛错
+           → 明确报错零请求，一律不回落 legacy。 */
+        var fnai;
+        try {
+          fnai = buildFormalNaiRequest({ api: api, plan: opts.plan, extras: opts.extras });
+        } catch (eNai) {
+          return Promise.resolve({ ok: false, error: err('NAI 正式生图编译失败，这张没有生成',
+            (eNai && eNai.message) || String(eNai)) });
+        }
+        if (fnai.ok) {
+          return requestAndStore(api, fnai.request, opts.size);
+        }
+        return Promise.resolve({ ok: false, error: fnai.error });
+      }
+      var formal = buildFormalPrompt({ api: api, plan: opts.plan, extras: opts.extras });
+      if (formal && formal.ok === false) {
+        return Promise.resolve({ ok: false, error: formal.error });
+      }
+      if (formal && formal.ok) {
+        return requestAndStore(api,
+          { positive: formal.positive, negative: formal.negative }, opts.size);
+      }
+    }
     var built = buildPrompt({
       plan: opts.plan,
       subject: opts.subject,
@@ -727,7 +1845,12 @@
           steps: 28,
           n_samples: 1,
           ucPreset: 0,
-          negative_prompt: built.negative || ''
+          negative_prompt: built.negative || '',
+          /* V4/V4.5 正式管线（2026-10-02）：字段由 buildFormalNaiRequest 给出，
+             V3 / legacy 路径恒缺省 → 不发（|| undefined 只做「没有就不发」，
+             不是空值回填）。 */
+          v4_prompt: built.v4Prompt || undefined,
+          v4_negative_prompt: built.v4NegativePrompt || undefined
         }
       })
     }, ctrl).then(function (r) {
@@ -894,6 +2017,58 @@
     SLEEPY_VISUAL_STYLE: SLEEPY_VISUAL_STYLE,
     visualStyleText: visualStyleText,
     buildSceneObjectExperimentPrompt: buildSceneObjectExperimentPrompt,
+    singleExpSubjectRef: singleExpSubjectRef,
+    setSingleExpSubjectRef: setSingleExpSubjectRef,
+    singleExpShot: singleExpShot,
+    setSingleExpShot: setSingleExpShot,
+    singleExpHands: singleExpHands,
+    setSingleExpHands: setSingleExpHands,
+    singleExpGender: singleExpGender,
+    setSingleExpGender: setSingleExpGender,
+    TEMP_SINGLE_REF: TEMP_SINGLE_REF,
+    TEMP_TWO_REF: TEMP_TWO_REF,
+    TWO_SUBJECT_STRUCTURE: TWO_SUBJECT_STRUCTURE,
+    TEMP_GROUP_REF: TEMP_GROUP_REF,
+    GROUP_MIN: GROUP_MIN,
+    GROUP_MAX: GROUP_MAX,
+    GROUP_LABELS: GROUP_LABELS,
+    GROUP_SUBJECT_STRUCTURE: GROUP_SUBJECT_STRUCTURE,
+    buildGroupSubjectExperimentPrompt: buildGroupSubjectExperimentPrompt,
+    SLEEPY_SINGLE_STYLE: SLEEPY_SINGLE_STYLE,
+    SLEEPY_TEMP_MALE_LOOK: SLEEPY_TEMP_MALE_LOOK,
+    /* C 版女性定稿底座（2026-10-01 投票定稿），与男那份对称 */
+    SLEEPY_TEMP_FEMALE_LOOK: SLEEPY_TEMP_FEMALE_LOOK,
+    /* 全分支统一的手部段（前身 SLEEPY_TEMP_MALE_HANDS，2026-10-01 改名） */
+    SLEEPY_HANDS_UNIFIED: SLEEPY_HANDS_UNIFIED,
+    tempMaleLookOn: tempMaleLookOn,
+    tempFemaleLookOn: tempFemaleLookOn,
+    singleVisualLayerOf: singleVisualLayerOf,
+    singleSubjectVisualStyleText: singleSubjectVisualStyleText,
+    singleSubjectGenderAdjustment: singleSubjectGenderAdjustment,
+    singleSubjectGenderNegative: singleSubjectGenderNegative,
+    visibleHandsText: visibleHandsText,
+    singleSubjectNegativeText: singleSubjectNegativeText,
+    buildSingleSubjectExperimentPrompt: buildSingleSubjectExperimentPrompt,
+    buildTwoSubjectExperimentPrompt: buildTwoSubjectExperimentPrompt,
+    /* 正式生图（内置 / 自定义，2026-10-01 施工单 v1） */
+    imgStyleMode: imgStyleMode,
+    setImgStyleMode: setImgStyleMode,
+    imgStyleCustom: imgStyleCustom,
+    setImgStyleCustom: setImgStyleCustom,
+    buildFormalPrompt: buildFormalPrompt,
+    /* NAI 正式编译器（2026-10-02 施工单）与共用校验 */
+    buildFormalNaiRequest: buildFormalNaiRequest,
+    validatePlanSubjects: validatePlanSubjects,
+    identitySegmentFor: identitySegmentFor,
+    /* 正式底座 v2（返修单 v2）：与实验旧词分开版本化 */
+    SLEEPY_FORMAL_MALE_LOOK_V2: SLEEPY_FORMAL_MALE_LOOK_V2,
+    SLEEPY_FORMAL_FEMALE_LOOK_V2: SLEEPY_FORMAL_FEMALE_LOOK_V2,
+    SLEEPY_NEUTRAL_SUBJECT_V1: SLEEPY_NEUTRAL_SUBJECT_V1,
+    SLEEPY_NEUTRAL_STRUCTURE_V1: SLEEPY_NEUTRAL_STRUCTURE_V1,
+    SLEEPY_NEUTRAL_NEGATIVE_V1: SLEEPY_NEUTRAL_NEGATIVE_V1,
+    /* 03/04 内置视觉层（用户找回原稿，逐字落库） */
+    SLEEPY_FORMAL_TWO_LOOK_V1: SLEEPY_FORMAL_TWO_LOOK_V1,
+    SLEEPY_FORMAL_GROUP_LOOK_V1: SLEEPY_FORMAL_GROUP_LOOK_V1,
     generateBuilt: generateBuilt,
     extractImageFromChatText: extractImageFromChatText,
     buildPrompt: buildPrompt,
