@@ -177,10 +177,26 @@
 
   /* ---------------------------- 装配 ---------------------------- */
 
+  /* 最近一次 composeRound 的行为文本诊断。
+     ★ 只在内存里，页面刷新即失；**不写 store**（本批不新增任何存储写入）。
+     ★ 每次尝试开头先置 null（见 composeRound）—— 否则这一轮若没接上，
+       上一轮的「已用 B/P/L + E/S4」会留在原地，诊断就成了误导性的残留。 */
+  var lastBehaviorNote = null;
+  /* 只读快照：深拷贝，外部改不到内部状态（与 proactive / offlineDiag 同一口径）。 */
+  function behaviorNote() {
+    if (!lastBehaviorNote) return null;
+    return JSON.parse(JSON.stringify(lastBehaviorNote));
+  }
+
   /* 组装一轮的 prompt。pure 函数（smoke 直接测）。
      opts = { stimulus, budget: {actors, msgs}, wave, wavesLeft, busyEntityIds } */
   function composeRound(groupId, opts) {
     opts = opts || {};
+    /* ★ 诊断重置必须在**任何早退之前**。
+       放后面（成员/实体判空之后）会漏掉「群不存在」这条早退 ——
+       那样一次失败尝试之后，上一轮的「已用 B/P/L/E/S4」仍然留在原地，
+       读诊断的人会以为这一轮也接上了。9d 就是拿这个抓出来的。 */
+    lastBehaviorNote = null;
     var g = gs().findGroup(groupId);
     if (!g) return null;
     var members = gs().membersOf(groupId);
@@ -189,9 +205,33 @@
 
     var budget = opts.budget || RHYTHM.light;
 
-    /* ---- system：卡 + 成员/知识/关系 ---- */
+    /* ---- system：B/P/L → groupRound 卡 → E/S4 → 原有群现场信息 ----
+       ★ B/P/L 与 E/S4 走共享行为决策层（v161）。顺序固定为
+         **B/P/L → groupRound → E/S4 → 原有群现场信息**：
+         行为纪律在前、场景专属的组织纪律在后、最后才是本场的成员/知识/关系。
+         groupRound 卡**保留在原位且正文一行不改**（它自带【输出协议】），
+         E/S4 谈的是「群聊里怎么说话、怎么接话」，两者并列互补。
+       ★ 本场景**不注入旧 shell 卡、不做裁节机制**；shell 卡被用户 override
+         时整条回退（touchedCards:['shell']），此时 groupRound 及以下全部原样。 */
+    var PE = Sleepy.promptEngine;
+    var bt = (PE && PE.btDecideScene) ? PE.btDecideScene('groupOnline') : null;
+    var btOk = !!(bt && bt.ok);
     var sys = [];
-    sys.push(Sleepy.promptEngine.cardBody('groupRound'));
+    var usedShell = false;
+    var usedScene = false;
+    /* 两段各自独立判定：ok + 对应 inject 为 true + 正文是非空字符串，才算「真进了 system」。
+       少任何一条都按「没用上」记账 —— 宁可少报，绝不谎报。 */
+    if (btOk && bt.injectShell === true &&
+        typeof bt.shellText === 'string' && bt.shellText.trim()) {
+      sys.push(bt.shellText);
+      usedShell = true;
+    }
+    sys.push(PE.cardBody('groupRound'));
+    if (btOk && bt.injectScene === true &&
+        typeof bt.sceneText === 'string' && bt.sceneText.trim()) {
+      sys.push(bt.sceneText);
+      usedScene = true;
+    }
 
     /* 成员清单：公开视角（名字 + 身份类型 + 群主标记） */
     var memLines = members.map(function (m) {
@@ -203,6 +243,19 @@
       return '- 账号「' + meta.name + '」（' + (tags.join(' · ') || '角色账号') + '）';
     });
     sys.push('[GROUP]\n群名：' + g.name + '\n' + memLines.join('\n'));
+
+    /* ---- 共享动态信息（2026-10-05 补齐批）----
+       ① 逐本体时间块：时区是公开设定，无知情差异 ⇒ 共享一块、同时区合并。
+       ② user 马甲人设：群创建时 user 成员的 accountId 就是马甲 id
+          （page-group.js:255，core.findUser(accountId) 直接命中）。
+          马甲人设是公开身份 ⇒ 共享一份，无广播风险。 */
+    var userMember = members.filter(function (m) { return m.kind === 'user'; })[0] || null;
+    var userMaskId = (userMember && userMember.accountId) || null;
+    var timeBlock = (PE.compileGroupTimeFacts)
+      ? PE.compileGroupTimeFacts(entities.map(function (e) { return e.ownerId; })) : '';
+    if (timeBlock) sys.push(timeBlock);
+    var userCore = (PE.compileUserCore && userMaskId) ? PE.compileUserCore(userMaskId) : '';
+    if (userCore) sys.push(userCore);
 
     /* 候选本体与知识切片 */
     var entLines = entities.map(function (e) {
@@ -217,6 +270,11 @@
         if (t && on) rels.push('对「' + on.name + '」：' + t);
       });
       if (rels.length) k += '\n' + rels.join('\n');
+      /* 马甲认知边界（2026-10-05 补）：compileI01 是「这个本体眼中的 user」，
+         每个本体的 cognition 独立 ⇒ 逐本体放各自的 [ENTITY] 块里，
+         靠 groupRound 的知识边界纪律隔离（软隔离，与 innerText 同级）。 */
+      var i01 = (PE.compileI01 && userMaskId) ? PE.compileI01(e.ownerId, userMaskId) : '';
+      if (i01) k += '\n' + i01;
       /* 项目 2：群池 L4 **逐成员注入**（α 方案）—— 每个实体的 `[ENTITY]` 块里
          只放它自己的群池摘要（groupTextFor 按它的记忆开关隔离，关了的为空）。
          不再是共享 system 一份（共享路径已删，M5c 反向锁死）。 */
@@ -272,6 +330,13 @@
       + (opts.wavesLeft != null ? ('，最多还能再续 ' + opts.wavesLeft + ' 波') : '')
       + '。' + (opts.busyNote || ''));
     user.push('请按输出协议输出 JSON。');
+
+    /* 诊断在**这里**才记：此时 sys 已拼完，能如实回答「B/P/L 与 E/S4 到底有没有
+       真的进 system」。usedShell/usedScene 传的是上面**实际 push 的结果**，
+       不是 spec 的应然值；两段不满足条件就不 push、也不记账。 */
+    if (PE && PE.btNote) {
+      lastBehaviorNote = PE.btNote('groupOnline', bt, usedShell, usedScene);
+    }
 
     var messages = [
       { role: 'system', content: sys.join('\n\n') },
@@ -593,7 +658,9 @@
     saveDefer: saveDefer,
     saveInner: saveInner,
     pendingText: pendingText,
-    innerText: innerText
+    innerText: innerText,
+    /* 最近一次 composeRound 的行为决策诊断（**只读深拷贝**，改不到内部状态） */
+    behaviorNote: behaviorNote
   };
 
 })(window);

@@ -121,7 +121,21 @@ function makeEl(tag) {
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k) ? this._attrs[k] : null; },
     hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k); },
     removeAttribute(k) { delete this._attrs[k]; },
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+    /* addEventListener **只记录、不分发** —— click()/dispatchEvent 仍然是
+       空的。为什么这么设计：让「点了按钮之后会怎样」这种断言能真跑一次
+       （关系网页的图/列表切换要用），同时**绝不改变**任何现有测试的行为
+       （以前是纯 noop，现在只是把 handler 存在 _on 上，没人调用它）。
+       要用的时候显式拿 `el._on.click` 自己逐个调 —— 见 fireClick()。 */
+    addEventListener(t, fn) {
+      if (typeof fn !== 'function') return;
+      this._on = this._on || Object.create(null);
+      this._on[t] = (this._on[t] || []).concat([fn]);
+    },
+    removeEventListener(t, fn) {
+      if (!this._on || !this._on[t]) return;
+      this._on[t] = this._on[t].filter((x) => x !== fn);
+    },
+    dispatchEvent() {},
     /* 桩不解析 innerHTML，所以元素级 querySelector 只能「凭空给一个元素」。
        但必须**同一个选择器返回同一个元素**，并且给它 parentNode ——
        页面常见的 `el.querySelector('.x').appendChild(...)` 之后再回来找它，
@@ -896,6 +910,128 @@ t('activeUserOnIsland：别座岛的「我」一律挡掉，本岛的放行', ()
   S.core._purgeSync.sandbox(sbX.id);
   S.core._purgeSync.sandbox(sbY.id);
   return { 别岛: 'null', 本岛: got.name };
+});
+
+/* ── 用户 2026-10-03 报的两个 bug（真机）────────────────────────────────
+   ① 「改了默认存档之后再加孤岛/群岛，表单直接 copy 那个存档的 user 账号；
+       后面改孤岛 B，其他所有岛屿的 user 账号信息都跟着变」
+   ② 「默认存档的彼此认知和新加的岛屿里彼此认知不一样：一个有选项一个没有」
+
+   根因（2026-10-03 定位）**不在 core.js 的隔离逻辑**（那套是好的），
+   而是 `page-idcard.js` 的两个编辑页把**同一条 user 记录**当自己的：
+     · `me-profile` 用 `core.activeUser()` 取人 —— 那个口子带
+       `|| ensureDefaultUser()` 的**跨岛兜底**，新岛没账号时会把别岛的
+       「我」当成新岛的人；而且它 save 时**不传 sandboxId**，
+       `upsertUser` 的 new 分支于是按「盖当前房章」处理 →
+       编辑的其实是**别座岛那条记录**，改一个全跟着变（bug ①）。
+     · `mask-edit` 的 `ctx.params.id` 串岛复用时会把表单整个 copy 过去（同 ①）。
+     · bug ② 是 `island-cognition` 的显示口径：认知锁那段要求
+       `mains.length && masks.length` 同时成立，新岛没有马甲 →
+       整段「初始认知锁」不渲染，看起来就是「没有选项」。
+
+   这条用例把判据钉在**数据层**（不依赖浏览器）：同一条 user 记录
+   绝不能同时出现在两座岛的名册里；改一件不许动到别岛那件。 */
+t('马甲真隔离：一件 user 记录只属一座岛，改一件不影响别岛（用户 10-03 报）', () => {
+  const sbOld = S.core.createSandbox('isle', '默认存档那座');
+  const sbNew = S.core.createSandbox('isle', '后加的孤岛 B');
+
+  /* 默认存档那件「我」—— 用户先在默认存档里改过它 */
+  const oldMe = S.core.upsertUser({ name: '默认存档的我', sandboxId: sbOld.id });
+  S.core.setSandboxMasks(sbOld.id, [oldMe.id]);
+
+  /* 新建孤岛 B。用户描述的现象：表单里出现的是「默认存档那件」 */
+  S.core.setActiveSandbox(sbNew.id);
+  S.core.switchTo(undefined, oldMe.id);          /* 指针还停在旧岛 */
+  const shown = S.core.activeUserOnIsland();     /* 卫兵应该判 null */
+  if (shown !== null) {
+    throw new Error('新岛不该拿默认存档那件当「我」（这正是表单 copy 的来源）：' + shown.name);
+  }
+  /* 兜底那个 activeUser() **会**给出旧岛的人 —— 这就是为什么编辑页
+     以前拿到的是别岛记录。锁住这个差异，别让谁把 activeUser 当成编辑页的取人口。 */
+  const loose = S.core.activeUser();
+  if (!loose || loose.id !== oldMe.id) throw new Error('activeUser 的兜底行为变了（这条是前提）');
+
+  /* 孤岛 B 该有自己的「我」，是**新记录**不是同一条 */
+  const newMe = S.core.upsertUser({ name: '孤岛 B 的我', sandboxId: sbNew.id });
+  S.core.setSandboxMasks(sbNew.id, [newMe.id]);
+  if (newMe.id === oldMe.id) throw new Error('孤岛 B 复用了默认存档那条记录');
+
+  /* 一条记录不能同时在两座岛名册里 */
+  S.core.setActiveSandbox(sbOld.id);
+  const inOld = S.core.masksOfSandbox(sbOld).map((u) => u.id);
+  const inNew = S.core.masksOfSandbox(sbNew).map((u) => u.id);
+  inOld.forEach((id) => {
+    if (inNew.indexOf(id) >= 0) throw new Error('同一条 user 记录同时在两座岛名册里：' + id);
+  });
+
+  /* 改孤岛 B 那件 —— 默认存档那件必须纹丝不动（bug ① 的核心） */
+  S.core.upsertUser({ id: newMe.id, name: '孤岛B改过的名字' });
+  const stillOld = S.core.findUser(oldMe.id);
+  if (stillOld.name !== '默认存档的我') {
+    throw new Error('改了孤岛 B，默认存档的账号也被改了：' + stillOld.name);
+  }
+  /* 反向：改默认存档那件，也不许动到孤岛 B */
+  S.core.upsertUser({ id: oldMe.id, name: '默认存档改过的名字' });
+  if (S.core.findUser(newMe.id).name !== '孤岛B改过的名字') {
+    throw new Error('改默认存档，孤岛 B 的账号被牵连了');
+  }
+
+  S.core._purgeSync.sandbox(sbOld.id);
+  S.core._purgeSync.sandbox(sbNew.id);
+  return {
+    新岛取人: 'null（不 copy 旧岛）',
+    两条记录: '各自独立',
+    改B不动旧: true
+  };
+});
+
+/* bug ② 的显示口径：新岛没有马甲时「初始认知锁」整段不渲染，
+   用户看到的就是「一个岛有选项、一个岛没有」。
+   判据：认知锁的档数与**能不能设**是两件事 ——
+   认知锁页面必须在「有角色」时就能打开并给出统一档数，
+   不能因为马甲数为 0 就少一截。 */
+t('彼此认知：新岛没马甲也要给出同样的档位，不许少一截（用户 10-03 报）', () => {
+  /* 认知锁的档数是**产品常量**（LOCKS 四档：拼图/调情/死装/没有小号），
+     与某座岛此刻有几件马甲**无关**。以前 UI 把「初始认知锁」整段挂在
+     `mains.length && masks.length` 底下 → 新岛没马甲就整段不渲染，
+     用户看到的就是「默认存档那边有选项、新岛那边没有」（bug ②）。
+
+     这条把判据钉在数据层：`core.cognitionOf` 在「有马甲 / 没马甲」
+     两种岛上都必须给出**同一个值域**里的值，绝不崩、绝不造出第四种。
+     ⚠️ 字段名是 `cognition`（不是 `cog`）—— `cognition` 才是值，
+     `cogLabel()` 才是显示口径，别混。 */
+  const LOCKS = ['puzzle', 'flirt', 'deny', 'single'];
+  const COGS = ['unaware', 'aware', 'single'];
+  if (LOCKS.length !== 4) throw new Error('认知锁档位变了：' + LOCKS.length);
+
+  const sbA = S.core.createSandbox('isle', '认知·有马甲');
+  const sbB = S.core.createSandbox('isle', '认知·没马甲');
+  const cid = 'ch_cog_probe';
+  S.core.upsertChar({ id: cid, name: '观察者', kind: 'main', sandboxId: sbA.id });
+  const me = S.core.upsertUser({ name: '有马甲的我', sandboxId: sbA.id });
+  S.core.setSandboxMasks(sbA.id, [me.id]);
+  /* 岛 B：同一个观察者，名册里一件马甲都没有 */
+
+  const withM = S.core.cognitionOf(cid, me.id, sbA.id);
+  if (!withM || COGS.indexOf(withM.cognition) < 0) {
+    throw new Error('有马甲那座读不出合法认知：' + JSON.stringify(withM));
+  }
+  /* 没马甲的岛：不许崩、不许跑出值域，且必须落回「还没定」那档（unaware）。
+     ⚠️ 不是 'single' ——「没有小号」说的是关系结构，不是「这人还没定认知」。 */
+  const noM = S.core.cognitionOf(cid, 'no_such_user', sbB.id);
+  if (!noM) throw new Error('没马甲时 cognitionOf 返回 null（UI 会整段崩）');
+  if (COGS.indexOf(noM.cognition) < 0) {
+    throw new Error('没马甲时认知值跑出值域：' + noM.cognition);
+  }
+  if (noM.cognition !== 'unaware') {
+    throw new Error('没定认知的人该落 unaware（拼图局基调），实际 ' + noM.cognition);
+  }
+  /* 两座岛读的是同一个值域、同一份 LOCKS —— 谁都不许少一档 */
+  if (COGS.length !== 3 || LOCKS.length !== 4) throw new Error('档位表被裁了');
+
+  S.core._purgeSync.sandbox(sbA.id);
+  S.core._purgeSync.sandbox(sbB.id);
+  return { 档位: LOCKS.length, 有马甲: withM.cognition, 没马甲: noM.cognition, 两岛口径一致: true };
 });
 
 /* 岛覆盖 > 全局：外观穿着 / 户型的岛覆盖层叠在全局上，
@@ -1951,6 +2087,1050 @@ t('LAYOUT_VERSION 没有重复声明（写了改动日志却忘了删旧块）',
   const n = (src.match(/var\s+LAYOUT_VERSION\s*=/g) || []).length;
   if (n !== 1) throw new Error('LAYOUT_VERSION 被声明了 ' + n + ' 次，说明改版本时有旧的注释块没删干净');
   return { 声明次数: n };
+});
+
+/* ---- ta 首页（生活窗口 v1，2026-10-02 第一批只读施工单）----
+   施工单 §四 1-6 由上面的桌面断言 + 本块第一条覆盖；
+   7（切岛不残留）与 8（打开零写入零模型）在本块第二条，缺什么补什么。 */
+console.log('\n--- ta 首页（生活窗口 v1）---');
+t('第三屏重复格已换成 ta：版本 18、只换一格、坐标沿用、主屏世界书仍在', () => {
+  const d = S.desktop.defaultDesktop();
+  if (S.desktop.LAYOUT_VERSION !== 18) {
+    throw new Error('LAYOUT_VERSION 应为 18，实际 ' + S.desktop.LAYOUT_VERSION);
+  }
+  /* 施工单：只允许替换一个格子，且必须保留原格子 id 和坐标 */
+  const taCells = d.pages[3].filter((c) => c.app === 'ta');
+  if (taCells.length !== 1) throw new Error('第三屏应恰有一格指向 ta，实际 ' + taCells.length);
+  const cell = taCells[0];
+  if (cell.i !== 'p3-book') throw new Error('格子 id 必须沿用 p3-book（老存档坐标别丢），实际 ' + cell.i);
+  if (cell.x !== 1 || cell.y !== 5 || cell.w !== 1 || cell.h !== 1) {
+    throw new Error('p3-book 的坐标变了 —— 施工单要求保留原坐标');
+  }
+  /* 世界书本身不能从桌面消失：主屏 p1-book 还得在 */
+  if (!d.pages[1].some((c) => c.app === 'worldbook')) {
+    throw new Error('主屏世界书不见了 —— 是不是替换错了格子');
+  }
+  /* 静态护栏：page-ta.js 里不许出现写入或网络调用（首页只读、0 模型） */
+  const src = require('fs').readFileSync('page-ta.js', 'utf8');
+  if (/store\.set\(|fetch\(|XMLHttpRequest|streamChat|api\.chat/i.test(src)) {
+    throw new Error('page-ta.js 出现了写入或网络调用 —— 首页必须只读、0 模型');
+  }
+  return { 格子: cell.i, label: cell.label, 版本: S.desktop.LAYOUT_VERSION };
+});
+t('ta 首页：真实读取三个键 + 空态 + 切岛不串 + 打开零写入', () => {
+  /* 造两座孤岛各一个角色 + 一个马甲；三个生活键只给 A 岛。 */
+  const a = S.core.upsertChar({ name: 'ta甲岛角色', kind: 'main', content: '夹具' }).id;
+  const b = S.core.upsertChar({ name: 'ta乙岛角色', kind: 'main', content: '夹具' }).id;
+  const u = S.core.upsertUser({ name: 'ta冒烟马甲' }).id;
+  const sbA = S.core.createSandbox('isle', 'ta甲岛');
+  const sbB = S.core.createSandbox('isle', 'ta乙岛');
+  S.core.setSandboxChars(sbA.id, [a]);
+  S.core.setSandboxChars(sbB.id, [b]);
+  S.core.setSandboxMasks(sbA.id, [u]);
+  S.core.setSandboxMasks(sbB.id, [u]);
+  const rootA = S.core.rootOf(a).id;
+  S.store.set('charState:' + rootA, { feelings: ['想把旧照片整理出来'], readings: [], unspoken: [], updatedAt: '2026-10-02T10:00:00' });
+  S.store.set('openLoops:' + rootA, { items: ['修旧相机的事还差一个零件'], updatedAt: '2026-10-02T10:00:00' });
+  S.store.set('attentionInbox:' + rootA, { items: ['留意楼下的猫最近有没有出现'], updatedAt: '2026-10-02T10:00:00' });
+
+  /* 现场备份：测完还原身份指针，别污染后面的断言 */
+  const bak = {
+    sb: S.store.get('activeSandboxId'),
+    ch: S.store.get('activeCharId'),
+    us: S.store.get('activeUserId')
+  };
+  /* 写入快照：打开 ta 前后，生活相关键一律不许变（施工单 §四 8） */
+  const LIFE_KEYS = ['calEvents', 'diaries', 'moments', 'chats', 'characters', 'links', 'sandboxes'];
+  const snap = () => JSON.stringify(LIFE_KEYS.map((k) => S.store.get(k)));
+  const before = snap();
+
+  function bodyTextOf() {
+    const ctx = S.nav.topCtx();
+    const root = ctx && (ctx.body || ctx.el);
+    if (!root) throw new Error('拿不到当前页的 DOM');
+    let s = '';
+    (function walk(n) {
+      if (n.textContent) s += n.textContent + '\n';
+      (n.children || []).forEach(walk);
+    })(root);
+    return s;
+  }
+
+  try {
+    /* A 岛：三个键都要被读到，首屏有当前角色名，状态带更新时间 */
+    S.core.setActiveSandbox(sbA.id);
+    S.core.switchTo(a, u);
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    S.nav.open('ta', {});
+    const t1 = bodyTextOf();
+    if (t1.indexOf('ta甲岛角色') < 0) throw new Error('首屏没有当前角色名');
+    if (t1.indexOf('想把旧照片整理出来') < 0) throw new Error('charState 没被读到');
+    if (t1.indexOf('修旧相机') < 0) throw new Error('openLoops 没被读到');
+    if (t1.indexOf('楼下的猫') < 0) throw new Error('attentionInbox 没被读到');
+    if (t1.indexOf('更新于') < 0) throw new Error('状态没有显示更新时间');
+    if (snap() !== before) throw new Error('打开 ta 产生了写入 —— 首页必须只读');
+
+    /* 事项详情占位：回显来源、更新时间、当前文字 */
+    S.nav.open('ta-item', { text: '修旧相机的事还差一个零件', at: '2026-10-02T10:00:00', src: '冒烟来源' });
+    const t2 = bodyTextOf();
+    if (t2.indexOf('修旧相机') < 0 || t2.indexOf('冒烟来源') < 0) {
+      throw new Error('事项详情没有回显来源与文字');
+    }
+    S.nav.closeAll();
+
+    /* 切岛：上一座岛的角色与内容不许残留（施工单 §四 7） */
+    S.core.setActiveSandbox(sbB.id);
+    S.core.switchTo(b, u);
+    S.nav.open('ta', {});
+    const t3 = bodyTextOf();
+    if (t3.indexOf('ta甲岛角色') >= 0 || t3.indexOf('想把旧照片整理出来') >= 0 || t3.indexOf('修旧相机') >= 0) {
+      throw new Error('切岛后残留了上一座岛的角色内容');
+    }
+    if (t3.indexOf('ta乙岛角色') < 0) throw new Error('切岛后没有显示新岛角色');
+    S.nav.closeAll();
+
+    /* 空岛（没有角色）：明确空态，不编生活 */
+    const sbE = S.core.createSandbox('isle', 'ta空岛');
+    S.core.setActiveSandbox(sbE.id);
+    S.nav.open('ta', {});
+    if (bodyTextOf().indexOf('未落岛 / 未选角色') < 0) {
+      throw new Error('空岛没有给「未落岛 / 未选角色」空态');
+    }
+    S.nav.closeAll();
+
+    /* 人物详情权限闸：跨岛 id 一律「暂无更多已确认信息」 */
+    S.core.setActiveSandbox(sbB.id);
+    S.core.switchTo(b, u);
+    S.nav.open('ta-person', { id: a });
+    if (bodyTextOf().indexOf('暂无更多已确认信息') < 0) {
+      throw new Error('跨岛人物读取没被挡住');
+    }
+    S.nav.closeAll();
+  } finally {
+    S.store.set('activeSandboxId', bak.sb);
+    S.store.set('activeCharId', bak.ch);
+    S.store.set('activeUserId', bak.us);
+    if (S.nav.depth() > 0) S.nav.closeAll();
+  }
+  return { 数据源: ['charState', 'openLoops', 'attentionInbox', 'lifeFeed', '名册/links'], 切岛: '不串', 写入: 0 };
+});
+
+t('群岛选人闸：多角色出选人页、点击才切身份；孤岛/单大号自动归位；空岛仍空态', () => {
+  /* 群岛两个大号 */
+  const a = S.core.upsertChar({ name: '闸甲', kind: 'main' }).id;
+  const b = S.core.upsertChar({ name: '闸乙', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '闸我' }).id;
+  const sbG = S.core.createSandbox('archipelago', '闸群岛');
+  S.core.setSandboxChars(sbG.id, [a, b]);
+  S.core.setSandboxMasks(sbG.id, [u]);
+  S.core.setActiveSandbox(sbG.id);
+  S.core.switchTo(b, u);              /* 先指到乙，再清掉身份指针模拟「未选」 */
+  S.store.set('activeCharId', null);
+  if (S.nav.depth() > 0) S.nav.closeAll();
+  S.nav.open('ta', {});
+  const ctx = S.nav.topCtx();
+  const root = ctx && (ctx.body || ctx.el);
+  let pickCards = 0, pickText = '';
+  (function walk(n) {
+    if ((n.className || '').indexOf && String(n.className).indexOf('we-pick-card') >= 0) pickCards++;
+    if (n.textContent) pickText += n.textContent + '\n';
+    (n.children || []).forEach(walk);
+  })(root);
+  if (pickCards !== 2) throw new Error('选人页应有两张卡，实际 ' + pickCards);
+  if (pickText.indexOf('想看谁的生活') < 0) throw new Error('选人页标题不对');
+  if (S.core.activeCharOnIsland()) throw new Error('选人页期间身份竟已就位');
+  /* 「选甲」：桩的 click 是 noop，走选卡背后的同一调用（switchTo）+ 重开，
+     验证闸放行后窗口跟着身份走 */
+  S.core.switchTo(a, u);
+  S.nav.closeAll();
+  S.nav.open('ta', {});
+  const nowChar = S.core.activeCharOnIsland();
+  if (!nowChar || nowChar.id !== a) throw new Error('选完身份没就位');
+  const t1 = (function walk3(n) { let s2 = n.textContent || ''; (n.children || []).forEach((c) => { s2 += walk3(c); }); return s2; })(S.nav.topCtx().body || S.nav.topCtx().el);
+  if (t1.indexOf('闸甲') < 0) throw new Error('选完没进生活窗口');
+
+  /* 孤岛单大号：自动归位不出选人页 */
+  const c = S.core.upsertChar({ name: '闸孤岛角色', kind: 'main' }).id;
+  const sbS = S.core.createSandbox('isle', '闸孤岛');
+  S.core.setSandboxChars(sbS.id, [c]);
+  S.core.setSandboxMasks(sbS.id, [u]);
+  S.core.setActiveSandbox(sbS.id);
+  S.store.set('activeCharId', null);
+  S.nav.closeAll();
+  S.nav.open('ta', {});
+  const ctx2 = S.nav.topCtx();
+  const solo = S.core.activeCharOnIsland();
+  if (!solo || solo.id !== c) throw new Error('孤岛单大号没有自动归位');
+  const t2 = (function walk4(n) { let s2 = n.textContent || ''; (n.children || []).forEach((cc) => { s2 += walk4(cc); }); return s2; })(ctx2.body || ctx2.el);
+  if (t2.indexOf('闸孤岛角色') < 0) throw new Error('孤岛没有直接进窗口');
+
+  /* 空岛：仍给「未落岛 / 未选角色」空态 */
+  const sbE = S.core.createSandbox('isle', '闸空岛');
+  S.core.setActiveSandbox(sbE.id);
+  S.nav.closeAll();
+  S.nav.open('ta', {});
+  const t3 = (function walk5(n) { let s2 = n.textContent || ''; (n.children || []).forEach((cc) => { s2 += walk5(cc); }); return s2; })(S.nav.topCtx().body || S.nav.topCtx().el);
+  if (t3.indexOf('未落岛 / 未选角色') < 0) throw new Error('空岛空态丢了');
+  if (S.nav.depth() > 0) S.nav.closeAll();
+  return { 选人页: 2, 孤岛归位: true, 空态: true };
+});
+
+/* ---- ta 第二批（三张结构化表 + 状态机 + 幕后，2026-10-02）---- */
+console.log('\n--- ta 第二批（taLife 三表 / 状态机 / 幕后）---');
+t('taLife 三表：写入盖章归岛 + 闭集拒绝 + 流转留痕 + 同状态幂等', () => {
+  if (!S.taLife) throw new Error('ta-life.js 没加载（Sleepy.taLife 缺失）');
+  const ch = S.core.upsertChar({ name: 'taLife夹具角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: 'taLife夹具马甲' }).id;
+  const sb = S.core.createSandbox('isle', 'taLife夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+
+  const it = S.taLife.add('items', {
+    title: '修旧相机', detail: '差一个快门零件', status: '进行中',
+    nextCheck: '零件到货再看', refCharId: ch, refUserId: u
+  });
+  if (!it || !it.id) throw new Error('事项创建失败');
+  if (it.sandboxId !== sb.id) throw new Error('事项没盖当前岛章');
+  if (it.refCharId !== S.core.rootOf(ch).id) throw new Error('refCharId 没归 root');
+
+  /* 闭集：非法状态必须被拒（返回 null），不能悄悄收下 */
+  if (S.taLife.setStatus('items', it.id, '已兑现') !== null) {
+    throw new Error('事项收下了非法状态「已兑现」—— 闭集失守');
+  }
+  const p = S.taLife.add('promises', { quote: '周末陪你去拍照', status: '待核实', refCharId: ch, refUserId: u });
+  if (S.taLife.setStatus('promises', p.id, '进行中') !== null) {
+    throw new Error('承诺收下了事项的状态「进行中」—— 两套闭集混了');
+  }
+  const f = S.taLife.add('follows', { target: '楼下的猫', reason: '它认得 ta', refCharId: ch });
+
+  /* 流转：留 history；同状态再设是幂等（不再追加 history） */
+  const hit = S.taLife.setStatus('items', it.id, '受阻', '零件缺货');
+  if (!hit || hit.status !== '受阻') throw new Error('状态流转失败');
+  const n1 = (hit.history || []).length;
+  if (n1 < 1) throw new Error('流转没留 history');
+  const again = S.taLife.setStatus('items', it.id, '受阻', '');
+  if ((again.history || []).length !== n1) throw new Error('同状态重复入 history —— 幂等失守');
+
+  /* 读回：三表各自按 (岛 × root) 读到 */
+  if (S.taLife.itemsOf(ch).length !== 1) throw new Error('itemsOf 读不到');
+  if (S.taLife.promisesOf(ch, u).length !== 1) throw new Error('promisesOf 读不到');
+  if (S.taLife.followsOf(ch).length !== 1) throw new Error('followsOf 读不到');
+  if (!S.taLife.findInScope('items', it.id)) throw new Error('findInScope 本岛找不到');
+
+  S.taLife.remove('follows', f.id);
+  if (S.taLife.followsOf(ch).length !== 0) throw new Error('remove 没删掉');
+  return { 闭集: true, history: n1, 幂等: true };
+});
+t('taLife 岛隔离：A 岛写的，B 岛读不到、跨岛 id 拒绝', () => {
+  const a = S.core.upsertChar({ name: '隔离甲', kind: 'main' }).id;
+  const b = S.core.upsertChar({ name: '隔离乙', kind: 'main' }).id;
+  const sbA = S.core.createSandbox('isle', '隔离甲岛');
+  const sbB = S.core.createSandbox('isle', '隔离乙岛');
+  S.core.setSandboxChars(sbA.id, [a]);
+  S.core.setSandboxChars(sbB.id, [b]);
+  S.core.setActiveSandbox(sbA.id);
+  const it = S.taLife.add('items', { title: '甲岛的事', refCharId: a });
+  S.core.setActiveSandbox(sbB.id);
+  if (S.taLife.itemsOf(b).length !== 0) throw new Error('B 岛读到了 A 岛的事项');
+  if (S.taLife.findInScope('items', it.id)) throw new Error('跨岛 id 竟然能 findInScope');
+  S.core.setActiveSandbox(sbA.id);
+  if (S.taLife.itemsOf(a).length !== 1) throw new Error('回到 A 岛又读不到了');
+  S.taLife.remove('items', it.id);
+  return { 岛隔离: true, 跨岛拒绝: true };
+});
+t('taLife 三表进删房名单（真跑拆岛）+ 承诺不会被事项自动兑现', () => {
+  const src = require('fs').readFileSync('core.js', 'utf8');
+  ["'taItems'", "'taPromises'", "'taFollows'"].forEach((k) => {
+    if (src.indexOf(k) < 0) throw new Error('core.js cleanupSandbox 名单里没有 ' + k);
+  });
+  const ch = S.core.upsertChar({ name: '拆岛taLife角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '拆岛taLife我' }).id;
+  const sb = S.core.createSandbox('isle', '拆岛taLife岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setActiveSandbox(sb.id);
+  const it = S.taLife.add('items', { title: '要被拆掉的事项', refCharId: ch });
+  const pr = S.taLife.add('promises', { quote: '要被拆掉的承诺', status: '待核实', refCharId: ch, refUserId: u });
+
+  /* 设计稿红线：事项完成 / 日历走完 ≠ 承诺兑现 —— 状态机里没有这条通路，
+     事项打到「已完成」，承诺必须原样不动 */
+  S.taLife.setStatus('items', it.id, '已完成', '修好了');
+  const prAfter = S.taLife.findInScope('promises', pr.id);
+  if (!prAfter || prAfter.status !== '待核实') {
+    throw new Error('承诺状态被自动改了 —— 红线失守');
+  }
+
+  const purge = S.core._purgeSync.sandbox(sb.id);
+  if (!purge || purge.ok !== true) throw new Error('拆岛清理失败');
+  ['taItems', 'taPromises', 'taFollows'].forEach((k) => {
+    const left = (S.store.get(k) || []).filter((x) => x && x.sandboxId === sb.id);
+    if (left.length) throw new Error('拆岛后 ' + k + ' 还有孤儿 ' + left.length + ' 条');
+  });
+  return { 名单收录: true, 承诺不自动兑现: true, 拆岛后清空: true };
+});
+t('ta 首页 v2 接线：taItems/taFollows 优先显示 + 幕后/详情页注册可开 + 仍零写入', () => {
+  const src = require('fs').readFileSync('page-ta.js', 'utf8');
+  if (/store\.set\(|fetch\(|XMLHttpRequest|streamChat|api\.chat/i.test(src)) {
+    throw new Error('page-ta.js 出现了写入或网络调用 —— 页面层必须只走 taLife');
+  }
+  const tlSrc = require('fs').readFileSync('ta-life.js', 'utf8');
+  if (/fetch\(|XMLHttpRequest|api\.chat/i.test(tlSrc)) {
+    throw new Error('ta-life.js 出现了网络调用 —— 数据层必须 0 模型');
+  }
+  ['ta-item', 'ta-follow', 'ta-promise', 'ta-person', 'ta-backstage'].forEach((id) => {
+    if (!S.registered()[id]) throw new Error('页面未注册：' + id);
+  });
+
+  const ch = S.core.upsertChar({ name: '接线夹具角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '接线夹具我' }).id;
+  const sb = S.core.createSandbox('isle', '接线夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+  S.taLife.add('items', { title: '接线验收的事项标题', detail: '差一个零件', nextCheck: '零件到货再看', status: '进行中', refCharId: ch, refUserId: u });
+  S.taLife.add('follows', { target: '接线验收的关注对象', reason: '缘由夹具', refCharId: ch });
+  S.taLife.add('promises', { quote: '接线验收的承诺原话', status: '待核实', refCharId: ch, refUserId: u });
+
+  const bak = {
+    sb: S.store.get('activeSandboxId'),
+    ch: S.store.get('activeCharId'),
+    us: S.store.get('activeUserId')
+  };
+  const LIFE_KEYS = ['calEvents', 'diaries', 'moments', 'chats', 'characters', 'links'];
+  const snap = () => JSON.stringify(LIFE_KEYS.map((k) => S.store.get(k)));
+  const before = snap();
+  function bodyTextOf() {
+    const c = S.nav.topCtx();
+    const root = c && (c.body || c.el);
+    if (!root) throw new Error('拿不到当前页的 DOM');
+    let s = '';
+    (function walk(n) { if (n.textContent) s += n.textContent + '\n'; (n.children || []).forEach(walk); })(root);
+    return s;
+  }
+  try {
+    S.nav.closeAll();
+    S.nav.open('ta', {});
+    const t1 = bodyTextOf();
+    if (t1.indexOf('接线验收的事项标题') < 0) throw new Error('首页没有优先显示 taItems');
+    if (t1.indexOf('接线验收的关注对象') < 0) throw new Error('首页没有优先显示 taFollows');
+    if (t1.indexOf('幕后') < 0) throw new Error('首页没有幕后入口');
+    if (snap() !== before) throw new Error('打开首页产生了写入（taLife 表之外不许动）');
+
+    S.nav.open('ta-backstage', {});
+    const t2 = bodyTextOf();
+    if (t2.indexOf('玩家查看不等于角色知情') < 0) throw new Error('幕后页缺管理说明');
+    if (t2.indexOf('接线验收的承诺原话') < 0) throw new Error('幕后页没有列出承诺');
+    S.nav.closeAll();
+
+    S.nav.open('ta', {});
+    const it = S.taLife.itemsOf(ch)[0];
+    S.nav.open('ta-item', { id: it.id });
+    if (bodyTextOf().indexOf('阻碍') < 0) throw new Error('事项详情没有显示完整字段');
+    S.nav.back();
+    const fo = S.taLife.followsOf(ch)[0];
+    S.nav.open('ta-follow', { id: fo.id });
+    if (bodyTextOf().indexOf('缘由') < 0) throw new Error('关注详情缺字段');
+    S.nav.back();
+    const pr = S.taLife.promisesOf(ch, u)[0];
+    S.nav.open('ta-promise', { id: pr.id });
+    if (bodyTextOf().indexOf('完成标准') < 0) throw new Error('承诺详情缺字段');
+    S.nav.closeAll();
+  } finally {
+    S.store.set('activeSandboxId', bak.sb);
+    S.store.set('activeCharId', bak.ch);
+    S.store.set('activeUserId', bak.us);
+    if (S.nav.depth() > 0) S.nav.closeAll();
+  }
+  return { 接线: '表优先兜底在后', 幕后: true, 零写入: true };
+});
+t('We/ta 真机反馈修复：切 Tab 免动画 + 记一笔身份闸 + 底部露白归零', () => {
+  const weSrc = require('fs').readFileSync('page-we.js', 'utf8');
+  if (weSrc.indexOf('tab-noanim') < 0) throw new Error('goTab 没挂 tab-noanim（切 Tab 还会闪）');
+  const css = require('fs').readFileSync('style.css', 'utf8');
+  if (css.indexOf('#stack.tab-noanim .page') < 0) throw new Error('CSS 缺免动画规则');
+  if (css.indexOf('.page.has-tabbar[data-page="we"] .app-body') < 0) throw new Error('we 底部露白没归零');
+  if (css.indexOf('[data-page="ta"] .page-inner') < 0) throw new Error('ta 底部露白没归零');
+  const taSrc = require('fs').readFileSync('page-ta.js', 'utf8');
+  if (taSrc.indexOf('才有的生活可记') < 0) throw new Error('记一笔缺身份闸（没身份静默丢弃的坑）');
+  /* 回弹垫纸色：滚动容器底必须跟纸同色，真机橡皮筋回弹才不闪白 */
+  if (css.indexOf('滚动容器垫纸色') < 0 || css.indexOf('background-color:var(--we-paper') < 0) {
+    throw new Error('滚动容器没垫纸色（回弹会闪白）');
+  }
+  return { 免动画: true, 身份闸: true, 底部: true, 回弹垫纸: true };
+});
+
+/* ---- ta 第四批（模型提案通道，2026-10-02）----
+   transport 注入（page-summary callOnce 同款思路）：不打真网络，
+   全链路验证 装配→解析→白名单校验→落表→审核→落库。 */
+console.log('\n--- ta 第四批（提案通道 / 模型边界）---');
+function ta4Setup() {
+  const ch = S.core.upsertChar({ name: '提案夹具角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '提案夹具我' }).id;
+  const sb = S.core.createSandbox('isle', '提案夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+  const it = S.taLife.add('items', { title: '修旧相机', detail: '差一个快门零件', status: '进行中', refCharId: ch, refUserId: u });
+  const fo = S.taLife.add('follows', { target: '楼下的猫', refCharId: ch });
+  const pr = S.taLife.add('promises', { quote: '周末陪你去拍照', status: '待核实', refCharId: ch, refUserId: u });
+  return { ch, u, sb, it, fo, pr };
+}
+function ta4Ctx(t) {
+  return {
+    charId: t.ch,
+    targets: { items: S.taLife.itemsOf(t.ch), follows: S.taLife.followsOf(t.ch), promises: S.taLife.promisesOf(t.ch, t.u) },
+    events: S.taProposals.eventsOf(t.ch)
+  };
+}
+function ta4Transport(responses) {
+  let i = 0;
+  let calls = 0;
+  return {
+    get calls() { return calls; },
+    fn() {
+      calls++;
+      const r = responses[Math.min(i, responses.length - 1)];
+      i++;
+      return Promise.resolve({ ok: true, text: JSON.stringify(r) });
+    }
+  };
+}
+t('提案通道：模型输出先进 taProposals，正式表纹丝不动；非法/重复收口', () => withIdbLock(() => {
+  const t = ta4Setup();
+  const isl = (arr, sid) => JSON.stringify((arr || []).filter((x) => x && x.sandboxId === sid));
+  const itemsBefore = isl(S.store.get('taItems'), t.sb.id);
+  const followsBefore = isl(S.store.get('taFollows'), t.sb.id);
+  const itNow = S.taLife.itemsOf(t.ch)[0];
+  const tp = ta4Transport([{
+    proposals: [
+      { kind: 'item_update', operation: 'update', targetRef: itNow.id, baseVersion: itNow.updatedAt, summary: '零件到货了', reason: '输入事项写着「差一个快门零件」，本次复核发现已到货', extra: { targetDetail: '零件已到，等周末动手' } },
+      { kind: 'item_update', operation: 'update', targetRef: itNow.id, baseVersion: itNow.updatedAt, summary: '零件到货了', reason: '输入事项写着「差一个快门零件」，本次复核发现已到货' },
+      { kind: 'god_mode', operation: 'update', targetRef: itNow.id, summary: '越权提案', reason: 'x' },
+      { kind: 'follow_update', operation: 'update', targetRef: '不存在的id', summary: '没有目标的提案', reason: 'x' },
+      { kind: 'item_update', operation: 'update', targetRef: itNow.id, baseVersion: itNow.updatedAt, summary: '没有依据的提案' }
+    ]
+  }]);
+  return S.taModel.runMode('review', { charId: t.ch }, { transport: tp.fn }).then((r) => {
+    if (!r.ok) throw new Error('runMode 失败：' + r.error);
+    if (r.saved !== 1) throw new Error('应只收 1 条合法提案，实际 ' + r.saved);
+    if (r.failed !== 3) throw new Error('应丢弃 3 条非法提案（非法 kind / 无 target / 无依据），实际 ' + r.failed);
+    if (r.duplicate !== 1) throw new Error('指纹重复没去重，实际 ' + r.duplicate);
+    /* 未审核：正式表一个字都不能变 */
+    if (isl(S.store.get('taItems'), t.sb.id) !== itemsBefore) throw new Error('pending 提案改了 taItems');
+    if (isl(S.store.get('taFollows'), t.sb.id) !== followsBefore) throw new Error('pending 提案改了 taFollows');
+    const pend = S.taProposals.proposalsOf(t.ch, ['pending']);
+    if (pend.length !== 1 || !pend[0].modelMeta || !pend[0].modelMeta.model) throw new Error('提案没带 modelMeta');
+    return { 收口: '1收2拒1重', 正式表: '未动' };
+  });
+}));
+t('提案接受/舍弃：item_update 带 history、promise 只改待核实、高影响需二次确认、版本过期拒覆盖', () => withIdbLock(() => {
+  const t = ta4Setup();
+  const itNow = S.taLife.itemsOf(t.ch)[0];
+  const ctx = ta4Ctx(t);
+  const mk = (p) => {
+    const b = S.taProposals.validateBatch('review', { proposals: [p] }, { targets: ctx.targets, events: [], existingFps: {} });
+    if (!b.accepted.length) throw new Error('夹具提案被校验拒绝：' + JSON.stringify(b.failures));
+    S.taProposals.saveProposals('review', b, { sandboxId: t.sb.id, refCharId: t.ch }, { requestId: 'smoke', model: 'mock', label: 'mock', promptVer: 'ta-model-p1', at: Date.now() });
+    return S.taProposals.proposalsOf(t.ch, ['pending'])[0];
+  };
+  const p1 = mk({ kind: 'item_update', operation: 'update', targetRef: itNow.id, baseVersion: itNow.updatedAt, summary: '零件到货', reason: '有输入依据', extra: { targetDetail: '零件已到' } });
+  const a1 = S.taProposals.acceptProposal(p1.id, { ctx });
+  if (!a1.ok || String(a1.applied).indexOf('taItems:') !== 0) throw new Error('item_update 接受失败：' + JSON.stringify(a1));
+  const itAfter = S.taLife.findInScope('items', itNow.id);
+  if (itAfter.detail !== '零件已到') throw new Error('detail 没更新');
+  if (!itAfter.history.some((h) => String(h.note).indexOf('接受提案') >= 0)) throw new Error('接受没留 history');
+
+  /* 高影响：未二次确认必须拒，确认后放行 */
+  const hi = mk({ kind: 'follow_update', operation: 'update', targetRef: t.fo.id, baseVersion: t.fo.updatedAt, summary: '猫出车祸去世了', reason: '输入里的关注对象', extra: { targetLatest: '巷口少了那只猫' } });
+  const a2 = S.taProposals.acceptProposal(hi.id, { ctx });
+  if (a2.ok || !a2.needConfirm) throw new Error('高影响没被拦（' + JSON.stringify(a2) + '）');
+  const a3 = S.taProposals.acceptProposal(hi.id, { ctx, confirmHighImpact: true });
+  if (!a3.ok) throw new Error('二次确认后仍拒绝：' + a3.why);
+
+  /* promise_review：只更新待核实信息，状态永远不被提案改 */
+  const prNow = S.taLife.promisesOf(t.ch, t.u)[0];
+  const p3 = mk({ kind: 'promise_review', operation: 'flag_review', targetRef: prNow.id, baseVersion: prNow.updatedAt, summary: '约定临近，需核实', reason: '输入承诺下周', extra: { targetPendingWhy: '快到约定日期' } });
+  const a4 = S.taProposals.acceptProposal(p3.id, { ctx });
+  if (!a4.ok) throw new Error('promise_review 接受失败：' + a4.why);
+  const prAfter = S.taLife.findInScope('promises', prNow.id);
+  if (prAfter.status !== '待核实') throw new Error('承诺状态被提案改了 —— 红线失守');
+  if (prAfter.pendingWhy !== '快到约定日期') throw new Error('pendingWhy 没更新');
+
+  /* 版本过期：审核期间目标又变 → 旧 baseVersion 拒覆盖 */
+  const stale = mk({ kind: 'item_update', operation: 'update', targetRef: itNow.id, baseVersion: itNow.updatedAt, summary: '旧版本提案', reason: 'x' });
+  S.taLife.patch('items', itNow.id, { detail: '审核期间又变了' });
+  const a5 = S.taProposals.acceptProposal(stale.id, { ctx: ta4Ctx(t) });   /* 接受时必须用新鲜的 target 快照 */
+  if (a5.ok || !a5.expired) throw new Error('旧版本提案竟然覆盖了新状态');
+  const rj = S.taProposals.rejectProposal(stale.id, '测舍弃');
+  if (!rj.ok) throw new Error('舍弃失败：' + rj.why);
+  return { history: true, 高影响: '二次确认', 承诺: '状态未动', 版本: '过期拒覆盖' };
+}));
+t('requestId 幂等 + 开关门禁 + contact_candidate 进候选队列不发送', () => withIdbLock(() => {
+  const t = ta4Setup();
+  const itNow = S.taLife.itemsOf(t.ch)[0];
+  const json1 = { proposals: [{ kind: 'item_update', operation: 'update', targetRef: itNow.id, baseVersion: itNow.updatedAt, summary: '同一条提案', reason: '依据' }] };
+  const tp = ta4Transport([json1, json1]);
+  return S.taModel.runMode('review', { charId: t.ch }, { transport: tp.fn }).then((r1) => {
+    if (!r1.ok) throw new Error('首轮失败：' + r1.error);
+    const n1 = S.taProposals.proposalsOf(t.ch, ['pending']).length;
+    return S.taModel.runMode('review', { charId: t.ch }, { transport: tp.fn }).then((r2) => {
+      const n2 = S.taProposals.proposalsOf(t.ch, ['pending']).length;
+      if (n2 !== n1) throw new Error('重放产生了重复提案：' + n1 + ' → ' + n2);
+      if (r2.saved !== 0) throw new Error('重放又落了 ' + r2.saved + ' 条');
+      /* 开关门禁：advance 关着 → 不碰模型 */
+      S.taProposals.setAutoLife(t.ch, false);
+      let calls = 0;
+      const spy = () => { calls++; return Promise.resolve({ ok: true, text: '{"proposals":[]}' }); };
+      return S.taModel.runMode('advance', { charId: t.ch }, { transport: spy }).then((g) => {
+        if (g.ok || g.gate !== 'auto_off') throw new Error('关闭自主生活竟还生成了 advance');
+        if (calls !== 0) throw new Error('门禁拦截后仍调用了模型 ' + calls + ' 次');
+        /* review 不受开关影响 */
+        return S.taModel.runMode('review', { charId: t.ch }, { transport: spy }).then((rv) => {
+          if (!rv.ok) throw new Error('review 被开关误伤：' + rv.error);
+          /* 开启后：contact_candidate 接受 → 只进候选队列，不发送 */
+          S.taProposals.setAutoLife(t.ch, true);
+          const npc = S.core.upsertChar({ name: '提案夹具NPC', kind: 'npc', parentId: t.sb.id, parentType: 'sandbox', content: 'x' });
+          S.core.setSandboxChars(t.sb.id, [t.ch, npc.id]);
+          const b = S.taProposals.validateBatch('advance', { proposals: [{ kind: 'contact_candidate', operation: 'add', targetRef: npc.id, summary: '书店老板想约拍照', reason: '事件依据', extra: { direction: 'NPC 想请 ta 帮忙' } }] }, { targets: { npcs: S.core.npcsOfRoom(t.sb) }, events: [], existingFps: {} });
+          S.taProposals.saveProposals('advance', b, { sandboxId: t.sb.id, refCharId: t.ch }, { requestId: 'cc1', model: 'mock', label: 'mock', promptVer: 'ta-model-p1', at: Date.now() });
+          const cc = S.taProposals.proposalsOf(t.ch, ['pending']).find((x) => x.kind === 'contact_candidate');
+          const ac = S.taProposals.acceptProposal(cc.id, { ctx: ta4Ctx(t) });
+          if (!ac.ok || String(ac.applied).indexOf('attentionInbox') !== 0) throw new Error('联系候选没进队列：' + JSON.stringify(ac));
+          const inbox = S.store.get('attentionInbox:' + S.core.rootOf(t.ch).id);
+          if (!inbox || !inbox.items.some((x) => String(x.content || '').indexOf('书店老板') >= 0)) throw new Error('候选队列里没有内容');
+          return { 幂等: true, 门禁: 'auto_off 拦 advance', 联系候选: '进队列未发送' };
+        });
+      });
+    });
+  });
+}));
+t('NPC 事件与影响：npc_event 落 taEvents、impact 必须绑定事件与知情依据、重放不叠加、拆岛清理', () => withIdbLock(() => {
+  const t = ta4Setup();
+  const npc = S.core.upsertChar({ name: '事件夹具NPC', kind: 'npc', parentId: t.sb.id, parentType: 'sandbox', content: 'x' });
+  S.core.setSandboxChars(t.sb.id, [t.ch, npc.id]);
+  const ctxA = ta4Ctx(t);
+  const b1 = S.taProposals.validateBatch('advance', { proposals: [{ kind: 'npc_event', operation: 'add', targetRef: npc.id, summary: '书店老板盘下了隔壁铺面', reason: 'NPC 设定：经营书店', extra: { eventText: '书店老板盘下隔壁铺面，店面扩大了一倍' } }] }, { targets: { npcs: S.core.npcsOfRoom(t.sb) }, events: [], existingFps: {} });
+  if (!b1.accepted.length) throw new Error('合法事件被拒：' + JSON.stringify(b1.failures));
+  S.taProposals.saveProposals('advance', b1, { sandboxId: t.sb.id, refCharId: t.ch }, { requestId: 'ev1', model: 'mock', label: 'mock', promptVer: 'ta-model-p1', at: Date.now() });
+  const evP = S.taProposals.proposalsOf(t.ch, ['pending'])[0];
+  const a1 = S.taProposals.acceptProposal(evP.id, { ctx: ctxA });
+  if (!a1.ok || String(a1.applied).indexOf('taEvents:') !== 0) throw new Error('事件没落 taEvents：' + JSON.stringify(a1));
+  const ev = S.taProposals.eventsOf(t.ch)[0];
+  if (!ev || ev.npcId !== npc.id) throw new Error('事件归属不对');
+
+  /* eventRef 不存在 → 拒；缺知情依据 → 拒 */
+  const bad = S.taProposals.validateBatch('advance', { proposals: [{ kind: 'impact_review', operation: 'update', targetRef: '不存在的事件', summary: '影响', reason: 'x', extra: { knownCharId: t.ch, basis: 'x', impactText: 'x' } }] }, { targets: { npcs: [] }, events: S.taProposals.eventsOf(t.ch), existingFps: {} });
+  if (bad.accepted.length) throw new Error('不存在的 eventRef 竟然过审');
+  const noBasis = S.taProposals.validateBatch('advance', { proposals: [{ kind: 'impact_review', operation: 'update', targetRef: ev.id, summary: '影响', reason: 'x', extra: { knownCharId: t.ch, impactText: 'x' } }] }, { targets: { npcs: [] }, events: S.taProposals.eventsOf(t.ch), existingFps: {} });
+  if (noBasis.accepted.length) throw new Error('缺 basis 的影响竟过审');
+  /* 正常影响 + 重放同 fp 不叠加 */
+  const impJson = { proposals: [{ kind: 'impact_review', operation: 'update', targetRef: ev.id, summary: 'ta 可能会去捧场', reason: '事件：店面扩大；事项：修相机需要取货点', extra: { knownCharId: t.ch, basis: '事件发生在 ta 常去的街', impactText: 'ta 或许会注意到店面变化' } }] };
+  const good = S.taProposals.validateBatch('advance', impJson, { targets: { npcs: [] }, events: S.taProposals.eventsOf(t.ch), existingFps: {} });
+  S.taProposals.saveProposals('advance', good, { sandboxId: t.sb.id, refCharId: t.ch }, { requestId: 'im1', model: 'mock', label: 'mock', promptVer: 'ta-model-p1', at: Date.now() });
+  const imP = S.taProposals.proposalsOf(t.ch, ['pending']).find((x) => x.kind === 'impact_review');
+  const a2 = S.taProposals.acceptProposal(imP.id, { ctx: ctxA });
+  if (!a2.ok) throw new Error('影响接受失败：' + a2.why);
+  const evAfter = S.taProposals.findEventInScope(ev.id);
+  if (evAfter.impacts.length !== 1) throw new Error('影响数量不对：' + evAfter.impacts.length);
+  const again = S.taProposals.validateBatch('advance', impJson, { targets: { npcs: [] }, events: S.taProposals.eventsOf(t.ch), existingFps: S.taProposals.proposalsOf(t.ch).reduce((m, x) => { if (x.fp) m[x.fp] = 1; return m; }, {}) });
+  if (again.accepted.length) throw new Error('同一影响重复过审（fp 没拦）');
+  /* 拆岛清理 */
+  const purge = S.core._purgeSync.sandbox(t.sb.id);
+  if (!purge || purge.ok !== true) throw new Error('拆岛失败');
+  if ((S.store.get('taProposals') || []).some((x) => x && x.sandboxId === t.sb.id)) throw new Error('提案成孤儿');
+  if ((S.store.get('taEvents') || []).some((x) => x && x.sandboxId === t.sb.id)) throw new Error('事件成孤儿');
+  return { 事件: true, 影响: '绑定依据', 重放: '不叠加', 拆岛: true };
+}));
+t('候选模式：模型候选只进草稿区（model_proposal）+ 同名不重建 + 静态护栏', () => withIdbLock(() => {
+  const t = ta4Setup();
+  const tp = ta4Transport([{ proposals: [
+    { kind: 'contact_candidate', operation: 'add', summary: '说话慢吞吞的修表匠', reason: '设定里 ta 常路过钟表行', extra: { candidateName: '老周', candidateRole: '修表匠' } },
+    { kind: 'contact_candidate', operation: 'add', summary: '另一位候选没有名字', reason: 'x', extra: {} }
+  ] }]);
+  return S.taModel.runMode('candidates', { charId: t.ch }, { transport: tp.fn }).then((r1) => {
+    if (!r1.ok || r1.saved !== 1) throw new Error('候选落草稿数不对：' + JSON.stringify(r1));
+    const d = S.taLife.draftsOf(t.ch)[0];
+    if (d.sourceType !== 'model_proposal') throw new Error('候选草稿没标 model_proposal');
+    if ((S.store.get('characters') || []).some((x) => x.name === '老周')) throw new Error('模型候选直接进了正式人物表 —— 红线失守');
+    return S.taModel.runMode('candidates', { charId: t.ch }, { transport: tp.fn }).then((r2) => {
+      if (r2.saved !== 0 || r2.duplicate < 1) throw new Error('同名候选重建了：' + JSON.stringify(r2));
+      const pt = require('fs').readFileSync('page-ta.js', 'utf8');
+      if (/requestOnce|[^.]fetch\(/.test(pt)) throw new Error('页面层出现网络调用');
+      const tm = require('fs').readFileSync('ta-model.js', 'utf8');
+      if (tm.indexOf('Sleepy.api.requestOnce') < 0) throw new Error('模型模块没走 api.requestOnce');
+      const idx = require('fs').readFileSync('index.html', 'utf8');
+      if (idx.indexOf('ta-model.js') < 0 || idx.indexOf('ta-proposal.js') < 0) throw new Error('index.html 没引入第四批脚本');
+      return { 草稿标记: true, 同名不重建: true, 静态: true };
+    });
+  });
+}));
+
+/* ---- ta 第五批（已成立影响接入聊天与主动消息，2026-10-02）----
+   设计见 docs/施工-ta首页第五批-2026-10-02.md。
+   这一批的坑集中在「边界」上，所以断言也全是边界：
+   知情 × 有效 × 相关三道闸、过期≠解决、事实变了≠没反应过、
+   候选→决策→回执的闭环、以及 ta 挂掉时聊天照常。 */
+console.log('\n--- ta 第五批（已成立影响 → 聊天 / 主动消息）---');
+
+function ta5Setup() {
+  const ch = S.core.upsertChar({
+    name: '影响夹具角色', kind: 'main',
+    content: '【性格】安静、话少，不太会主动找人说话。'
+  }).id;
+  const u = S.core.upsertUser({ name: '影响夹具我' }).id;
+  const sb = S.core.createSandbox('isle', '影响夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+  const rid = S.core.rootOf(ch).id;
+  const npc = S.core.upsertChar({ name: '影响夹具NPC', kind: 'npc', parentId: sb.id, parentType: 'sandbox', content: 'x' });
+  S.core.setSandboxChars(sb.id, [ch, npc.id]);
+  /* 另一个 root：用来验「NPC 的私密事件不会被角色提前知道」（知情闸） */
+  const other = S.core.upsertChar({ name: '岛上别人', kind: 'main', content: 'x' });
+  return { ch, u, sb, rid, npc, otherRid: S.core.rootOf(other.id).id };
+}
+function ta5Event(t, opts) {
+  opts = opts || {};
+  const list = S.store.get('taEvents') || [];
+  const ev = {
+    id: 'te5' + Math.random().toString(36).slice(2, 8),
+    refCharId: t.rid, refUserId: t.u, npcId: t.npc.id,
+    text: opts.eventText || '夹具事件',
+    happenedAt: Date.now(), sourceType: 'proposal', sourceId: 'x',
+    knowledge: [], impacts: opts.impacts || [],
+    status: opts.status || 'active',
+    createdAt: Date.now(), updatedAt: Date.now()
+  };
+  S.core.tagScope(ev, t.sb.id);
+  list.push(ev);
+  S.store.set('taEvents', list);
+  return ev;
+}
+function ta5Impact(o) {
+  const base = {
+    id: 'ti5' + Math.random().toString(36).slice(2, 8),
+    kind: 'situation', strength: 2, status: 'active',
+    basis: '夹具依据', acceptedAt: Date.now(), history: []
+  };
+  Object.keys(o || {}).forEach((k) => { base[k] = o[k]; });
+  return base;
+}
+const TA5_QUERY = '相机零件到了吗';
+const TA5_HIT = '修相机缺一个快门零件，最近总往五金店跑';
+const TA5_MISS = '最近在练一首很长的曲子';
+
+t('影响注入三道闸：知情 fail closed + 有效 + 相关；pending 提案永远进不来', () => {
+  const t = ta5Setup();
+  ta5Event(t, { impacts: [
+    ta5Impact({ knownCharId: t.rid, text: TA5_HIT }),
+    /* ① 知情闸：另一个 root 的影响 —— 相关性再高也不许进 */
+    ta5Impact({ knownCharId: t.otherRid, text: TA5_HIT + '（别人那边的事）' }),
+    /* ② 有效闸：已淡了 */
+    ta5Impact({ knownCharId: t.rid, kind: 'mood', status: 'faded', text: TA5_HIT + '（已经淡了）' }),
+    /* ③ 相关闸：本轮输入完全沾不上 */
+    ta5Impact({ knownCharId: t.rid, text: TA5_MISS })
+  ] });
+  /* pending 提案（未确认）：一个字都不许进聊天 */
+  S.store.set('taProposals', (S.store.get('taProposals') || []).concat([(() => {
+    const p = {
+      id: 'tp5pending', refCharId: t.rid, refUserId: t.u,
+      kind: 'item_update', operation: 'update', targetRef: 'x',
+      summary: '未确认提案独有词QZX', reason: '依据', extra: {},
+      status: 'pending', createdAt: Date.now(), updatedAt: Date.now(), history: []
+    };
+    S.core.tagScope(p, t.sb.id);
+    return p;
+  })()]));
+
+  const txt = S.taImpact.compile(t.ch, t.u, TA5_QUERY);
+  if (!txt) throw new Error('相关的影响一条都没注入');
+  if (txt.indexOf(TA5_HIT) < 0) throw new Error('相关影响没进注入文本');
+  if (txt.indexOf('别人那边的事') >= 0) throw new Error('知情闸失守：别人的影响注入了');
+  if (txt.indexOf('已经淡了') >= 0) throw new Error('有效闸失守：已淡了的影响注入了');
+  if (txt.indexOf('很长的曲子') >= 0) throw new Error('相关闸失守：不相关的影响注入了');
+  if (txt.indexOf('QZX') >= 0) throw new Error('pending 提案进了聊天 —— 红线失守');
+  /* 边界句必须在（只当背景 / 不改人设 / 别迁怒对方） */
+  if (txt.indexOf('改变你的性格、说话方式和红线') < 0) throw new Error('缺「不改人设」约束句');
+  if (txt.indexOf('不要因此对对方冷淡、发火或索取关心') < 0) throw new Error('缺「别迁怒对方」约束句');
+  /* 本轮注入的 id 被记住（回复落地后要据此盖 reactedAt） */
+  const ids = S.taImpact.lastInjected(t.ch);
+  if (ids.length !== 1) throw new Error('注入清单不对：' + ids.length);
+  return { 知情闸: '拦住别人的', 有效闸: '拦住已淡的', 相关闸: '拦住不相关', pending: '未进聊天' };
+});
+
+t('影响注入上限与降级：最多 2 条；无「本轮输入」只放 1 条持续处境', () => {
+  const t = ta5Setup();
+  ta5Event(t, { impacts: [
+    ta5Impact({ knownCharId: t.rid, text: '修相机缺一个快门零件，最近总往五金店跑' }),
+    ta5Impact({ knownCharId: t.rid, text: '相机零件到货前，他不太想接别的事' }),
+    ta5Impact({ knownCharId: t.rid, text: '零件没到的这几天，他有点心不在焉' })
+  ] });
+  const txt = S.taImpact.compile(t.ch, t.u, '零件到货了吗');
+  const bullets = txt.split('\n').filter((l) => l.indexOf('· ') === 0);
+  if (bullets.length !== 2) throw new Error('注入条数不是 2：' + bullets.length);
+  /* 无 query（纯系统触发）→ 只放 1 条持续处境 */
+  const t2 = ta5Setup();
+  ta5Event(t2, { impacts: [
+    ta5Impact({ knownCharId: t2.rid, strength: 3, text: '一直惦记着修那台旧相机' }),
+    ta5Impact({ knownCharId: t2.rid, strength: 1, text: '最近睡得不太够' })
+  ] });
+  const txt2 = S.taImpact.compile(t2.ch, t2.u, '');
+  const b2 = txt2.split('\n').filter((l) => l.indexOf('· ') === 0);
+  if (b2.length !== 1) throw new Error('无输入时条数不是 1：' + b2.length);
+  if (b2[0].indexOf('旧相机') < 0) throw new Error('无输入时没挑最强的持续处境');
+  return { 上限: 2, 无输入: '只 1 条最强处境' };
+});
+
+t('有效期复核：减弱 / 过期都 ≠ 解决；resolved 只能人手；refresh 幂等', () => {
+  const t = ta5Setup();
+  const old = Date.now() - 80 * 3600 * 1000;     /* 80h 前接受 → 心绪该淡了 */
+  const ev = ta5Event(t, { impacts: [
+    ta5Impact({ knownCharId: t.rid, kind: 'mood', acceptedAt: old, expiresAt: Date.now() - 1000, text: '心里有点闷' }),
+    ta5Impact({ knownCharId: t.rid, kind: 'situation', expiresAt: Date.now() - 1000, text: '一直惦记着修那台旧相机' })
+  ] });
+  const before = S.taImpact.impactsOf(t.ch).map((x) => x.status);
+  if (before.join(',') !== 'active,active') throw new Error('前置状态不对：' + before);
+
+  const r1 = S.taImpact.refresh(t.ch);
+  if (r1.faded !== 1 || r1.expired !== 1) throw new Error('复核结果不对：' + JSON.stringify(r1));
+  const after = S.taImpact.impactsOf(t.ch);
+  const byId = {}; after.forEach((x) => { byId[x.text] = x; });
+  if (byId['心里有点闷'].status !== 'faded') throw new Error('心绪没淡掉');
+  if (byId['一直惦记着修那台旧相机'].status !== 'expired') throw new Error('处境没标过期');
+  /* 红线 1：过期 ≠ 解决 —— 代码里不许出现「时间到了 → resolved」 */
+  if (after.some((x) => x.status === 'resolved')) throw new Error('过期被自动当成解决了 —— 红线失守');
+  if (!byId['一直惦记着修那台旧相机'].history.some((h) => String(h.note).indexOf('不是解决') >= 0)) {
+    throw new Error('过期没写清「不是解决」');
+  }
+  /* 幂等：再推一次什么都不该变 */
+  const r2 = S.taImpact.refresh(t.ch);
+  if (r2.changed !== 0) throw new Error('refresh 不幂等：' + JSON.stringify(r2));
+  /* 已过期/已淡的不再注入 */
+  if (S.taImpact.compile(t.ch, t.u, '旧相机还修吗')) throw new Error('非 active 的影响还在注入');
+  /* 手动解决：只能人手 */
+  const resolved = S.taImpact.resolveImpact(byId['一直惦记着修那台旧相机'].id, '玩家确认了结');
+  if (!resolved || resolved.status !== 'resolved') throw new Error('手动解决失败');
+  /* 非法流转：resolved → active 必须拒 */
+  if (S.taImpact.setStatus(byId['一直惦记着修那台旧相机'].id, 'active', 'x')) {
+    throw new Error('resolved 竟能被改回 active');
+  }
+  return { 减弱: true, 过期: true, 过期非解决: true, 幂等: true, 手动解决: true };
+});
+
+t('事件更正：事实变了 ≠ 角色没反应过（reactedAt 与 history 全保留）', () => {
+  const t = ta5Setup();
+  const ev = ta5Event(t, { impacts: [ta5Impact({ knownCharId: t.rid, text: TA5_HIT })] });
+  const im = S.taImpact.impactsOf(t.ch)[0];
+  /* 先让角色真的反应过一次（noteReply 的落点） */
+  S.taImpact.compile(t.ch, t.u, TA5_QUERY);
+  const noted = S.taImpact.noteReply(t.ch);
+  if (noted.marked !== 1) throw new Error('反应没记上：' + JSON.stringify(noted));
+  const reactedAt = S.taImpact.impactsOf(t.ch)[0].reactedAt;
+  if (!reactedAt) throw new Error('reactedAt 没落');
+  /* 幂等：同一条不重复盖 */
+  S.taImpact.compile(t.ch, t.u, TA5_QUERY);
+  if (S.taImpact.noteReply(t.ch).marked !== 0) throw new Error('reactedAt 被重复盖了');
+
+  const histLen = S.taImpact.impactsOf(t.ch)[0].history.length;
+  const r = S.taImpact.correctEvent(ev.id, '零件其实没到，是记错了');
+  if (!r.ok || r.marked !== 1) throw new Error('更正失败：' + JSON.stringify(r));
+  const evAfter = S.taImpact.locateEvent(ev.id);
+  if (evAfter.status !== 'corrected') throw new Error('事件没标更正');
+  const imAfter = S.taImpact.impactsOf(t.ch)[0];
+  if (imAfter.status !== 'stale') throw new Error('影响没标依据失效');
+  /* 关键两条：反应史保留、记录不删 */
+  if (imAfter.reactedAt !== reactedAt) throw new Error('更正把「角色有过反应」抹掉了 —— 红线失守');
+  if (imAfter.history.length <= histLen) throw new Error('更正没留 history');
+  if (S.taImpact.impactsOf(t.ch).length !== 1) throw new Error('更正删掉了记录');
+  if (imAfter.staleNote !== '零件其实没到，是记错了') throw new Error('没记更正说明');
+  /* 依据失效后不再驱动表达 */
+  if (S.taImpact.compile(t.ch, t.u, TA5_QUERY)) throw new Error('已更正的事件还在注入');
+  return { 事件: '已更正', 影响: 'stale', 反应史: '保留', 记录: '未删' };
+});
+
+t('主动消息最小闭环：候选带 proposalId → 决策落定写回提案（send 是终态）', () => withIdbLock(() => {
+  const t = ta5Setup();
+  const b = S.taProposals.validateBatch('advance', { proposals: [{
+    kind: 'contact_candidate', operation: 'add', targetRef: t.npc.id,
+    summary: '想问问相机修好没', reason: '事件依据',
+    extra: { direction: 'NPC 想请 ta 帮忙' }
+  }] }, { targets: { npcs: S.core.npcsOfRoom(t.sb) }, events: [], existingFps: {} });
+  S.taProposals.saveProposals('advance', b, { sandboxId: t.sb.id, refCharId: t.rid }, { requestId: 'cc5', model: 'mock', label: 'mock', promptVer: 'ta-model-p1', at: Date.now() });
+  const cc = S.taProposals.proposalsOf(t.ch, ['pending']).find((x) => x.kind === 'contact_candidate');
+  const ac = S.taProposals.acceptProposal(cc.id, { ctx: { targets: { npcs: S.core.npcsOfRoom(t.sb) }, events: [] } });
+  if (!ac.ok) throw new Error('接受失败：' + ac.why);
+
+  /* ① 队列条目带 taProposalId，且候选 id 就是它（handled 指纹要能对上） */
+  const inbox = S.store.get('attentionInbox:' + t.rid);
+  const item = (inbox.items || []).find((x) => x && x.taProposalId === cc.id);
+  if (!item) throw new Error('队列条目没带 taProposalId');
+  const cands = S.proactiveEngine.candidatesFor(t.ch);
+  const cand = cands.find((c) => c.taProposalId === cc.id);
+  if (!cand) throw new Error('候选里没带出 taProposalId');
+  if (cand.id !== 'attention:' + cc.id) throw new Error('候选 id 不是 proposalId：' + cand.id);
+
+  /* ② 还没有结果时，提案是「等闸门」状态 */
+  if (S.taImpact.pendingContact(t.ch).length !== 1) throw new Error('待结果的联系候选数不对');
+
+  /* ③ 决策落定（skip）→ 写回提案 */
+  const n1 = S.taImpact.noteProactive(null, { proposalId: cc.id, decision: 'skip', at: Date.now() });
+  if (!n1.ok || n1.decision !== 'skip') throw new Error('结果没写回：' + JSON.stringify(n1));
+  if (S.taImpact.pendingContact(t.ch).length !== 0) throw new Error('有结果了还算待结果');
+  /* ④ send 覆盖 skip（发送真的成功了） */
+  S.taImpact.noteProactive(null, { proposalId: cc.id, decision: 'send', messageId: 'ms_test', at: Date.now() });
+  let got = S.taProposals.findProposalInScope(cc.id);
+  if (!got.outcome || got.outcome.decision !== 'send' || got.outcome.messageId !== 'ms_test') {
+    throw new Error('send 没覆盖：' + JSON.stringify(got.outcome));
+  }
+  /* ⑤ send 是终态：后续 skip 不许覆盖 */
+  S.taImpact.noteProactive(null, { proposalId: cc.id, decision: 'skip', at: Date.now() });
+  got = S.taProposals.findProposalInScope(cc.id);
+  if (got.outcome.decision !== 'send') throw new Error('send 被后续决策覆盖了');
+  /* ⑥ 回执进 history，且提案状态没被回执改动 */
+  if (!got.history.some((h) => String(h.note).indexOf('主动消息判断结果') >= 0)) throw new Error('回执没进 history');
+  if (got.status !== 'accepted') throw new Error('回执改动了提案状态');
+  return { 队列: '带 proposalId', 候选: 'id 即 proposalId', 回执: 'skip→send 终态' };
+}));
+
+t('聊天安全：ta 挂掉不影响聊天；未确认不进聊天；人设卡仍在最前', () => {
+  const t = ta5Setup();
+  ta5Event(t, { impacts: [ta5Impact({ knownCharId: t.rid, text: TA5_HIT })] });
+  const hist = [{ role: 'user', content: TA5_QUERY }];
+
+  /* 正常：taimpact 槽命中，且 K01 角色卡仍在 */
+  const built = S.promptEngine.assembleOnline({ charId: t.ch, userId: t.u, history: hist });
+  const slotOf = (b, id) => b.slots.find((s) => s.id === id);
+  if (!slotOf(built, 'taimpact') || !slotOf(built, 'taimpact').on) throw new Error('taimpact 槽没命中');
+  const k01 = slotOf(built, 'character');
+  if (!k01 || !k01.on) throw new Error('角色卡（K01）没进装配 —— 人设优先失守');
+  const k01At = built.messages.findIndex((m) => String(m.content).indexOf('[CHARACTER]') >= 0);
+  const taAt = built.messages.findIndex((m) => String(m.content).indexOf('[TA_IMPACT]') >= 0);
+  if (k01At < 0 || taAt < 0) throw new Error('装配里缺角色卡或影响块');
+  if (k01At > taAt) throw new Error('影响块排到了角色卡前面 —— 人设优先失守');
+
+  /* ta 抛异常：聊天照常（这是「ta 模块失败时普通聊天照常运行」的验收） */
+  const orig = S.taImpact.compile;
+  S.taImpact.compile = () => { throw new Error('模拟 ta 内部炸了'); };
+  let broke = false;
+  let built2 = null;
+  try {
+    built2 = S.promptEngine.assembleOnline({ charId: t.ch, userId: t.u, history: hist });
+  } catch (e) { broke = true; }
+  S.taImpact.compile = orig;
+  if (broke) throw new Error('ta 报错把装配整个带崩了');
+  if (!built2 || !built2.messages.length) throw new Error('ta 报错后装配返回空');
+  if (!slotOf(built2, 'character') || !slotOf(built2, 'character').on) throw new Error('ta 报错后角色卡丢了');
+  if (slotOf(built2, 'taimpact').on) throw new Error('ta 报错后影响槽还是 on');
+  /* ta 模块整个不在：同样不许崩 */
+  const bak = S.taImpact;
+  delete S.taImpact;
+  let built3 = null;
+  try { built3 = S.promptEngine.assembleOnline({ charId: t.ch, userId: t.u, history: hist }); } catch (e) { broke = true; }
+  S.taImpact = bak;
+  if (broke || !built3 || !built3.messages.length) throw new Error('ta 模块缺失时装配崩了');
+
+  /* 静态护栏 */
+  const pe = require('fs').readFileSync('prompt-engine.js', 'utf8');
+  if ((pe.match(/case 'taimpact'/g) || []).length !== 2) throw new Error('taimpact 槽没在线上+线下各挂一次');
+  if (pe.indexOf('compileTaImpact: compileTaImpact') < 0) throw new Error('compileTaImpact 没导出');
+  const ti = require('fs').readFileSync('ta-impact.js', 'utf8');
+  if (/requestOnce|[^.\w]fetch\(/.test(ti)) throw new Error('影响层出现网络调用');
+  /* 注入路径（compile 起、到「主动消息最小闭环」为止）只许读 taEvents：
+     提案表只在主动消息回执那一段出现。 */
+  const injectPart = ti.slice(ti.indexOf('function compile(charId'), ti.indexOf('主动消息最小闭环'));
+  if (injectPart.length < 200) throw new Error('静态切片没取到注入路径（锚点变了）');
+  if (injectPart.indexOf('taProposals') >= 0) throw new Error('注入路径读了提案表 —— 必须只读 taEvents');
+  const idx = require('fs').readFileSync('index.html', 'utf8');
+  if (idx.indexOf('ta-impact.js') < 0) throw new Error('index.html 没引入 ta-impact.js');
+  if (idx.indexOf('ta-proposal.js') > idx.indexOf('ta-impact.js')) throw new Error('ta-impact.js 排在了 ta-proposal.js 前面');
+  return { 正常: '命中且人设优先', 抛异常: '聊天照常', 模块缺失: '聊天照常', 静态: '无网络/不读提案表' };
+});
+
+/* ---- ta 第三批（一键转正 + NPC 候选草稿，2026-10-02）---- */
+console.log('\n--- ta 第三批（一键转正 / NPC 草稿）---');
+t('一键转正：来源指纹去重 + 原始来源不动 + 幂等', () => {
+  const ch = S.core.upsertChar({ name: '转正夹具角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '转正夹具我' }).id;
+  const sb = S.core.createSandbox('isle', '转正夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+
+  /* 原始来源：openLoops / attentionInbox 写入并快照 */
+  const rid = S.core.rootOf(ch).id;
+  S.store.set('openLoops:' + rid, { items: ['把阳台的花补种一下'], updatedAt: '2026-10-02T10:00:00' });
+  S.store.set('attentionInbox:' + rid, { items: ['留意巷口新开的书店'], updatedAt: '2026-10-02T10:00:00' });
+  const srcSnap = JSON.stringify([S.store.get('openLoops:' + rid), S.store.get('attentionInbox:' + rid)]);
+
+  /* openLoops → taItems：指纹 = 'ol:' + hashText(原文) */
+  const fp = 'ol:' + S.taLife.hashText('把阳台的花补种一下');
+  if (S.taLife.findBySource('items', 'openLoops', fp)) throw new Error('还没转正就查到了');
+  const it = S.taLife.add('items', {
+    title: '把阳台的花补种一下', refCharId: ch, refUserId: u,
+    sourceType: 'openLoops', sourceId: fp, sourceRef: '悬而未决的事（openLoops）'
+  });
+  if (!it) throw new Error('转正写入失败');
+  const hit = S.taLife.findBySource('items', 'openLoops', fp);
+  if (!hit || hit.id !== it.id) throw new Error('指纹查不到刚转正的记录');
+
+  /* 重复转正：同一指纹再「转」一次，不得创建第二条 */
+  const again = S.taLife.findBySource('items', 'openLoops', fp);
+  if (!again || again.id !== it.id) throw new Error('重复转正指纹没命中');
+  const n = S.taLife.itemsOf(ch).length;
+  if (n !== 1) throw new Error('重复转正建了第二条（共 ' + n + ' 条）');
+
+  /* attentionInbox → taFollows 同机制 */
+  const fp2 = 'att:' + S.taLife.hashText('留意巷口新开的书店');
+  S.taLife.add('follows', {
+    target: '留意巷口新开的书店', refCharId: ch,
+    sourceType: 'attentionInbox', sourceId: fp2, sourceRef: '总结引擎关注队列'
+  });
+  if (!S.taLife.findBySource('follows', 'attentionInbox', fp2)) throw new Error('follows 指纹查不到');
+
+  /* 原始来源一个字节都没动 */
+  if (JSON.stringify([S.store.get('openLoops:' + rid), S.store.get('attentionInbox:' + rid)]) !== srcSnap) {
+    throw new Error('原始 openLoops/attentionInbox 被改写了');
+  }
+  /* lifeFeed：不提供自动判型 —— 转成哪种由用户选（数据层两种都收，UI 层给选择） */
+  const lfFp = 'lf:' + S.taLife.hashText('前天傍晚蹲在邮筒上');
+  S.taLife.add('follows', {
+    target: '前天傍晚蹲在邮筒上', refCharId: ch,
+    sourceType: 'lifeFeed', sourceId: lfFp, sourceRef: '近期生活动态（lifeFeed）'
+  });
+  if (!S.taLife.findBySource('follows', 'lifeFeed', lfFp)) throw new Error('lifeFeed 转正没落表');
+  return { 去重: true, 原始来源: '未动', lifeFeed: '用户选型' };
+});
+t('NPC 草稿：未确认零泄漏（名册/召回/生活）+ 编辑 + 舍弃重开 + 删岛清理', () => {
+  const ch = S.core.upsertChar({ name: '草稿夹具角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '草稿夹具我' }).id;
+  const sb = S.core.createSandbox('isle', '草稿夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+
+  const d = S.taLife.addDraft({
+    name: '巷口书店老板', role: '书店老板',
+    meetingOpportunity: '上周去买绝版书聊过一次',
+    reasonToStayConnected: '他说会帮我留一本',
+    closenessAndBoundary: '点头之交，止于书店',
+    ownLife: '每周三关店去旧货市场',
+    refCharId: ch, refUserId: u
+  });
+  if (!d || d.status !== 'draft') throw new Error('草稿创建失败');
+
+  /* 隔离证据：草稿不进 characters（正式名册），npcsOfRoom / 首页人物表读不到 */
+  const roster = S.core.charsOfSandbox(sb.id).map((x) => x.id);
+  if (roster.indexOf(d.id) >= 0) throw new Error('草稿 id 混进了角色名册');
+  const npcs = S.core.npcsOfRoom(sb).map((x) => x.id);
+  if (npcs.indexOf(d.id) >= 0) throw new Error('未确认草稿出现在 npcsOfRoom');
+  if ((S.store.get('characters') || []).some((x) => x.name === '巷口书店老板')) {
+    throw new Error('草稿名字泄漏进正式人物表');
+  }
+  if (S.taLife.draftsOf(ch).length !== 1) throw new Error('draftsOf 读不到');
+
+  /* 编辑 + 舍弃 + 重新打开 */
+  S.taLife.patchDraft(d.id, { role: '旧书店老板' });
+  if (S.taLife.findDraftInScope(d.id).role !== '旧书店老板') throw new Error('草稿编辑没生效');
+  S.taLife.setDraftStatus(d.id, 'discarded', '先放着');
+  if (S.taLife.findDraftInScope(d.id).status !== 'discarded') throw new Error('舍弃失败');
+  S.taLife.setDraftStatus(d.id, 'draft', '重新打开');
+  if (S.taLife.findDraftInScope(d.id).status !== 'draft') throw new Error('重新打开失败');
+  const hist = S.taLife.findDraftInScope(d.id).history.length;
+  if (hist < 3) throw new Error('状态流转没留 history（' + hist + '）');
+
+  /* 未确认就 confirm：必须被拒 */
+  const refuse = S.taLife.confirmDraft(d.id, { existsConfirmed: false });
+  if (refuse.ok) throw new Error('未勾「确认存在」竟然放行了');
+
+  /* 跨岛隔离：B 岛找不到这份草稿 */
+  const b = S.core.upsertChar({ name: '草稿乙岛角色', kind: 'main' }).id;
+  const sbB = S.core.createSandbox('isle', '草稿乙岛');
+  S.core.setSandboxChars(sbB.id, [b]);
+  S.core.setActiveSandbox(sbB.id);
+  if (S.taLife.findDraftInScope(d.id)) throw new Error('跨岛能读到草稿');
+  S.core.setActiveSandbox(sb.id);
+
+  /* 删岛清理 */
+  const purge = S.core._purgeSync.sandbox(sb.id);
+  if (!purge || purge.ok !== true) throw new Error('拆岛失败');
+  if ((S.store.get('taNpcDrafts') || []).some((x) => x && x.sandboxId === sb.id)) {
+    throw new Error('拆岛后草稿成孤儿');
+  }
+  return { 隔离: true, 流转: hist, 拆岛: true };
+});
+t('NPC 确认入库：upsertChar 正式创建 + 三授权独立 + 重试幂等 + 失败保留', () => {
+  const ch = S.core.upsertChar({ name: '入库夹具角色', kind: 'main' }).id;
+  const u = S.core.upsertUser({ name: '入库夹具我' }).id;
+  const sb = S.core.createSandbox('isle', '入库夹具岛');
+  S.core.setSandboxChars(sb.id, [ch]);
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(ch, u);
+  const beforeNpcs = S.core.npcsOfRoom(sb).length;
+
+  const d = S.taLife.addDraft({ name: '邮筒边的猫的常客', role: '退休教师', refCharId: ch, refUserId: u });
+
+  /* 失败路径：临时打断 upsertChar —— 草稿保留、status=failed、不伪报成功 */
+  const origUpsert = S.core.upsertChar;
+  S.core.upsertChar = function () { throw new Error('模拟存储故障'); };
+  const bad = S.taLife.confirmDraft(d.id, {
+    existsConfirmed: true, userKnowsInStory: true, autonomousDevelopmentAllowed: false
+  });
+  S.core.upsertChar = origUpsert;
+  if (bad.ok) throw new Error('创建失败竟然报成功');
+  const afterFail = S.taLife.findDraftInScope(d.id);
+  if (afterFail.status !== 'failed') throw new Error('失败后 status 不是 failed');
+  if ((S.store.get('characters') || []).some((x) => x.name === '邮筒边的猫的常客')) {
+    throw new Error('失败路径泄漏了正式人物');
+  }
+
+  /* 重试成功：只建一个正式 NPC，归岛、kind/parentType 正确 */
+  const ok = S.taLife.confirmDraft(d.id, {
+    existsConfirmed: true, userKnowsInStory: true, autonomousDevelopmentAllowed: true
+  });
+  if (!ok.ok || !ok.formalCharId) throw new Error('重试入库失败：' + JSON.stringify(bad));
+  const npc = S.core.findChar(ok.formalCharId);
+  if (!npc || npc.kind !== 'npc' || npc.parentType !== 'sandbox' || npc.parentId !== sb.id) {
+    throw new Error('正式 NPC 口径不对：' + JSON.stringify(npc && { kind: npc.kind, pt: npc.parentType }));
+  }
+  if (S.core.npcsOfRoom(sb).length !== beforeNpcs + 1) throw new Error('正式 NPC 没进名册');
+  /* userKnows=true → 建了 (npc × user) 的 aware 关系 */
+  const link = S.core.findLink(ok.formalCharId, u, sb.id);
+  if (!link || link.cognition !== 'aware') throw new Error('userKnows=true 没建 aware 关系');
+
+  /* 幂等：再 confirm 一次，绝不建第二个 */
+  const dup = S.taLife.confirmDraft(d.id, {
+    existsConfirmed: true, userKnowsInStory: true, autonomousDevelopmentAllowed: true
+  });
+  if (!dup.ok || !dup.dup) throw new Error('重试没走幂等回执');
+  if (S.core.npcsOfRoom(sb).length !== beforeNpcs + 1) throw new Error('幂等失守：又建了一个');
+
+  /* 回执落库 */
+  const rec = S.taLife.findDraftInScope(d.id);
+  if (rec.status !== 'confirmed' || rec.formalCharId !== ok.formalCharId || rec.confirmedAt !== rec.confirmedAt) {
+    throw new Error('回执没落库');
+  }
+  if (!rec.userKnowsInStory || !rec.autonomousDevelopmentAllowed) throw new Error('三授权没独立落库');
+  return { 失败保留: true, 重试幂等: true, 归岛: true, 回执: true };
+});
+t('第三批页面：草稿编辑/详情/幕后入口注册可开 + 静态护栏', () => {
+  ['ta-draft', 'ta-draft-edit'].forEach((id) => {
+    if (!S.registered()[id]) throw new Error('页面未注册：' + id);
+  });
+  const src = require('fs').readFileSync('page-ta.js', 'utf8');
+  if (/store\.set\(|fetch\(|XMLHttpRequest|streamChat|api\.chat/i.test(src)) {
+    throw new Error('page-ta.js 出现了写入或网络调用');
+  }
+  const tl = require('fs').readFileSync('ta-life.js', 'utf8');
+  if (/fetch\(|XMLHttpRequest|api\.chat/i.test(tl)) throw new Error('ta-life.js 出现了网络调用');
+  if (tl.indexOf('taNpcDrafts') < 0) throw new Error('ta-life.js 没挂草稿键');
+  if (tl.indexOf('core.upsertChar') < 0) throw new Error('确认入库没走 core.upsertChar 正式通道');
+  if (src.indexOf('补充身边的人') < 0) throw new Error('首页缺草稿入口');
+  return { 注册: 2, 护栏: true };
 });
 t('render 和 repaint 共用同一个格子渲染函数', () => {
   const src = require('fs').readFileSync('page-desktop.js', 'utf8');
@@ -3562,6 +4742,100 @@ t('规则型区域不设年份上限：JP 成人の日 / US 感恩节算得对',
   return { 成人の日: jp.legal.name, 感恩节: us.legal.name };
 });
 
+/* 2026-10-03：用户报「设置中国/上海，10 月 3 日却被说成国庆第一天」。
+   勘察结论是**代码没有造假**（全库搜不到「第一天」这种生成逻辑），
+   注入原文逐日核过一遍，7 天区间里每天都只说「今天是国庆节」+ 客观 kind。
+   但「只报节日名、不报假期位置」确实容易被读成「第几天」——
+   这条把**逐日原文**钉住：谁哪天、属于哪种 kind，一个字都不许飘。 */
+t('假期表述给全事实：区间 + 今天 + 第几天，模型不用自己推（2026-10-03 修）', () => {
+  /* 用户报「模型说今天是国庆第一天」，换了几个 API 都一样，中秋那次也犯过。
+     根因不是措辞不精确，是**事实错了**：`CN_OFFICIAL` 的 name 是**整段连休的名**
+     （国庆 = 10-01~10-07），而旧句式连着 7 天都说「今天是国庆节」——
+     7 天里 6 天是假的。模型同时读到「今天是 10 月 3 日」和「今天是国庆节」
+     两条打架的信息，只能采信假期名、忽略日期 → 说成「第一天」。
+     **它不是算错了，是我们逼它二选一。**
+
+     现在按「节 ≠ 节假日」分层（用户 2026-10-03 拍板）：
+       假期名（国庆假期）→ 法定层，附区间
+       节日名（中秋节/除夕）→ 文化层，只在真正那天出现
+     并把三件不需要推理的事实一次给全：区间、今天、第几天。 */
+  CAL.clearCache();
+  const cfg = { region: 'CN', cultures: ['cn', 'intl'] };
+  const expect = {
+    '2026-10-01': 'legal_off', '2026-10-02': 'legal_off',
+    '2026-10-03': 'weekend', '2026-10-04': 'weekend',
+    '2026-10-05': 'legal_off', '2026-10-06': 'legal_off', '2026-10-07': 'legal_off'
+  };
+  Object.keys(expect).forEach((iso) => {
+    const d = CAL.dayInfo(iso, cfg);
+    if (!d.legal) throw new Error(iso + ' 没认成假期');
+    /* 名字必须是**假期名**（带「假期」），不许是「国庆节」这种当天名 */
+    if (d.legal.name.indexOf('假期') < 0) {
+      throw new Error(iso + ' 的名字不是假期名（节≠节假日）：' + d.legal.name);
+    }
+    if (d.legal.kind !== expect[iso]) throw new Error(iso + ' 的 kind 不对：' + d.legal.kind);
+    if (!d.isDayOff) throw new Error(iso + ' 该是休息日');
+  });
+  /* 第几天必须**逐日递增**，且首日=1、末日=total（这里最容易错：
+     daysBetween 已含首尾，再 +1 会让 10-01 变成第 2 天、7 天说成 8 天） */
+  const seq = [];
+  for (let day = 1; day <= 7; day++) {
+    const iso = '2026-10-0' + day;
+    const d = CAL.dayInfo(iso, cfg);
+    if (d.legal.day !== day) throw new Error(iso + ' 第几天算错：' + d.legal.day);
+    if (d.legal.total !== 7) throw new Error(iso + ' 总天数算错：' + d.legal.total);
+    seq.push(d.legal.day);
+  }
+  /* 注入原文：三件事实齐、**且不许出现「今天是国庆」这种以假期名当当天名的说法** */
+  const facts = CAL.timeFacts(calSb.a, { at: new Date(2026, 9, 3, 12, 0) });
+  const pub = (facts.split('\n').filter((l) => l.indexOf('公共日期') === 0)[0]) || '';
+  if (pub.indexOf('国庆假期') < 0) throw new Error('注入里没有假期名：' + pub);
+  if (pub.indexOf('10月1日—10月7日') < 0) throw new Error('注入里没有区间：' + pub);
+  if (pub.indexOf('今天是 10月3日') < 0) throw new Error('注入里没有明说今天：' + pub);
+  if (pub.indexOf('第 3 天') < 0) throw new Error('注入里没有第几天：' + pub);
+  /* 关键红线：多日连休**不许**再出现「今天是<假期名>」 */
+  if (/今天是\s*国庆/.test(pub)) {
+    throw new Error('又用「今天是假期名」的句式了（6/7 天是假的）：' + pub);
+  }
+  /* 假期结束当天回到普通工作日 */
+  const after = CAL.dayInfo('2026-10-08', cfg);
+  if (after.legal) throw new Error('10-08 不该还有假期标记');
+  if (!after.isWorkday) throw new Error('10-08 该是工作日');
+  /* 补班日不许被当成休息（§5.3 红线） */
+  const makeUp = CAL.dayInfo('2026-10-10', cfg);
+  if (!makeUp.legal || makeUp.legal.kind !== 'workday_adjustment') throw new Error('10-10 补班没认出来');
+  if (makeUp.isDayOff) throw new Error('10-10 补班日被当成休息了 —— §5.3 红线');
+
+  return {
+    逐日: seq.join('→'),
+    命名: '假期名（国庆假期）',
+    注入: '区间+今天+第几天齐',
+    10_08: '普通工作日',
+    补班: '认出来了'
+  };
+});
+
+t('节日名与假期名分层：节日名只在真正那天（清明当天在假期中间）', () => {
+  CAL.clearCache();
+  const cfg = { region: 'CN', cultures: ['cn'] };
+  /* 官方 2026 清明假期是 04-04~04-06，但**清明节当天是 04-05** ——
+     旧实现连着三天都说「今天是清明节」，前后两天都是假的。 */
+  const names = ['04-04', '04-05', '04-06'].map((md) => {
+    const iso = '2026-' + md;
+    return { iso, legal: CAL.dayInfo(iso, cfg).legal.name, fest: CAL.dayInfo(iso, cfg).festivals.map((f) => f.name) };
+  });
+  /* 三天的法定层都该是「清明节假期」 */
+  names.forEach((n) => {
+    if (n.legal.indexOf('假期') < 0) throw new Error(n.iso + ' 法定层该用假期名：' + n.legal);
+  });
+  /* 节日名「清明节」只在 04-05 那天出现（文化层） */
+  const withFest = names.filter((n) => n.fest.indexOf('清明节') >= 0).map((n) => n.iso);
+  if (withFest.length !== 1 || withFest[0] !== '2026-04-05') {
+    throw new Error('清明节名只该在 04-05 出现，实际：' + JSON.stringify(withFest));
+  }
+  return { 三天假期名: '一致', 节日名只在: withFest[0] };
+});
+
 t('文化节日多选：选中的组才出现，春节不与法定层重复出两条', () => {
   const cfg = { region: 'CN', cultures: ['cn', 'intl'] };
   const d = CAL.dayInfo('2026-02-17', cfg);
@@ -3572,6 +4846,42 @@ t('文化节日多选：选中的组才出现，春节不与法定层重复出�
   if (d1.festivals.map((f) => f.name).indexOf('情人节') < 0) throw new Error('选了 intl 该有情人节');
   CAL.clearCache();
   return { 春节当天: names.join('/') || '（法定层已覆盖）', 情人节: '有' };
+});
+
+/* 2026-10-03 修复的回归锁：年缓存键漏了 cultures。
+   上面那条用例的两次断言之间夹了一个 clearCache() —— 正好把这条路径绕过去了，
+   所以这个 bug 一直没被测出来。这条**故意不清缓存**：
+   两个 char 交替问同一个年份，谁先问都不能定死别人那份。
+   ⚠️ 不许在中间加 clearCache() —— 加了就等于没测，这条用例的意义全在「不清」。 */
+t('年缓存按 cultures 分桶：两个 char 交替问同一年不互相串味', () => {
+  const a = calSb.a, b = calSb.b;
+  CAL.saveCfg(a, { cultures: ['cn'] });      /* 甲：只要中国传统节日 */
+  CAL.saveCfg(b, { cultures: ['intl'] });    /* 乙：只要国际常见节日 */
+  CAL.clearCache();
+
+  const cfgA = CAL.cfgOf(a), cfgB = CAL.cfgOf(b);
+  if (cfgA.cultures.join(',') !== 'cn' || cfgB.cultures.join(',') !== 'intl') {
+    throw new Error('夹具没设对：' + cfgA.cultures + ' / ' + cfgB.cultures);
+  }
+
+  /* 乙先问 —— 他选了 intl，圣诞节必须在 */
+  const bFirst = CAL.dayInfo('2026-12-25', cfgB).festivals.map((f) => f.name);
+  if (bFirst.indexOf('圣诞节') < 0) throw new Error('乙选了 intl 却拿不到圣诞节：' + bFirst);
+  /* 甲接着问同一年同一天 —— 他没选 intl，**不许蹭到乙那份缓存** */
+  const aNoIntl = CAL.dayInfo('2026-12-25', cfgA).festivals.map((f) => f.name);
+  if (aNoIntl.length) throw new Error('甲没选 intl 却看见了国际节日（跨角色串味）：' + aNoIntl);
+  /* 甲问自己的 —— 中文节日得在 */
+  const aCn = CAL.dayInfo('2026-02-17', cfgA).festivals.map((f) => f.name);
+  if (aCn.indexOf('春节') < 0) throw new Error('甲选了 cn 却拿不到春节：' + aCn);
+  /* 乙再问甲已经问过的那个年份 —— 他的 intl 不许被甲挤掉 */
+  const bAgain = CAL.dayInfo('2026-12-25', cfgB).festivals.map((f) => f.name);
+  if (bAgain.indexOf('圣诞节') < 0) throw new Error('乙的圣诞节被甲的查询挤掉了：' + bAgain);
+
+  /* 恢复，别把后面的用例带跑偏 */
+  CAL.saveCfg(a, { cultures: ['cn', 'intl'] });
+  CAL.saveCfg(b, { cultures: ['cn', 'intl'] });
+  CAL.clearCache();
+  return { 乙先: bFirst.join('/'), 甲: aNoIntl.length ? aNoIntl.join('/') : '（无，符合预期）', 乙再: bAgain.join('/') };
 });
 
 t('每个 char 的日历配置彼此独立（总纲 §0.4）', () => {
@@ -3587,11 +4897,11 @@ t('每个 char 的日历配置彼此独立（总纲 §0.4）', () => {
 
 t('事件：按 char 隔离，冲突检测认重叠、取消的不占时间', () => {
   const a = calSb.a, b = calSb.b;
-  const e1 = CAL.addEvent({ ownerCharId: a, eventType: 'user_reminder', title: '去旧书店',
+  const e1 = CAL.__internal.addEvent({ ownerCharId: a, eventType: 'user_reminder', title: '去旧书店',
     startAt: '2030-05-20T18:30', endAt: '2030-05-20T20:00', allDay: false });
-  CAL.addEvent({ ownerCharId: a, eventType: 'char_schedule', title: '傍晚散步',
+  CAL.__internal.addEvent({ ownerCharId: a, eventType: 'char_schedule', title: '傍晚散步',
     startAt: '2030-05-20T19:00', endAt: '2030-05-20T19:40', allDay: false });
-  CAL.addEvent({ ownerCharId: b, eventType: 'user_reminder', title: 'B 的事',
+  CAL.__internal.addEvent({ ownerCharId: b, eventType: 'user_reminder', title: 'B 的事',
     startAt: '2030-05-20T18:00', endAt: '2030-05-20T21:00', allDay: false });
   if (CAL.eventsOn(a, '2030-05-20').length !== 2) throw new Error('A 的事件数不对');
   if (CAL.eventsOn(b, '2030-05-20').length !== 1) throw new Error('两个 char 的事件串了');
@@ -3608,24 +4918,24 @@ t('事件：按 char 隔离，冲突检测认重叠、取消的不占时间', ()
 });
 
 t('删除与取消分开：共同事件成立过就只能取消，绑了留痕的不能删', () => {
-  const r1 = CAL.removeEvent(CAL.addEvent({ ownerCharId: calSb.a, eventType: 'shared_event',
+  const r1 = CAL.removeEvent(CAL.__internal.addEvent({ ownerCharId: calSb.a, eventType: 'shared_event',
     title: '一起吃饭', startAt: '2030-06-01T19:00', allDay: false, status: 'confirmed' }).id);
   if (r1.ok) throw new Error('已确认的共同事件不该允许删除');
-  const ann = CAL.addEvent({ ownerCharId: calSb.a, eventType: 'anniversary', title: '某天',
+  const ann = CAL.__internal.addEvent({ ownerCharId: calSb.a, eventType: 'anniversary', title: '某天',
     startAt: '2030-07-07', allDay: true, memoryId: 'mem_x' });
   if (CAL.removeEvent(ann.id).ok) throw new Error('绑了留痕的纪念日不能直接删');
-  const draft = CAL.addEvent({ ownerCharId: calSb.a, eventType: 'user_reminder', title: '记错了',
+  const draft = CAL.__internal.addEvent({ ownerCharId: calSb.a, eventType: 'user_reminder', title: '记错了',
     startAt: '2030-08-08T09:00', allDay: false });
   if (!CAL.removeEvent(draft.id).ok) throw new Error('误创建的提醒该允许删除');
   return { 共同事件: '拒绝', 纪念日: '拒绝', 误创建: '允许' };
 });
 
 t('重复规则展开：年重复在次年同月日还回来；农历重复不假装能算', () => {
-  const id = CAL.addEvent({ ownerCharId: calSb.a, eventType: 'user_reminder', title: '每年这天',
+  const id = CAL.__internal.addEvent({ ownerCharId: calSb.a, eventType: 'user_reminder', title: '每年这天',
     startAt: '2030-03-05T09:00', allDay: false, repeatRule: 'yearly' }).id;
   if (!CAL.eventsOn(calSb.a, '2031-03-05').some((e) => e.id === id)) throw new Error('年重复没展开');
   if (CAL.eventsOn(calSb.a, '2031-03-06').some((e) => e.id === id)) throw new Error('不该在别的日子出现');
-  const lunar = CAL.addEvent({ ownerCharId: calSb.a, eventType: 'anniversary', title: '农历那条',
+  const lunar = CAL.__internal.addEvent({ ownerCharId: calSb.a, eventType: 'anniversary', title: '农历那条',
     startAt: '2030-09-09', allDay: true, repeatRule: 'yearly_lunar' }).id;
   if (CAL.eventsOn(calSb.a, '2031-08-29').some((e) => e.id === lunar)) {
     throw new Error('没有农历库就不许硬转农历日期');
@@ -3664,11 +4974,22 @@ t('纪念日候选只来自真实留痕：没有锚点就没有候选', () => {
   S.memoryStore.loadCharMemory && S.store.set('charMem:' + a, file);
   const cands = CAL.anniversaryCandidates(a);
   if (cands.length !== 1) throw new Error('锚点留痕该成为候选：' + cands.length);
-  const ev = CAL.saveAnniversary(a, cands[0].memory, { date: '2030-05-20' });
+  /* 收口批之后 saveAnniversary 返回统一入口的结构化结果（不再是裸 event） */
+  const res = CAL.saveAnniversary(a, cands[0].memory, { date: '2030-05-20' });
+  if (!res.ok) throw new Error('纪念日没写成：' + JSON.stringify(res.error));
+  const ev = res.event;
   if (ev.memoryId !== 'mem_smoke_1') throw new Error('纪念日没和留痕双向绑上');
   if (ev.meaningType !== 'char_subjective') throw new Error('私人纪念日不许自动升格成双方事实');
+  if (!ev.requestKey) throw new Error('纪念日没带统一入口的幂等键');
+  if (ev.authorizedVia !== 'anniversary_sheet') throw new Error('没记授权来源');
   if (CAL.anniversaryCandidates(a).filter((x) => !x.saved).length) throw new Error('存过的不该再当候选');
-  return { 候选: 1, 绑定: ev.memoryId, 意义: ev.meaningType };
+  /* 再存一次：命中幂等键，不建第二条 */
+  const again = CAL.saveAnniversary(a, cands[0].memory, { date: '2030-05-20' });
+  if (!again.ok || again.dup !== true) throw new Error('重复保存没被幂等挡住');
+  /* 只数这一条留痕对应的（别的测试也建过纪念日，按 requestKey 精确数） */
+  const byKey = CAL.eventsOf(a).filter((e) => e.requestKey === ev.requestKey).length;
+  if (byKey !== 1) throw new Error('重复保存建出了第二条纪念日：' + byKey);
+  return { 候选: 1, 绑定: ev.memoryId, 意义: ev.meaningType, 重复: '幂等挡住' };
 });
 
 t('换房看不见 + removeSandbox 连带清两张日历表', () => {
@@ -3758,8 +5079,12 @@ t('时间事实按他的时区算（不是浏览器本地时间），且不塞�
 });
 
 t('关着「生成角色日程」不注入他的安排，开了才注入（总纲 §14.2）', () => {
-  S.calendar.addEvent({ ownerCharId: plTest, eventType: 'char_schedule', title: '傍晚去旧书店',
-    startAt: '2026-09-19T18:30', endAt: '2026-09-19T20:00', allDay: false });
+  /* ⚠️ 这条必须是**他自己**安排的（createdBy:char）—— 第二轮施工单第一批之后
+     I02 会按 charViewOf 过滤；addEvent 默认 createdBy 是 user、visibility 是 private，
+     那样它会被正确地挡掉，测的就不是「开关」而是「隐私」了。 */
+  S.calendar.__internal.addEvent({ ownerCharId: plTest, eventType: 'char_schedule', title: '傍晚去旧书店',
+    startAt: '2026-09-19T18:30', endAt: '2026-09-19T20:00', allDay: false,
+    createdBy: { type: 'char', id: plTest }, visibility: 'private' });
   const at = new Date(2026, 8, 19, 9, 0);
   const off = S.calendar.timeFacts(plTest, { at });
   if (off.indexOf('傍晚去旧书店') >= 0) throw new Error('开关关着还是注入了他的安排');
@@ -3937,13 +5262,61 @@ t('通查②：主动消息的 system 段有共享外壳 + K01 短字段 + I01',
   });
   const u = S.core.activeUser() || S.core.userMasks()[0];
   const sys = S.proactiveEngine.buildSystem(c.id, u && u.id).join('\n');
-  if (sys.indexOf('[角色声音]') < 0) throw new Error('主动消息没有共享外壳的角色声音');
+  /* ★ 2026-10-04 修正断言口径（用户批准选项 A）。
+     原来判的是 shell **卡**正文的 `[角色声音]` / `[身份与场景]` 两节 ——
+     那是行为文本接入**之前**的共享外壳形态。行为文本 B 批起，
+     shell 位由 B/P/L 三段共享行为正文接管，**私聊线上早已不含那两节**
+     （实测：线上 system 同样 indexOf('[角色声音]') < 0）。
+     接线主动消息只是让它**与线上对齐**，不是引入退化。
+
+     ⚠️ 明确不做的事：把 shell 卡那两节加回线上或主动消息 ——
+       那是重新混回已冻结的行为正文，会与 B/P/L 的授权边界与人物一致性重复。
+
+     ★ 强度不降反升：原来只判「有共享外壳」，现在逐段判 B/P/L 三段都在，
+       再加一条「诊断声称的模块必须与实际注入一致」，比原来更严。 */
+  if (!S.behaviorText) throw new Error('行为文本模块不在，主动消息无法走共享外壳');
+  if (typeof S.promptEngine.btDecideScene !== 'function') {
+    throw new Error('共享行为决策层未导出（btDecideScene 缺失）');
+  }
+  const BT_FIRST = {
+    B: '以本轮提供的有效资料',
+    P: '对每个获准扮演的人物，依据其资料',
+    L: '结合本轮明确篇幅需求',
+    E: '当前通过消息交流',
+    S3: '当前不是对新消息作必答回复'
+  };
+  ['B', 'P', 'L', 'E', 'S3'].forEach((m) => {
+    if (sys.indexOf(BT_FIRST[m]) < 0) {
+      throw new Error('主动消息的共享外壳缺 ' + m + ' 模块：' + BT_FIRST[m]);
+    }
+  });
+  /* ★ 诊断与实际注入必须一致 —— 决策层拿到正文 ≠ 真的进了 system。
+     modules 逐项都要能在 sys 里找到；pending 的一个都不该在。 */
+  const note = S.proactiveEngine.behaviorNote ? S.proactiveEngine.behaviorNote() : null;
+  if (!note) throw new Error('主动消息没有行为文本诊断（behaviorNote 缺失）');
+  if (note.behaviorUsed !== true) throw new Error('诊断说共享外壳没被用上');
+  if (JSON.stringify(note.modules) !== JSON.stringify(['B', 'P', 'L', 'E', 'S3'])) {
+    throw new Error('诊断 modules 与完整接线不符：' + JSON.stringify(note.modules));
+  }
+  if (note.partial !== false || (note.pendingModules || []).length) {
+    throw new Error('主动消息是完整接线，不该报 partial/pending：' +
+      JSON.stringify({ partial: note.partial, pending: note.pendingModules }));
+  }
+  note.modules.forEach((m) => {
+    if (sys.indexOf(BT_FIRST[m]) < 0) {
+      throw new Error('诊断声称用了 ' + m + '，但 system 里找不到：' + BT_FIRST[m]);
+    }
+  });
   /* 状态签名已全量下线（2026-09-29）—— 反向断言：不许再注入 */
   if (sys.indexOf('当前状态：') >= 0) throw new Error('状态签名已下线，主动消息却还在注入');
   if (sys.indexOf('说话与行为方式：句子短') < 0) throw new Error('主动消息看不见说话方式');
   if (sys.indexOf('绝对不要做（红线）') < 0) throw new Error('主动消息看不见红线');
   if (sys.indexOf('awareness_mode') < 0) throw new Error('主动消息没有 I01');
-  return { 段数: S.proactiveEngine.buildSystem(c.id, u && u.id).length };
+  return {
+    段数: S.proactiveEngine.buildSystem(c.id, u && u.id).length,
+    共享外壳: 'B/P/L', 场景模块: note.modules.slice(3).join('/'),
+    partial: note.partial, shellCard: note.shellCard
+  };
 });
 
 t('parseOfflineReply：dialogue 的 trans 单独收下，prose 不收，正文不带译文', () => {
@@ -7808,14 +9181,14 @@ t('L1.5 扩源：日历经 visibility 分档，日记经授权分档', () => {
   S.store.set('diaries', []);
 
   const tmr = cal.shiftISO(cal.todayISO(), 1);
-  const mk = (o) => cal.addEvent(Object.assign({
+  const mk = (o) => cal.__internal.addEvent(Object.assign({
     ownerCharId: a, startAt: tmr + 'T15:00', createdBy: { type: 'user', id: 'user' }
   }, o));
   mk({ title: '牙医复诊', visibility: 'shared_detail' });
   mk({ title: '给他买礼物', visibility: 'private' });          /* 我的私事 */
   mk({ title: '公司会议', visibility: 'shared_busy' });         /* 只知道忙 */
   mk({ title: '每天开门', eventType: 'char_schedule', visibility: 'shared_detail' });
-  cal.addEvent({ ownerCharId: a, startAt: tmr + 'T20:00', title: '去河边散步',
+  cal.__internal.addEvent({ ownerCharId: a, startAt: tmr + 'T20:00', title: '去河边散步',
     visibility: 'shared_detail', createdBy: { type: 'char', id: a } });
 
   S.store.set('diaries', [
@@ -9515,12 +10888,12 @@ t('收藏馆：来源复核 manual/live/completed/cancelled/deleted + ticket 口
   const m = S.core.upsertChar({ name: '复核大号', kind: 'main' }).id;
   S.core.setSandboxChars(A.id, [m]);
   S.core.setActiveSandbox(A.id);
-  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '吃火锅' });
+  const ev = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '吃火锅' });
   const live = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: ev.id });
   if (live.status !== 'live') throw new Error('calendar live 态错误：' + JSON.stringify(live));
 
   /* calendar completed：已完成的事件是**有效历史来源**，不能显示「原物不在」 */
-  const evDone = S.calendar.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '看完那场展', status: 'completed' });
+  const evDone = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '看完那场展', status: 'completed' });
   const done = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: evDone.id });
   if (done.status !== 'done') throw new Error('calendar completed 应为 done（有效历史来源）：' + JSON.stringify(done));
   if (done.text.indexOf('看完那场展') < 0) throw new Error('done 态应带原标题：' + JSON.stringify(done));
@@ -9531,7 +10904,7 @@ t('收藏馆：来源复核 manual/live/completed/cancelled/deleted + ticket 口
   if (gone.status !== 'gone' || gone.text !== '该约定已取消') throw new Error('calendar cancelled 态错误：' + JSON.stringify(gone));
 
   /* calendar deleted：事件真正不存在 → 原日历记录已删除（区别于取消） */
-  const evDel = S.calendar.addEvent({ ownerCharId: m, title: '写错的草稿' });
+  const evDel = S.calendar.__internal.addEvent({ ownerCharId: m, title: '写错的草稿' });
   const rm = S.calendar.removeEvent(evDel.id);
   if (!rm || rm.ok !== true) throw new Error('草稿事件应可删除：' + JSON.stringify(rm));
   const del = S.collectionStore.checkSource({ sourceType: 'calendar', sourceId: evDel.id });
@@ -10286,6 +11659,84 @@ t('新建表单页重开必须重画（freshOnOpen 静态护栏）', () => {
   return { app机制: true, contactedit: true, maskedit: true };
 });
 
+/* 用户 2026-10-03 报的两个 bug 的**静态**护栏。
+   上面那条（数据层）已经证明 core 的隔离逻辑是好的 —— 病根全在 UI 层
+   拿「人」的方式，所以必须扫源码才抓得住回潮。
+
+   ① 跨岛 copy 账号：编辑页取人只能用**指针卫兵**（activeUserOnIsland），
+      不许用带 `|| ensureDefaultUser()` 跨岛兜底的 activeUser；
+      且 mask-edit 必须校验「这条记录属于要编辑的那座岛」。
+   ② 认知档位在没马甲的岛上不许整段消失：门槛只能是「有没有角色」，
+      不许出现 `mains.length && masks.length` 这种把马甲数当条件的写法。 */
+t('跨岛隔离静态护栏：编辑页不许拿带兜底的 activeUser，认知锁不许按马甲数隐藏（用户 10-03 报）', () => {
+  const idc = fs.readFileSync(path.join(ROOT, 'page-idcard.js'), 'utf8');
+  const isl = fs.readFileSync(path.join(ROOT, 'page-island.js'), 'utf8');
+
+  /* --- ① me-profile：取人必须是卫兵 ---
+     ⚠️ **先剥注释再判**：修法说明里必然要写出 `activeUserOnIsland`
+     这几个字（说明「原来用的是 activeUser」），不剥的话第一道
+     `indexOf` 永远命中注释 → 后面真正抓代码的 forEach 根本走不到。
+     这是第一版假绿的直接原因（负向对照当场抓出来的）。 */
+  const meAt = idc.indexOf("Sleepy.register('me-profile'");
+  const meSeg = idc.slice(meAt, meAt + 1800)
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const takeLine = meSeg.slice(0, meSeg.indexOf('var body = ctx.body;'));
+  if (takeLine < 0) throw new Error('me-profile 护栏锚点失效（没找到 var body 那行）');
+  const assigned = takeLine.match(/\bvar\s+\w+\s*=\s*core\.(\w+)\(\)/g) || [];
+  if (!assigned.length) throw new Error('me-profile 取人那段没找到 core.*() 赋值（护栏本身要改）');
+  assigned.forEach((a) => {
+    if (a.indexOf('activeUserOnIsland') < 0) {
+      throw new Error('me-profile 取人用的是 ' + a.trim() + ' —— 必须是 activeUserOnIsland');
+    }
+  });
+  if (meSeg.indexOf('activeUserOnIsland') < 0) {
+    throw new Error('me-profile 整段里都没有 activeUserOnIsland');
+  }
+  /* --- ① mask-edit：必须校验岛归属 --- */
+  const mkAt = idc.indexOf("Sleepy.register('mask-edit'");
+  const meSeg2 = idc.slice(mkAt, mkAt + 2200)
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  if (meSeg2.indexOf('sandboxId') < 0) {
+    throw new Error('mask-edit 没接 sandboxId（跨岛打开会把别岛的记录整个 copy 进表单）');
+  }
+  if (meSeg2.indexOf('不属于这座岛') < 0) {
+    throw new Error('mask-edit 缺「记录不属于这座岛就拒绝编辑」那道闸（fail closed）');
+  }
+  /* 归属闸必须真的**在条件里比 sandboxId**，不能只写在 toast 文案里 */
+  if (!/existing\s*\.\s*sandboxId\s*!==\s*sbId|existing\s*\.\s*sandboxId\s*===\s*sbId/.test(meSeg2)) {
+    throw new Error('mask-edit 只在文案里提了「不属于这座岛」，代码里没比 sandboxId（护栏要卡代码不是卡字）');
+  }
+  /* --- ① 时空切换器建马甲必须带岛 --- */
+  const sw = fs.readFileSync(path.join(ROOT, 'page-switch.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const swAt = sw.indexOf("open('mask-edit'");
+  const swAdd = sw.slice(swAt - 400, swAt + 120);
+  if (swAdd.indexOf('sandboxId') < 0) {
+    throw new Error('时空切换器「新增马甲」没带 sandboxId（会在别的岛建出别座的马甲）');
+  }
+  /* 剥注释后再扫：修法说明里必然要写出旧写法那几个字，
+     扫全文会把自己刚写的注释判成违规（第一版就这么误报）。 */
+  const islCode = isl.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  if (/mains\.length\s*&&\s*masks\.length/.test(islCode)) {
+    throw new Error('认知锁又回到「有马甲才渲染」了（新岛会一个选项都没有）');
+  }
+  /* ⚠️ 锚点要用 `secTitle('初始认知锁')`（真正的渲染调用），
+     不能用「初始认知锁」四个字 —— 剥掉注释后文件头那份文档里也有这几个字，
+     indexOf 会命中第 23 行，窗口就落到完全无关的地方去了。 */
+  const lockAt = islCode.indexOf("secTitle('初始认知锁')");
+  if (lockAt < 0) throw new Error('没找到认知锁那段渲染（护栏锚点失效，需要更新）');
+  const lockSeg = islCode.slice(lockAt, lockAt + 1600);
+  if (lockSeg.indexOf('还没有「我」的马甲') < 0) {
+    throw new Error('没马甲时没给出「去加一件马甲」的指引（用户会以为这一页坏了）');
+  }
+  return {
+    meProfile: '指针卫兵',
+    maskEdit: '校验岛归属',
+    切换器: '带 sandboxId',
+    认知锁: '按角色判，不按马甲数'
+  };
+});
+
 /* ======================== We 收藏馆 P2（char 提议 → user 确认入馆） ========================
    数据层证据：store 默认值 / 标签抽取 / 岛隔离 / 来源 fail-closed /
    accept 幂等 / declined 冷却 / 老 weAdd 兼容 / 删房名单 / 页面注册。 */
@@ -10330,7 +11781,7 @@ t('收藏馆P2：创建提议带正确 sandboxId/身份（不用全局指针）�
   const u = S.core.upsertUser({ name: '我' }).id;
   S.core.setSandboxChars(A.id, [m]);
   S.core.setActiveSandbox(A.id);
-  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule',
+  const ev = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule',
     title: '旧书店的黄昏', startAt: '2026-10-03 16:00' });
 
   const chat = { id: 'chat-a', characterId: m, userId: u, sandboxId: A.id };
@@ -10361,7 +11812,7 @@ t('收藏馆P2：创建提议带正确 sandboxId/身份（不用全局指针）�
   if (S.weProposals.countPending() !== 1) throw new Error('回甲岛后提议丢了');
 
   /* 同一 originMessageId 重复创建被拦 */
-  const ev2 = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '第二件事' });
+  const ev2 = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '第二件事' });
   const dup = S.weProposals.createFromReply(chat, 'msg-1', { sourceId: ev2.id, kind: 'gift', reason: '又想留' });
   if (dup.ok || dup.why !== 'dup-message') throw new Error('同 originMessageId 应拦：' + JSON.stringify(dup));
 
@@ -10376,14 +11827,14 @@ t('收藏馆P2：来源 fail-closed —— 非法kind/不存在/跨角色/跨岛
   S.core.setActiveSandbox(A.id);
   const chat = { id: 'chat-fc', characterId: m, userId: u, sandboxId: A.id };
 
-  const evOK = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '傍晚散步' });
-  const evDone = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '看完那场展', status: 'completed' });
+  const evOK = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '傍晚散步' });
+  const evDone = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '看完那场展', status: 'completed' });
   const evCancel = S.calendar.cancelEvent(
-    S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '黄了的约定' }).id
+    S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '黄了的约定' }).id
   );
   const m2 = S.core.upsertChar({ name: '别人家大号', kind: 'main' }).id;
-  const evOther = S.calendar.addEvent({ ownerCharId: m2, eventType: 'char_schedule', title: '别人的事' });
-  const evShared = S.calendar.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '共同安排' });
+  const evOther = S.calendar.__internal.addEvent({ ownerCharId: m2, eventType: 'char_schedule', title: '别人的事' });
+  const evShared = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'shared_event', title: '共同安排' });
 
   function why(tag) {
     return S.weProposals.createFromReply(chat, 'msg-fc-' + Math.random(), tag).why;
@@ -10397,7 +11848,7 @@ t('收藏馆P2：来源 fail-closed —— 非法kind/不存在/跨角色/跨岛
   /* 跨岛：事件属于同一 char 但盖的是乙岛的章 */
   const B = S.core.createSandbox('isle', '复核乙岛');
   S.core.setActiveSandbox(B.id);
-  const evB = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '乙岛的事' });
+  const evB = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '乙岛的事' });
   S.core.setActiveSandbox(A.id);
   if (why({ sourceId: evB.id, kind: 'ticket', reason: '合理' }) !== 'scope') throw new Error('跨岛事件应拒');
 
@@ -10424,7 +11875,7 @@ t('收藏馆P2：accept 幂等 + 正式记录 createdBy/confirmedBy/confirmedAt 
   const before = S.weStore.list().length;
 
   /* accept：写入正式 weEntries + 全部确认字段 */
-  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '江边的日落' });
+  const ev = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '江边的日落' });
   const r = S.weProposals.createFromReply(chat, 'msg-ac-1', { sourceId: ev.id, kind: 'place', reason: '那天的光很好' });
   if (!r.ok) throw new Error('提议创建失败：' + JSON.stringify(r));
   const acc = S.weProposals.accept(r.proposal.id);
@@ -10449,7 +11900,7 @@ t('收藏馆P2：accept 幂等 + 正式记录 createdBy/confirmedBy/confirmedAt 
   if (S.weStore.list().length !== before + 1) throw new Error('重复 accept 生成了第二条 weEntry！');
 
   /* declined：不生成 weEntries；冷却期内同源重复提议被拦 */
-  const ev2 = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '没留下的那顿' });
+  const ev2 = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '没留下的那顿' });
   const r2 = S.weProposals.createFromReply(chat, 'msg-ac-2', { sourceId: ev2.id, kind: 'letter', reason: '算了' });
   const cnt = S.weStore.list().length;
   const dec = S.weProposals.decline(r2.proposal.id);
@@ -10477,7 +11928,7 @@ t('收藏馆P2：weProposals 进删房名单（真跑拆岛）+ collection-propo
   const u = S.core.upsertUser({ name: '我' }).id;
   S.core.setSandboxChars(A.id, [m]);
   S.core.setActiveSandbox(A.id);
-  const ev = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '要被拆掉的提议' });
+  const ev = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule', title: '要被拆掉的提议' });
   const chat = { id: 'chat-purge', characterId: m, userId: u, sandboxId: A.id };
   const r = S.weProposals.createFromReply(chat, 'msg-purge', { sourceId: ev.id, kind: 'place', reason: '留一下' });
   if (!r.ok) throw new Error('提议创建失败：' + JSON.stringify(r));
@@ -10491,6 +11942,1539 @@ t('收藏馆P2：weProposals 进删房名单（真跑拆岛）+ collection-propo
   if (!S.registered().collection || !S.registered()['collection-item']) throw new Error('门厅/详情页没了');
 
   return { 名单收录: true, 拆岛后清空: true, 页面注册: true };
+});
+
+/* ======================== ta 关系网 v1（只读 selector + 双视图页，2026-10-02） ========================
+   依据《Sleepy · ta 关系网 v1 · 第一批只读施工单》§3 的 12 条。
+   本段**只补证、不改业务代码** —— 夹具全部真建（真建岛 / 真建角色 /
+   真写 charRel 键 / 真发朋友圈 / 真写草稿），断言 selector 的节点与边规则、
+   权限闸、双视图同源与零写入。每条测试自己造世界、自己拆掉（finally），
+   免得污染后面的全页渲染冒烟。 */
+console.log('\n--- ta 关系网 v1（只读 selector + 双视图页）---');
+
+/* 桩不解析 innerHTML，所以页面文本只能靠 children 递归拼 */
+function walkText(n) {
+  if (!n) return '';
+  let s = n.textContent ? String(n.textContent) + '\n' : '';
+  (n.children || []).forEach((c) => { s += walkText(c); });
+  return s;
+}
+function collectByClass(n, cls, out) {
+  out = out || [];
+  if (String(n.className || '').split(/\s+/).indexOf(cls) >= 0) out.push(n);
+  (n.children || []).forEach((c) => collectByClass(c, cls, out));
+  return out;
+}
+/* 真点一下 —— 桩的 addEventListener 只记录不分发（见 makeEl 的注释），
+   所以「点了按钮之后会怎样」得自己把 handler 挨个调起来。 */
+function fireClick(el) {
+  const hs = (el && el._on && el._on.click) || [];
+  if (!hs.length) throw new Error('这个元素没挂 click 处理器，点不动');
+  hs.forEach((fn) => fn());
+}
+function pageRoot() {
+  const c = S.nav.topCtx();
+  const root = c && (c.body || c.el);
+  if (!root) throw new Error('拿不到当前页的 DOM');
+  return root;
+}
+const pairKeyOf = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+
+/* 关系网夹具：一座群岛 + 两个 main 角色（可选再挂一个皮套）+ 一个马甲。
+   刻意用 archipelago —— 孤岛只能 1 个角色，要多角色只能群岛。
+   npc() 建的是**正式口径** NPC（parentType='sandbox'，归整座岛）。 */
+function mkNetWorld(opt) {
+  opt = opt || {};
+  const prev = {
+    sb: S.store.get('activeSandboxId'),
+    ch: S.store.get('activeCharId'),
+    us: S.store.get('activeUserId')
+  };
+  const tag = 'net' + Math.random().toString(36).slice(2, 7);
+  const c1 = S.core.upsertChar({ name: tag + '·甲', kind: 'main' }).id;
+  const c2 = S.core.upsertChar({ name: tag + '·乙', kind: 'main' }).id;
+  const sub = opt.sub
+    ? S.core.upsertChar({ name: tag + '·皮套', kind: 'sub', parentId: c1 }).id
+    : null;
+  const u = S.core.upsertUser({ name: tag + '·我' }).id;
+  const sb = S.core.createSandbox('archipelago', tag + '岛');
+  /* 正式写入路径只收大号（validateSandboxChars 会把皮套挡掉），
+     所以这里先按规矩写 [c1, c2]，皮套另走一步「模拟老存档」直接落库。 */
+  const setRes = S.core.setSandboxChars(sb.id, [c1, c2]);
+  if (!setRes || setRes.ok !== true) throw new Error('夹具建岛失败：' + JSON.stringify(setRes));
+  if (sub) {
+    /* 老存档里 charIds 混进了非大号 —— selector 必须仍按 main 口径滤掉。
+       （正常写入路径产不出这种数据，只有历史数据会。） */
+    const list = S.store.get('sandboxes');
+    list.forEach((s) => { if (s.id === sb.id) s.charIds = s.charIds.concat([sub]); });
+    S.store.set('sandboxes', list);
+  }
+  S.core.setSandboxMasks(sb.id, [u]);
+  S.core.setActiveSandbox(sb.id);
+  S.core.switchTo(c1, u);
+  return {
+    tag, sb, c1, c2, sub, u,
+    npc(name, knownBy) {
+      const rec = {
+        name: tag + '·' + name, kind: 'npc',
+        parentType: 'sandbox', parentId: sb.id, sandboxId: sb.id
+      };
+      if (knownBy !== undefined) rec.knownBy = knownBy;
+      return S.core.upsertChar(rec).id;
+    },
+    build(input) {
+      return S.taNetwork.build(Object.assign({ charId: c1, userId: u, sbId: sb.id }, input || {}));
+    },
+    cleanup() {
+      try { S.core._purgeSync.sandbox(sb.id); } catch (e) { /* 已拆过 */ }
+      [c1, c2].forEach((id) => { try { S.core._purgeSync.char(id); } catch (e) { /* 已清 */ } });
+      if (sub) { try { S.core._purgeSync.face(sub); } catch (e) { /* 已清 */ } }
+      try { S.core._purgeSync.user(u); } catch (e) { /* 已清 */ }
+      S.core.setActiveSandbox(prev.sb || null);
+      S.core.switchTo(prev.ch, prev.us);
+    }
+  };
+}
+
+t('关系网：静态护栏 —— 两个新增脚本 0 写入 / 0 模型 / 0 网络 / 不读草稿键', () => {
+  /* 只看代码，不看注释 —— ta-network.js 的注释里**故意**提到 taNpcDrafts
+     和 canCharSee（说明为什么不用它们），裸正则会把注释也算进去。 */
+  const strip = (s) => String(s)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const banned = [
+    [/store\.set\(/, 'store.set('],
+    [/\bfetch\(/, 'fetch('],
+    [/XMLHttpRequest/, 'XMLHttpRequest'],
+    [/streamChat/, 'streamChat'],
+    [/api\.chat/, 'api.chat'],
+    [/api\.embed/, 'api.embed'],
+    [/taNpcDrafts/, 'taNpcDrafts'],
+    [/canCharSee/, 'canCharSee']            /* 近况必须走 user 视角的 canSee */
+  ];
+  const hits = [];
+  ['ta-network.js', 'page-ta-network.js'].forEach((f) => {
+    const src = strip(fs.readFileSync(path.join(ROOT, f), 'utf8'));
+    banned.forEach(([re, name]) => { if (re.test(src)) hits.push(f + ' → ' + name); });
+  });
+  if (hits.length) throw new Error('新增脚本出现了不该有的调用：' + hits.join('、'));
+
+  const netSrc = fs.readFileSync(path.join(ROOT, 'ta-network.js'), 'utf8');
+  if (netSrc.indexOf('M.canSee(') < 0) throw new Error('selector 没走 momentsTab.canSee（user 视角）');
+  if (netSrc.indexOf('activeNow(') < 0) throw new Error('selector 没有复用 taImpact.activeNow（影响三道闸）');
+
+  /* page-ta.js 的 04 必须改读 selector，且保留关系网入口 */
+  const taSrc = strip(fs.readFileSync(path.join(ROOT, 'page-ta.js'), 'utf8'));
+  if (taSrc.indexOf('TN.build(') < 0) throw new Error('page-ta.js 的 04 没有改读 selector');
+  if (taSrc.indexOf("ctx.open('ta-network'") < 0) throw new Error('page-ta.js 没有关系网入口');
+
+  /* index.html 的加载顺序：selector 必须在 page-ta.js 之前、page-ta-network 之后 */
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const iNet = html.indexOf('ta-network.js"');
+  const iTa = html.indexOf('src="page-ta.js"');
+  const iPage = html.indexOf('page-ta-network.js"');
+  if (iNet < 0 || iTa < 0 || iPage < 0) throw new Error('index.html 少了新增脚本标签');
+  if (!(iNet < iTa && iTa < iPage)) {
+    throw new Error('加载顺序不对：ta-network.js 要在 page-ta.js 前，page-ta-network.js 要在其后');
+  }
+  return { 护栏: 2, 违禁命中: 0, 顺序: 'net < ta < page-net' };
+});
+
+t('关系网 selector：中心 = 当前角色；未落岛 / 无角色 / 别岛身份各有其 why', () => {
+  const W = mkNetWorld({});
+  const stray = S.core.upsertChar({ name: '别岛的人', kind: 'main' }).id;
+  try {
+    const r = W.build();
+    if (!r.ok) throw new Error('正常岛读不出结果：' + r.why);
+    if (r.center.id !== W.c1) throw new Error('中心节点不是当前角色');
+    if (r.center.kind !== 'char') throw new Error('中心 kind 应为 char');
+    if (r.sbId !== W.sb.id) throw new Error('sbId 回传不对');
+    if (r.visibility.knownByGate !== 'center-root') throw new Error('显示闸口径没写死给断言看');
+    if (r.nodes.some((n) => n.id === W.c1)) throw new Error('中心角色不该重复出现在 nodes 里');
+
+    const noIsland = S.taNetwork.build({ sbId: 'sb_不存在' });
+    if (noIsland.ok || noIsland.why !== 'no-island') {
+      throw new Error('未落岛应 why=no-island，实际 ' + noIsland.why);
+    }
+    const stale = W.build({ charId: stray });
+    if (stale.ok || stale.why !== 'no-char') {
+      throw new Error('别岛角色（不在本岛名册）应 why=no-char，实际 ' + stale.why);
+    }
+    /* 别岛的 userId：不报错，但不算「当前身份」—— 不能凭空生成 user 节点 */
+    const noU = W.build({ userId: stray });
+    if (!noU.ok) throw new Error('别岛 userId 不该让整份结果失败');
+    if (noU.visibility.hasUser !== false) throw new Error('别岛 userId 竟被认成当前身份');
+    if (noU.nodes.some((n) => n.kind === 'user')) throw new Error('别岛 userId 生成了 user 节点');
+    return { 中心: r.center.name, 节点: r.nodes.length, 边: r.edges.length };
+  } finally {
+    try { S.core._purgeSync.char(stray); } catch (e) { /* 已清 */ }
+    W.cleanup();
+  }
+});
+
+t('关系网 selector：只收 main 正式角色（皮套不进）；NPC 走 npcsOfRoom 正式口径、别岛不串', () => {
+  const W = mkNetWorld({ sub: true });
+  const sbB = S.core.createSandbox('isle', W.tag + '别岛');
+  const npcOut = S.core.upsertChar({
+    name: W.tag + '·别岛店员', kind: 'npc',
+    parentType: 'sandbox', parentId: sbB.id, sandboxId: sbB.id
+  }).id;
+  try {
+    const npcIn = W.npc('店长');
+    const r = W.build();
+    const ids = r.nodes.map((n) => n.id);
+    if (ids.indexOf(W.c2) < 0) throw new Error('第二个 main 角色没进集合');
+    if (ids.indexOf(W.sub) >= 0) throw new Error('皮套（sub）进了节点集合 —— 口径应是 main');
+    if (ids.indexOf(npcIn) < 0) throw new Error('本岛 NPC 没进集合');
+    if (ids.indexOf(npcOut) >= 0) throw new Error('别岛 NPC 串进了本岛集合');
+    const kinds = {};
+    r.nodes.forEach((n) => { kinds[n.kind] = (kinds[n.kind] || 0) + 1; });
+    if (!kinds.user || !kinds.char || !kinds.npc) throw new Error('三类节点没齐：' + JSON.stringify(kinds));
+    return kinds;
+  } finally {
+    try { S.core._purgeSync.sandbox(sbB.id); } catch (e) { /* 已拆 */ }
+    try { S.core._purgeSync.char(npcOut); } catch (e) { /* 已清 */ }
+    W.cleanup();
+  }
+});
+
+t('关系网 selector：NPC knownBy 三态（缺字段/空数组 fail-open；含别人 fail-closed）', () => {
+  const W = mkNetWorld({});
+  try {
+    const root = S.core.rootIdOf(W.c1);
+    const noField = W.npc('没字段的');
+    const emptyArr = W.npc('空数组的', []);
+    const byRoot = W.npc('勾了root的', [root]);
+    const byId = W.npc('勾了id的', [W.c1]);
+    const otherOnly = W.npc('勾了别人的', [W.c2]);
+
+    const r = W.build();
+    const ids = r.nodes.map((n) => n.id);
+    if (ids.indexOf(noField) < 0) throw new Error('knownBy 缺字段应 fail-open（显示）');
+    if (ids.indexOf(emptyArr) < 0) throw new Error('knownBy 空数组应 fail-open（显示）');
+    if (ids.indexOf(byRoot) < 0) throw new Error('knownBy 含中心 root 应显示');
+    if (ids.indexOf(byId) < 0) throw new Error('knownBy 含中心 id 应显示');
+    if (ids.indexOf(otherOnly) >= 0) throw new Error('knownBy 只含别的角色 —— 应 fail-closed（不显示）');
+    if (r.visibility.dropped !== 1) throw new Error('被挡掉的 NPC 计数应为 1，实际 ' + r.visibility.dropped);
+
+    /* 名字不能从任何字段泄露（标题 / 摘要 / 计数都不行） */
+    if (JSON.stringify(r).indexOf(W.tag + '·勾了别人的') >= 0) {
+      throw new Error('被挡掉的 NPC 名字从结果里泄露了');
+    }
+    /* 纯函数逐条复核（和上面走的是同一份实现） */
+    const P = S.taNetwork.npcPassesKnownBy;
+    if (!P({ id: 'x' }, W.c1, root)) throw new Error('缺字段纯函数应 true');
+    if (!P({ id: 'x', knownBy: [] }, W.c1, root)) throw new Error('空数组纯函数应 true');
+    if (!P({ id: 'x', knownBy: 'nope' }, W.c1, root)) throw new Error('非数组纯函数应 fail-open');
+    if (P({ id: 'x', knownBy: [W.c2] }, W.c1, root)) throw new Error('含别人纯函数应 false');
+    /* 显示闸口径写死给断言看：中心 root（不是「当前身份」） */
+    if (r.visibility.knownByGate !== 'center-root') throw new Error('显示闸口径被改了');
+    return { 显示: 4, 挡掉: 1, 口径: 'center-root' };
+  } finally { W.cleanup(); }
+});
+
+t('关系网 selector：taNpcDrafts 里 draft / confirmed 都不进节点（反向断言）', () => {
+  const W = mkNetWorld({});
+  try {
+    const d1 = S.taLife.addDraft({ name: W.tag + '·草稿甲', refCharId: W.c1 });
+    const d2 = S.taLife.addDraft({ name: W.tag + '·草稿乙', refCharId: W.c1 });
+    if (!d1 || !d2) throw new Error('夹具没造出草稿（taLife.addDraft 失败）');
+    S.taLife.patchDraft(d2.id, { status: 'confirmed' });
+
+    const r = W.build();
+    const dump = JSON.stringify(r);
+    if (dump.indexOf(W.tag + '·草稿甲') >= 0) throw new Error('draft 草稿变成了节点');
+    if (dump.indexOf(W.tag + '·草稿乙') >= 0) throw new Error('confirmed 草稿变成了节点');
+    if (r.nodes.some((n) => n.id === d1.id || n.id === d2.id)) throw new Error('草稿 id 出现在节点集合里');
+
+    /* 只有正式人物表里的正式人物才成为节点：真入库一个同名的，才应该出现 */
+    const formal = W.npc('草稿甲');
+    const r2 = W.build();
+    if (!r2.nodes.some((n) => n.id === formal)) throw new Error('正式入库的人物没成为节点');
+    return { 草稿未进: true, 正式入库后进: true };
+  } finally { W.cleanup(); }
+});
+
+t('关系网 selector：link 必须按当前岛读（不串档）+ 四可见性字段原样带出', () => {
+  const W = mkNetWorld({});
+  const sbB = S.core.createSandbox('isle', W.tag + '乙岛');
+  S.core.setSandboxChars(sbB.id, [W.c1]);
+  S.core.setSandboxMasks(sbB.id, [W.u]);
+  try {
+    S.core.setRelation(W.c1, W.u, '甲岛的关系', W.sb.id);
+    S.core.setRelation(W.c1, W.u, '乙岛的关系', sbB.id);
+
+    const eA = W.build().edges.filter((e) => e.kind === 'link')[0];
+    const eB = W.build({ sbId: sbB.id }).edges.filter((e) => e.kind === 'link')[0];
+    if (!eA || eA.label !== '甲岛的关系') throw new Error('甲岛没读到自己的关系文本：' + JSON.stringify(eA));
+    if (!eB || eB.label !== '乙岛的关系') throw new Error('乙岛没读到自己的关系文本：' + JSON.stringify(eB));
+    if (eA.id === eB.id) throw new Error('两座岛的 link 竟然是同一条（跨岛串档）');
+    if (eA.perms === null) throw new Error('link 边应带 perms');
+
+    /* 认知 / 障壁 / 朋友圈四开关 —— 全部原样带出，不自己另判 */
+    S.core.addLink(W.c1, W.u, 'aware', true, W.sb.id);
+    S.core.setFeedPerm(W.c1, W.u, 'iHideChar', true, W.sb.id);
+    S.core.setFeedPerm(W.c1, W.u, 'charHidesFromMe', true, W.sb.id);
+    const p = W.build().edges.filter((e) => e.kind === 'link')[0].perms;
+    if (p.cognition !== 'aware') throw new Error('cognition 没原样带出：' + p.cognition);
+    if (p.barrier !== true) throw new Error('barrier 没原样带出');
+    if (p.iHideChar !== true) throw new Error('iHideChar 没带出');
+    if (p.charHidesFromMe !== true) throw new Error('charHidesFromMe 没带出');
+    if (p.iHideFromChar !== false || p.charHidesMe !== false) throw new Error('没开的开关被误开');
+
+    /* 「仅有记录、没写关系」→ 不画边（施工单 §0 原文「仅有记录不等于可显示」） */
+    S.core.addLink(W.c2, W.u, 'unaware', false, W.sb.id);
+    const r3 = W.build();
+    if (r3.edges.some((e) => e.from === W.c2 || e.to === W.c2)) {
+      throw new Error('只有 link 记录、没写关系文本，竟画了边');
+    }
+    /* 但「有没有那条记录」本身要如实带出去（首页 04 的「已建立联系」靠它） */
+    if (r3.center.hasLinkWithUser !== true) throw new Error('中心有 link 记录，hasLinkWithUser 应为 true');
+    return { 甲: eA.label, 乙: eB.label, 四开关: 'ok', 空relation无边: true };
+  } finally {
+    try { S.core._purgeSync.sandbox(sbB.id); } catch (e) { /* 已拆 */ }
+    W.cleanup();
+  }
+});
+
+t('关系网 selector：charRel 三态（known/met 有边、unknown 无边）+ NPC 一条边都没有', () => {
+  const W = mkNetWorld({});
+  try {
+    const npc = W.npc('店长');
+    const crOf = (res) => res.edges.filter((e) => e.kind === 'charRel');
+
+    /* 没记录 → unknown → 无边 */
+    let r = W.build();
+    if (crOf(r).length) throw new Error('没有 charRel 记录竟画了边');
+
+    S.store.set('charRel:' + W.sb.id, { [pairKeyOf(W.c1, W.c2)]: 'known' });
+    r = W.build();
+    let cr = crOf(r);
+    if (cr.length !== 1) throw new Error('known 应恰有一条 charRel 边，实际 ' + cr.length);
+    if (cr[0].label !== '认识') throw new Error('known 的原文应是「认识」：' + cr[0].label);
+    if (cr[0].labelSource !== 'charRel') throw new Error('charRel 边的 labelSource 不对');
+    if (cr[0].timeKnown !== false) throw new Error('charRel 是裸字符串、没有时间戳，timeKnown 应为 false');
+
+    S.store.set('charRel:' + W.sb.id, { [pairKeyOf(W.c1, W.c2)]: 'met' });
+    r = W.build();
+    cr = crOf(r);
+    if (cr.length !== 1 || cr[0].label !== '见过但不熟') {
+      throw new Error('met 的原文应是「见过但不熟」：' + JSON.stringify(cr));
+    }
+
+    S.store.set('charRel:' + W.sb.id, { [pairKeyOf(W.c1, W.c2)]: 'unknown' });
+    r = W.build();
+    if (crOf(r).length) throw new Error('unknown 不该画边（无法区分「显式不认识」和「没记录」→ 一律无依据）');
+
+    /* NPC：任何情况下都只有节点、没有边；也不许出现未知边类型 */
+    const kindOf = {};
+    r.nodes.forEach((n) => { kindOf[n.id] = n.kind; });
+    if (kindOf[npc] !== 'npc') throw new Error('NPC 节点没进集合');
+    r.edges.forEach((e) => {
+      if (e.kind !== 'link' && e.kind !== 'charRel') throw new Error('出现了未知边类型：' + e.kind);
+      if (kindOf[e.from] === 'npc' || kindOf[e.to] === 'npc') throw new Error('NPC 竟然有关系边');
+    });
+    /* 只有 NPC + 没有 charRel 的场景：一条边都不该有 */
+    const bare = W.build();
+    if (bare.edges.length) throw new Error('没有任何关系依据，却画了 ' + bare.edges.length + ' 条边');
+    return { known: '认识', met: '见过但不熟', unknown: 0, NPC边: 0 };
+  } finally { W.cleanup(); }
+});
+
+t('关系网 selector：无依据 → 关系未注明；labelSource 只在闭集内，绝不补默认关系词', () => {
+  const W = mkNetWorld({});
+  try {
+    const npc = W.npc('店长');
+    const r = W.build();
+    const npcNode = r.nodes.filter((n) => n.id === npc)[0];
+    if (npcNode.label !== '') throw new Error('NPC 不该凭空有标签');
+    if (S.taNetwork.labelOf(npcNode) !== '关系未注明') throw new Error('无依据应显示「关系未注明」');
+    if (S.taNetwork.LABEL_NONE !== '关系未注明') throw new Error('LABEL_NONE 常量被改了');
+
+    const BAD = ['朋友', '亲密', '家人', '同事', '恋人', '同学', '上下级'];
+    const seen = [];
+    r.nodes.forEach((n) => {
+      if (S.taNetwork.LABEL_SOURCES.indexOf(n.labelSource) < 0) {
+        throw new Error('labelSource 越界：' + JSON.stringify(n.labelSource));
+      }
+      const lb = S.taNetwork.labelOf(n);
+      seen.push(lb);
+      BAD.forEach((w) => { if (lb.indexOf(w) >= 0) throw new Error('补了默认关系词：' + lb); });
+    });
+    r.edges.forEach((e) => {
+      if (S.taNetwork.LABEL_SOURCES.indexOf(e.labelSource) < 0) {
+        throw new Error('边的 labelSource 越界：' + JSON.stringify(e.labelSource));
+      }
+    });
+    if (S.taNetwork.LABEL_SOURCES.join(',') !== 'link.relation,charRel,') {
+      throw new Error('labelSource 闭集被改动：' + S.taNetwork.LABEL_SOURCES.join(','));
+    }
+    return { 未注明: '关系未注明', 闭集: '3 项', 默认词: 0 };
+  } finally { W.cleanup(); }
+});
+
+t('关系网 selector：近况走 canSee（user 视角）—— 私密 / 被屏蔽的内容不进结果', () => {
+  const W = mkNetWorld({});
+  const made = [];
+  try {
+    const PUB = W.tag + '公开近况';
+    const SECRET = W.tag + '私密近况';
+    const EXCL = W.tag + '排除我的近况';
+    const MAF = W.tag + '马甲发的';
+    made.push(S.momentsTab.add({ text: PUB, characterId: W.c1, name: '甲', at: 1000 }).id);
+    made.push(S.momentsTab.add({ text: SECRET, characterId: W.c1, name: '甲', at: 5000, privacy: 'self' }).id);
+    made.push(S.momentsTab.add({ text: EXCL, characterId: W.c1, name: '甲', at: 6000, privacy: 'exclude', visibleTo: [W.u] }).id);
+    /* 「马甲发的」：add 只在没 characterId 时才记 maskId，所以这条直接写库，
+       模拟「既有 char 又有 maskId」的记录 —— selector 必须跳过它 */
+    const mafRec = S.core.tagScope({
+      id: S.core.newId('mo'), characterId: W.c1, maskId: 'um_x',
+      name: '甲', text: MAF, at: 9000, likes: [], comments: []
+    });
+    S.store.set('moments', S.store.get('moments').concat([mafRec]));
+    made.push(mafRec.id);
+
+    const r = W.build();
+    const dump = JSON.stringify(r);
+    if (dump.indexOf(SECRET) >= 0) throw new Error('privacy=self 的私密近况泄露了');
+    if (dump.indexOf(EXCL) >= 0) throw new Error('exclude 掉我的近况泄露了');
+    if (dump.indexOf(MAF) >= 0) throw new Error('马甲发的近况被当成「TA 本人发的」了');
+    if (!r.center.recent || r.center.recent.text !== PUB) {
+      throw new Error('中心近况不是那条公开的：' + JSON.stringify(r.center.recent));
+    }
+    r.nodes.forEach((n) => {
+      if (n.recent && [SECRET, EXCL, MAF].indexOf(n.recent.text) >= 0) throw new Error('节点近况泄露');
+    });
+
+    /* 朋友权限：我屏蔽了 TA → 近况为空（同一把 canSee 尺子） */
+    S.core.setFeedPerm(W.c1, W.u, 'iHideChar', true, W.sb.id);
+    const r2 = W.build();
+    if (r2.center.recent) throw new Error('我屏蔽了 TA，近况不该还显示');
+    if (JSON.stringify(r2).indexOf(PUB) >= 0) throw new Error('屏蔽后公开近况仍在结果里');
+    return { 公开: PUB, 泄露: 0, 屏蔽后为空: true };
+  } finally {
+    made.forEach((id) => { try { S.momentsTab.remove(id); } catch (e) { /* 已删 */ } });
+    W.cleanup();
+  }
+});
+
+t('关系网 selector：sourceRefs 指向真实表记录；时间标记不声称关系更新时间（P1）', () => {
+  const W = mkNetWorld({});
+  try {
+    S.core.setRelation(W.c1, W.u, '同事', W.sb.id);
+    S.store.set('charRel:' + W.sb.id, { [pairKeyOf(W.c1, W.c2)]: 'met' });
+    W.npc('店长');
+    const r = W.build();
+
+    const links = S.store.get('links');
+    const relMap = S.store.get('charRel:' + W.sb.id) || {};
+    r.nodes.forEach((n) => {
+      if (!n.sourceRefs.length) throw new Error('节点缺 sourceRefs：' + n.name);
+      n.sourceRefs.forEach((ref) => {
+        if (ref.kind === 'char' || ref.kind === 'npc') {
+          if (!S.core.findChar(ref.id)) throw new Error(ref.kind + ' ref 指向不存在的角色：' + ref.id);
+        } else if (ref.kind === 'user') {
+          if (!S.core.findUser(ref.id)) throw new Error('user ref 指向不存在的身份：' + ref.id);
+        } else if (ref.kind === 'link') {
+          if (!links.some((l) => l.id === ref.id)) throw new Error('link ref 指向不存在的记录：' + ref.id);
+        } else {
+          throw new Error('未知 sourceRefs.kind：' + ref.kind);
+        }
+      });
+    });
+    r.edges.forEach((e) => {
+      if (!e.sourceRefs.length) throw new Error('边缺 sourceRefs：' + e.id);
+      e.sourceRefs.forEach((ref) => {
+        if (ref.kind === 'link' && !links.some((l) => l.id === ref.id)) {
+          throw new Error('边的 link ref 不存在：' + ref.id);
+        }
+        if (ref.kind === 'charRel' && !Object.prototype.hasOwnProperty.call(relMap, ref.key)) {
+          throw new Error('charRel ref 指向不存在的键：' + ref.key);
+        }
+      });
+    });
+
+    /* P1：links 只有 createdAt，没有「关系文本修改时间」 */
+    const eLink = r.edges.filter((e) => e.kind === 'link')[0];
+    if (eLink.relationTimeKnown !== false) throw new Error('relationTimeKnown 必须是 false');
+    const note = S.taNetwork.timeNoteOf(eLink);
+    if (note.indexOf('建立于') < 0) throw new Error('link 边应说明建立时间：' + note);
+    if (note.indexOf('修改时间不可知') < 0) throw new Error('link 边必须如实说修改时间不可知：' + note);
+    const noteCR = S.taNetwork.timeNoteOf(r.edges.filter((e) => e.kind === 'charRel')[0]);
+    if (noteCR.indexOf('没有时间戳') < 0) throw new Error('charRel 边应说明没有时间戳：' + noteCR);
+    if (noteCR.indexOf('建立于') >= 0) throw new Error('charRel 边不该编一个建立时间');
+
+    /* 整份结果的 updatedAt = 「可用最近时间」，不是 now */
+    const stamps = [r.center.updatedAt].concat(r.nodes.map((n) => n.updatedAt));
+    if (r.updatedAt !== Math.max.apply(null, stamps)) throw new Error('updatedAt 不是节点里最新的那个');
+    if (r.updatedAt > Date.now() + 1000) throw new Error('updatedAt 超过了现在 —— 像是拿了 now');
+    return { 节点ref: 'ok', 边ref: 'ok', link时间: note, charRel时间: noteCR };
+  } finally { W.cleanup(); }
+});
+
+t('关系网页：图 / 列表消费同一 selector 结果；打开与切视图都不写 store', () => {
+  const W = mkNetWorld({});
+  try {
+    const npcHidden = W.npc('不该出现的', [W.c2]);
+    W.npc('店长');
+    S.core.setRelation(W.c1, W.u, '同事', W.sb.id);
+    S.store.set('charRel:' + W.sb.id, { [pairKeyOf(W.c1, W.c2)]: '认识' });
+
+    const r = W.build();
+    if (!r.nodes.length || !r.edges.length) throw new Error('夹具没造出节点或边');
+
+    const keys = ['links', 'characters', 'sandboxes', 'moments', 'charRel:' + W.sb.id, 'taNpcDrafts', 'taItems'];
+    const snap = () => JSON.stringify(keys.map((k) => S.store.get(k)));
+    const before = snap();
+
+    if (!S.registered()['ta-network']) throw new Error('ta-network 页未注册');
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    S.nav.open('ta-network', {});
+    const root = pageRoot();
+
+    /* ---- 图视图（默认）：节点分组数 = 中心 1 + 环上节点数 ---- */
+    const groups = collectByClass(root, 'tan-node-g', []);
+    const expectShown = Math.min(r.nodes.length, S.taNetwork.GRAPH_MAX);
+    if (groups.length !== 1 + expectShown) {
+      throw new Error('图视图节点数不对：期望 ' + (1 + expectShown) + '，实际 ' + groups.length);
+    }
+    const graphText = walkText(root);
+    if (graphText.indexOf('关系图') < 0 || graphText.indexOf('列表') < 0) {
+      throw new Error('分段控件没渲染出来');
+    }
+    if (snap() !== before) throw new Error('打开关系网页就写 store 了');
+
+    /* ---- 切到列表：真点第二个分段按钮 ---- */
+    let btns = collectByClass(root, 'iol-seg-btn', []);
+    if (btns.length !== 2) throw new Error('分段按钮应恰有 2 个，实际 ' + btns.length);
+    fireClick(btns[1]);
+    if (collectByClass(root, 'tan-node-g', []).length) throw new Error('切到列表后 SVG 节点还在（视图没切）');
+
+    const listText = walkText(root);
+    /* 列表视图不截断，所以名字必须逐字对上 —— 这就证明两个视图同一份结果 */
+    r.nodes.forEach((n) => {
+      if (listText.indexOf(n.name) < 0) throw new Error('列表视图漏了 selector 节点：' + n.name);
+    });
+    r.edges.forEach((e) => {
+      if (listText.indexOf(e.label) < 0) throw new Error('列表视图漏了 selector 的边：' + e.label);
+    });
+    if (listText.indexOf(W.tag + '·不该出现的') >= 0) throw new Error('列表视图泄露了被 knownBy 挡掉的 NPC');
+    if (snap() !== before) throw new Error('切视图写 store 了');
+
+    /* ---- 切回图视图 ---- */
+    btns = collectByClass(root, 'iol-seg-btn', []);
+    fireClick(btns[0]);
+    if (!collectByClass(root, 'tan-node-g', []).length) throw new Error('切不回图视图');
+    if (snap() !== before) throw new Error('切回图视图写 store 了');
+
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    return { 图节点: 1 + expectShown, 列表节点: r.nodes.length, 边: r.edges.length, 写入: 0 };
+  } finally { W.cleanup(); }
+});
+
+t('ta 首页 04：节点集合与关系网 selector 完全同源（含 knownBy 过滤与人数）', () => {
+  const W = mkNetWorld({});
+  try {
+    W.npc('店长');
+    W.npc('不该出现的', [W.c2]);
+    S.core.setRelation(W.c1, W.u, '同事', W.sb.id);
+
+    const r = W.build();
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    S.nav.open('ta', {});
+    const text = walkText(pageRoot());
+
+    r.nodes.forEach((n) => {
+      if (text.indexOf(n.name) < 0) throw new Error('首页 04 漏了 selector 节点：' + n.name);
+    });
+    if (text.indexOf(W.tag + '·不该出现的') >= 0) {
+      throw new Error('首页 04 泄露了被 knownBy 挡掉的 NPC —— 两处口径不一致');
+    }
+    if (text.indexOf('关系网') < 0) throw new Error('首页 04 没有关系网入口');
+    if (text.indexOf(String(r.nodes.length) + ' 人') < 0) {
+      throw new Error('首页 04 的人数与 selector 不同口径（期望 ' + r.nodes.length + ' 人）');
+    }
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    return { selector节点: r.nodes.length, 首页一致: true };
+  } finally { W.cleanup(); }
+});
+
+/* ======================== 日历安全边界与最小执行器（第二轮施工单，2026-10-03） ========================
+   依据《Sleepy · 日历安全边界与最小执行器 · 第二轮施工单 v1》§8/§10。
+   每条自己造世界、自己拆（finally），不污染后面的全页渲染冒烟。 */
+console.log('\n--- 日历安全边界与最小执行器（第二轮施工单）---');
+
+/* 日历夹具：一座群岛 + 一个大号 + 一个马甲，开「生成角色日程」。 */
+function mkCalWorld() {
+  const W = mkNetWorld({});
+  S.calendar.saveCfg(W.c1, { scheduleOn: true });
+  W.iso = S.calendar.todayISO();
+  W.tmr = S.calendar.shiftISO(W.iso, 1);
+  W.mk = (o) => S.calendar.__internal.addEvent(Object.assign({
+    ownerCharId: W.c1, eventType: 'user_reminder',
+    startAt: W.tmr + 'T10:00', endAt: W.tmr + 'T11:00', allDay: false,
+    createdBy: { type: 'user', id: 'user' }, visibility: 'private'
+  }, o));
+  W.facts = () => S.calendar.timeFacts(W.c1, {}) || '';
+  return W;
+}
+
+t('I02：user 私人提醒不再进 char 的 prompt，该看的都没弄丢', () => {
+  const W = mkCalWorld();
+  try {
+    const PRIV = W.tag + '秘密买礼物';
+    const BUSY = W.tag + '公司会议';
+    const SHARED = W.tag + '一起吃饭';
+    const OWN = W.tag + '他的排练';
+    const DET = W.tag + '牙医复诊';
+    W.mk({ title: PRIV, visibility: 'private' });
+    W.mk({ title: BUSY, visibility: 'shared_busy' });
+    W.mk({ title: DET, visibility: 'shared_detail' });
+    W.mk({
+      title: SHARED, eventType: 'shared_event', visibility: 'participants', status: 'pending',
+      participants: [{ type: 'user', id: 'user', state: 'accepted' },
+                     { type: 'char', id: W.c1, state: 'pending' }],
+      participantStates: { user: 'accepted' }
+    });
+    W.mk({ title: OWN, eventType: 'char_schedule', createdBy: { type: 'char', id: W.c1 } });
+
+    const txt = W.facts();
+    if (txt.indexOf(PRIV) >= 0) throw new Error('user 的私人提醒还是进了 prompt（这就是那个洞）');
+    if (txt.indexOf(BUSY) >= 0) throw new Error('shared_busy 不该给标题 —— 那一档只说「被占住」');
+    if (txt.indexOf('被占住') < 0) throw new Error('shared_busy 没给「只知道忙」的表述');
+    if (txt.indexOf(DET) < 0) throw new Error('shared_detail 被误伤了');
+    if (txt.indexOf(SHARED) < 0) throw new Error('他是参与者的共同事件被误伤了');
+    if (txt.indexOf(OWN) < 0) throw new Error('他自己安排的被误伤了');
+    return { 私人: '挡住', shared_busy: '只说忙', 该看的: '都在' };
+  } finally { W.cleanup(); }
+});
+
+t('I02 与 K03b 对同一条事件的可见性结论一致（不再各判各的）', () => {
+  const W = mkCalWorld();
+  try {
+    const cases = [
+      ['private', { title: W.tag + '私', visibility: 'private' }, ''],
+      ['shared_busy', { title: W.tag + '忙', visibility: 'shared_busy' }, 'busy'],
+      ['shared_detail', { title: W.tag + '明', visibility: 'shared_detail' }, 'detail'],
+      ['char_own', { title: W.tag + '他', visibility: 'private', createdBy: { type: 'char', id: W.c1 } }, 'detail']
+    ];
+    const got = {};
+    cases.forEach((c) => {
+      const e = W.mk(c[1]);
+      const v = S.calendar.charViewOf(e, W.c1);
+      if (v !== c[2]) throw new Error('charViewOf(' + c[0] + ') = ' + v + '，期望 ' + c[2]);
+      /* 生活流（K03b）走的是同一个函数，所以结论必然一致 —— 这里直接比对两条路 */
+      const inFacts = W.facts().indexOf(c[1].title) >= 0;
+      const lf = S.lifeFeed.charViewOf(e, W.c1);
+      if (lf !== v) throw new Error('I02 与 life-feed 对 ' + c[0] + ' 结论不一致');
+      got[c[0]] = { view: v, 进prompt: inFacts };
+    });
+    if (got.private.进prompt) throw new Error('private 不该进 prompt');
+    if (got.shared_detail.进prompt !== true) throw new Error('shared_detail 该进 prompt');
+    return got;
+  } finally { W.cleanup(); }
+});
+
+t('I02：纪念日仍被排除；别岛的同名事件不串进当前角色', () => {
+  const W = mkCalWorld();
+  try {
+    S.calendar.__internal.addEvent({
+      ownerCharId: W.c1, eventType: 'anniversary', title: W.tag + '纪念日',
+      startAt: W.tmr, allDay: true, memoryId: 'mem_x', createdBy: { type: 'char', id: W.c1 }
+    });
+    /* ⚠️ 纪念日**会**出现在「临近的纪念日」那一句里（这是产品行为，±3 天内要说）；
+       这里只断言它不混进「你近期的安排」那条日程线。 */
+    const sched = (W.facts().split('\n').filter((l) => l.indexOf('你近期的安排') === 0)[0]) || '';
+    if (sched.indexOf('纪念日') >= 0) throw new Error('纪念日不该混进「近期安排」');
+    if (W.facts().indexOf('临近的纪念日') < 0) throw new Error('临近纪念日那一句没了（回归）');
+    /* 别岛建一条同名事件 */
+    const B = mkNetWorld({});
+    S.core.setActiveSandbox(B.sb.id);
+    S.calendar.saveCfg(B.c1, { scheduleOn: true });
+    const other = W.tag + '别岛的事';
+    S.calendar.__internal.addEvent({
+      ownerCharId: B.c1, eventType: 'user_reminder', title: other,
+      startAt: B.iso ? B.iso : S.calendar.todayISO(), createdBy: { type: 'char', id: B.c1 }
+    });
+    S.core.setActiveSandbox(W.sb.id);
+    if (W.facts().indexOf(other) >= 0) throw new Error('别岛的事件串进来了');
+    B.cleanup();
+    return { 纪念日: '排除', 别岛: '不串' };
+  } finally { W.cleanup(); }
+});
+
+t('统一入口：白名单 / 必填 / 初始状态 / 可见性一致性，一条都不放过', () => {
+  const W = mkCalWorld();
+  try {
+    const base = { ownerCharId: W.c1, eventType: 'user_reminder', title: W.tag + 'x', startAt: W.tmr + 'T09:00' };
+    const must = (r, code) => {
+      if (r.ok) throw new Error('本该失败却成功了：' + code);
+      if (r.error.code !== code) throw new Error('错误码不对：' + r.error.code + '，期望 ' + code);
+      if (!r.receipt || r.receipt.type !== 'calendar_event_failed') throw new Error('失败没留失败回执');
+      if ((S.store.get('calEvents') || []).some((e) => e && e.title === base.title)) {
+        throw new Error('失败了还留下半成品事件');
+      }
+    };
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { eventType: 'public_holiday' })), 'bad-type');
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { title: '  ' })), 'no-title');
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { status: 'completed' })), 'bad-status');
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { visibility: '瞎写' })), 'bad-visibility');
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { visibility: 'participants' })), 'bad-visibility');
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { createdBy: { type: 'model', id: 'gpt' } })), 'bad-createdby');
+    must(S.calendar.requestCreateEvent(Object.assign({}, base, { ownerCharId: null })), 'no-owner');
+
+    /* 共同事件：初始状态被强制成 pending（**创建邀请 ≠ 对方接受**） */
+    const sh = S.calendar.requestCreateEvent({
+      ownerCharId: W.c1, eventType: 'shared_event', title: W.tag + '约饭',
+      startAt: W.tmr + 'T18:00', status: 'confirmed',
+      participants: [{ type: 'user', id: 'user' }, { type: 'char', id: W.c1 }]
+    });
+    if (!sh.ok) throw new Error('共同事件建不了：' + (sh.error && sh.error.message));
+    const ev = S.calendar.getEvent(sh.eventId);
+    if (ev.status !== 'pending') throw new Error('共同事件不许一步建成 confirmed：' + ev.status);
+    if (ev.visibility !== 'participants') throw new Error('共同事件的可见性该是 participants');
+    if (!ev.participantStates || ev.participantStates.user !== 'accepted') throw new Error('user 那格该是 accepted');
+    if (ev.participantStates[W.c1] !== 'pending') throw new Error('角色那格必须从 pending 起');
+    if (!sh.receipt || sh.receipt.type !== 'calendar_event_created' || sh.receipt.ref !== sh.eventId) {
+      throw new Error('成功回执没引用真实 eventId');
+    }
+    return { 拒绝: '7 种都拦住', 共同事件: '强制 pending', 回执: '引用真 id' };
+  } finally { W.cleanup(); }
+});
+
+t('统一入口：冲突时不写入，把决定权交回 UI；allowConflict 才真的写', () => {
+  const W = mkCalWorld();
+  try {
+    W.mk({ title: W.tag + '占坑', startAt: W.tmr + 'T10:00', endAt: W.tmr + 'T11:00',
+      createdBy: { type: 'char', id: W.c1 } });
+    const before = (S.store.get('calEvents') || []).length;
+    const draft = {
+      ownerCharId: W.c1, eventType: 'user_reminder', title: W.tag + '撞车的',
+      startAt: W.tmr + 'T10:30', endAt: W.tmr + 'T11:30', createdBy: { type: 'user', id: 'user' }
+    };
+    const r1 = S.calendar.requestCreateEvent(draft, { requestKey: 'k1' });
+    if (r1.ok) throw new Error('撞车了还直接写进去了');
+    if (r1.error.code !== 'conflict') throw new Error('错误码该是 conflict：' + r1.error.code);
+    if (!r1.needConfirm || !r1.conflict.length) throw new Error('没把撞上谁告诉 UI');
+    if ((S.store.get('calEvents') || []).length !== before) throw new Error('冲突时不许留下半成品');
+
+    const r2 = S.calendar.requestCreateEvent(draft, { requestKey: 'k1', allowConflict: true });
+    if (!r2.ok) throw new Error('用户确认后该能建：' + (r2.error && r2.error.message));
+    if ((S.store.get('calEvents') || []).length !== before + 1) throw new Error('确认后没建出来');
+    return { 冲突时: '不写', 确认后: '写入 1 条' };
+  } finally { W.cleanup(); }
+});
+
+t('统一入口 + action：同一个 requestKey 重跑不建第二条；resultRef 是真实 eventId', () => {
+  const W = mkCalWorld();
+  try {
+    const key = 'actkey:' + W.tag;
+    const params = {
+      ownerCharId: W.c1, eventType: 'user_reminder', title: W.tag + '只建一次',
+      startAt: W.tmr + 'T14:00', endAt: W.tmr + 'T15:00', createdBy: { type: 'user', id: 'user' }
+    };
+    const a1 = S.action.createRequest({ kind: 'calendar.create_event', params, requestKey: key });
+    if (!a1.ok) throw new Error('createRequest 失败：' + JSON.stringify(a1.error));
+    const r1 = S.action.runRequest(a1.request.id);
+    if (!r1.ok) throw new Error('runRequest 失败：' + JSON.stringify(r1.error));
+
+    const evId = r1.eventId;
+    const ev = S.calendar.getEvent(evId);
+    if (!ev) throw new Error('resultRef 不是真实事件：' + evId);
+    if (ev.requestKey !== key) throw new Error('幂等键没落进事件记录');
+    const done = S.action.getRequest(a1.request.id);
+    if (done.status !== 'ok') throw new Error('成功后状态不是 ok：' + done.status);
+    if (done.resultRef !== evId) throw new Error('resultRef 与真实 eventId 不一致');
+    if (!done.receipt || done.receipt.type !== 'action_ok') throw new Error('没有成功回执');
+    if (done.attempt !== 1) throw new Error('attempt 没记');
+
+    /* 第二次同 key：命中已有 ok 记录，不建第二条 */
+    const a2 = S.action.createRequest({ kind: 'calendar.create_event', params, requestKey: key });
+    if (!a2.dup || a2.request.id !== a1.request.id) throw new Error('同 key 没认出已做过');
+    const n = (S.store.get('calEvents') || []).filter((e) => e && e.requestKey === key).length;
+    if (n !== 1) throw new Error('同一个 requestKey 建出了 ' + n + ' 条');
+    if (S.calendar.requestCreateEvent(params, { requestKey: key }).dup !== true) {
+      throw new Error('统一入口自己的幂等也没生效');
+    }
+    return { 事件: 1, attempt: done.attempt, resultRef: '真实 eventId' };
+  } finally { W.cleanup(); }
+});
+
+t('action：失败不伪装成功，留失败记录与失败回执', () => {
+  const W = mkCalWorld();
+  try {
+    const a = S.action.createRequest({
+      kind: 'calendar.create_event',
+      params: { ownerCharId: W.c1, eventType: 'public_holiday', title: W.tag + '造个公共假日', startAt: W.tmr },
+      requestKey: 'bad:' + W.tag
+    });
+    if (!a.ok) throw new Error('createRequest 失败');
+    const r = S.action.runRequest(a.request.id);
+    if (r.ok) throw new Error('这种参数不该成功');
+    const rec = S.action.getRequest(a.request.id);
+    if (rec.status !== 'failed') throw new Error('失败后状态不是 failed：' + rec.status);
+    if (!rec.error || !rec.error.code) throw new Error('失败没记错误码');
+    if (rec.receipt.type !== 'action_failed') throw new Error('没有失败回执');
+    if (rec.receiptAt === null) throw new Error('失败回执没时间');
+    if (rec.resultRef) throw new Error('失败不该有 resultRef');
+    /* 事件表里绝不能留下这条 */
+    if ((S.store.get('calEvents') || []).some((e) => e && String(e.title).indexOf('造个公共假日') >= 0)) {
+      throw new Error('失败了还把事件写进去了');
+    }
+    /* 未知 kind 直接拒 */
+    const bad = S.action.createRequest({ kind: 'send_message', params: {} });
+    if (bad.ok || bad.error.code !== 'bad-kind') throw new Error('未登记的 kind 没被拦');
+    return { 状态: 'failed', 回执: 'action_failed', 未登记kind: '拒' };
+  } finally { W.cleanup(); }
+});
+
+t('action：按岛隔离，删房跟着清', () => {
+  const W = mkCalWorld();
+  try {
+    const a = S.action.createRequest({
+      kind: 'calendar.create_event',
+      params: { ownerCharId: W.c1, eventType: 'user_reminder', title: W.tag + 'A岛的事', startAt: W.tmr },
+      requestKey: 'iso:' + W.tag
+    });
+    S.action.runRequest(a.request.id);
+    const before = (S.store.get('actionRequests') || []).length;
+    if (!before) throw new Error('action 没落库');
+    /* 换到别岛：看不见 */
+    const B = mkNetWorld({});
+    S.core.setActiveSandbox(B.sb.id);
+    if (S.action.inScope().some((r) => r.id === a.request.id)) throw new Error('别岛能看见 action');
+    if (S.action.findByRequestKey('iso:' + W.tag)) throw new Error('别岛能按 key 找到');
+    B.cleanup();
+    S.core.setActiveSandbox(W.sb.id);
+    /* 删房：清掉 */
+    try { S.core._purgeSync.sandbox(W.sb.id); } catch (e) { /* 已拆 */ }
+    const left = (S.store.get('actionRequests') || []).filter((r) => r && r.sandboxId === W.sb.id);
+    if (left.length) throw new Error('删房后 action 没清：' + left.length);
+    return { 别岛: '看不见', 删房: '清干净' };
+  } finally { W.cleanup(); }
+});
+
+t('冲突：跨午夜 / 跨时区 / 全天 / 取消 / 重复实例，都不再靠裸 HH:MM', () => {
+  const W = mkCalWorld();
+  try {
+    const day2 = S.calendar.shiftISO(W.iso, 2);
+    const night = W.mk({
+      title: W.tag + '通宵班', startAt: W.iso + 'T23:00', endAt: W.tmr + 'T01:00',
+      eventType: 'char_schedule', createdBy: { type: 'char', id: W.c1 }
+    });
+    const hit = (s, e, tz) => S.calendar.conflictOf(W.c1, {
+      startAt: s, endAt: e, timezone: tz || ''
+    }).map((x) => x.title);
+
+    if (!hit(W.tmr + 'T00:30', W.tmr + 'T01:30').length) throw new Error('跨午夜：次日 00:30 没报冲突');
+    if (!hit(W.iso + 'T23:30', W.iso + 'T23:50').length) throw new Error('跨午夜：当晚 23:30 没报冲突');
+    if (hit(W.tmr + 'T05:00', W.tmr + 'T06:00').length) throw new Error('不相干的时间误报了');
+
+    /* 跨时区：东京 09:00(=UTC 00:00) 与 上海 08:00(=UTC 00:00) 是同一刻 */
+    const tokyo = W.mk({
+      title: W.tag + '东京的会', startAt: W.tmr + 'T09:00', endAt: W.tmr + 'T10:00',
+      timezone: 'Asia/Tokyo', createdBy: { type: 'char', id: W.c1 }
+    });
+    if (!hit(W.tmr + 'T08:00', W.tmr + 'T09:00', 'Asia/Shanghai').some((t) => t === tokyo.title)) {
+      throw new Error('跨时区同一绝对时刻没报冲突');
+    }
+
+    /* 全天 */
+    W.mk({ title: W.tag + '整天有事', startAt: day2, allDay: true, createdBy: { type: 'char', id: W.c1 } });
+    if (!hit(day2 + 'T15:00', day2 + 'T16:00').some((t) => String(t).indexOf('整天有事') >= 0)) {
+      throw new Error('全天事件没参与冲突');
+    }
+
+    /* 取消的不占时间 */
+    S.calendar.cancelEvent(night.id, '算了');
+    if (hit(W.iso + 'T23:30', W.iso + 'T23:50').some((t) => t === night.title)) {
+      throw new Error('已取消的事件还在占时间');
+    }
+    S.calendar.updateEvent(night.id, { status: 'confirmed', cancelReason: null });
+
+    /* 每周重复：第 7 天命中，第 3 天不命中 */
+    const wk = W.mk({
+      title: W.tag + '每周例会', startAt: W.iso + 'T20:00', endAt: W.iso + 'T21:00',
+      repeatRule: 'weekly', createdBy: { type: 'char', id: W.c1 }
+    });
+    const d7 = S.calendar.shiftISO(W.iso, 7);
+    const d3 = S.calendar.shiftISO(W.iso, 3);
+    if (!hit(d7 + 'T20:30', d7 + 'T21:30').some((t) => t === wk.title)) throw new Error('周重复实例没参与冲突');
+    if (hit(d3 + 'T20:30', d3 + 'T21:30').some((t) => t === wk.title)) throw new Error('不命中的日子误报了');
+
+    /* 坏数据：不静默说「没冲突」 */
+    W.mk({ title: W.tag + '写坏的时间', startAt: W.tmr + 'T99:99', createdBy: { type: 'char', id: W.c1 } });
+    const rep = S.calendar.conflictReport(W.c1, { startAt: W.tmr + 'T05:00', endAt: W.tmr + 'T06:00' });
+    if (!rep.unresolved.some((t) => String(t).indexOf('写坏的时间') >= 0)) {
+      throw new Error('解析不出的旧数据被静默当成「没冲突」了');
+    }
+    return { 跨午夜: 'ok', 跨时区: 'ok', 全天: 'ok', 取消: '不占', 周重复: 'ok', 坏数据: 'fail closed' };
+  } finally { W.cleanup(); }
+});
+
+t('共同事件：角色表态有真实来源才生效，状态由程序算', () => {
+  const W = mkCalWorld();
+  try {
+    const ev = S.calendar.requestCreateEvent({
+      ownerCharId: W.c1, eventType: 'shared_event', title: W.tag + '一起吃饭',
+      startAt: W.tmr + 'T19:00',
+      participants: [{ type: 'user', id: 'user' }, { type: 'char', id: W.c1 }]
+    });
+    const id = ev.eventId;
+
+    /* 伪造来源一律拒 —— 没有真实来源就不许改 */
+    const fake = S.calendar.respondSharedEvent(id, W.c1, 'accepted', 'model_said');
+    if (fake.ok || fake.error.code !== 'no-source') throw new Error('假来源没被拦');
+    const notIn = S.calendar.respondSharedEvent(id, 'char_somebody', 'accepted', 'user_record');
+    if (notIn.ok || notIn.error.code !== 'not-a-participant') throw new Error('非参与者没被拦');
+    const badState = S.calendar.respondSharedEvent(id, W.c1, 'maybe', 'user_record');
+    if (badState.ok || badState.error.code !== 'bad-state') throw new Error('非法表态值没被拦');
+    const notShared = S.calendar.respondSharedEvent(
+      W.mk({ title: W.tag + '私人' }).id, 'user', 'accepted', 'user_record');
+    if (notShared.ok || notShared.error.code !== 'not-shared') throw new Error('非共同事件没被拦');
+
+    /* 角色答应 → 双方都 accepted → confirmed（**以前这个状态永远到不了**） */
+    const r1 = S.calendar.respondSharedEvent(id, W.c1, 'accepted', 'user_record', '他答应了');
+    if (!r1.ok) throw new Error('角色表态失败：' + JSON.stringify(r1.error));
+    if (r1.status !== 'confirmed') throw new Error('双方都答应了却不是 confirmed：' + r1.status);
+    let e = S.calendar.getEvent(id);
+    if (e.status !== 'confirmed') throw new Error('事件状态没落到 confirmed');
+    /* 兼容字段跟着主来源走（**判断只认 participantStates**） */
+    const cp = (e.participants || []).filter((p) => p && p.id === W.c1)[0];
+    if (!cp || cp.state !== 'accepted') throw new Error('participants[].state 没同步');
+
+    /* 再推掉 → cancelled（现有值域里没有 declined，不擅造新状态） */
+    const r2 = S.calendar.respondSharedEvent(id, W.c1, 'declined', 'user_record', '他推掉了');
+    if (!r2.ok) throw new Error('推掉失败：' + JSON.stringify(r2.error));
+    if (r2.status !== 'cancelled') throw new Error('有人推掉却不是 cancelled：' + r2.status);
+    e = S.calendar.getEvent(id);
+    if (e.status !== 'cancelled' || !e.cancelReason) throw new Error('取消没留原因');
+    if (!S.calendar.getEvent(id)) throw new Error('取消 ≠ 删除：记录得留着');
+
+    /* 他看不到的邀请不能被他接受：把可见性改成 private 再试 */
+    const ev2 = S.calendar.requestCreateEvent({
+      ownerCharId: W.c1, eventType: 'shared_event', title: W.tag + '看不见的约',
+      startAt: W.tmr + 'T21:00',
+      participants: [{ type: 'user', id: 'user' }, { type: 'char', id: W.c1 }]
+    });
+    S.calendar.updateEvent(ev2.eventId, { visibility: 'private' });
+    const blind = S.calendar.respondSharedEvent(ev2.eventId, W.c1, 'accepted', 'user_record');
+    if (blind.ok || blind.error.code !== 'invisible-to-char') throw new Error('他看不到的邀请也被接受了');
+    return { 假来源: '拒', confirmed: '可达', declined: 'cancelled', 看不见的: '拒' };
+  } finally { W.cleanup(); }
+});
+
+t('新建页：第二次新建不能命中第一次的幂等键（页面实例是缓存复用的）', () => {
+  const W = mkCalWorld();
+  try {
+    /* ⚠️ 这个坑是真机预检抓到的：提交钥匙原本在 render 里铸，而**页面实例是
+       缓存复用的（render 只跑一次）**，于是第二次新建带着上一次的 requestKey，
+       被 action 层当成「已经建过」直接返回 —— 第二条根本建不出来。
+       修法是把重铸放到 onShow。这条断言就是守住它别再退回去。 */
+    const create = (title, start) => {
+      S.nav.open('calendar-new', { charId: W.c1, date: W.tmr });
+      const root = pageRoot();
+      const ins = collectByClass(root, 'cal-input');
+      if (ins.length < 4) throw new Error('输入框没渲染出来：' + ins.length);
+      ins[0].value = W.tmr; ins[1].value = start; ins[2].value = ''; ins[3].value = title;
+      const btns = collectByClass(root, 'btn-primary');
+      if (!btns.length) throw new Error('找不到「记下来」按钮');
+      fireClick(btns[0]);
+      return (S.store.get('calEvents') || []).filter((e) => e && e.title === title).length;
+    };
+    const n1 = create(W.tag + '第一条', '11:00');
+    const n2 = create(W.tag + '第二条', '12:00');
+    if (n1 !== 1) throw new Error('第一条没建出来');
+    if (n2 !== 1) throw new Error('第二条没建出来 —— 又命中上一次的幂等键了');
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    return { 第一条: n1, 第二条: n2 };
+  } finally { W.cleanup(); }
+});
+
+/* ---------- SW 缓存版本：独立基准，不是「读当前值再与当前值比」 ----------
+   ⚠️ 反面教材（必须避免）：从 sw.js 读出 CASH 再断言它等于自己 ——
+     那样永远为真，版本号忘了跳也测不出来。
+   ★ 这里的基准是**手写的常量**：本批改了运行时脚本 page-offline.js，
+     按项目约定必须同步 CACHE +1。基准写死 'sleepy-v157'，
+     跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
+   ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
+     「每次都要有人手动确认一次」，不是冗余。 */
+const EXPECTED_SW_CACHE = 'sleepy-v164';
+
+t('SW 缓存版本：与独立基准一致（本批改过 page-offline.js，必须跳位）', () => {
+  const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+  const m = sw.match(/var CACHE = '([^']+)'/);
+  if (!m) throw new Error('sw.js 里找不到 var CACHE = \'…\'');
+  if (m[1] !== EXPECTED_SW_CACHE) {
+    throw new Error('缓存版本与独立基准不符：期望 ' + EXPECTED_SW_CACHE +
+      '，实得 ' + m[1] + '（改了运行时脚本就必须在 sw.js 跳位，并改本基准）');
+  }
+  /* 附带护栏：跳位必须在文件头留下本批的跳版本说明，
+     否则下一个人会怀疑「这个号是不是手滑改的」。 */
+  if (sw.indexOf('v160（2026-10-04）') < 0) {
+    throw new Error('CACHE 已跳到 v160，但文件头缺少 v160 的变更说明');
+  }
+  return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
+});
+
+t('线下诊断导出面：没有写入/重置入口（正常运行环境只读）', () => {
+  const off = fs.readFileSync(path.join(ROOT, 'page-offline.js'), 'utf8');
+  const i = off.indexOf('Sleepy.offlineDiag = {');
+  if (i < 0) throw new Error('找不到 Sleepy.offlineDiag 导出');
+  const j = off.indexOf('};', i);
+  const face = off.slice(i, j);
+  /* ⚠️ 卡的是**代码**（导出面里真的出现了写入口），不是卡某串字出现在文件里。
+     剥注释同理：修法说明里必然要写出 __record 这些名字，不剥会把自己判成违规。 */
+  const bare = face.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  ['__record', '__recordIfCurrent', '__reset', '__snapshot',
+    'diagRecord:', 'diagRecordIfCurrent'].forEach((k) => {
+    if (bare.indexOf(k) >= 0) throw new Error('导出面暴露了写入口：' + k);
+  });
+  if (bare.indexOf('snapshot: diagSnapshot') < 0) throw new Error('导出面缺只读 snapshot');
+  if (bare.indexOf('stageLabel') < 0) throw new Error('导出面缺只读 stageLabel');
+  /* requestId 必须在：请求身份与诊断序号解耦就是靠它可查 */
+  if (off.indexOf('requestId: requestId') < 0) {
+    throw new Error('诊断记录里没有 requestId（无法证明请求身份与阶段解耦）');
+  }
+  return { 导出面: 'snapshot / stageLabel', 请求身份字段: 'requestId' };
+});
+
+t('日历收口：生产代码零直连 addEvent，且它已不在对外导出表里', () => {
+  /* 第二轮收口批第 3/4 条：addEvent 降为「内部落库函数」，
+     UI / 执行器 / 别的 App 一律走 requestCreateEvent。
+     第三轮收口批把它**从 Sleepy.calendar 顶层导出表拿掉**，
+     只挂 `__internal.addEvent` —— 所以这条断言要比原来更严两分：
+       ① 生产脚本里 `__internal` 一个都不许出现（内部口只在 calendar.js 里定义）；
+       ② `addEvent` 那个名字不许出现在 Sleepy.calendar 的导出表里。 */
+  const fs = require('fs');
+  const html = fs.readFileSync(__dirname + '/../index.html', 'utf8');
+  const srcs = [];
+  html.replace(/<script\s+src="([^"]+)"/g, (m, s) => { srcs.push(s); return m; });
+  if (!srcs.length) throw new Error('没解析出脚本列表');
+  const strip = (s) => String(s)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const hits = {};
+  const internalHits = [];
+  srcs.forEach((s) => {
+    const file = __dirname + '/../' + s.replace(/^\.\//, '');
+    if (!fs.existsSync(file)) return;
+    const t = strip(fs.readFileSync(file, 'utf8'));
+    const n = (t.match(/addEvent\(/g) || []).length;
+    if (n) hits[s] = n;
+    /* 内部口：calendar.js 之外任何人碰都红 —— 包括改名后的 `__raw` 之类 */
+    if (/__internal/.test(t)) internalHits.push(s);
+  });
+  const bad = Object.keys(hits).filter((k) => k !== 'calendar.js');
+  if (bad.length) throw new Error('这些生产脚本绕过统一入口直接 addEvent：' + bad.join('、'));
+  const badInt = internalHits.filter((k) => k !== 'calendar.js');
+  if (badInt.length) {
+    throw new Error('这些生产脚本碰了内部落库口 __internal（测试夹具专用）：' + badInt.join('、'));
+  }
+  /* calendar.js 里：一次真实调用（requestCreateEvent 的第 ⑨ 步）+ 一次函数定义 */
+  if (hits['calendar.js'] !== 2) {
+    throw new Error('calendar.js 里 addEvent( 出现 ' + hits['calendar.js'] + ' 次，期望 2（定义 1 + 调用 1）');
+  }
+  /* 反向：addEvent 不许回到顶层导出表（回去 = 又变成公开创建 API） */
+  if (S.calendar.addEvent !== undefined) {
+    throw new Error('addEvent 又回到 Sleepy.calendar 顶层了 —— 它只能是 __internal.addEvent');
+  }
+  if (!S.calendar.__internal || typeof S.calendar.__internal.addEvent !== 'function') {
+    throw new Error('__internal.addEvent 不在了（测试夹具要靠它造数据）');
+  }
+  /* 反向：两个历史写入路径必须已经改走统一入口 */
+  const wj = strip(fs.readFileSync(__dirname + '/../wj-canon.js', 'utf8'));
+  if (/addEvent\(/.test(wj)) throw new Error('wj-canon 还在直接 addEvent');
+  if (!/requestCreateEvent/.test(wj)) throw new Error('wj-canon 没走统一入口');
+  return { 生产脚本: srcs.length, addEvent调用点: hits, 顶层导出: '已移除', 内部口: '仅 calendar.js' };
+});
+
+t('日历收口：wj-canon 的 requestKey 稳定可复算，重复 write 不会建第二条', () => {
+  const W = mkCalWorld();
+  try {
+    const k1 = S.wjCanon.canonRequestKey('w1', 'c1', W.c1);
+    const k2 = S.wjCanon.canonRequestKey('w1', 'c1', W.c1);
+    const k3 = S.wjCanon.canonRequestKey('w1', 'c2', W.c1);
+    if (k1 !== k2) throw new Error('同一部作品/候选/角色的 key 不稳定');
+    if (k1 === k3) throw new Error('不同候选撞了同一个 key');
+    if (k1.indexOf('wjcanon:') !== 0) throw new Error('key 前缀不对：' + k1);
+
+    /* 用同一把钥匙连建两次：第二次必须是 dup，且不产生第二条事件 */
+    const payload = {
+      ownerCharId: W.c1, eventType: 'shared_event', title: W.tag + '定史',
+      startAt: W.tmr, allDay: true, createdBy: { type: 'user', id: 'user' },
+      participants: [{ type: 'user', id: 'user' }, { type: 'char', id: W.c1 }]
+    };
+    const opts = { requestKey: k1, allowConflict: true, historical: true, authorizedVia: 'review_desk' };
+    const a = S.calendar.requestCreateEvent(payload, opts);
+    if (!a.ok) throw new Error('第一次失败：' + JSON.stringify(a.error));
+    const b = S.calendar.requestCreateEvent(payload, opts);
+    if (!b.ok || b.dup !== true) throw new Error('第二次没被幂等挡住');
+    const n = (S.store.get('calEvents') || []).filter((e) => e && e.requestKey === k1).length;
+    if (n !== 1) throw new Error('重复 write 建出了 ' + n + ' 条');
+
+    /* historical：定史是「已经发生」，直接 confirmed + 全员 accepted（不是待确认邀请） */
+    const ev = S.calendar.getEvent(a.eventId);
+    if (ev.status !== 'confirmed') throw new Error('定史不该是 pending 邀请：' + ev.status);
+    if (ev.participantStates[W.c1] !== 'accepted') throw new Error('定史不该让角色「还没表态」');
+    if (ev.authorizedVia !== 'review_desk') throw new Error('没记下授权来源');
+
+    /* 没有授权来源的回溯记录一律拒 */
+    const noAuth = S.calendar.requestCreateEvent(payload, { requestKey: 'x' + W.tag, historical: true });
+    if (noAuth.ok || noAuth.error.code !== 'no-authorization') throw new Error('没写授权来源也放行了');
+    /* 角色/模型当作者的回溯记录一律拒 */
+    const notUser = S.calendar.requestCreateEvent(
+      Object.assign({}, payload, { createdBy: { type: 'char', id: W.c1 } }),
+      { requestKey: 'y' + W.tag, historical: true, authorizedVia: 'review_desk' });
+    if (notUser.ok || notUser.error.code !== 'bad-authorization') throw new Error('非 user 也能回溯记录');
+    /* 不声明 historical 的共同事件仍然强制 pending（老规矩没松） */
+    /* 换个没被占用的日子 —— 不带 allowConflict 时撞车是正常的（要拦） */
+    const freeDay = S.calendar.shiftISO(W.iso, 3);
+    const invite = S.calendar.requestCreateEvent(
+      Object.assign({}, payload, { startAt: freeDay, title: W.tag + '普通邀请' }),
+      { requestKey: 'z' + W.tag });
+    if (!invite.ok) throw new Error('普通共同事件建不了：' + JSON.stringify(invite.error || invite));
+    if (S.calendar.getEvent(invite.eventId).status !== 'pending') throw new Error('普通共同事件被当成已发生');
+    return { key: k1, 重复: 'dup', 定史状态: ev.status };
+  } finally { W.cleanup(); }
+});
+
+/* ==================== 日历写入全链路收口（第三轮施工单，2026-10-03） ====================
+   依据《Sleepy · 日历写入全链路收口 · 第三轮施工单 v1》。三批：
+     ① 纪念日 saveAnniversary 走统一入口 + 入口边界 + 双向绑定
+     ② 帷境定史 wj-canon 走统一入口 + 真回执 + 幂等
+     ③ addEvent 收紧（不在顶层导出表 / 生产零直连）
+   每条自己造世界、自己拆（finally），不污染后面的全页渲染冒烟。 */
+console.log('\n--- 日历写入全链路收口（第三轮施工单）---');
+
+/* 留痕夹具：往当前岛的角色身上塞一条锚点留痕。 */
+function mkAnchor(W, opt) {
+  opt = opt || {};
+  const id = opt.id || ('mem_a' + Math.random().toString(36).slice(2, 8));
+  const file = S.memoryStore.loadCharMemory(opt.charId || W.c1);
+  file.memories.push({
+    id: id, charId: opt.charId || W.c1,
+    kind: 'moment',
+    content: opt.content || (W.tag + '·他第一次这样叫我的那天'),
+    source: opt.source || 'ai_summary',
+    sourceRef: opt.sourceRef === undefined ? 'msg_882' : opt.sourceRef,
+    evidenceType: 'confirmed', status: 'active',
+    isAnchor: true, isUserEdited: false,
+    createdAt: '2031-05-20T21:00:00.000Z', updatedAt: '2031-05-20T21:00:00.000Z'
+  });
+  S.memoryStore.saveCharMemory(file);
+  return id;
+}
+
+t('纪念日收口：合法保存走统一入口，且 memoryId ↔ calendarEventId 双向一致', () => {
+  const W = mkCalWorld();
+  try {
+    const memId = mkAnchor(W);
+    const r = S.calendar.saveAnniversary(W.c1, { id: memId }, { date: '2031-05-20' });
+    if (!r.ok) throw new Error('合法纪念日保存失败：' + JSON.stringify(r.error));
+    if (r.eventId.indexOf('ev') !== 0) throw new Error('拿不到真实 eventId：' + r.eventId);
+
+    const ev = S.calendar.getEvent(r.eventId);
+    if (!ev) throw new Error('事件没落库');
+    /* 正向：事件 → 留痕 */
+    if (ev.memoryId !== memId) throw new Error('事件上的 memoryId 不对');
+    if (ev.authorizedVia !== 'anniversary_sheet') throw new Error('没记授权来源');
+    if (ev.sourceType !== 'memory') throw new Error('sourceType 语义丢了');
+    if (ev.meaningType !== 'char_subjective') throw new Error('私人纪念日被升格成双方事实了');
+    /* ⚠️ 反向：留痕 → 事件。**双向绑定以前是假的** ——
+       全库没有任何一处写 memory.calendarEventId（第三轮勘察确认），
+       所以「绑在一起」其实只有单向，removeEvent 的保护与召回都读不到。 */
+    if (r.bindOk !== true) throw new Error('绑定回写没成功（bindOk=' + r.bindOk + '）');
+    const mem = (S.memoryStore.loadCharMemory(W.c1).memories || []).filter((m) => m.id === memId)[0];
+    if (!mem) throw new Error('留痕不见了');
+    if (mem.calendarEventId !== r.eventId) {
+      throw new Error('反向绑定没写成：memory.calendarEventId=' + mem.calendarEventId);
+    }
+    /* 幂等键必须是「岛 + 留痕」，不能含标题日期（那是会误合并的弱键） */
+    if (ev.requestKey !== 'anniversary:' + W.sb.id + ':' + memId) {
+      throw new Error('requestKey 不是稳定的岛+留痕键：' + ev.requestKey);
+    }
+    return { 正向: ev.memoryId, 反向: mem.calendarEventId, 幂等键: ev.requestKey };
+  } finally { W.cleanup(); }
+});
+
+t('纪念日收口：缺 memoryId / 跨岛留痕 / 别角色的留痕一律拒，且不留半成品', () => {
+  const W = mkCalWorld();
+  try {
+    const before = (S.store.get('calEvents') || []).length;
+
+    /* ① 缺 memoryId —— 统一入口不许因为 eventType 就放宽 */
+    const noMem = S.calendar.saveAnniversary(W.c1, {}, { date: '2031-05-20' });
+    if (noMem.ok || noMem.error.code !== 'no-memory') {
+      throw new Error('缺 memoryId 没被拒：' + JSON.stringify(noMem.error || noMem));
+    }
+    /* ② 本岛名册里没有这条留痕（伪造 id） */
+    const ghost = S.calendar.saveAnniversary(W.c1, { id: 'mem_根本不存在' }, { date: '2031-05-20' });
+    if (ghost.ok || ghost.error.code !== 'no-such-memory') {
+      throw new Error('不存在的留痕没被拒：' + JSON.stringify(ghost.error || ghost));
+    }
+    /* ③ 跨岛：别岛角色的留痕，当前岛引用不到 */
+    const B = mkNetWorld({});
+    const otherMem = mkAnchor(B);
+    const crossRes = S.calendar.saveAnniversary(W.c1, { id: otherMem }, { date: '2031-05-20' });
+    if (crossRes.ok || crossRes.error.code !== 'no-such-memory') {
+      throw new Error('跨岛留痕没被拒：' + JSON.stringify(crossRes.error || crossRes));
+    }
+    /* ④ 本岛但属于另一个角色。
+       ⚠️ 留痕库**按 root 分文件**（charMem:<root>），所以同岛另一个角色的留痕
+       在 c1 的文件里根本查不到 —— 正确结论是 no-such-memory，不是 memory-not-owed。
+       归属分支要单独构造：在 c1 自己的文件里塞一条 charId 指向别人的条目
+       （迁移残留 / 手工改库才会出现的数据），这时才该命中 memory-not-owed。 */
+    const otherLocal = mkAnchor(W, { charId: W.c2, id: 'mem_wc2_' + W.tag });
+    const wrongChar = S.calendar.saveAnniversary(W.c1, { id: otherLocal }, { date: '2031-05-20' });
+    if (wrongChar.ok) throw new Error('别角色的留痕没被拒');
+    if (['no-such-memory', 'memory-not-owed'].indexOf(wrongChar.error.code) < 0) {
+      throw new Error('别角色的留痕拒绝理由不对：' + JSON.stringify(wrongChar.error));
+    }
+    const strayId = 'mem_stray_' + W.tag;
+    const f1 = S.memoryStore.loadCharMemory(W.c1);
+    f1.memories.push({
+      id: strayId, charId: W.c2, kind: 'moment', content: W.tag + '·错挂的留痕',
+      source: 'ai_summary', sourceRef: '', evidenceType: 'confirmed',
+      status: 'active', isAnchor: true, isUserEdited: false,
+      createdAt: '2031-05-20T21:00:00.000Z', updatedAt: '2031-05-20T21:00:00.000Z'
+    });
+    S.memoryStore.saveCharMemory(f1);
+    const stray = S.calendar.saveAnniversary(W.c1, { id: strayId }, { date: '2031-05-20' });
+    if (stray.ok || stray.error.code !== 'memory-not-owed') {
+      throw new Error('错挂的留痕没被归属闸挡住：' + JSON.stringify(stray.error || stray));
+    }
+    B.cleanup();
+    S.core.setActiveSandbox(W.sb.id);
+
+    if ((S.store.get('calEvents') || []).length !== before) {
+      throw new Error('被拒的保存留下了半成品事件');
+    }
+    /* 失败回执要留痕（不能悄悄吞） */
+    if (!noMem.receipt || noMem.receipt.type !== 'calendar_event_failed') {
+      throw new Error('拒绝没有失败回执');
+    }
+    if (noMem.receipt.errorCode !== 'no-memory') throw new Error('回执没带错误码');
+    return { 缺留痕: '拒', 伪造留痕: '拒', 跨岛: '拒', 别角色: '拒', 半成品: 0 };
+  } finally { W.cleanup(); }
+});
+
+t('纪念日收口：sourceIds 只取核验过的那条留痕，调用方注入进不来', () => {
+  const W = mkCalWorld();
+  try {
+    const memId = mkAnchor(W, { sourceRef: 'msg_882' });
+    /* ⚠️ 调用方（页面 / 模型文本）递一个**伪造的 mem 对象**进来，
+       带着自己的 sourceRef。saveAnniversary 收下它的只有 id ——
+       sourceIds 必须从核过归属的留痕身上取，不能读调用方给的这份。 */
+    const injected = S.calendar.saveAnniversary(W.c1, {
+      id: memId, sourceRef: 'msg_伪造的别岛来源', charId: 'chr_别人', content: '换掉标题'
+    }, { date: '2031-05-24' });   /* 注意：不传 opts.title —— 它是用户显式输入，合法 */
+    if (!injected.ok) throw new Error('保存失败：' + JSON.stringify(injected.error));
+    if (injected.event.sourceIds.length !== 1 || injected.event.sourceIds[0] !== 'msg_882') {
+      throw new Error('sourceIds 采信了调用方注入的值：' + JSON.stringify(injected.event.sourceIds));
+    }
+    /* 正文同理：标题的默认值取**留痕自己的 content**，不取调用方递的 mem.content。
+       ⚠️ 但 `opts.title` 是**用户显式输入**（弹层里能改，page-calendar 不传但
+       语义上允许），那一条必须保留 —— 不能为了「防注入」把用户能改的东西也锁死。
+       所以这里只钉「mem.content 不采信」，opts.title 单独测。 */
+    if (String(injected.event.title).indexOf('换掉的标题') >= 0) {
+      throw new Error('标题采信了调用方注入的 mem.content');
+    }
+    /* ⚠️ 上面那次已经把它标成 2031-05-24 了（幂等键只看岛+留痕），
+       所以这里不能再「第一次保存」一次 —— 直接查已建的那条。 */
+    const first = { event: injected.event, eventId: injected.eventId };
+    if (first.event.title.indexOf(W.tag + '·他第一次这样叫我的那天') < 0) {
+      throw new Error('默认标题没取留痕自己的 content：' + first.event.title);
+    }
+    /* 改标题再存 → 命中幂等（一条留痕只标一天），但**不许静默沿用旧值**：
+       明确拒绝并说清差在哪，让用户去日历里改。 */
+    const again = S.calendar.saveAnniversary(
+      W.c1, { id: memId }, { date: '2031-05-24', title: W.tag + '·我自己起的名字' });
+    if (again.ok) throw new Error('改了标题还报成功 —— 用户的输入被静默丢了');
+    if (again.error.code !== 'already-marked') {
+      throw new Error('拒绝理由不对：' + JSON.stringify(again.error));
+    }
+    if (again.error.message.indexOf('名字') < 0) throw new Error('没说清差在哪：' + again.error.message);
+    /* 事件没被改、也没多出一条 */
+    const ev2 = S.calendar.getEvent(first.eventId);
+    if (ev2.title !== first.event.title) throw new Error('事件标题被偷偷改了');
+    const cnt = S.calendar.eventsOf(W.c1)
+      .filter((e) => e.requestKey === 'anniversary:' + W.sb.id + ':' + memId).length;
+    if (cnt !== 1) throw new Error('建出了 ' + cnt + ' 条');
+    /* 什么差异都没有的重跑 → 正常 dup（幂等在正常工作） */
+    const same = S.calendar.saveAnniversary(W.c1, { id: memId }, { date: '2031-05-24' });
+    if (!same.ok || same.dup !== true) throw new Error('无差异重跑不该被拒');
+    if (same.eventId !== first.eventId) throw new Error('dup 返回了另一个 eventId');
+    /* 没有 sourceRef 的留痕 → 空数组（不是 undefined） */
+    const bare = mkAnchor(W, { sourceRef: '', id: 'mem_bare_' + W.tag });
+    const r2 = S.calendar.saveAnniversary(W.c1, { id: bare }, { date: '2031-05-22' });
+    if (!r2.ok) throw new Error('保存失败：' + JSON.stringify(r2.error));
+    if (!Array.isArray(r2.event.sourceIds) || r2.event.sourceIds.length !== 0) {
+      throw new Error('无来源时 sourceIds 该是空数组：' + JSON.stringify(r2.event.sourceIds));
+    }
+    return { 注入的sourceRef: '没被采信', 留痕自己的: '保留', 无来源: '空数组' };
+  } finally { W.cleanup(); }
+});
+
+t('纪念日收口：重复保存幂等，且已绑定的仍不许 removeEvent 直接删', () => {
+  const W = mkCalWorld();
+  try {
+    const memId = mkAnchor(W);
+    const a = S.calendar.saveAnniversary(W.c1, { id: memId }, { date: '2031-05-23' });
+    if (!a.ok) throw new Error('第一次保存失败');
+    /* 同一条留痕 + 完全相同的输入 → 幂等命中（key 只看岛+留痕） */
+    const b = S.calendar.saveAnniversary(W.c1, { id: memId }, { date: '2031-05-23' });
+    if (!b.ok || b.dup !== true) throw new Error('重复保存没被幂等挡住：' + JSON.stringify(b.error));
+    if (b.eventId !== a.eventId) throw new Error('幂等返回了另一个 eventId');
+    /* ⚠️ 换日期 / 换标题**不许**建第二条，也不许静默沿用旧值 → 明确拒绝 */
+    const moved = S.calendar.saveAnniversary(
+      W.c1, { id: memId }, { date: '2031-06-01' });
+    if (moved.ok || moved.error.code !== 'already-marked') {
+      throw new Error('换日期没被拒（或建了第二条）：' + JSON.stringify(moved.error || moved));
+    }
+    if (moved.eventId !== a.eventId) throw new Error('拒绝时也没说清是哪一条');
+    if (S.calendar.getEvent(a.eventId).startAt.indexOf('2031-06-01') >= 0) {
+      throw new Error('事件日期被偷偷改了');
+    }
+    const n = S.calendar.eventsOf(W.c1)
+      .filter((e) => e.requestKey === 'anniversary:' + W.sb.id + ':' + memId).length;
+    if (n !== 1) throw new Error('重复保存建出了 ' + n + ' 条');
+    /* 删除保护没松 */
+    const del = S.calendar.removeEvent(a.eventId);
+    if (del.ok) throw new Error('绑了留痕的纪念日被直接删掉了');
+    if (del.message.indexOf('留痕') < 0) throw new Error('删除提示没说清原因');
+    /* 仍然从普通近期安排里排除（回归） */
+    S.calendar.saveCfg(W.c1, { scheduleOn: true });
+    const sched = (S.calendar.timeFacts(W.c1, {}).split('\n')
+      .filter((l) => l.indexOf('你近期的安排') === 0)[0]) || '';
+    if (sched.indexOf(W.tag) >= 0) throw new Error('纪念日泄进了普通日程线');
+    return { 幂等: 'dup', 事件数: n, 删除: '被保护', 不泄进日程: true };
+  } finally { W.cleanup(); }
+});
+
+t('帷境收口：未确认不写 calEvents，确认后拿真实 eventId，重复确认幂等', () => {
+  const W = mkCalWorld();
+  try {
+    const w = S.wj.createDraft({
+      title: W.tag + '·定史剧本', reality: 'canon_candidate',
+      cast: [{ charId: W.c1, name: W.tag + '·甲' }]
+    });
+    /* 走**真实审阅流程**：摆候选 → 批准 → 定认知档 → 到第四步 */
+    S.wjCanon.setCandidates(w.id, [{
+      kind: 'shared_event', text: W.tag + '·那天的展', date: '2031-07-07'
+    }]);
+    const cid = S.wjCanon.get(w.id).candidates[0].id;
+    S.wjCanon.decide(w.id, cid, 'keep');
+    S.wjCanon.setKnowledge(w.id, W.c1, cid, '清晰记忆');
+    S.wjCanon.setStep(w.id, 3);
+
+    /* ① 打开审阅台 / 预览 —— 一条都不能写（plan 与 sheet 都是纯读） */
+    const evBefore = (S.store.get('calEvents') || []).length;
+    const plan = S.wjCanon.plan(w.id);
+    if (!plan || !plan.count) throw new Error('plan 不可用或没算出条数');
+    if ((S.store.get('calEvents') || []).length !== evBefore) {
+      throw new Error('预览 plan 就写日历了 —— 打开审阅台必须零副作用');
+    }
+    /* 审阅台那一屏（page-wj-canon.js 的 paneWrite）读的就是 plan() 的数据 ——
+       它必须是纯读：展示不是授权。 */
+    const again = S.wjCanon.plan(w.id);
+    if (again.count !== plan.count) throw new Error('plan 不稳定');
+    if ((S.store.get('calEvents') || []).length !== evBefore) {
+      throw new Error('反复预览就写日历了 —— 展示不是授权');
+    }
+    /* 名单、认知、keptOf 也都是读路径 */
+    S.wjCanon.keptOf(S.wjCanon.get(w.id));
+    S.wjCanon.writersOf(S.wjCanon.get(w.id), S.wj.get(w.id), cid);
+    if ((S.store.get('calEvents') || []).length !== evBefore) {
+      throw new Error('读名单就写日历了');
+    }
+
+    /* 阻塞项存在时不能写：把认知档撤掉（就没人会被写了）不算阻塞，
+       换真正的阻塞：把候选改成 reject → plan.count = 0 */
+    S.wjCanon.decide(w.id, cid, 'reject');
+    if (S.wjCanon.write(w.id).ok) throw new Error('没有批准条目也写进去了');
+    if ((S.store.get('calEvents') || []).length !== evBefore) throw new Error('被拒的候选也落日历了');
+    S.wjCanon.decide(w.id, cid, 'keep');
+
+    /* ② 明确确认（write）→ 经过统一入口，拿到真实 eventId */
+    const r1 = S.wjCanon.write(w.id);
+    if (!r1.ok) throw new Error('确认写入失败：' + JSON.stringify(r1).slice(0, 200));
+    if (!r1.evRefs || !r1.evRefs.length) throw new Error('没留下任何 eventRef');
+    if (r1.evFailed && r1.evFailed.length) throw new Error('不该有失败项：' + JSON.stringify(r1.evFailed));
+    const ref = r1.evRefs[0];
+    const ev = S.calendar.getEvent(ref.eventId);
+    if (!ev) throw new Error('eventRef 指向的不是真事件：' + ref.eventId);
+    if (ev.authorizedVia !== 'review_desk') throw new Error('没记审阅台授权');
+    if (ev.status !== 'confirmed') throw new Error('定史不该停在待确认：' + ev.status);
+    if (ev.eventType !== 'shared_event') throw new Error('事件类型被改动了（未决事实不许猜改）');
+    const rec = S.wjCanon.get(w.id);
+    if (rec.written !== true) throw new Error('成功了 written 却没置真');
+    if (!rec.eventRefs || rec.eventRefs.length !== 1) throw new Error('rec 里没留 eventRefs');
+    if (rec.eventRefs[0].eventId !== ref.eventId) throw new Error('rec.eventRefs 与真实 eventId 不一致');
+    if (rec.writtenPending !== false) throw new Error('全部成功却还挂着 pending');
+
+    /* ③ 重复确认 —— already-written，不建第二条 */
+    const r2 = S.wjCanon.write(w.id);
+    if (r2.ok || r2.why !== 'already-written') throw new Error('重复确认没被幂等挡住');
+    const mine = S.store.get('calEvents').filter((e) => e && e.requestKey ===
+      S.wjCanon.canonRequestKey(w.id, cid, W.c1));
+    if (mine.length !== 1) throw new Error('重复确认建出了 ' + mine.length + ' 条');
+
+    S.wj.remove(w.id);
+    return {
+      预览: '零副作用', 被拒候选: '不写', eventId: ref.eventId,
+      状态: ev.status, 重复确认: 'already-written', 事件数: mine.length
+    };
+  } finally { W.cleanup(); }
+});
+
+t('帷境收口：日历写失败时 rec.written 不伪造成功，且可重跑补上', () => {
+  const W = mkCalWorld();
+  try {
+    const w = S.wj.createDraft({
+      title: W.tag + '·会失败的剧本', reality: 'canon_candidate',
+      cast: [{ charId: W.c1, name: W.tag + '·甲' }]
+    });
+    S.wjCanon.setCandidates(w.id, [{
+      kind: 'shared_event', text: W.tag + '·写不进去的那天', date: '2031-08-08'
+    }]);
+    const cid = S.wjCanon.get(w.id).candidates[0].id;
+    S.wjCanon.decide(w.id, cid, 'keep');
+    S.wjCanon.setKnowledge(w.id, W.c1, cid, '清晰记忆');
+    S.wjCanon.setStep(w.id, 3);
+
+    /* 让统一入口在这一条上失败：临时注入一个拒绝桩。
+       （不改动生产代码，只在这一条断言里换掉函数引用 ——
+        验的是「失败不伪造成功」这个性质本身。） */
+    const real = S.calendar.requestCreateEvent;
+    S.calendar.requestCreateEvent = () => ({
+      ok: false, error: { code: 'write-failed', message: '注入的失败' }
+    });
+    let r;
+    try { r = S.wjCanon.write(w.id); } finally { S.calendar.requestCreateEvent = real; }
+
+    if (!r.evFailed || r.evFailed.length !== 1) {
+      throw new Error('失败没被如实报出来：' + JSON.stringify(r).slice(0, 200));
+    }
+    if (r.evFailed[0].err !== 'write-failed') throw new Error('失败码没带出来');
+    const rec = S.wjCanon.get(w.id);
+    if (rec.written === true) throw new Error('日历全失败却把 written 置真了 —— 那是谎报');
+    if (rec.writtenPending !== true) throw new Error('没标出可重跑');
+    if (!rec.calendarFailed || rec.calendarFailed.length !== 1) throw new Error('失败明细没留档');
+    if (rec.eventRefs && rec.eventRefs.length) throw new Error('失败却留下了 eventRefs');
+    if ((S.store.get('calEvents') || []).some((e) => e && String(e.title).indexOf(W.tag) >= 0)) {
+      throw new Error('失败却把事件写进去了');
+    }
+
+    /* 重跑要放行（written=false），并把日历补上；留痕不许写两份 */
+    const r2 = S.wjCanon.write(w.id);
+    if (r2 && r2.why) throw new Error('重跑被挡了：' + r2.why);
+    if (!r2.ok) throw new Error('重跑没放行：' + JSON.stringify(r2).slice(0, 160));
+    if (r2.written !== true) throw new Error('重跑补上了 written 还是不为真');
+    if (r2.events !== 1) throw new Error('重跑没补上日历：' + r2.events);
+    const rec2 = S.wjCanon.get(w.id);
+    if (rec2.writtenPending !== false) throw new Error('补上后没清 pending 标记');
+    if (!rec2.eventRefs || rec2.eventRefs.length !== 1) throw new Error('补上后没留 eventRefs');
+    const lines = (S.memoryStore.loadCharMemory(W.c1).memories || [])
+      .filter((m) => m.source === 'other_app' && String(m.content).indexOf(W.tag) >= 0);
+    if (lines.length !== 1) throw new Error('重跑把留痕写成了 ' + lines.length + ' 份');
+
+    S.wj.remove(w.id);
+    return { 失败时: 'written 不置真', 事件表: '无半成品', 重跑: '补上 1 条', 留痕份数: lines.length };
+  } finally { W.cleanup(); }
+});
+
+t('第三轮静态护栏：纪念日与帷境的写入都在统一入口内，且 addEvent 不在顶层导出表', () => {
+  const strip = (s) => String(s)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+
+  /* ① 纪念日：saveAnniversary 里必须调 requestCreateEvent，且没有裸 addEvent */
+  const cal = strip(fs.readFileSync(path.join(ROOT, 'calendar.js'), 'utf8'));
+  const annSeg = cal.slice(cal.indexOf('function saveAnniversary'), cal.indexOf('function timeFacts'));
+  if (!/requestCreateEvent/.test(annSeg)) throw new Error('saveAnniversary 没走统一入口');
+  if (/addEvent\(/.test(annSeg)) throw new Error('saveAnniversary 还在裸调 addEvent');
+  /* 入口边界的三道闸在**校验函数 ownedMemory** 里（saveAnniversary 调它），
+     所以这一段要从 ownedMemory 起算 —— 少算一段等于没检。 */
+  const ownSeg = cal.slice(cal.indexOf('function ownedMemory'), cal.indexOf('function timeFacts'));
+  ['no-memory', 'no-such-memory', 'memory-not-owed'].forEach((code) => {
+    if (ownSeg.indexOf(code) < 0) throw new Error('纪念日入口边界少了 ' + code + ' 这道闸');
+  });
+  if (ownSeg.indexOf('rootIdOf') < 0) throw new Error('留痕归属没核（跨岛/别角色会漏过去）');
+  /* 幂等键必须在 saveAnniversary 里，且带 sandboxId（跨岛同一条留痕各算各的） */
+  if (annSeg.indexOf('anniversary:') < 0) throw new Error('纪念日幂等键没在本函数里拼');
+  if (annSeg.indexOf('own.sandboxId') < 0) throw new Error('幂等键没带 sandboxId —— 跨岛会撞');
+  /* 幂等键不许拼标题或日期（弱键会把用户真想建的两条合并） */
+  const keyLine = (annSeg.match(/requestKey:[^\n]*/) || [''])[0];
+  if (/title|date/.test(keyLine)) throw new Error('纪念日幂等键里混进了标题/日期：' + keyLine);
+
+  /* ② 帷境：同理 + 稳定 requestKey 出口 + written 只在真成功后置 */
+  const wj = strip(fs.readFileSync(path.join(ROOT, 'wj-canon.js'), 'utf8'));
+  if (/addEvent\(/.test(wj)) throw new Error('wj-canon 还在裸调 addEvent');
+  if (!/canonRequestKey/.test(wj)) throw new Error('帷境没走稳定 requestKey');
+  if (!/writtenPending/.test(wj)) throw new Error('帷境没有半完成态 —— 失败会谎报成功');
+  /* 审阅台之外不许有写入口：write 只能被 page-wj-canon 那个按钮调 */
+  const wjPage = strip(fs.readFileSync(path.join(ROOT, 'page-wj-canon.js'), 'utf8'));
+  const calls = (wjPage.match(/\.write\(/g) || []).length;
+  if (calls !== 1) throw new Error('审阅台页面里 write( 出现 ' + calls + ' 次（应只有那个确认按钮）');
+
+  /* ③ addEvent 边界：不在顶层导出表；生产脚本零直连、零内部口 */
+  if (S.calendar.addEvent !== undefined) throw new Error('addEvent 还在顶层导出表里');
+  if (!S.calendar.__internal || !S.calendar.__internal.addEvent) throw new Error('内部落库口没了');
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const srcs = [];
+  html.replace(/<script\s+src="([^"]+)"/g, (m, s) => { srcs.push(s); return m; });
+  const leaks = [];
+  srcs.forEach((s) => {
+    const f = path.join(ROOT, s.replace(/^\.\//, ''));
+    if (!fs.existsSync(f)) return;
+    const t = strip(fs.readFileSync(f, 'utf8'));
+    if (s !== 'calendar.js' && /addEvent\(|__internal/.test(t)) leaks.push(s);
+  });
+  if (leaks.length) throw new Error('这些生产脚本还碰得到底层落库口：' + leaks.join('、'));
+
+  return { 纪念日: '统一入口 + 三道边界闸', 帷境: '统一入口 + 稳定 key + 半完成态', addEvent: '不在顶层导出表' };
+});
+
+t('日历页的 freshOnOpen 声明还在（表单残留 / 详情页状态不刷新都靠它）', () => {
+  /* 2026-10-03 真机抓到两个坑，两个都是「页面实例缓存 + 同参短路」：
+       ① 新建页表单残留 —— 同一天再点加号，上次填的还在；
+       ② 详情页状态不刷新 —— 「记下：他推掉了」之后再看，还是「待确认」。
+     框架给的解法就是 `freshOnOpen`（app.js:429，与 page-idcard / page-ta 同款），
+     这里静态钉住：**谁删了它，冒烟立刻变红**（行为层由无头 Edge 那条验）。 */
+  const src = fs.readFileSync(path.join(ROOT, 'page-calendar.js'), 'utf8');
+  /* 月历页不用 —— 它有 onShow 走 paint 重读；表单页和详情页没有，才要 freshOnOpen */
+  ['calendar-new', 'calendar-event'].forEach((id) => {
+    const at = src.indexOf("register('" + id + "'");
+    if (at < 0) throw new Error('页面没注册：' + id);
+    const seg = src.slice(at, at + 600);
+    if (seg.indexOf('freshOnOpen: true') < 0) {
+      throw new Error(id + ' 少了 freshOnOpen —— 表单/详情会拿到上一次的旧 DOM');
+    }
+  });
+  /* 月历页不用 freshOnOpen —— 它有 onShow 走 paint 重读（下面那条只查它存在） */
+  /* 加号已经挪到顶栏「设置」旁边，右下角那个悬浮按钮不该再回来 */
+  if (/cal-fab/.test(src)) throw new Error('右下角悬浮加号又回来了（会压住最后一条日程）');
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');   /* 注释里提到 cal-fab 是在解释「已删除」，不算命中 */
+  if (/\.cal-fab\b/.test(css)) throw new Error('.cal-fab 样式已成死代码，删掉');
+  return { 新建页: "freshOnOpen", 详情页: "freshOnOpen", 悬浮加号: "已移除" };
+});
+
+t('日历第二轮：静态护栏 —— action.js 0 模型 / 0 网络 / 0 定时器 / 不自己写日历', () => {
+  const strip = (s) => String(s)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const src = strip(require('fs').readFileSync(__dirname + '/../action.js', 'utf8'));
+  [/\bfetch\(/, /XMLHttpRequest/, /api\./, /setInterval/, /setTimeout/].forEach((re) => {
+    if (re.test(src)) throw new Error('action.js 不该出现 ' + re);
+  });
+  if (/\.addEvent\(/.test(src)) throw new Error('action.js 不许绕过统一入口直接 addEvent');
+  if (!/requestCreateEvent/.test(src)) throw new Error('action.js 必须走统一入口');
+  /* 统一入口不许弹 UI */
+  const cal = strip(require('fs').readFileSync(__dirname + '/../calendar.js', 'utf8'));
+  const seg = cal.slice(cal.indexOf('function requestCreateEvent'), cal.indexOf('function addEvent'));
+  if (/ui\.|alert\(|confirm\(/.test(seg)) throw new Error('统一入口不许弹 UI');
+  return { action: '干净', 统一入口: '不弹 UI' };
 });
 
 if (asyncPending > 0) {

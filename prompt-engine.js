@@ -1267,6 +1267,52 @@
     }
   }
 
+  /* 群场景时间（2026-10-05 用户裁决：逐本体时区块）。
+     每个在场本体一行「TA 那边现在是 …（城市 · 时区）」，同一时区合并一行。
+     时间与时区是公开设定，不涉及知情差异 ⇒ 共享一块、无广播风险。
+     全部原语取自 calendar 已导出面（tzNow / cfgOf / placeOf / cnDate），
+     不在 calendar 里加第二份实现。 */
+  function compileGroupTimeFacts(ownerIds) {
+    var cal = Sleepy.calendar;
+    if (!cal || !cal.tzNow || !cal.cfgOf) return '';
+    var ids = [];
+    (ownerIds || []).forEach(function (id) {
+      if (id && ids.indexOf(id) < 0) ids.push(id);
+    });
+    if (!ids.length) return '';
+    var now = new Date();
+    var byKey = {};    /* 同一「时区+时间+城市」合并，防同时区重复 */
+    var order = [];
+    ids.forEach(function (id) {
+      var c = core.findChar(id);
+      if (!c) return;
+      var cfg = cal.cfgOf(id) || {};
+      var t = cal.tzNow(cfg.timezone, now);
+      var local = t || cal.localNow(now);
+      var place = cal.placeOf(id) || {};
+      var where = place.city || (cfg.timezone || '');
+      var key = (cfg.timezone || '') + '|' + local.time + '|' + where;
+      var whereTxt = where ? '（' + where + '）' : '';
+      var line = '那边现在是 ' + cal.cnDate(local.iso) + ' ' + local.time +
+        whereTxt + (local.exact ? '' : '，约');
+      if (!byKey[key]) {
+        byKey[key] = { names: [], line: line, iso: local.iso };
+        order.push(key);
+      }
+      byKey[key].names.push(c.name);
+    });
+    if (!order.length) return '';
+    var out = ['【在场时间】现在的真实时间以这里为准；不要自己编时间，也不要把它当台词念出来。'];
+    var lastIso = null;
+    order.forEach(function (key) {
+      var it = byKey[key];
+      var cross = (lastIso !== null && it.iso !== lastIso) ? '（注意：和上面的人可能不在同一天）' : '';
+      out.push('- ' + it.names.join('、') + it.line + cross);
+      lastIso = it.iso;
+    });
+    return out.join('\n');
+  }
+
   /* 语言档：常驻地在国外才算（拿不到日历、或说中文 → null）。
      语言与翻译两个下游判据都从这里出发，别各自再写一份。 */
   function langOfChar(charId) {
@@ -2306,6 +2352,8 @@
     /* 语言与翻译：两个下游判据都从这里出发（翻译页/群线下直接用） */
     langOfChar: langOfChar,
     transAsked: transAsked,
+    /* 群场景逐本体时间块（2026-10-05）：逐本体时区一行，同时区合并 */
+    compileGroupTimeFacts: compileGroupTimeFacts,
     /* 六套文风统一读取口（2026-10-05 七项批）：私聊线下与群线下共用，
        未知 id / 空正文 → null（调用方回落 styleDefault）。 */
     stylePresetOf: stylePresetOf,
@@ -2318,6 +2366,9 @@
        导出给它们复用，别再有第二份实现。
        charMetaLines 是「几个短字段 → 注入行」，群聊按行拼、K01 按块拼。 */
     compileCharacter: compileCharacter,
+    compileUserCore: compileUserCore,
+    compileWorldbook: compileWorldbook,
+    compileRelation: compileRelation,
     charMetaLines: charMetaLines,
     compileI01: compileI01,
     /* L1.5 近期生活动态（2026-09-22）：主动消息也要这一层 ——

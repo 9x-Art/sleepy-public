@@ -14,6 +14,11 @@
 
    触发时机：聊天列表 rebuild / 每轮回复后 sweep（自带 2 分钟节流），
    手动入口在角色设置（无视免打扰与冷却，其余闸门照走）。
+
+   第五批（2026-10-02，ta 已成立影响接入）：ta 里被接受的
+   `contact_candidate` 走的就是这条链路 —— 队列里的条目带 taProposalId，
+   决策落定后由 noteTaOutcome 把结果写回提案。ta 侧**不发送、不改闸门**，
+   只补上「结果去哪了」这一环。
    ============================================================ */
 (function (global) {
   'use strict';
@@ -67,7 +72,12 @@
 
   /* ---------------------------- 候选队列 ----------------------------
      来源优先级：attention（关注队列）> openLoops（悬而未决）> unspoken（想说没说）。
-     id 用内容指纹 —— 队列刷新后已处理过的不会卷土重来。 */
+     id 用内容指纹 —— 队列刷新后已处理过的不会卷土重来。
+
+     第五批（ta 影响接入）：attention 队列里由 ta 提案接受而来的条目带
+     taProposalId —— 决策落定后要按它把结果写回提案。
+     **候选 id 只在有条目带该字段时才用 proposalId**：老存档 handled 里
+     存的是「内容指纹」，改了 id 会让已处理过的候选卷土重来。 */
   function candidatesFor(charId) {
     var rid = rootIdOf(charId);   /* S6：键归 root，与 page-summary 的写侧对齐 */
     var out = [], seen = {};
@@ -75,10 +85,11 @@
       var text = typeof it === 'string' ? it : (it && (it.content || it.text || it.title)) || '';
       text = String(text || '').trim();
       if (!text) return;
-      var id = src + ':' + text.slice(0, 24);
+      var pid = (it && typeof it === 'object' && it.taProposalId) ? String(it.taProposalId) : '';
+      var id = src + ':' + (pid || text.slice(0, 24));
       if (seen[id]) return;
       seen[id] = 1;
-      out.push({ id: id, source: src, text: text.slice(0, 120) });
+      out.push({ id: id, source: src, text: text.slice(0, 120), taProposalId: pid || null });
     }
     var att = store.get('attentionInbox:' + rid);
     ((att && att.items) || []).forEach(function (x) { push('attention', x); });
@@ -183,10 +194,32 @@
     return mv && mv._pure ? mv._pure.buildQuery(lines, '') : lines.join(String.fromCharCode(10));
   }
 
-  function buildSystem(charId, userId) {
+  /* 最近一次 buildSystem 的行为文本诊断（**装配完成后**才记，
+     ★ 工厂不提前宣称「实际使用」—— 见 promptEngine.btNote 的注释）。
+     只在内存里，页面刷新即失；本批不做 UI。 */
+  var lastBehaviorNote = null;
+  /* 只读快照：深拷贝，外部改不到内部状态（与 offlineDiag.snapshot 同一口径）。 */
+  function behaviorNote() {
+    if (!lastBehaviorNote) return null;
+    return JSON.parse(JSON.stringify(lastBehaviorNote));
+  }
+
+  function buildSystem(charId, userId, matchText) {
     var PE = Sleepy.promptEngine;
     var ch = core.findChar(charId);
-    var sys = [PE.cardBody('shell'), PE.cardBody('proactive')];
+    /* B/P/L 走共享行为决策层（v160）。
+       ★ proactive 卡**保留在原位** —— 它自带【调用任务】与
+         【输出结构】{"decision":"send|skip|defer|blocked"}，是本场景的协议；
+         E/S3 讲的是「人物为什么想主动、怎么措辞」，两者并列互补。
+       ★ 顺序固定为 **shell → proactive 卡 → E/S3**：两处都谈输出结构时，
+         场景卡的【输出结构】必须在前（E 模块说「结构用本轮协议」，排在后面才生效）。
+       ★ proactive 卡被用户 override 时：决策层只跳过 E/S3，保留 B/P/L
+         （skipSceneIfOverridden，见 BT_SPECS.proactive）。shell 被 override 则整条回退。 */
+    var bt = (PE && PE.btDecideScene) ? PE.btDecideScene('proactive') : null;
+    var btOk = !!(bt && bt.ok);
+    var sys = [btOk ? bt.shellText : PE.cardBody('shell'), PE.cardBody('proactive')];
+    if (btOk && bt.sceneText) sys.push(bt.sceneText);
+
     var k01 = PE.compileCharacter ? PE.compileCharacter(charId) : '';
     if (k01) sys.push(k01);
     else if (ch && ch.content) sys.push('[CHARACTER]\n' + ch.content + '\n[/CHARACTER]');
@@ -200,6 +233,21 @@
        evaluate 里排掉了，用的是**上一次**的结果）。 */
     var recall = PE.compileRecall ? PE.compileRecall(charId, userId || null) : '';
     if (recall) sys.push(recall);
+    /* 世界书（2026-10-05 补齐批）：与私聊线上同一编译器。主动消息没有
+       「当前输入」，匹配文本 = 调用方传入的最近聊天原文；没有传 →
+       只剩常驻条目（两档都合法）。 */
+    var wb = (PE.compileWorldbook && matchText) ? PE.compileWorldbook(charId, matchText) : '';
+    if (wb) sys.push(wb);
+    /* 关系与记忆（K03）：与私聊同一份 [U→C] 归档层的只读投影 ——
+       主动消息的措辞本来就该受关系阶段约束（[U→C] 的条目是 char 亲历的）。 */
+    var rel = PE.compileRelation ? PE.compileRelation(charId, userId || null, 0) : '';
+    if (rel) sys.push(rel);
+    /* 诊断在**这里**才记：此时 sys 已拼完，能如实回答
+       「B/P/L 与 E/S3 到底有没有真的进 system」。
+       usedShell/usedScene 传实际 push 结果，不传 spec 的应然值。 */
+    if (PE && PE.btNote) {
+      lastBehaviorNote = PE.btNote('proactive', bt, btOk, !!(btOk && bt.sceneText));
+    }
     return sys;
   }
 
@@ -225,8 +273,12 @@
     var ps = stateOf(charId);
     var ch = core.findChar(charId);
 
-    /* 2026-09-22 预设通查：system 段改走 buildSystem（共享外壳 + K01 + I01） */
-    var sys = buildSystem(charId, (g.chat && g.chat.userId) || null);
+    /* 2026-09-22 预设通查：system 段改走 buildSystem（共享外壳 + K01 + I01）。
+       2026-10-05 补齐批：第三个参数传最近聊天原文（世界书关键词匹配用）。 */
+    var matchText = ((g.chat && g.chat.messages) || []).slice(-6).map(function (m) {
+      return String((m && m.content) || '');
+    }).join('\n');
+    var sys = buildSystem(charId, (g.chat && g.chat.userId) || null, matchText);
 
     var user = [];
     user.push('[TRIGGER_CANDIDATES]\n' + g.cands.map(function (c) {
@@ -268,8 +320,9 @@
       if (d.decision === 'send' && d.message && String(d.message).trim()) {
         var chat = findChatFor(charId);
         if (!chat) return done({ ok: false, why: 'nochat' });
+        var msgId = core.newId('ms');
         Sleepy.chatStore.addMessage(chat.id, {
-          id: core.newId('ms'),
+          id: msgId,
           role: 'assistant',
           content: String(d.message).trim(),
           timestamp: Date.now(),
@@ -279,6 +332,8 @@
         ps.lastAt = Date.now();
         ps.count = (ps.count || 0) + 1;
         saveState(charId, ps);
+        /* 结果写回 ta 提案（第五批）：**发送真的成功了**才记 send */
+        noteTaOutcome(g.cands, ids, 'send', msgId);
         notify(charId, chat.id);
         return done({ ok: true, decision: 'send', text: String(d.message).trim() });
       }
@@ -290,6 +345,9 @@
         ps.deferredUntil = Date.now() + (st.deferMin || 90) * 60000;
       }
       saveState(charId, ps);
+      /* ta 提案同样记结果（skip / defer / blocked 都是结果）——
+         没发送就没有 messageId，别编一个。 */
+      noteTaOutcome(g.cands, ids, d.decision || 'skip', null);
       return done({ ok: true, decision: d.decision || 'skip',
         reason: d.reasonCode || '' });
     }, function (e) {
@@ -297,6 +355,30 @@
     });
   }
   var evaluating = {};
+
+  /* ta 影响最小闭环（第五批）：把这次判断的结果写回 ta 提案。
+     · 只有 ta 提案接受而来的候选（带 taProposalId）才有回执；
+     · 决策落定后才调 —— send 是「既有发送机制真的成功了」，
+       skip/defer 是「判断过但不发」，两者都是结果；
+     · ta 模块缺失 / 报错 → 静默，主动消息照常跑。 */
+  function noteTaOutcome(cands, ids, decision, messageId) {
+    var ti = Sleepy.taImpact;
+    if (!ti || !ti.noteProactive) return;
+    var byId = {};
+    (cands || []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+    var seen = {};
+    (ids || []).forEach(function (id) {
+      var c = byId[id];
+      if (!c || !c.taProposalId || seen[c.taProposalId]) return;
+      seen[c.taProposalId] = 1;
+      try {
+        ti.noteProactive(null, {
+          proposalId: c.taProposalId, decision: decision,
+          messageId: messageId || null, at: Date.now()
+        });
+      } catch (e) { /* 静默 */ }
+    });
+  }
 
   /* 落页 + 提醒 */
   function notify(charId, chatId) {
@@ -356,6 +438,8 @@
     candidatesFor: candidatesFor,
     settings: settings,
     saveSettings: saveSettings,
+    /* 行为文本诊断（**只读深拷贝**）。本批只落内存、不做 UI。 */
+    behaviorNote: behaviorNote,
     GATE_WHY: GATE_WHY
   };
 
