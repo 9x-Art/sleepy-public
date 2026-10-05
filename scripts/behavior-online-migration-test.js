@@ -1003,7 +1003,14 @@ var EXP_PROACTIVE = {
   retiredMarks: ['[身份与场景]', '[角色声音]'],
   /* 场景卡协议六件套（顶掉 = 解析器空转） */
   keepMarks: ['【调用任务】', '【候选判断】', '【输出结构】',
-    '{"decision":"send|skip|defer|blocked"', '[TRIGGER_CANDIDATES]']
+    '{"decision":"send|skip|defer|blocked"', '[TRIGGER_CANDIDATES]'],
+  /* —— f493aca 世界书补齐批 + K03 关系记忆批 批准新增块（GO_* 同源口径）——
+     buildSystem 在 recall 之后依次追加 compileWorldbook(charId, matchText) /
+     compileRelation(charId, userId, 0)；两块从**生产编译器现算**（不抄重捕输出）。
+     夹具四项哨兵随之翻转（写死批准值；用户 WeChat 名与【记忆】头随关系块进装配）。 */
+  approvedBlocks: ['worldbook', 'relation'],
+  approvedSentinels: { worldbook: true, userWechat: true, memory: true,
+    'probe.memoryHead': true }
 };
 
 /* 直接问决策层：「批准的两个注入开关」当前是什么。
@@ -1469,7 +1476,21 @@ function strictGroupOfflineCase() {
   });
 }
 
-/* ============ proactive：替换旧外壳 + 在批准位置插入 E/S3 ============ */
+/* ============ proactive：替换旧外壳 + 插入 E/S3 + 追加批准新增块 ============ */
+
+/* f493aca/K03 批准差异清单（写死，与 offline 的 expectedOfflineDiffSet 同一口径）：
+   messages[0]（壳替换 + E/S3 插入 + 两批准块追加）、旧壳头标记退役、
+   世界书 / 记忆 / 微信名 / 【记忆】头 四哨兵翻转。不反推自实际捕获。 */
+function expectedProactiveDiffSet() {
+  return [
+    'messages[0].content',
+    'sentinels.probe.shellHead',
+    'sentinels.worldbook',
+    'sentinels.userWechat',
+    'sentinels.memory',
+    'sentinels.probe.memoryHead'
+  ].sort();
+}
 
 function rebuildProactive() {
   var exp = JSON.parse(JSON.stringify(V1_CAPS.proactive));
@@ -1479,21 +1500,46 @@ function rebuildProactive() {
     + exp.messages[0].content.slice(loc.at + loc.len);
   /* 再在批准位置（场景卡之后、第一个 [CHARACTER] 段之前）**插入** E/S3。
      ★ 不是「删掉 E/S3 后等于 v1」—— 那个判据在这里恒不成立。 */
-  exp.messages[0].content = insertBlock(replaced, goBtBlock(EXP_PROACTIVE.sceneIds),
+  var withScene = insertBlock(replaced, goBtBlock(EXP_PROACTIVE.sceneIds),
     EXP_PROACTIVE.insertBeforeMark, 'proactive v1 messages[0]');
-  exp.sentinels['probe.shellHead'] = false;
+  /* —— 批准新增块（GO_* 同源：生产编译器现算，先断言哨兵正文命中）——
+     evaluate 的装配顺序在 recall 之后追加 worldbook → relation，
+     装配分隔符 GO_SEP。matchText 按生产 evaluate 的口径现算：
+     夹具会话最近 6 条 content join('\n')。 */
+  var PE = PROBE.S.promptEngine;
+  var chat = (PROBE.S.chatStore && PROBE.S.chatStore.chatOf)
+    ? PROBE.S.chatStore.chatOf(ID_ONLINE.chMain) : null;
+  var matchText = ((chat && chat.messages) || []).slice(-6).map(function (m) {
+    return String(m.content || '');
+  }).join('\n');
+  var wb = EXP_PROACTIVE.approvedBlocks.indexOf('worldbook') >= 0
+    ? (PE.compileWorldbook ? (PE.compileWorldbook(ID_ONLINE.chMain, matchText) || '') : '')
+    : '';
+  var rel = EXP_PROACTIVE.approvedBlocks.indexOf('relation') >= 0
+    ? (PE.compileRelation ? (PE.compileRelation(ID_ONLINE.chMain,
+        (chat && chat.userId) || null, 0) || '') : '')
+    : '';
+  assert(wb && wb.indexOf(S_ONLINE.worldbook) >= 0,
+    'proactive 批准块现算：世界书块没产出或缺哨兵正文（生产编译器变了？）');
+  assert(rel && rel.indexOf(S_ONLINE.memory) >= 0 && rel.indexOf(S_ONLINE.userWechat) >= 0,
+    'proactive 批准块现算：关系记忆块没产出或缺哨兵正文');
+  exp.messages[0].content = withScene + GO_SEP + wb + GO_SEP + rel;
+  exp.sentinels['probe.shellHead'] = false;   /* 旧壳头标记随替换退役（既有批准） */
+  Object.keys(EXP_PROACTIVE.approvedSentinels).forEach(function (k) {
+    exp.sentinels[k] = EXP_PROACTIVE.approvedSentinels[k];
+  });
   return exp;
 }
 
 function strictProactiveCase() {
   var key = 'proactive';
-  t('[' + key + '] 与 v1 的差异恰为批准的 2 条（messages[0] + 正文标记）', function () {
+  t('[' + key + '] 与 v1 的差异恰为批准的 6 条（messages[0] + 旧壳标记退役 + f493aca/K03 四哨兵翻转）', function () {
     assert(CAPS[key], key + ' 没捕到');
     eq(diffPaths(V1_CAPS[key], CAPS[key]).sort(),
-      ['messages[0].content', 'sentinels.probe.shellHead'],
+      expectedProactiveDiffSet(),
       key + ' 与 v1 的差异（逐条路径）：');
   });
-  t('[' + key + '] 「v1 + 旧外壳替换 + 批准位置插入 E/S3」重建 === 实际', function () {
+  t('[' + key + '] 「v1 + 旧外壳替换 + E/S3 插入 + 批准新增块现算拼接」重建 === 实际', function () {
     eq(diffPaths(rebuildProactive(), CAPS[key]), [], key + ' 重建期望 vs 重捕实际：');
     eq(CAPS[key].messages.length, EXP_PROACTIVE.msgCount, key + ' messages 条数：');
   });

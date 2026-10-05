@@ -388,7 +388,7 @@ var SENTINEL_PLAN = {
   proactive: [
     ['charContent', 1], ['charSpeech', 1], ['charNeverDo', 1],
     ['userPersona', 0], ['userWechat', 0],
-    ['memory', 0], ['moment', 1],   /* memory：主动链路未接 K03，见 GAPS */
+    ['memory', 0], ['moment', 1],   /* memory：K03 批已接 compileRelation → 实测 true；require 仍 0（见 GAPS 过时登记） */
     ['attention', 1], ['charStateFeeling', 1], ['charStateReading', 1],
     ['histUser2', 1],
     ['worldbook', 0], ['calEvent', 0], ['taImpact', 0], ['customBody', 0]
@@ -647,6 +647,11 @@ var GAPS = [
     detail: 'page-proactive.js buildSystem():197-215 只拼 shell / proactive 卡 / K01 / I01 / life / recall，' +
       '**没有 compileRelation** → 【记忆】块在主动请求里不出现（哨兵 memory 记为未命中）。' +
       '与冻结包 §2.2「主动缺 K03 关系记忆」的前置清单一致，属批次 F1 的缺口，不在本批修。' },
+  /* ⚠️ 上面这条 proactive 的说明自 K03/f493aca 批（2026-10-05）起已过时：
+     buildSystem 现在接了 compileRelation（K03 关系记忆）与 compileWorldbook（f493aca 世界书），
+     哨兵 memory / probe.memoryHead / userWechat / worldbook 在主动链路翻成 true
+     （批准翻转，见 behavior-online-migration-test 的 expectedProactiveDiffSet）；
+     userPersona / customBody / taImpact 仍未命中（未接线，说明仍有效）。 */
   { scenario: 'online', kind: 'known-behavior', what: '皮套 / NPC 人设不进私聊线上',
     detail: 'assembleOnline 只按 ctx.charId 编译那一张脸的 K01；subContent / npcContent 未命中是期望值。' },
   { scenario: 'online/offline', kind: 'known-behavior', what: '语言段按常驻地点推，本夹具对话角色是中国人',
@@ -659,6 +664,9 @@ var GAPS = [
     detail: 'buildSystem 只拼 shell / proactive 卡 / K01 / I01 / life / recall → userPersona、userWechat、' +
       'worldbook、customBody 未命中；与冻结包 §7.3「K02 需补、custom 待核」一致，属批次 F1。' +
       'K03d（taImpact）在主动链路本就未接（S17 未接，前几轮已核）。' },
+  /* ⚠️ 上面这条 proactive 的说明自 K03/f493aca 批（2026-10-05）起部分过时：
+     worldbook / userWechat 两哨兵已随 compileWorldbook + compileRelation 接线翻成 true
+     （见上一条登记）；K02 马甲（userPersona）/ 自定义卡 / taImpact 仍未接，说明仍有效。 */
   { scenario: 'groupOnline', kind: 'known-behavior', what: 'moment / worldbook / customBody / sessionPurpose 未命中',
     detail: 'composeRound 只拼 groupRound 卡 + [GROUP] + [ENTITY_KNOWLEDGE] + [RECENT_GROUP]/[PENDING]/' +
       '[STIMULUS]/[BUDGET]，没有 L1.5 / 世界书 / 自定义卡 / 线下见面目的这些槽。' },
