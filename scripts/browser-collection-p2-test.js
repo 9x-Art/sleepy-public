@@ -120,16 +120,16 @@ async function main() {
       S.core.setActiveSandbox(sb.id);
       S.core.switchTo(m, u);
       const chat = S.chatStore.createChat('聊', m);
-      const evOK = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule',
+      const evOK = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule',
         title: '旧书店的黄昏', startAt: '2026-10-03 16:00' });
-      const evDone = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule',
+      const evDone = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule',
         title: '看完那场展', startAt: '2026-09-20 14:00', status: 'completed' });
-      const evDone2 = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule',
+      const evDone2 = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule',
         title: '江边的日落', startAt: '2026-09-22 18:30', status: 'completed' });
-      const evCancelId = S.calendar.addEvent({ ownerCharId: m, eventType: 'char_schedule',
+      const evCancelId = S.calendar.__internal.addEvent({ ownerCharId: m, eventType: 'char_schedule',
         title: '黄了的约定' }).id;
       S.calendar.cancelEvent(evCancelId, '临时有事');
-      const evDelId = S.calendar.addEvent({ ownerCharId: m, title: '写错的草稿' }).id;
+      const evDelId = S.calendar.__internal.addEvent({ ownerCharId: m, title: '写错的草稿' }).id;
       const rm = S.calendar.removeEvent(evDelId);
       if (!rm || rm.ok !== true) throw new Error('草稿应可删除');
       /* mock API：非流式（requestOnce 只打一次 HTTP，route 好拦） */

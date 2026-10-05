@@ -153,11 +153,11 @@ async function main() {
       S.core.setActiveSandbox(a.sb);
       S.core.switchTo(a.m, a.u);
       const manual = S.weStore.add({ title: '一张手写纸条', note: '你塞进我书里', kind: 'letter', at: 1111 }, a.sb);
-      const evLive = S.calendar.addEvent({ ownerCharId: a.m, eventType: 'shared_event', title: '周五吃火锅' });
-      const evDone = S.calendar.addEvent({ ownerCharId: a.m, eventType: 'shared_event', title: '看完那场展', status: 'completed' });
-      const evGone = S.calendar.addEvent({ ownerCharId: a.m, eventType: 'shared_event', title: '取消的约定' });
+      const evLive = S.calendar.__internal.addEvent({ ownerCharId: a.m, eventType: 'shared_event', title: '周五吃火锅' });
+      const evDone = S.calendar.__internal.addEvent({ ownerCharId: a.m, eventType: 'shared_event', title: '看完那场展', status: 'completed' });
+      const evGone = S.calendar.__internal.addEvent({ ownerCharId: a.m, eventType: 'shared_event', title: '取消的约定' });
       S.calendar.cancelEvent(evGone.id, '临时有事');
-      const evDel = S.calendar.addEvent({ ownerCharId: a.m, title: '写错的草稿' });
+      const evDel = S.calendar.__internal.addEvent({ ownerCharId: a.m, title: '写错的草稿' });
       const rm = S.calendar.removeEvent(evDel.id);
       if (!rm || rm.ok !== true) throw new Error('草稿事件应可删除');
       const live = S.weStore.add({ title: '一起看过海', note: '在码头吹了整晚风', kind: 'ticket', at: 2222,

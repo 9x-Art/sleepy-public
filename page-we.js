@@ -140,6 +140,15 @@
   function goTab(id) {
     var nav = Sleepy.nav;
     if (!nav || nav.top() === id) return;
+    /* 切 Tab 是「同一空间的两个面」，不该带 .3s 的推入动画 ——
+       （2026-10-02 真机验收：用户「切换 tab 会一闪一下到那个页面」）。
+       临时给 #stack 挂 no-anim，页面就位后摘掉；只影响这一次切换，
+       从桌面进 We / 二级页 push 的动画照旧。 */
+    var stack = document.getElementById('stack');
+    if (stack) {
+      stack.classList.add('tab-noanim');
+      setTimeout(function () { stack.classList.remove('tab-noanim'); }, 350);
+    }
     nav.replace(id);
   }
 
