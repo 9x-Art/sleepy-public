@@ -598,11 +598,11 @@ t('线上对 f1 override 回退，线下不受牵连', function () {
   eq(countOcc(texts(off).join('\n'), N_BODY), 1, '线下 f2 应仍用新正文：');
 });
 
-t('OFFLINE_SLOTS 结构未变（15 项、id 与顺序）', function () {
+t('OFFLINE_SLOTS 结构未变（含 2026-10-05 K03e 批在 taimpact 后插入 talife）', function () {
   var h = boot({});
   eq((h.S.promptEngine.offlineSlots || []).map(function (s) { return s.id; }),
     ['character', 'usercore', 'i01', 'lang', 'shell', 'f2', 'relation',
-     'life', 'recall', 'taimpact', 'worldbook', 'custom', 'narrative',
+     'life', 'recall', 'taimpact', 'talife', 'worldbook', 'custom', 'narrative',
      'scene', 'c05off', 'history'],
     'OFFLINE_SLOTS：');
 });

@@ -2368,6 +2368,219 @@ t('taLife 三表进删房名单（真跑拆岛）+ 承诺不会被事项自动�
   });
   return { 名单收录: true, 承诺不自动兑现: true, 拆岛后清空: true };
 });
+
+/* ---------- ta-life K03e 三表消费（2026-10-05 本批）----------
+   用生产装配入口验证最终 messages，不只查编译函数返回值：
+   F1 assembleOnline / F2 assembleOffline / 主动 buildSystem 三场景共用
+   ta-life.compileLivingLife（唯一编译出口），零模型零写入。 */
+console.log('\n--- ta-life K03e 进行中的生活（三表消费）---');
+
+const K03E_KEYS = ['taItems', 'taPromises', 'taFollows'];
+const k03eSnapLife = () => JSON.stringify(K03E_KEYS.map((k) => S.store.get(k)));
+const k03eCount = (hay, needle) => hay.split(needle).length - 1;
+
+/* 夹具：一座岛、两个本体、两个马甲、六条记录（含终止态/跨马甲/提案） */
+const k03e = t('K03e 夹具：岛/本体/马甲/三表记录（含终止态与 pending 提案）', () => {
+  const sb = S.core.createSandbox('isle', 'K03e生活岛');
+  S.core.setActiveSandbox(sb.id);
+  const chA = S.core.upsertChar({ name: 'K03e角色甲', kind: 'main' }).id;
+  const chB = S.core.upsertChar({ name: 'K03e角色乙', kind: 'main' }).id;
+  S.core.setSandboxChars(sb.id, [chA, chB]);
+  const uA = S.core.upsertUser({ name: 'K03e马甲A' }).id;
+  const uB = S.core.upsertUser({ name: 'K03e马甲B' }).id;
+  S.core.setSandboxMasks(sb.id, [uA, uB]);
+  S.taLife.add('items', { title: '相机还差一个零件', detail: '快门件到货就能装', nextCheck: '零件到货再看', status: '进行中', refCharId: chA });
+  S.taLife.add('items', { title: '终止夹具已完成事项', status: '已完成', refCharId: chA });
+  S.taLife.add('promises', { quote: '周末陪你去拍胶片', toWhom: '你', condition: '等天晴', standard: '把一卷拍完', pendingWhy: '最近连着下雨', status: '待核实', refCharId: chA, refUserId: uA });
+  S.taLife.add('promises', { quote: '终止夹具已解除承诺', status: '已解除', refCharId: chA, refUserId: uA });
+  S.taLife.add('promises', { quote: 'B马甲专属承诺原话', status: '待核实', refCharId: chA, refUserId: uB });
+  S.taLife.add('follows', { target: '楼下的三花猫', latest: '上周开始没出现', reason: '它认得他', refCharId: chA });
+  /* pending 提案：写在 taProposals（ta-proposal.js 的键），内容带识别串 ——
+     编译出口永远不读这个键，下面的场景断言它绝不出现。 */
+  S.store.set('taProposals', [{
+    id: 'prop_k03e_fixture', kind: 'item_update', status: 'pending',
+    payload: { title: '提案夹具不得出现的内容串' }, createdAt: Date.now()
+  }]);
+  return { sb: sb.id, chA: chA, chB: chB, uA: uA, uB: uB };
+});
+
+t('K03e 导出面：编译出口与槽位真实存在（缺导出不能被守卫静默掩盖）', () => {
+  if (!S.taLife || typeof S.taLife.compileLivingLife !== 'function') {
+    throw new Error('ta-life.compileLivingLife 未导出');
+  }
+  if (!S.promptEngine || typeof S.promptEngine.compileTaLife !== 'function') {
+    throw new Error('promptEngine.compileTaLife 未导出');
+  }
+  /* 主动消息侧是**直接调用**（不挂 PE.compileX && 守卫）—— 这里只证导出在，
+     「真的被调到」由下面三个场景的注入断言兜住。 */
+  const offIds = (S.promptEngine.offlineSlots || []).map((d) => d.id);
+  if (offIds.indexOf('talife') < 0) throw new Error('OFFLINE_SLOTS 没有 talife 槽');
+  if (offIds.indexOf('talife') < offIds.indexOf('taimpact')) throw new Error('K03e 应排在 K03d 之后');
+  return { offline槽序: 'taimpact > talife' };
+});
+
+const k03eSys = (r) => (r.messages || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+const k03eCommon = (sys, tag) => {
+  if (k03eCount(sys, '[TA_LIFE]') !== 1) throw new Error(tag + '：生活块不是恰好一次');
+  if (sys.indexOf('相机还差一个零件') < 0) throw new Error(tag + '：进行中事项没进');
+  if (sys.indexOf('事项（进行中）') < 0) throw new Error(tag + '：状态标注不准确');
+  if (sys.indexOf('「周末陪你去拍胶片」') < 0) throw new Error(tag + '：承诺原话没保留');
+  if (sys.indexOf('承诺（待核实）') < 0) throw new Error(tag + '：承诺状态没标');
+  if (sys.indexOf('完成标准：把一卷拍完') < 0) throw new Error(tag + '：完成标准丢了');
+  if (sys.indexOf('待核实原因：最近连着下雨') < 0) throw new Error(tag + '：待核实原因丢了');
+  if (sys.indexOf('楼下的三花猫') < 0 || sys.indexOf('最新已知：上周开始没出现') < 0) throw new Error(tag + '：关注没进');
+  /* 终止态排除 */
+  ['终止夹具已完成事项', '终止夹具已解除承诺'].forEach((s) => {
+    if (sys.indexOf(s) >= 0) throw new Error(tag + '：终止状态泄漏进来了：' + s);
+  });
+  /* 红线：有效承诺绝不表述成已兑现 */
+  if (sys.indexOf('已兑现') >= 0) throw new Error(tag + '：出现了「已兑现」表述');
+  /* pending 提案绝不进入 */
+  if (sys.indexOf('提案夹具不得出现的内容串') >= 0) throw new Error(tag + '：pending 提案泄漏进来了');
+  /* 边界：只作背景，不指令联络 */
+  if (sys.indexOf('不必因此主动联络对方') < 0) throw new Error(tag + '：缺「不强迫提及/联络」边界句');
+};
+
+t('K03e F1 线上：真实 messages 注入一次、槽序正确、其余槽未被顶掉、三表逐字节不变', () => {
+  const before = k03eSnapLife();
+  const hist = [{ role: 'user', content: '相机修得怎么样了？' }, { role: 'assistant', content: '还差个零件。' }];
+  const r = S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: hist });
+  const sys = k03eSys(r);
+  k03eCommon(sys, 'F1');
+  /* 跨马甲承诺隔离：B 马甲专属的承诺在 A 的视角不出现 */
+  if (sys.indexOf('B马甲专属承诺原话') >= 0) throw new Error('F1：A 视角读到了 B 马甲的承诺');
+  const slot = (r.slots || []).filter((x) => x.id === 'talife')[0];
+  if (!slot) throw new Error('F1：talife 槽没注册进 ONLINE_SLOTS');
+  if (!slot.on || slot.slot !== 'K03e') throw new Error('F1：talife 槽未命中或槽名不对：' + JSON.stringify(slot));
+  const ids = (r.slots || []).map((x) => x.id);
+  if (!(ids.indexOf('taimpact') < ids.indexOf('talife') && ids.indexOf('talife') < ids.indexOf('worldbook'))) {
+    throw new Error('F1：槽序不对，应为 taimpact < talife < worldbook：' + ids.join('>'));
+  }
+  /* 既有槽不被顶掉：历史仍垫底、输出协议仍在、taimpact/relation 槽仍在 */
+  const last = r.messages[r.messages.length - 1];
+  if (last.role !== 'assistant') throw new Error('F1：历史原文没有垫底');
+  if (!r.messages.some((m) => m.role === 'user' && String(m.content).indexOf('相机修得怎么样了？') >= 0)) {
+    throw new Error('F1：本轮 user 输入丢了');
+  }
+  if (ids.indexOf('c05') < 0 || ids.indexOf('history') < 0 || ids.indexOf('taimpact') < 0 || ids.indexOf('relation') < 0) {
+    throw new Error('F1：既有槽不见了：' + ids.join('>'));
+  }
+  if (k03eSnapLife() !== before) throw new Error('F1：装配动了三表 —— 逐字节比对失败');
+  return { 槽: slot.slot, 块次数: k03eCount(sys, '[TA_LIFE]') };
+});
+
+t('K03e F2 线下：同一份记录同样注入一次（query 取场景末条 user 输入）', () => {
+  const before = k03eSnapLife();
+  const sess = { charId: k03e.chA, userId: k03e.uA, messages: [
+    { role: 'user', text: '相机修得怎么样了？' },
+    { role: 'char', paras: ['还差个零件。'] }
+  ] };
+  const r = S.promptEngine.assembleOffline({ charId: k03e.chA, userId: k03e.uA, session: sess });
+  const sys = k03eSys(r);
+  k03eCommon(sys, 'F2');
+  if (sys.indexOf('B马甲专属承诺原话') >= 0) throw new Error('F2：A 视角读到了 B 马甲的承诺');
+  if (k03eSnapLife() !== before) throw new Error('F2：装配动了三表');
+  return { 块次数: k03eCount(sys, '[TA_LIFE]') };
+});
+
+t('K03e 主动消息：buildSystem 注入一次、不碰闸门状态、不产生请求', () => {
+  const beforeLife = k03eSnapLife();
+  const stKey = 'proactiveState:' + k03e.chA;
+  const beforeGate = JSON.stringify([S.store.get('proactiveSettings'), S.store.get(stKey)]);
+  const matchText = '最近在忙什么？相机修得怎么样了？';
+  const sys = S.proactiveEngine.buildSystem(k03e.chA, k03e.uA, matchText).join('\n\n');
+  k03eCommon(sys, '主动');
+  if (sys.indexOf('B马甲专属承诺原话') >= 0) throw new Error('主动：A 视角读到了 B 马甲的承诺');
+  if (k03eSnapLife() !== beforeLife) throw new Error('主动：动了三表');
+  if (JSON.stringify([S.store.get('proactiveSettings'), S.store.get(stKey)]) !== beforeGate) {
+    throw new Error('主动：编译动了闸门/设置状态');
+  }
+  return { 块次数: k03eCount(sys, '[TA_LIFE]') };
+});
+
+t('K03e 无数据静默：三场景都不出现块、槽不命中', () => {
+  const sb2 = S.core.createSandbox('isle', 'K03e空岛');
+  S.core.setActiveSandbox(sb2.id);
+  const ch = S.core.upsertChar({ name: 'K03e空岛角色', kind: 'main' }).id;
+  S.core.setSandboxChars(sb2.id, [ch]);
+  if (S.taLife.compileLivingLife(ch, null, { queryText: '' }) !== '') throw new Error('编译出口空数据没回空串');
+  const r = S.promptEngine.assembleOnline({ charId: ch, userId: null, history: [] });
+  if (k03eSys(r).indexOf('[TA_LIFE]') >= 0) throw new Error('F1：无数据却注入了');
+  if ((r.slots || []).filter((x) => x.id === 'talife' && x.on).length) throw new Error('F1：空数据槽却命中');
+  const r2 = S.promptEngine.assembleOffline({ charId: ch, userId: null, session: { charId: ch } });
+  if (k03eSys(r2).indexOf('[TA_LIFE]') >= 0) throw new Error('F2：无数据却注入了');
+  const sys3 = S.proactiveEngine.buildSystem(ch, null, '').join('\n\n');
+  if (sys3.indexOf('[TA_LIFE]') >= 0) throw new Error('主动：无数据却注入了');
+  return '三场景全部静默';
+});
+
+t('K03e 切岛/切本体不串：B 岛读不到 A 岛的记录，同岛别的本体也读不到', () => {
+  S.core.setActiveSandbox(k03e.sb);
+  const rA = S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: [] });
+  if (k03eSys(rA).indexOf('相机还差一个零件') < 0) throw new Error('A 岛自己都读不到了');
+  /* 切岛 */
+  const sb2 = S.core.createSandbox('isle', 'K03e另一座岛');
+  S.core.setActiveSandbox(sb2.id);
+  const rB = S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: [] });
+  if (k03eSys(rB).indexOf('[TA_LIFE]') >= 0) throw new Error('切岛后仍读到 A 岛记录');
+  S.core.setActiveSandbox(k03e.sb);
+  /* 切本体：同岛 charB 没有任何记录 */
+  const rC = S.promptEngine.assembleOnline({ charId: k03e.chB, userId: k03e.uA, history: [] });
+  if (k03eSys(rC).indexOf('[TA_LIFE]') >= 0) throw new Error('切本体后读到了甲的记录');
+  return '岛 × 本体双隔离';
+});
+
+t('K03e 切 user 身份：承诺跟马甲走（A 有 B 无），事项/关注按设计跨马甲共享', () => {
+  const rB = S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uB, history: [] });
+  const sysB = k03eSys(rB);
+  if (sysB.indexOf('B马甲专属承诺原话') < 0) throw new Error('B 视角没读到 B 自己的承诺');
+  if (sysB.indexOf('周末陪你去拍胶片') >= 0) throw new Error('B 视角读到了 A 的承诺');
+  if (sysB.indexOf('相机还差一个零件') < 0) throw new Error('事项是「TA 的生活」不该按马甲隔离（设计口径）');
+  return '承诺按 refUserId 隔离，事项/关注共享';
+});
+
+t('K03e 容量与选序：每类最多 2 条、输出可复现、相关优先、超限如实裁剪', () => {
+  const sb3 = S.core.createSandbox('isle', 'K03e容量岛');
+  S.core.setActiveSandbox(sb3.id);
+  const ch = S.core.upsertChar({ name: 'K03e容量角色', kind: 'main' }).id;
+  S.core.setSandboxChars(sb3.id, [ch]);
+  const u = S.core.upsertUser({ name: 'K03e容量我' }).id;
+  S.core.setSandboxMasks(sb3.id, [u]);
+  ['一号事项', '二号事项', '三号事项', '四号事项'].forEach((t2) => {
+    S.taLife.add('items', { title: t2, status: '进行中', refCharId: ch });
+  });
+  const out1 = S.taLife.compileLivingLife(ch, null, { queryText: '' });
+  const out2 = S.taLife.compileLivingLife(ch, null, { queryText: '' });
+  if (out1 !== out2) throw new Error('同一输入两次编译结果不同 —— 选序不可复现');
+  /* 只取 2 条：不管 updatedAt 是否同毫秒，出现在文里的必须是 4 选 2 */
+  const picked = ['一号事项', '二号事项', '三号事项', '四号事项'].filter((t2) => out1.indexOf(t2) >= 0);
+  if (picked.length !== 2) throw new Error('进行中的没按稳定顺序取满 2 条：实得 ' + picked.length + ' 条');
+  /* 相关优先：query 点名三号事项 → 它必须进前 2 */
+  const out3 = S.taLife.compileLivingLife(ch, null, { queryText: '三号事项现在怎么样了' });
+  if (out3.indexOf('三号事项') < 0) throw new Error('相关优先失效：点名的事项没进');
+  const picked3 = ['一号事项', '二号事项', '三号事项', '四号事项'].filter((t2) => out3.indexOf(t2) >= 0);
+  if (picked3.length !== 2 || picked3.indexOf('三号事项') < 0) {
+    throw new Error('点名后仍不是 2 条或没含三号：' + picked3.join(','));
+  }
+  /* 无 query 时也注入（允许少量进行中背景保留）——这正是「不点名也知道在忙什么」 */
+  if (!picked.length) throw new Error('无 query 时进行中背景没保留');
+  return { 无query取: picked.join('+'), 点名后: picked3.join('+') };
+});
+
+t('K03e 暂停/受阻/待核实按真实状态表达（不伪装成进行中，也不推断复核结果）', () => {
+  const sb4 = S.core.createSandbox('isle', 'K03e状态岛');
+  S.core.setActiveSandbox(sb4.id);
+  const ch = S.core.upsertChar({ name: 'K03e状态角色', kind: 'main' }).id;
+  S.core.setSandboxChars(sb4.id, [ch]);
+  S.taLife.add('items', { title: '暂停夹具事项', status: '暂停', refCharId: ch });
+  S.taLife.add('items', { title: '受阻夹具事项', detail: '预算没批', status: '受阻', refCharId: ch });
+  const sys = k03eSys(S.promptEngine.assembleOnline({ charId: ch, userId: null, history: [] }));
+  if (sys.indexOf('事项（暂停）：暂停夹具事项') < 0) throw new Error('暂停状态没如实标注');
+  if (sys.indexOf('事项（受阻）：受阻夹具事项') < 0) throw new Error('受阻状态没如实标注');
+  if (sys.indexOf('预算没批') < 0) throw new Error('受阻原因（detail）没带上');
+  return '状态逐条如实';
+});
+
 t('ta 首页 v2 接线：taItems/taFollows 优先显示 + 幕后/详情页注册可开 + 仍零写入', () => {
   const src = require('fs').readFileSync('page-ta.js', 'utf8');
   if (/store\.set\(|fetch\(|XMLHttpRequest|streamChat|api\.chat/i.test(src)) {
@@ -12898,7 +13111,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
      「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v164';
+const EXPECTED_SW_CACHE = 'sleepy-v165';
 
 t('SW 缓存版本：与独立基准一致（本批改过 page-offline.js，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

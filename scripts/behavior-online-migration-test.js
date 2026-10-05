@@ -153,6 +153,34 @@ function diffPaths(a, b, p, out) {
   return out;
 }
 
+/* ============================================================
+   2026-10-05 K03e 批：批准的槽位插入（**写死**，不读生产）
+   ------------------------------------------------------------
+   本批在 ONLINE_SLOTS / OFFLINE_SLOTS 的 taimpact 之后新增 talife
+   （K03e 进行中的生活）槽。v1 黄金基线文件**一字不动**（本测试全程只读），
+   改为在「期望」一侧按批准的元信息**显式插入**这一个槽。
+   ★ 为什么不重捕基线：当前工作区还有本批之外、未验收的场景级漂移
+     （proactive / groupOnline 的既有差异），重捕会把它们一起洗进黄金文件。
+   ★ 写死的元信息 = 批准值：生产改名 / 挪位 / 元信息变更 / 误注入
+     （夹具岛没有任何 ta-life 记录 → 重捕里该槽必须 on:false + tokens:0）
+     都会让重建期望与重捕实际对不上 → 红。
+   ============================================================ */
+var TALIFE_AT = { online: 16, offline: 9 };   /* v1 基线里 taimpact 的下标 */
+var TALIFE_SLOT = { id: 'talife', slot: 'K03e', on: false, tokens: 0,
+  hidden: false, required: false };
+
+function withTalifeSlot(cap, kind) {
+  var out = JSON.parse(JSON.stringify(cap));
+  var at = TALIFE_AT[kind];
+  assert(typeof at === 'number', 'K03e 批准插入位未定义：' + kind);
+  assert(out.slots && out.slots[at] && out.slots[at].id === 'taimpact',
+    kind + ' 基线 slots[' + at + '] 应是 taimpact（锚点漂了？）：' +
+    JSON.stringify(out.slots && out.slots[at]));
+  out.slots = out.slots.slice();
+  out.slots.splice(at + 1, 0, JSON.parse(JSON.stringify(TALIFE_SLOT)));
+  return out;
+}
+
 /* 复刻生产 estimate()：cjk*1.6 + other*0.3，四舍五入 */
 function estimateText(text) {
   var t = String(text || '');
@@ -329,8 +357,10 @@ t('除 shell / f1 / c05 三条外，其余 messages 逐字节未变', function (
     '（含 3 条历史 + 全部输入/能力说明）');
 });
 
-t('slots 表结构未变，只有 shell/f1/c05 的 tokens 变', function () {
-  var olds = V1_ONLINE.slots, news = NEW.slots;
+t('slots 表结构未变，只有 shell/f1/c05 的 tokens 变（含 K03e 批准槽位插入）', function () {
+  /* 2026-10-05 K03e 批：taimpact 之后插入 talife（K03e）—— 批准的结构变化。
+     期望侧用 withTalifeSlot 显式插入（元信息写死），黄金基线文件不动。 */
+  var olds = withTalifeSlot(V1_ONLINE, 'online').slots, news = NEW.slots;
   eq(news.length, olds.length, 'slots 条数：');
   var diffs = [];
   for (var i = 0; i < olds.length; i++) {
@@ -763,7 +793,7 @@ function slotIndexById(slots, id) {
 
 /* 重建该用例的期望记录：只改批准的三处正文 + 三个 tokens + 三个自检字段 */
 function rebuildOnline(key) {
-  var exp = JSON.parse(JSON.stringify(V1_CAPS[key]));
+  var exp = withTalifeSlot(V1_CAPS[key], 'online');   /* K03e 批准槽位插入 */
   var pos = onlinePositions(key);
   var want = { shell: btShellText(), f1: btF1Text(), c05: c05OnlineTextFromSource() };
   exp.messages[pos.shell].content = want.shell;
@@ -786,7 +816,7 @@ function rebuildOnline(key) {
 
 /* 「与 v1 基线的差异」应恰为这 9 条 */
 function expectedDiffSet(key) {
-  var pos = onlinePositions(key), base = V1_CAPS[key];
+  var pos = onlinePositions(key), base = withTalifeSlot(V1_CAPS[key], 'online');
   return [
     'messages[' + pos.shell + '].content',
     'messages[' + pos.f1 + '].content',
@@ -801,10 +831,10 @@ function expectedDiffSet(key) {
 }
 
 function strictOnlineCase(key) {
-  t('[' + key + '] 与 v1 基线的差异恰为批准的 9 条（其余一律不变）', function () {
+  t('[' + key + '] 与 v1 的差异恰为批准的 9 条 + K03e 批准槽位插入（其余一律不变）', function () {
     assert(CAPS[key], key + ' 没捕到');
-    eq(diffPaths(V1_CAPS[key], CAPS[key]).sort(), expectedDiffSet(key),
-      key + ' 与 v1 基线的差异：');
+    eq(diffPaths(withTalifeSlot(V1_CAPS[key], 'online'), CAPS[key]).sort(), expectedDiffSet(key),
+      key + ' 与 v1 的差异：');
   });
   t('[' + key + '] 「基线 + 三处批准替换」重建后期望 === 实际（整条）', function () {
     eq(diffPaths(rebuildOnline(key), CAPS[key]), [], key + ' 重建期望 vs 重捕实际：');
@@ -813,16 +843,18 @@ function strictOnlineCase(key) {
 }
 
 function strictOtherCase(key) {
-  t('[' + key + '] 重捕与 v1 基线逐字段一致（narrative 槽除外）', function () {
+  t('[' + key + '] 重捕与 v1 基线逐字段一致（narrative 槽 + K03e 批准槽位插入除外）', function () {
     /* ★ 2026-10-05 七项文风批批准差异：narrative 槽的文风行从旧三套
        （pure_love 系）换成六套正文（回落 nature_life）。
+       ★ 2026-10-05 K03e 批批准差异：taimpact 后插入 talife 槽（见 withTalifeSlot）。
        除这两条批准路径外，其余字段仍必须与 v1 逐字段一致。 */
     assert(CAPS[key], key + ' 没捕到');
-    var approved = narrativeApprovedPaths(V1_CAPS[key]);
-    var got = diffPaths(V1_CAPS[key], CAPS[key]).filter(function (p) {
+    var base = withTalifeSlot(V1_CAPS[key], 'offline');
+    var approved = narrativeApprovedPaths(base);
+    var got = diffPaths(base, CAPS[key]).filter(function (p) {
       return approved.indexOf(p) < 0;
     });
-    eq(got, [], key + ' 与 v1 基线的差异（已扣除文风批准差异）：');
+    eq(got, [], key + ' 与 v1 基线的差异（已扣除批准差异）：');
   });
 }
 
@@ -1065,7 +1097,7 @@ function strictGroupOnlineCase() {
 /* ================= offline：两条消息整条替换 + tokens 独立重算 ================= */
 
 function rebuildOffline() {
-  var exp = JSON.parse(JSON.stringify(V1_CAPS.offline));
+  var exp = withTalifeSlot(V1_CAPS.offline, 'offline');   /* K03e 批准槽位插入 */
   var iS = EXP_OFFLINE.shellMsgIndex, iF = EXP_OFFLINE.f2MsgIndex;
   var wantShell = goBtBlock(EXP_OFFLINE.shellIds);
   var wantScene = goBtBlock(EXP_OFFLINE.sceneIds);
@@ -1122,7 +1154,7 @@ function rebuildOffline() {
 }
 
 function expectedOfflineDiffSet() {
-  var base = V1_CAPS.offline;
+  var base = withTalifeSlot(V1_CAPS.offline, 'offline');   /* K03e 批准槽位插入 */
   return [
     'messages[' + EXP_OFFLINE.shellMsgIndex + '].content',
     'messages[' + EXP_OFFLINE.f2MsgIndex + '].content',
@@ -1149,9 +1181,10 @@ function narrativeMsgIndex(messages) {
 
 function strictOfflineCase() {
   var key = 'offline';
-  t('[' + key + '] 与 v1 的差异恰为批准的 7 条（其余一律不变）', function () {
+  t('[' + key + '] 与 v1 的差异恰为批准的 7 条 + K03e 批准槽位插入（其余一律不变）', function () {
     assert(CAPS[key], key + ' 没捕到');
-    eq(diffPaths(V1_CAPS[key], CAPS[key]).sort(), expectedOfflineDiffSet(),
+    eq(diffPaths(withTalifeSlot(V1_CAPS[key], 'offline'), CAPS[key]).sort(),
+      expectedOfflineDiffSet(),
       key + ' 与 v1 的差异（逐条路径，不是只比数量）：');
   });
   t('[' + key + '] 「v1 + 两处批准替换 + tokens 重算」重建 === 实际（整条）', function () {

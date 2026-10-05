@@ -233,6 +233,15 @@
        evaluate 里排掉了，用的是**上一次**的结果）。 */
     var recall = PE.compileRecall ? PE.compileRecall(charId, userId || null) : '';
     if (recall) sys.push(recall);
+    /* K03e 进行中的生活（本批）：与私聊线上/线下同一份编译出口
+       （ta-life.compileLivingLife 的只读投影，prompt-engine.compileTaLife 包装）。
+       这里**不挂 `PE.compileX &&` 守卫** —— 弱导出面 + 守卫 = 静默失效
+       （2026-10-05 交接 §五.6 的教训）；compileTaLife 自身有 try/catch 回空串。
+       匹配文本 = 调用方传入的最近聊天原文（真实数据，不假造 user 输入做匹配）；
+       没传 → 退化为按状态与时间的稳定选序。生活信息只是联系背景 ——
+       发不发仍由上游闸门（免打扰/冷却/每日上限/未回复不追问）与这轮决策决定。 */
+    var talife = PE.compileTaLife(charId, userId || null, matchText);
+    if (talife) sys.push(talife);
     /* 世界书（2026-10-05 补齐批）：与私聊线上同一编译器。主动消息没有
        「当前输入」，匹配文本 = 调用方传入的最近聊天原文；没有传 →
        只剩常驻条目（两档都合法）。 */

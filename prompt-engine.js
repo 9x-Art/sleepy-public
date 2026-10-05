@@ -1142,6 +1142,11 @@
        三道闸在 ta-impact.js（知情 × 有效 × 相关），这里只管挂槽。 */
     { id: 'taimpact', slot: 'K03d', name: '已成立的影响', kind: 'program', required: false,
       note: '程序生成：ta 已确认的生活带来的影响（知情 × 有效 × 相关，最多 2 条）。没命中就不注入' },
+    /* 进行中的生活（本批 2026-10-05）：ta-life 三表（事项/承诺/关注）的只读投影。
+       与 K03d 职责分开：K03d 是「已成立事件带来的影响」，这里是「持续进行中的生活状态」。
+       筛选与格式化的唯一实现在 ta-life.compileLivingLife，这里只取用。 */
+    { id: 'talife', slot: 'K03e', name: '进行中的生活', kind: 'program', required: false,
+      note: '程序生成：ta-life 三表里仍有效的事项/承诺/关注（每类最多 2 条，只作背景）。没数据就不注入' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻条目 + 关键词命中的条目（全局书 + 挂在 TA 身上的书）' },
     { id: 'custom', slot: 'K/S', name: '自定义注入', kind: 'custom', required: false,
@@ -1481,6 +1486,21 @@
     }
   }
 
+  /* K03e 进行中的生活（本批 2026-10-05）：ta-life 三表的只读投影。
+     筛选/选序/格式化/容量的唯一实现在 ta-life.compileLivingLife ——
+     这里和 K03d 同款：惰性取模块 + 出错回空串，槽是 program 类型自动不上。
+     ★ ta-life.js 排在本文件之后加载，所以必须惰性取；
+     ★ queryText 只用于选序（相关优先），不做阈值闸、不改变条数上限。 */
+  function compileTaLife(charId, userId, queryText) {
+    var tl = Sleepy.taLife;
+    if (!tl || !tl.compileLivingLife) return '';
+    try {
+      return tl.compileLivingLife(charId, userId || null, { queryText: queryText || '' }) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   /* 本轮的「当前输入」：历史里最后一条 user 内容。
      相关性判据要用它 —— 没有它就只能按强弱取，注入会变糊。 */
   function lastUserText(history) {
@@ -1721,6 +1741,8 @@
         case 'recall': pushSlot(def, compileRecall(charId, userId)); break;
         /* 已成立的影响：query 取历史末条 user 输入（相关性判据的唯一出处） */
         case 'taimpact': pushSlot(def, compileTaImpact(charId, userId, lastUserText(history))); break;
+        /* 进行中的生活：query 同样取历史末条 user 输入，只用于选序（相关优先） */
+        case 'talife': pushSlot(def, compileTaLife(charId, userId, lastUserText(history))); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
           pushSlot(def, compileWorldbook(charId, wbText));
@@ -1784,6 +1806,10 @@
        线下也注入 —— 否则「线下他像没事人、线上他心事重重」，同一个角色两张脸。 */
     { id: 'taimpact', slot: 'K03d', name: '已成立的影响', kind: 'program', required: false,
       note: '程序生成：ta 已确认的生活带来的影响（与线上同一份）' },
+    /* 进行中的生活（本批 2026-10-05）：与线上同一份 compileTaLife ——
+       否则「线上他知道自己在忙什么，线下就忘了」，同一个角色两张脸。 */
+    { id: 'talife', slot: 'K03e', name: '进行中的生活', kind: 'program', required: false,
+      note: '程序生成：ta-life 三表里仍有效的事项/承诺/关注（与线上同一份）' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻 + 关键词命中（同线上规则）' },
     /* 自定义注入（2026-09-22 通查补）：线上一直有这一槽，线下漏了 ——
@@ -2001,6 +2027,19 @@
 
   /* 组装一次线下回复调用。ctx = { charId, userId, session, userInput }
      history 由本函数从 session.messages 生成（最近 20 条，完整原文不全量传）。 */
+  /* 线下「本轮输入」：场景消息里最后一段 user 正文（text 或 paras 拼接）。
+     K03d/K03e 两个 query 消费点共用 —— 取法只此一份，别在各 case 里各抄一遍。 */
+  function offlineLastUserQuery(session) {
+    var om = (session && session.messages) || [];
+    var q = '';
+    for (var i = om.length - 1; i >= 0; i--) {
+      if (!om[i] || om[i].role !== 'user') continue;
+      q = String(om[i].text || parasText(om[i].paras) || '');
+      if (q.trim()) break;
+    }
+    return q;
+  }
+
   function assembleOffline(ctx) {
     ctx = ctx || {};
     var session = ctx.session || {};
@@ -2059,14 +2098,12 @@
         /* 已成立的影响（线下）：query 取场景里最后一段 user 输入。
            线下没有 content 数组，只有 text / paras（见 narrativeText 的取法）。 */
         case 'taimpact': {
-          var offQ = '';
-          var om = session.messages || [];
-          for (var oi = om.length - 1; oi >= 0; oi--) {
-            if (!om[oi] || om[oi].role !== 'user') continue;
-            offQ = String(om[oi].text || parasText(om[oi].paras) || '');
-            if (offQ.trim()) break;
-          }
-          pushSlot(def, compileTaImpact(charId, userId, offQ));
+          pushSlot(def, compileTaImpact(charId, userId, offlineLastUserQuery(session)));
+          break;
+        }
+        /* 进行中的生活（线下）：与线上同一份；query 取法同上（只用于选序） */
+        case 'talife': {
+          pushSlot(def, compileTaLife(charId, userId, offlineLastUserQuery(session)));
           break;
         }
         case 'worldbook': {
@@ -2378,6 +2415,9 @@
     /* K03d 已成立的影响（第五批）：线下/群聊/主动消息若要同一份影响，
        一律走这里，别各自去读 taEvents（会绕开知情闸）。 */
     compileTaImpact: compileTaImpact,
+    /* K03e 进行中的生活（本批）：线下/主动消息若要同一份三表投影，
+       一律走这里 —— 筛选与格式化的唯一实现在 ta-life.compileLivingLife。 */
+    compileTaLife: compileTaLife,
     cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,

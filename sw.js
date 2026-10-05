@@ -13,6 +13,18 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v165（2026-10-05）：**ta-life 三表接入私聊线上/线下/主动消息（K03e）**——
+   · ta-life：新增 compileLivingLife（统一编译出口，只读零模型零写入）：
+     按真实状态筛选三表（items 终止=已完成；promises 终止=已兑现/已解除；
+     follows 无状态机全有效），选序稳定（相关二字片段 > 状态优先级 > updatedAt），
+     每类最多 2 条 + 900 字预算，pending 提案（taProposals）完全不经过它。
+   · prompt-engine：新增 K03e 槽（talife）与 compileTaLife 包装
+     （惰性取模块 + try/catch 回空串），assembleOnline / assembleOffline 各接一 case；
+     线下 query 抽成 offlineLastUserQuery（K03d/K03e 共用，取法只此一份）。
+   · page-proactive：buildSystem 在 recall 与 worldbook 之间 push K03e，
+     直接调 PE.compileTaLife（不挂弱导出守卫），匹配文本用真实最近聊天原文。
+   → 必须跳版本：prompt-engine.js / ta-life.js / page-proactive.js 都变了。
+
    v161（2026-10-04）：**群线上接入冻结 B/P/L/E/S4**——
    · prompt-engine：只把 `BT_SPECS.groupOnline` 的
      `injectShell`/`injectScene` 由 `false/false` 改为 `true/true`，
@@ -418,7 +430,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v164';
+var CACHE = 'sleepy-v165';
 var CORE = [
   './',
   './index.html',
