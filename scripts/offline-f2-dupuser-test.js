@@ -353,17 +353,29 @@ t('★ 提示词正文没动：新增块**之前**与**之后**都与基线逐�
   var biL = lineStart(base, bi);
   process.stdout.write('    [锚点对齐] si=' + si + '→行首 ' + siL
     + ' ;基线 bi=' + bi + '→行首 ' + biL + ']\n');
-  eq(src.slice(0, siL), base.slice(0, biL), '新增块**之前**应与基线逐字相同');
-  /* 源文件里 TAIL 前只有换行+缩进；基线里是「旧块}\n<缩进>slots.push」 */
-  /* 尾部同理：sk 落在 TAIL 词上，但前面的缩进归属要一致 ⇒ 都取「行首」 */
+  /* ★ 2026-10-05 范围收缩：原判据比「START 之前整段」+「TAIL 之后整段」。
+     七项文风批与 groupOffline S5 接入均获准改动 prompt-engine.js 的
+     **修复区之外**，「之前整段逐字相同」从此必然失效。
+     ⚠️ 也不能拿「src 修复块 == 基线同区间」—— 基线是**修复前**的旧块，
+     两者天然不同（那正是修复内容本身）。
+     ⇒ 正确锁法：修复成果**黄金片段**写死在测试里，src 的修复块必须与其
+     逐字相同 —— 修复块被任何后续批改动，这里当场红。 */
+  var GOLDEN_FIX_BLOCK =
+    '          /* 本轮 user 输入已由 page-offline.js 的 appendMessage 落进\n' +
+    '             session.messages，装配器不再重复追加；线上 assembleOnline\n' +
+    '             不经过此分支。ctx.userInput 只作兜底：历史里确实没有它时\n' +
+    '             才补一条（历史为空、或调用方没先落库的探针形状）。 */\n' +
+    "          if (ctx.userInput) {\n" +
+    '            var lastIsThis = messages.length > 0\n' +
+    "              && messages[messages.length - 1].role === 'user'\n" +
+    "              && String(messages[messages.length - 1].content) === String(ctx.userInput);\n" +
+    '            if (!lastIsThis) {\n' +
+    '              total += estimate(ctx.userInput);\n' +
+    "              messages.push({ role: 'user', content: String(ctx.userInput) });\n" +
+    '            }\n' +
+    '          }\n';
   var skL = lineStart(src, sk);
-  var bkL = lineStart(base, bk);
-  eq(src.slice(skL), base.slice(bkL), '新增块**之后**应与基线逐字相同');
-  /* 净增 = 新增块 - 旧块，这就是本次改动的全部 */
-  var added = (skL - siL) - (bkL - biL);
-  process.stdout.write('    [净增 ' + (src.length - base.length) + ' 字节 · '
-    + '新增块 ' + (skL - siL) + ' - 旧块 ' + (bkL - biL) + ' = ' + added + ']\n');
-  eq(src.length - base.length, added, '净增字节数应等于「新增块 - 旧块」');
+  eq(src.slice(siL, skL), GOLDEN_FIX_BLOCK, 'dupuser 修复块应与黄金片段逐字相同');
 });
 /* ---------- 汇总 ---------- */
 runQueue().then(function () {

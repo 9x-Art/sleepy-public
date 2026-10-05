@@ -109,7 +109,7 @@
         };
       }),
       narrativeSettings: {
-        pov: 'he_you', tense: 'present', style: 'pure_love',
+        pov: 'he_you', tense: 'present', style: 'nature_life',
         lengthMode: 'medium', customLengthMin: null, styleWords: '',
         showCharInner: true, charProactive: false, npcFrequency: 'normal'
       },
@@ -170,13 +170,10 @@
 
   /* ============================ 装配 / 解析 ============================ */
 
-  function styleHintOf(style) {
-    return {
-      pure_love: '纯爱日常：语感轻，物件细节多，情绪藏在动作里，不喊口号。',
-      literary: '沉浸文学：句子可以慢下来，重意象与留白，克制抒情。',
-      casual: '轻松互动：短句、抖包袱、互相打趣，节奏快。'
-    }[style] || '';
-  }
+  /* 文风（2026-10-05 七项批）：旧 styleHintOf（本页私有的第二份三套文案）
+     已删 —— 私聊线下与群线下统一走 Sleepy.promptEngine.stylePresetOf
+     （六套文风唯一来源），优先级与私聊同口径：
+     styleWords 非空（自定义）> 固定文风正文 > 无有效设置回落自然生活。 */
 
   /* 篇幅：**多一个人就多一段量**（用户 2026-09-19：「字数一般在三百字以上，
      那么多人线下就应该总字数更多」）。给的是「这一轮全场加起来的字数」，
@@ -189,14 +186,38 @@
     return '这一轮总共 ' + (350 + 190 * extra) + ' 字上下。';
   }
 
+  /* 最近一次 buildSystem 的行为文本诊断（**装配完成后**才记）。
+     只在内存里，页面刷新即失；本批不做 UI。 */
+  var lastBehaviorNote = null;
+  function behaviorNote() {
+    if (!lastBehaviorNote) return null;
+    return JSON.parse(JSON.stringify(lastBehaviorNote));
+  }
+
   function buildSystem(s) {
     var E = Sleepy.promptEngine;
     var parts = [];
+    /* B/P/L + N/S5 走共享行为决策层（2026-10-05 用户裁决接入 S5）。
+       装配顺序：B/P/L → 旧 f2 场景卡（**保留**，其【线上承接到线下】【第一帧】
+       等职责仍由它承担）→ N/S5（群体取向的现场组织纪律）→ [SCENE] /
+       [PARTICIPANTS] / [LANGUAGES] / [PRESENCE RULES] / [OUTPUT] / 焦点篇幅
+       （全部原样保留）。 */
+    var bt = (E && E.btDecideScene) ? E.btDecideScene('groupOffline') : null;
+    var btOk = !!(bt && bt.ok);
+    var usedShell = false;
+    var usedScene = false;
     try {
-      var shell = E.cardBody('shell');
-      if (shell) parts.push(shell);
+      var shell = btOk ? bt.shellText : E.cardBody('shell');
+      if (shell) { parts.push(shell); usedShell = btOk; }
       var f2 = E.cardBody('f2');
       if (f2) parts.push(f2);
+      /* scene 位（N/S5）：ok + injectScene + 正文非空才算「真进了 system」，
+         少任何一条都按「没用上」记账 —— 与群线上同一口径。 */
+      if (btOk && bt.injectScene === true &&
+          typeof bt.sceneText === 'string' && bt.sceneText.trim()) {
+        parts.push(bt.sceneText);
+        usedScene = true;
+      }
     } catch (e) { /* 卡片缺失不阻塞 */ }
 
     var env = s.env || {};
@@ -272,8 +293,16 @@
     }
     var n = s.narrativeSettings || {};
     rules.push('user 的行动已经给出：转述和回应都可以，但不要替 ' + um.name + ' 编造新的决定或台词。');
-    if (n.styleWords) rules.push('文风词（必须遵守）：' + n.styleWords);
-    else if (styleHintOf(n.style)) rules.push('文风：' + styleHintOf(n.style));
+    /* 文风行：与私聊线下同一优先级（styleWords 非空 > 六套正文 > 默认自然生活）。
+       无有效设置**必须兜底**出自然生活，不再像旧实现那样整行省略。 */
+    var styleWordsV = String(n.styleWords || '').trim();
+    if (styleWordsV) {
+      rules.push('文风词（必须遵守）：' + styleWordsV);
+    } else {
+      var sp = (E.stylePresetOf && (E.stylePresetOf(n.style) || E.stylePresetOf(E.styleDefault)))
+        || E.stylePresetOf('nature_life');
+      rules.push('文风：' + sp.label + '\n' + sp.text);
+    }
     rules.push(lengthHintOf(n, presentParts(s).length) +
       '（这是这一轮全场加起来的字数：在场的人越多，段落越多，总量越大 —— ' +
       '不是每人一份，也不要一轮只写一两句。）');
@@ -335,6 +364,13 @@
       '- 没开口的人也有戏：他的反应可以写在叙述里，值得突出时用 silent 段。',
       '- 位置关系要立得住（谁坐在哪、谁离门近），后面的动作才有落点。'
     ].join('\n'));
+
+    /* 诊断在**这里**才记：此时 parts 已拼完，能如实回答「B/P/L/N/S5 到底进没进 system」。
+       2026-10-05 用户裁决接入 S5：usedScene 现在 ==「N/S5 真的 push 过」，
+       不再恒为 false；override 回退或正文缺失时仍是 false（如实记账）。 */
+    if (E && E.btNote) {
+      lastBehaviorNote = E.btNote('groupOffline', bt, usedShell, usedScene);
+    }
 
     return parts.filter(Boolean).join('\n\n');
   }
@@ -1896,11 +1932,14 @@
 
       var styleSec = section('文风与节奏');
       styleSec.appendChild(rowSeg('整体风格', '', [
-        { value: 'pure_love', label: '纯爱日常' },
-        { value: 'literary', label: '沉浸文学' },
-        { value: 'casual', label: '轻松互动' },
+        { value: 'nature_life', label: '自然生活' },
+        { value: 'immersive', label: '细腻沉浸' },
+        { value: 'restrained', label: '克制留白' },
+        { value: 'lively', label: '轻快灵动' },
+        { value: 'cool_crisp', label: '冷感利落' },
+        { value: 'cinematic', label: '电影叙事' },
         { value: 'custom', label: '自定义' }
-      ], n.style || 'pure_love', function (v) {
+      ], n.style || 'nature_life', function (v) {
         updateNarr({ style: v });
         wordsWrap.style.display = v === 'custom' ? '' : 'none';
       }));
@@ -2196,6 +2235,9 @@
     parseGroupReply: parseGroupReply,
     /* 装配与解析对调试有用（冒烟桩也靠它验 [LANGUAGES] / [WRITING] 段） */
     buildSystem: buildSystem,
+    /* 行为文本诊断（**只读深拷贝**）。本批只落内存、不做 UI。
+       本场景是**部分接线**：modules 只报 B/P/L，pendingModules 报 N/S5。 */
+    behaviorNote: behaviorNote,
     parasToLines: parasToLines
   };
 

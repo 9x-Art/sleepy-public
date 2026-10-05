@@ -68,10 +68,536 @@
 
   /* ============================ 内置卡（默认文案） ============================ */
 
-  /* 这些是「我们自己写的 prompt」—— locked 卡。
-     正文只存在这里一份（代码里），用户的改动存 store 覆盖层。
-     开发者模式关掉后，UI 只显示「Sleepy 内置注入 · 约N tokens」，
-     拿不到正文 —— 也为以后「导出脱敏」留干净边界。 */
+  /* ============================ 线上行为文本切换（B 批） ============================
+
+     场景级整体选择：私聊线上受影响的卡 = shell / f1 / c05。
+     只要**任一**被用户改过（含空串 override），整条线上行为路径回退旧组合 ——
+     不做「一半新一半旧」的拼接，也不改动用户的任何文本。
+
+     ⚠️ 空串 override 也算「改过」（cardBody 的判据是 `overrides[id] != null`）——
+     这是**现有缺陷**（该槽 on=true 但正文为空）。本批如实沿用旧路径带出来，
+     **不声称这是新组合迁移成功**。
+
+     ★ btOnlineDecision 在**任何 pushSlot 之前**完成全部校验与分配，返回最终决定；
+       三个 case 只读取决定，不再各自计算可能失败的正文。
+     ★ forScenario('online') **最多调用一次**。
+     ★ 诊断只带**固定原因码**，不把异常全文 / 用户内容带进 prompt。 */
+
+  var BT_VERSION = 'sleepy-behavior-v1-review-01';
+
+  /* 唯一原因码闭集（诊断只从这里取值，不拼异常文本） */
+  var BT_REASON = {
+    MODULE_MISSING: 'module-missing',
+    VERSION_MISMATCH: 'version-mismatch',
+    CALL_THREW: 'call-threw',
+    NOT_OK: 'not-ok',
+    BAD_SHAPE: 'bad-shape',
+    BAD_PART: 'bad-part',
+    BAD_TEXT: 'bad-text',
+    PLAN_MISMATCH: 'plan-mismatch',
+    JOIN_MISMATCH: 'join-mismatch',
+    SLOT_CONTRACT: 'slot-contract',
+    USER_OVERRIDE: 'user-override'
+  };
+
+  /* 按 id 从已验证结果里取 part；找不到返回 null。显式传参，不读外部局部变量。 */
+  function btPick(verified, id) {
+    for (var i = 0; i < verified.modules.length; i++) {
+      if (verified.modules[i] === id) return verified.parts[i];
+    }
+    return null;
+  }
+
+  /* 计划与结果必须**等长、同序、无重复、无额外、无遗漏**。
+     同时缺项 / 同时多项 / 错序 / 重复 → 全部 false（调用方整体回退）。 */
+  function btPlanOk(plan, modules) {
+    if (!Array.isArray(plan) || !Array.isArray(modules)) return false;
+    if (!plan.length || plan.length !== modules.length) return false;
+    var seen = {};
+    for (var i = 0; i < plan.length; i++) {
+      if (plan[i] !== modules[i]) return false;
+      if (seen[plan[i]]) return false;
+      seen[plan[i]] = 1;
+    }
+    return true;
+  }
+
+  /* 取某一槽契约要求的模块正文：顺序必须与契约一致、各一次、无遗漏。
+     任一不满足 → null（调用方整体回退）。 */
+  function btSlotText(verified, ids) {
+    var parts = [];
+    for (var i = 0; i < ids.length; i++) {
+      var p = btPick(verified, ids[i]);
+      if (!p || typeof p.text !== 'string' || !p.text.trim()) return null;
+      parts.push(p.text);
+    }
+    return parts.join('\n\n');
+  }
+
+  /* ===================== 共享行为决策层（五场景唯一实现） =====================
+
+     ★ 为什么抽这一层：原先 btOnlineDecision / btOfflineDecision 各写了一份
+       **十步完全同构**的校验，只差四个参数（场景常量 / 槽位契约 / override
+       卡集 / 第三块协议正文）。两份实现 = 两处都要同步改，迟早漂移。
+
+     ★ 保留两个旧函数名作为**薄包装**是有意的：
+       behavior-offline-migration-test.js 的 67 条断言逐条锚在它们身上
+       （含「then 回调里不得有丢弃式守卫」等负向回归）。改名或删掉会破断言，
+       而本批**不允许改测试来迁就重构**。
+
+     ★ 工厂**不提前宣称「实际使用了」**：它只产出「按 spec 能拿到什么」，
+         真正「用没用到」由调用方在**装配完成后**回报（见 btNote）。
+         否则会出现「诊断说 E/S3 已使用、system 里其实没有」的撒谎诊断。 */
+
+  /* 合法场景闭集。★ 不从 behaviorText.planOf 反推 ——
+     模块缺失时也必须能判「这个场景名不认识」，不能被依赖模块的 spec 校验抢先。 */
+  var BT_SCENES = ['online', 'offline', 'proactive', 'groupOnline', 'groupOffline'];
+
+  /* 五场景契约表（唯一出处）。
+     injectShell / injectScene 决定「哪些槽真的进 system」：
+     ★ injectScene:false 时 **modules 只报 shell 契约那几段**，
+       未接的进 pendingModules —— 绝不能报 PLANS 全量（撒谎的诊断）。 */
+  var BT_SPECS = {
+    online: {
+      scene: 'online',
+      contract: { shell: ['B', 'P', 'L'], scene: ['E', 'S1'] },
+      touchedCards: ['shell', 'f1', 'c05'],
+      protocolText: null,          /* 线上协议由 BT_C05_ONLINE 单独校验后填入 */
+      injectShell: true, injectScene: true
+    },
+    offline: {
+      scene: 'offline',
+      contract: { shell: ['B', 'P', 'L'], scene: ['N', 'S2'] },
+      touchedCards: ['shell', 'f2'],
+      protocolText: null,          /* ★ 线下刻意不接管输出协议 */
+      injectShell: true, injectScene: true
+    },
+    proactive: {
+      scene: 'proactive',
+      contract: { shell: ['B', 'P', 'L'], scene: ['E', 'S3'] },
+      /* ★ 只判 shell —— 用户改 proactive 卡只该让那张卡回落（由卡片自己负责），
+         不该把 shell 的 B/P/L 一起拖回退。shell 被改则整条回退。 */
+      touchedCards: ['shell'],
+      /* 场景卡被 override → **保留 B/P/L、只跳过默认的 E/S3**。
+         理由：proactive 卡与 E/S3 是**并列互补**的两块（卡管「能不能发/输出结构」，
+         E/S3 管「人物为什么想主动、怎么措辞」）。用户改卡只说明他不接受默认那张卡，
+         不代表 B/P/L 的行为纪律也要一起丢。 */
+      skipSceneIfOverridden: ['proactive'],
+      protocolText: null,
+      injectShell: true, injectScene: true
+    },
+    groupOffline: {
+      scene: 'groupOffline',
+      contract: { shell: ['B', 'P', 'L'], scene: ['N', 'S5'] },
+      touchedCards: ['shell'],
+      protocolText: null,
+      /* ★ 2026-10-05 用户裁决：接入 S5（injectScene 改 true）。
+         历史备注：本批之前 injectScene:false，当时的理由是「S2 与 S5 语义相冲」——
+         该表述已被方案文档 §3.3 勘误推翻：两段方向一致（都在说「不要轮流表演」），
+         只差主语（S2 二人取向 / S5 群体取向），不接的真正原因是「未验证」。
+         本批按用户裁决接入，旧 f2 场景卡与群线下输出协议**原样保留**（不删旧职责）；
+         N 为现场连续性模块，本就不限人数（PLANS 也把它同时给了 offline）。 */
+      injectShell: true, injectScene: true
+    },
+    groupOnline: {
+      scene: 'groupOnline',
+      contract: { shell: ['B', 'P', 'L'], scene: ['E', 'S4'] },
+      touchedCards: ['shell'],
+      protocolText: null,
+      /* ★ 本批直接接冻结行为模块（2026-10-04 用户裁决）：B/P/L 与 E/S4 一起进 system，
+         **不注入旧 shell 卡、不做裁节机制**。C1 核对已确认
+         groupRound 卡的 plans[].internalUpdate 是**可选结构化状态**
+         （validateRound 不要求存在、不校验类型/长度；saveInner/saveDefer 截断至 120 字），
+         不是详细内部推理。**本批不注入旧 shell 卡，因此未证明 shell ⑦
+         构成本批接线的阻碍**（不注入 ≠ 已证明互斥不存在；真要注入需另行裁决）。
+         顺序固定为 B/P/L → groupRound → E/S4 → 原有群现场信息，
+         **保留现有群现场协议**（groupRound / [GROUP] / [ENTITY_KNOWLEDGE] / 编号禁令）一行不动。 */
+      injectShell: true, injectScene: true
+    }
+  };
+
+  /* spec 合法性护栏（第 0 步）。
+     ★ 失败一律 **throw**，绝不 return —— 返回会让调用方误当成「回退成功」，
+       然后照常装配出错误的 system。抛错由 btDecideScene 的 try/catch 转成
+       MODULE_MISSING 回退，**不向页面泄漏未捕获异常**。
+     ★ 只做**纯本地**校验（不碰 Sleepy.behaviorText）——
+       模块可用性由 btDecide 内部按正确顺序自己判，不能被依赖它的护栏抢先。 */
+  function btSpecGuard(spec) {
+    if (!spec || typeof spec !== 'object') throw new Error('btDecide: spec 必须是对象');
+    if (BT_SCENES.indexOf(spec.scene) < 0) {
+      throw new Error('btDecide: 未知场景 ' + String(spec.scene));
+    }
+    var c = spec.contract;
+    if (!c || !Array.isArray(c.shell) || !Array.isArray(c.scene)) {
+      throw new Error('btDecide: contract 必须是 { shell:[], scene:[] }');
+    }
+    /* G2：shell 契约固定三段，逐项比对（不是「包含 B/P/L」） */
+    var wantShell = ['B', 'P', 'L'];
+    if (c.shell.length !== wantShell.length) {
+      throw new Error('btDecide: contract.shell 必须是 [' + wantShell + ']');
+    }
+    for (var i = 0; i < wantShell.length; i++) {
+      if (c.shell[i] !== wantShell[i]) {
+        throw new Error('btDecide: contract.shell 第 ' + i + ' 项应为 ' + wantShell[i]);
+      }
+    }
+    /* G4：scene 契约必须是「该场景计划里 shell 之后的剩余序列」。
+       ★ 允许 S1–S5 任意一个（上一版写成「只能是媒介段 E/N」是错的：
+         媒介段在剩余序列的**首位**，场景专属段 S* 在其后，且 S1/S3/S4 是消息、
+         S2/S5 是现场 —— 只认 E/N 会把 E/S1、E/S3、E/S4 三种合法契约全判非法）。
+       这里只能做**形状**校验（首项是已知模块、元素互不重复）；
+       「是否真等于该场景 PLANS 的剩余序列」由 btDecide 在拿到 plan 之后
+       用 G3 判定 —— 那时才有真数据可比。 */
+    var KNOWN = ['B', 'P', 'L', 'E', 'N', 'S1', 'S2', 'S3', 'S4', 'S5'];
+    var seen = {};
+    for (var k = 0; k < c.scene.length; k++) {
+      var mid = c.scene[k];
+      if (typeof mid !== 'string' || KNOWN.indexOf(mid) < 0) {
+        throw new Error('btDecide: contract.scene 含未知模块 ' + String(mid));
+      }
+      if (mid === 'B' || mid === 'P' || mid === 'L') {
+        throw new Error('btDecide: contract.scene 不得含 shell 段模块 ' + mid);
+      }
+      if (seen[mid]) throw new Error('btDecide: contract.scene 重复模块 ' + mid);
+      seen[mid] = 1;
+    }
+    /* G5：protocolText 只能是 string 或 null */
+    if (spec.protocolText != null && typeof spec.protocolText !== 'string') {
+      throw new Error('btDecide: protocolText 必须是 string 或 null');
+    }
+    /* G6：touchedCards 必须是字符串数组（元素是否是真实卡由 isOverridden 兜） */
+    if (!Array.isArray(spec.touchedCards)) {
+      throw new Error('btDecide: touchedCards 必须是数组');
+    }
+    spec.touchedCards.forEach(function (cid) {
+      if (typeof cid !== 'string' || !cid) {
+        throw new Error('btDecide: touchedCards 元素必须是非空字符串');
+      }
+    });
+    /* G7：inject 标志必须是布尔（'false' 字符串是经典错法，会静默当真值） */
+    if (typeof spec.injectShell !== 'boolean' || typeof spec.injectScene !== 'boolean') {
+      throw new Error('btDecide: injectShell / injectScene 必须是布尔');
+    }
+    /* G8：skipSceneIfOverridden 若给出，必须是字符串数组（元素同样只能是卡 id） */
+    if (typeof spec.skipSceneIfOverridden !== 'undefined') {
+      if (!Array.isArray(spec.skipSceneIfOverridden)) {
+        throw new Error('btDecide: skipSceneIfOverridden 必须是数组');
+      }
+      spec.skipSceneIfOverridden.forEach(function (cid) {
+        if (typeof cid !== 'string' || !cid) {
+          throw new Error('btDecide: skipSceneIfOverridden 元素必须是非空字符串');
+        }
+      });
+    }
+    return true;
+  }
+
+  /* 按 spec 产出一个「空壳结果」。字段名与旧实现一致，
+     额外带 pendingModules / partial（新增记账，见下方注释）。 */
+  function btEmptyResult(spec) {
+    return {
+      ok: false, reason: BT_REASON.MODULE_MISSING,
+      shellText: null, sceneText: null, protocolText: null,
+      sceneKey: null,
+      VERSION: null,
+      /* ★ modules 只放**实际产出正文的那几段**。
+         injectShell:false → 全部进 pending（不接线场景不许声称已用）；
+         injectScene:false → 只有 shell 三段；
+         失败 → 空数组。绝不在这里填 PLANS 全量。 */
+      modules: [],
+      pendingModules: (spec && spec.injectShell === false)
+        ? spec.contract.shell.concat(spec.contract.scene)
+        : (spec && spec.injectScene === false
+            ? spec.contract.scene.slice() : []),
+      partial: !!(spec && (spec.injectShell === false || spec.injectScene === false)),
+      touched: false,
+      injectShell: !!(spec && spec.injectShell),
+      injectScene: !!(spec && spec.injectScene),
+      sceneSkippedByOverride: false
+    };
+  }
+
+  /* ============================ 共享决策实现 ============================
+
+     spec = { scene, contract:{shell,scene}, touchedCards, protocolText,
+              injectShell, injectScene }
+     十步校验与原两份实现逐字同构，只是把常量换成了 spec 字段。 */
+  function btDecide(spec) {
+    btSpecGuard(spec);
+    var out = btEmptyResult(spec);
+    out.sceneKey = spec.scene;
+
+    /* ① 用户改动优先：整条回退（含空串 override），不改用户文本。
+       ★ skipSceneIfOverridden 里的卡**不走这条** —— 它只让 scene 位被跳过，
+         shell 位照常走成功路径（见 ①b）。 */
+    out.touched = spec.touchedCards.some(function (cid) { return isOverridden(cid); });
+    if (out.touched) { out.reason = BT_REASON.USER_OVERRIDE; return out; }
+
+    /* ①b 场景卡被 override → 标记「本次不注入 scene 位」。
+       不改 ok / 不改 shellText，只让 injectScene 在本次生效为 false。
+       诊断会因此记 partial + pendingModules（未接通与 override 分开记账）。 */
+    var skipIds = spec.skipSceneIfOverridden || [];
+    var skipScene = skipIds.some(function (cid) { return isOverridden(cid); });
+    var wantShell = spec.injectShell;
+    var wantScene = spec.injectScene && !skipScene;
+
+    /* ② 模块可用性（**必须在 spec 的形状校验之后、但要在任何
+          依赖模块数据的校验之前**）—— 模块不在就整体回退，不猜。 */
+    var BT = Sleepy.behaviorText;
+    if (!BT || typeof BT.forScenario !== 'function' || typeof BT.planOf !== 'function') {
+      return out;                                   /* module-missing */
+    }
+    out.VERSION = BT.VERSION || null;
+
+    /* ③ 版本锚 */
+    if (BT.VERSION !== BT_VERSION) { out.reason = BT_REASON.VERSION_MISMATCH; return out; }
+
+    /* ④ 场景计划（唯一出处 = 模块自己的 planOf） */
+    var plan = null;
+    try { plan = BT.planOf(spec.scene); } catch (e) { out.reason = BT_REASON.CALL_THREW; return out; }
+    if (!Array.isArray(plan) || !plan.length) { out.reason = BT_REASON.PLAN_MISMATCH; return out; }
+
+    /* ⑤ 唯一一次 forScenario */
+    var r = null;
+    try { r = BT.forScenario(spec.scene); } catch (e) { out.reason = BT_REASON.CALL_THREW; return out; }
+
+    /* ⑥ 结果合法性：ok / missing 空 / modules↔parts 完整对应且同序 / 非空白正文 */
+    if (!r || r.ok !== true) { out.reason = BT_REASON.NOT_OK; return out; }
+    if (!Array.isArray(r.missing) || r.missing.length) { out.reason = BT_REASON.BAD_SHAPE; return out; }
+    if (!Array.isArray(r.modules) || !Array.isArray(r.parts) ||
+        r.modules.length !== r.parts.length || !r.modules.length) {
+      out.reason = BT_REASON.BAD_SHAPE; return out;
+    }
+    for (var i = 0; i < r.parts.length; i++) {
+      var p = r.parts[i];
+      if (!p || p.id !== r.modules[i] || typeof p.text !== 'string' || !p.text.trim()) {
+        out.reason = BT_REASON.BAD_PART; return out;
+      }
+    }
+
+    /* ⑦ 计划覆盖：完整、无遗漏、无重复、无额外 */
+    if (!btPlanOk(plan, r.modules)) { out.reason = BT_REASON.PLAN_MISMATCH; return out; }
+
+    /* ⑧ 拼接一致性：text 必须 === parts 按 '\n\n' 拼接 */
+    if (typeof r.text !== 'string' || !r.text) { out.reason = BT_REASON.BAD_TEXT; return out; }
+    var joined = r.parts.map(function (x) { return x.text; }).join('\n\n');
+    if (joined !== r.text) { out.reason = BT_REASON.JOIN_MISMATCH; return out; }
+
+    /* ⑨ 槽位契约（最严）：两槽契约按「先 shell 后 scene」拼成一条基准序列，
+       要求 **plan 与结果都逐项等于它** —— 「两边一起错」会让集合比对看起来通过，
+       所以必须逐项比。
+       ★ G3 在这里才做「scene 契约 == 计划剩余序列」的判定：只有拿到真 plan
+         之后才能比。形状层面的护栏在 btSpecGuard 里（允许 S1–S5）。 */
+    var contractFlat = spec.contract.shell.concat(spec.contract.scene);
+    if (plan.length !== contractFlat.length) { out.reason = BT_REASON.SLOT_CONTRACT; return out; }
+    for (var fi = 0; fi < contractFlat.length; fi++) {
+      if (plan[fi] !== contractFlat[fi]) { out.reason = BT_REASON.SLOT_CONTRACT; return out; }
+      if (r.modules[fi] !== contractFlat[fi]) { out.reason = BT_REASON.SLOT_CONTRACT; return out; }
+    }
+
+    var shellText = btSlotText(r, spec.contract.shell);
+    if (shellText === null) { out.reason = BT_REASON.SLOT_CONTRACT; return out; }
+    var sceneText = wantScene ? btSlotText(r, spec.contract.scene) : null;
+    if (wantScene && sceneText === null) { out.reason = BT_REASON.SLOT_CONTRACT; return out; }
+
+    /* ⑩ 协议正文：非 null 时必须是非空白字符串。
+       线上用 BT_C05_ONLINE（调用方在 spec 外校验后填进来），
+       线下刻意传 null —— offlineOutProto 程序槽负责，本路径不接管。 */
+    if (spec.protocolText != null) {
+      if (typeof spec.protocolText !== 'string' || !spec.protocolText.trim()) {
+        out.reason = BT_REASON.BAD_TEXT; return out;
+      }
+      out.protocolText = spec.protocolText;
+    }
+
+    out.shellText = shellText;
+    out.sceneText = sceneText;
+    /* ★ modules 只报**真的拿到正文的那几段**。三个维度都要看：
+       - wantShell=false（整个 shell 位不接线的场景）→ 一段都不报；
+       - wantScene=false（部分接线 / 被 override 跳过）→ 只报 shell 三段；
+       - 全注入 → 全量。
+       ⚠️ 漏掉 wantShell 这一维会让「不接线」的场景声称已用 B/P/L ——
+         那正是本层要防的撒谎诊断（2026-10-04 实测抓到）。 */
+    if (!wantShell) {
+      out.modules = [];
+      out.pendingModules = spec.contract.shell.concat(spec.contract.scene);
+    } else if (!wantScene) {
+      out.modules = spec.contract.shell.slice();
+      out.pendingModules = spec.contract.scene.slice();
+    } else {
+      out.modules = r.modules.slice();
+      out.pendingModules = [];
+    }
+    out.partial = out.pendingModules.length > 0;
+    out.injectShell = wantShell;
+    out.injectScene = wantScene;
+    /* 区分「未接通」与「被 override 跳过」—— 两者 partial 都是 true，
+       但原因不同，排查时要能分开。 */
+    out.sceneSkippedByOverride = skipScene;
+    out.reason = '';
+    out.ok = true;
+    return out;
+  }
+
+  /* 场景入口（对外唯一）。**不向页面泄漏未捕获异常** ——
+     spec 写错时 throw 被这里接住，转成一次正常的「整条回退」。 */
+  function btDecideScene(sceneKey, overrides) {
+    var spec = BT_SPECS[sceneKey];
+    if (!spec) return null;
+    /* 逐场景覆写（只允许改这三项，其余仍走表里的默认值）：
+       用于线上填 BT_C05_ONLINE；inject 标志日常由表里的默认值决定。 */
+    var use = {
+      scene: spec.scene,
+      contract: spec.contract,
+      touchedCards: spec.touchedCards,
+      skipSceneIfOverridden: spec.skipSceneIfOverridden,
+      protocolText: spec.protocolText,
+      injectShell: spec.injectShell,
+      injectScene: spec.injectScene
+    };
+    if (overrides) {
+      if (typeof overrides.protocolText !== 'undefined') use.protocolText = overrides.protocolText;
+      if (typeof overrides.injectShell === 'boolean') use.injectShell = overrides.injectShell;
+      if (typeof overrides.injectScene === 'boolean') use.injectScene = overrides.injectScene;
+    }
+    try {
+      return btDecide(use);
+    } catch (e) {
+      /* spec 不合法 —— 当成「模块不可用」整条回退，并把真实原因记进 reason。
+         ★ 不 console 抛栈：页面里没有对应的诊断出口，抛出去只会变成
+           一条无主的 [Sleepy] 报错。 */
+      var bad = btEmptyResult({ scene: use.scene, contract: use.contract,
+        injectShell: use.injectShell, injectScene: use.injectScene });
+      bad.reason = BT_REASON.MODULE_MISSING;
+      return bad;
+    }
+  }
+
+  /* 装配完成后的诊断记账。
+     ★ **必须由调用方在 system 真的拼完之后调用** —— 工厂提前写会撒谎。
+       usedShell / usedScene 传「实际有没有把正文 push 进 sys」，
+       不是「spec 说该有」。接线漏了 push，诊断就如实记 false。 */
+  function btNote(sceneKey, dec, usedShell, usedScene, shellCard) {
+    var ok = !!(dec && dec.ok);
+    var spec = BT_SPECS[sceneKey];
+    if (!spec) return null;
+    var useShell = ok && usedShell === true;
+    var useScene = ok && usedScene === true && dec.injectScene === true;
+    var modules = [];
+    if (useShell) modules = modules.concat(spec.contract.shell);
+    if (useScene) modules = modules.concat(spec.contract.scene);
+    var all = spec.contract.shell.concat(spec.contract.scene);
+    var pending = ok ? all.filter(function (m) { return modules.indexOf(m) < 0; }) : [];
+
+    /* ★★ 自洽护栏：只信调用方传的两个布尔是不够的 ——
+       下游若把 dec.modules 改成全量，btNote 自己重算的话照样报「全量已用」，
+       而实际可能只 push 了 shell（2026-10-04 负向对照 N2 逼出来的假绿）。
+       所以额外校验「dec 声称 modules 里必须含契约要求的 scene 段」，
+       不自洽就**收紧**到只报 shell 并置 sceneMismatch。
+       宁可少报「已用」，绝不报没进 system 的模块。 */
+    var sceneMismatch = false;
+    if (ok && useScene) {
+      var declared = Array.isArray(dec.modules) ? dec.modules : [];
+      sceneMismatch = spec.contract.scene.some(function (m) {
+        return declared.indexOf(m) < 0;
+      });
+      if (sceneMismatch) {
+        useScene = false;
+        modules = useShell ? spec.contract.shell.slice() : [];
+        pending = all.filter(function (m) { return modules.indexOf(m) < 0; });
+      }
+    }
+
+    return {
+      scene: sceneKey,
+      behaviorUsed: useShell,
+      reason: ok ? '' : (dec && dec.reason) || BT_REASON.MODULE_MISSING,
+      touched: !!(dec && dec.touched),
+      version: (dec && dec.VERSION) || null,
+      modules: modules,
+      pendingModules: pending,
+      partial: pending.length > 0,
+      /* ★ 接线缺口与 override 分开记账：
+         sceneSkippedByOverride=true → 「没接」是因为用户改了场景卡；
+         false → 是本批就没接通（groupOffline 的 N/S5）。 */
+      sceneSkippedByOverride: !!(dec && dec.sceneSkippedByOverride),
+      /* 接线与 spec 脱节的信号（正常路径恒为 false） */
+      sceneMismatch: sceneMismatch,
+      shellCard: shellCard || (useShell ? 'behavior' : 'card')
+    };
+  }
+
+  /* 线上唯一入口（**薄包装**：字段名与旧实现逐字一致**）。 */
+  function btOnlineDecision() {
+    var d = btDecideScene('online', {
+      protocolText: (typeof BT_C05_ONLINE === 'string' && BT_C05_ONLINE.trim())
+        ? BT_C05_ONLINE : ''      /* 空串会走 ⑩ 步 BAD_TEXT —— 与旧实现同义 */
+    });
+    /* 旧字段：shellText / f1Text / c05Text / VERSION / modules / touched / ok / reason */
+    return {
+      ok: d.ok, reason: d.reason,
+      shellText: d.ok ? d.shellText : null,
+      f1Text: d.ok ? d.sceneText : null,
+      c05Text: d.ok ? d.protocolText : null,
+      VERSION: d.VERSION, modules: d.modules, touched: d.touched
+    };
+  }
+
+  /* ============================ 线下行为文本切换（F2 批） ============================
+
+     场景级整体选择：私聊线下受影响的卡 = shell / f2。
+     与线上同口径：**任一被用户改过（含空串 override）→ 整条线下回退旧组合**，
+     不做「一半新一半旧」的拼接，也不改动用户的任何文本。
+
+     ★ 与线上的三处差异（都是刻意的，不是遗漏）：
+       1. override 只判 **shell / f2 两张**。线上判 shell/f1/c05，其中 f1/c05 是
+          **线上专属** —— 若照抄，用户只改了线上 f1 就会把线下也拖回退。
+       2. 槽位契约 f2 = ['N','S2']（线下用 N 不用 E）。
+       3. **不接管输出协议**：线下 JSON 协议由 c05off 程序槽
+          （offlineOutProto）负责，本路径**一行都不改它**。
+
+     ★ 决策在**任何 pushSlot 之前**一次完成（assembleOffline 开头），
+       两个 case 只读取结果，不再各自计算可能失败的正文。
+     ★ forScenario('offline') **最多调用一次**。
+
+     ★ 线下契约（shell=B/P/L、f2=N/S2）与 override 卡集（shell/f2）现在
+       都写在上面的 BT_SPECS.offline 里，本段不再保留第二份常量 ——
+       两处各留一份正是这次要抽共享层的起因。 */
+
+  /* 线下唯一入口（**薄包装**：字段名与旧实现逐字一致**）。
+     ★ 与线上的三处差异全部落在 BT_SPECS.offline 里，行为不变：
+       1. touchedCards 只判 shell/f2（线上多一张 c05，是线上专属）；
+       2. 契约 scene 位 = N/S2（线上是 E/S1）；
+       3. protocolText 恒为 null —— **不接管输出协议**，
+          线下 JSON 协议由 offlineOutProto 程序槽负责。 */
+  function btOfflineDecision() {
+    var d = btDecideScene('offline');
+    /* 旧字段：shellText / f2Text / VERSION / modules / touched / ok / reason */
+    return {
+      ok: d.ok, reason: d.reason,
+      shellText: d.ok ? d.shellText : null,
+      f2Text: d.ok ? d.sceneText : null,
+      VERSION: d.VERSION, modules: d.modules, touched: d.touched
+    };
+  }
+
+  /* 线上输出协议（B 批新路径专用）。
+     ★ 不动 CARD_DEFAULTS.c05 —— 旧默认值继续服务兼容路径
+       （override 场景 / 线下 c05off / 其他消费者）。
+     ★ 保留：|| 分隔、[WHISPER] 必带与闭合标记、心声 40 字。
+     ★ 不保留旧表达限制（转折追问同泡 / 完整段落单泡 / 一律不许请示继续）。
+     ★ 译文与其他能力说明**不在此处覆盖**：译文由 I03 槽 compileLang 负责，
+       表情/生图/手机/收藏提议由各自 program 槽负责；本节只声明「按其说明使用」。 */
+  var BT_C05_ONLINE = [
+    '【输出格式 · 硬约束】',
+    '输出结构：',
+    '正文可以包含一个或多个气泡。单个气泡不添加分隔符；多个气泡仅在相邻气泡之间使用 ||，不添加空气泡或占位内容。气泡长度与划分遵循本轮表达规则。',
+    '正文之后必须附带一条完整的 [WHISPER]…[/WHISPER]。',
+    '心声：',
+    '心声不超过 40 字，呈现角色当下的简短内心感受或念头，不输出模型内部推理。不要求刻意制造表里反差，与人物及当前经历保持一致。',
+    '其他已启用内容：',
+    '本轮若提供译文或其他能力的输出说明，按对应说明使用其标记及位置；本节不取消这些契约，也不授权未提供的能力。'
+  ].join('\n');
 
   var CARD_DEFAULTS = {
     /* 共享外壳：总纲 15.12「共享外壳的最小注入版」。三类调用共用。 */
@@ -611,6 +1137,11 @@
        它是异步预取的 —— 发送前 prefetch() 把结果放进缓存，装配时同步读。 */
     { id: 'recall', slot: 'K03c', name: '相关的过去（召回）', kind: 'program', required: false,
       note: '程序生成：向量按当前话题召回的原文块。要配「向量记忆 API」；没命中就不注入' },
+    /* 已成立的影响（第五批 2026-10-02）：ta 里被用户确认过、当前有效、
+       且与本轮输入相关的影响 —— 只作为背景，不强迫角色每句话提起。
+       三道闸在 ta-impact.js（知情 × 有效 × 相关），这里只管挂槽。 */
+    { id: 'taimpact', slot: 'K03d', name: '已成立的影响', kind: 'program', required: false,
+      note: '程序生成：ta 已确认的生活带来的影响（知情 × 有效 × 相关，最多 2 条）。没命中就不注入' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻条目 + 关键词命中的条目（全局书 + 挂在 TA 身上的书）' },
     { id: 'custom', slot: 'K/S', name: '自定义注入', kind: 'custom', required: false,
@@ -888,6 +1419,43 @@
     return mv.text(charId, userId || null) || '';
   }
 
+  /* K03d 已成立的影响（第五批）：ta 里被用户**确认过**、当前有效、
+     且与本轮输入相关的影响。三道闸（知情 × 有效 × 相关）全在
+     ta-impact.js —— 这里只是取用，不重复判一遍（判两遍 = 两处口径打架）。
+     ★ 惰性取 Sleepy.taImpact：它排在本文件之后加载也能用；
+     ★ ta 模块缺失 / 内部报错 → 返回 ''，槽是 program 类型自动不上，
+       普通聊天照常跑（第五批安全验收第 5 条）。 */
+  function compileTaImpact(charId, userId, queryText) {
+    var ti = Sleepy.taImpact;
+    if (!ti || !ti.compile) return '';
+    try {
+      return ti.compile(charId, userId || null, queryText || '') || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /* 本轮的「当前输入」：历史里最后一条 user 内容。
+     相关性判据要用它 —— 没有它就只能按强弱取，注入会变糊。 */
+  function lastUserText(history) {
+    var h = history || [];
+    for (var i = h.length - 1; i >= 0; i--) {
+      var m = h[i];
+      if (!m || m.role !== 'user' || !m.content) continue;
+      if (typeof m.content === 'string') return m.content;
+      /* 多模态输入：content 是 [{type:'text'},{type:'image_url'}] 数组，
+         直接 String() 会得到 "[object Object]"（相关性判据就废了）。 */
+      if (Object.prototype.toString.call(m.content) === '[object Array]') {
+        var t = '';
+        m.content.forEach(function (part) {
+          if (part && part.type === 'text' && part.text) t += ' ' + String(part.text);
+        });
+        if (t.trim()) return t.trim();
+      }
+    }
+    return '';
+  }
+
   function compileDrop(charId) {
     if (!Sleepy.switcher) return '';
     var root = core.rootOf(charId);
@@ -1056,6 +1624,17 @@
     var slots = [];
     var system = [];
 
+    /* 场景级选择：在**任何 pushSlot 之前**一次性求完全部校验与分配。
+       下面的三个 case 只读取 btDec —— 不各自计算、不各自可能失败。 */
+    var btDec = btOnlineDecision();
+    var btDiag = {
+      used: btDec.ok,
+      reason: btDec.reason,          /* 固定原因码；成功时为空串 */
+      touched: btDec.touched,
+      VERSION: btDec.VERSION,
+      modules: btDec.modules.slice()
+    };
+
     function pushSlot(def, text, opts) {
       opts = opts || {};
       var on = (def.required ? true : cardEnabled(def.id)) && !opts.forceOff;
@@ -1082,8 +1661,9 @@
         case 'i01': pushSlot(def, compileI01(charId, userId)); break;
         case 'time': pushSlot(def, compileTimeFacts(charId)); break;
         case 'lang': pushSlot(def, compileLang(charId)); break;
-        case 'shell': pushSlot(def, cardBody('shell')); break;
-        case 'f1': pushSlot(def, cardBody('f1')); break;
+        /* 三张受影响卡统一读 btDec：任一失败时三者一起回退旧路径 */
+        case 'shell': pushSlot(def, btDec.ok ? btDec.shellText : cardBody('shell')); break;
+        case 'f1': pushSlot(def, btDec.ok ? btDec.f1Text : cardBody('f1')); break;
         case 'pat': pushSlot(def, cardBody('pat')); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
@@ -1093,6 +1673,8 @@
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'life': pushSlot(def, compileLife(charId, userId)); break;
         case 'recall': pushSlot(def, compileRecall(charId, userId)); break;
+        /* 已成立的影响：query 取历史末条 user 输入（相关性判据的唯一出处） */
+        case 'taimpact': pushSlot(def, compileTaImpact(charId, userId, lastUserText(history))); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
           pushSlot(def, compileWorldbook(charId, wbText));
@@ -1108,7 +1690,7 @@
             system.push({ role: 'system', content: cc.body });
           });
           break;
-        case 'c05': pushSlot(def, cardBody('c05')); break;
+        case 'c05': pushSlot(def, btDec.ok ? btDec.c05Text : cardBody('c05')); break;
         case 'history': {
           var histText = history.map(function (m) {
             return (m.role === 'user' ? 'user: ' : 'char: ') + (m.content || '');
@@ -1125,7 +1707,7 @@
       return { role: m.role, content: m.content };
     }));
 
-    return { messages: messages, slots: slots };
+    return { messages: messages, slots: slots, behavior: btDiag };
   }
 
   /* ============================ 线下装配（F2） ============================
@@ -1152,6 +1734,10 @@
       note: '程序生成：TA 近期实际看见的动态（与线上同一份 compileLife）' },
     { id: 'recall', slot: 'K03c', name: '相关的过去（召回）', kind: 'program', required: false,
       note: '程序生成：向量召回的原文块（与线上同一份 compileRecall）' },
+    /* 已成立的影响：与线上同一份实现（ta-impact.compile 的只读投影）。
+       线下也注入 —— 否则「线下他像没事人、线上他心事重重」，同一个角色两张脸。 */
+    { id: 'taimpact', slot: 'K03d', name: '已成立的影响', kind: 'program', required: false,
+      note: '程序生成：ta 已确认的生活带来的影响（与线上同一份）' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻 + 关键词命中（同线上规则）' },
     /* 自定义注入（2026-09-22 通查补）：线上一直有这一槽，线下漏了 ——
@@ -1177,16 +1763,67 @@
     he_she: '「他」看着「她」'
   };
   var STYLE_LABELS = {
-    pure_love: '纯爱日常', literary: '沉浸文学', casual: '轻松互动'
+    nature_life: '自然生活', immersive: '细腻沉浸', restrained: '克制留白',
+    lively: '轻快灵动', cool_crisp: '冷感利落', cinematic: '电影叙事'
   };
-  /* 线下文风词（第三梯队 7 的「文风词编写」）：之前只把风格名给模型，
-     它只能猜「纯爱日常」是什么意思；现在每个内置风格配一小段「怎么写」，
-     跟着风格名一起注入。 */
-  var STYLE_HINTS = {
-    pure_love: '贴地的日常口语，短句为主；情绪放在动作和小事里（递水、拎包、绕路陪你走一段），不写大段心理独白；甜而不腻，克制煽情。',
-    literary: '画面感和物件细节优先；比喻可以有，但每个比喻都要带来新信息；节奏慢、留白多，情绪藏在环境与动作的缝隙里，不堆华丽辞藻。',
-    casual: '轻快、打趣、互怼；句子短、来回快；允许玩梗和口语，但不贫嘴不刷屏；认真的时刻要突然收住玩笑——反差才珍贵。'
+  /* 六套文风的默认档。任何「未知风格 id / 空正文 / 无有效设置」都回落到这里。 */
+  var STYLE_DEFAULT = 'nature_life';
+  /* ============================ 六套文风正文（唯一来源） ============================
+
+     依据《Sleepy · 文风预设引擎新稿 v2》逐字提取，每套三部分：
+     一句话风格锚点 / 表现重点 / 适配原则。本表是**全库唯一出处**：
+     私聊线下（narrativeText 的 narrative 槽）与群线下（[PRESENCE RULES]
+     的文风行）都从这里读；旧 page-group-offline.styleHintOf 的第二份
+     实现已删，不再保留两套互不同步的文案。
+
+     边界（设计卡 §一/§二）：文风只决定内容如何被观察、组织和表达，
+     不制造人设、态度、关系进度或剧情结果；输出权限、安全边界、人设保真
+     与场景连续性由 F2 底座与 behavior-text.js 的 B/P/L/N/S* 管理 ——
+     因此六套正文**不复制进 behavior-text.js**，两套资产保持正交。
+
+     旧 pure_love/literary/casual 已退役：存量会话里的旧 style 值
+     在 stylePresetOf 查不到 → 调用方按「无有效设置」回落 STYLE_DEFAULT。 */
+  var STYLE_PRESETS = {
+    nature_life: [
+      '风格锚点：让感情生长在共同生活的具体小事里，不刻意强调，却始终能够被感受到。',
+      '表现重点：优先关注人物此刻真正会注意和回应的事物，以及能够推动互动的动作、对话与环境变化。使用贴近日常感知的语言，让动作具有自然的先后与因果，让对话保留角色原本的说话习惯。情绪从具体反应中逐渐显露，细节服务于生活与人物本身。',
+      '适配原则：根据人物性格、关系阶段、事件轻重与现场节奏调整表达密度。平常时允许简洁、琐碎与偶然；重要时刻可以自然放慢。健谈者通过对话进入生活，寡言者则通过行动、习惯与停顿留下存在感。'
+    ].join('\n'),
+    immersive: [
+      '风格锚点：让感情在一次次细微的靠近中被身体察觉，让心动、欢喜与牵挂自然变得清晰。',
+      '表现重点：将注意力贴近人物当下的感知与反应，选择目光、呼吸、声音、触感、温度与动作迟疑等能够承载情绪的细节。让外部行动、身体感受与内心意识彼此连贯，使人物在经历当下的过程中逐渐辨认自己的感情。每一次放慢，都应让关系、人物或情绪比此前更清晰。',
+      '适配原则：根据人物的感知习惯、表达能力、关系阶段与场景强度选择细节。敏锐者可能较早理解变化；迟钝或克制者可以先产生身体反应，之后才意识到情绪。亲近、紧张、悲伤与安心都可以被细腻呈现，描写浓度随情境自然起伏。'
+    ].join('\n'),
+    restrained: [
+      '风格锚点：让感情停在恰好显露的地方，把没有说尽的部分留给彼此慢慢感受。',
+      '表现重点：优先呈现动作、语气、停顿、距离与环境变化，让情绪依附于正在发生的事情自然浮现。为人物尚未说出口、尚未确认或暂时不愿解释的部分保留空间，使对白与行动之间形成余韵。必要事实保持清楚，尚未抵达的情感结论则交还给人物自己。',
+      '适配原则：根据人物的表达习惯、关系阶段与场景压力调整留白程度。坦率者仍可直接表达，只保留情绪自然存在的余地；寡言、谨慎或尚未想清楚的人物，可以让动作、停顿与话题转移承担更多信息。等人物真正意识到、愿意说出或做出选择时，再让情绪继续向前。'
+    ].join('\n'),
+    lively: [
+      '风格锚点：让人物鲜活地走进正在发生的生活里，使寻常时刻也能透出生命本身的明亮与可爱。',
+      '表现重点：优先捕捉人物对眼前世界真实而即时的反应，让好奇、兴致、突发奇想、细小欢喜与自然的情绪起伏进入叙事。人物可以观察、接话、行动，也可以跑神、改口或临时改变主意。轻盈感来自人物愿意参与生活、回应他人与环境，使寻常小事因其独特反应显出趣味与温度。',
+      '适配原则：根据人物原本的能量与当前状态呈现不同形态的鲜活。活泼者可以外放敏捷，安静者也能通过兴趣、专注与细小回应展现生命感。欢乐时节奏可以明快；疲惫、低落或紧张时保留真实重量，让人物仍拥有感受、选择与回应世界的能力。'
+    ].join('\n'),
+    cool_crisp: [
+      '风格锚点：平静地写下人物做出的每一个选择，让没有被渲染的感情反而显出更清楚的重量。',
+      '表现重点：以平稳、准确的叙述选择真正具有分量的动作、言语、选择及其结果，让情绪存在于事实的取舍与排列之间。人物为何停下、拿走什么、没有回应什么、最终做出什么决定，都可以成为感情的证据。利落来自重点清楚、措辞准确与解释节制，不等于句子必须短促。',
+      '适配原则：根据人物性格、事件性质与关系阶段决定叙述距离。面对剧烈情绪时，语气可以保持平静，但应选择足以承载重量的事实；面对日常时刻，则让简洁观察保留人物特有的温度。心理活动以人物确实能够意识到的判断、记忆或念头呈现，不必把每个动作翻译成情绪结论。'
+    ].join('\n'),
+    cinematic: [
+      '风格锚点：让每一个被看见的人、画面与声音都参与叙事，使感情在整个世界的共同运转中逐渐抵达。',
+      '表现重点：像组织一部完整电影一样选择内容，使人物、环境、对话与事件彼此配合。空间关系、人物位置、光线天气、物件状态与行动变化负责传递信息；对话既符合人物，也承担推进关系、揭示信息或转换节奏的作用。环境拥有持续状态，NPC 也依据自己的身份与处境行动，通过出现、缺席、选择或一句话，使世界更完整并影响当前故事。',
+      '适配原则：根据场景重要程度与人物关系决定叙事规模。私人时刻可以收束世界，只保留最能参与情绪的声音、光线与物件；复杂事件则让空间、NPC 与多条行动自然加入。画面或视角的每次转换都应带来新的信息、情绪变化或因果推进，使精巧来自整体组织，而不是摄影术语、华丽景物或人为巧合。'
+    ].join('\n')
   };
+
+  /* 文风统一读取口（全库唯一，群线下也走这里）。
+     未知 id / 空正文 → null（调用方回落 STYLE_DEFAULT，不猜）。 */
+  function stylePresetOf(id) {
+    if (typeof id !== 'string') return null;
+    var body = STYLE_PRESETS[id];
+    if (typeof body !== 'string' || !body.trim()) return null;
+    return { id: id, label: STYLE_LABELS[id], text: body };
+  }
   /* 线下篇幅档位（用户 2026-09-19 定：「字数一般在三百字以上」——
      线下是一篇连续的叙事，描写与心理是主体，不是几句对话。
      以前 适中=150~300 偏短，写出来像分镜。 */
@@ -1202,16 +1839,17 @@
       ? ('用「' + charName + '」称呼 char，user 用「你」（视角跟随 char，有限视角）')
       : (POV_LABELS[n.pov] || POV_LABELS.he_you)));
     lines.push('- 时态：' + (n.tense === 'past' ? '过去时' : '现在时'));
-    if (n.style === 'custom') {
-      lines.push('- 整体风格：自定义');
-      var words = String(n.styleWords || '').trim();
-      lines.push(words
-        ? ('- 自定义文风词（本轮文风以这些词为准）：' + words)
-        : ('- 自定义文风词：未填写，先按「纯爱日常」处理（' + STYLE_HINTS.pure_love + '）'));
+    /* 文风（2026-10-05 七项批）：优先级 = styleWords 非空（自定义）>
+       固定文风正文 > 无有效设置回落自然生活。
+       旧 style 值（pure_love 等）在 stylePresetOf 查不到 → 走默认档。 */
+    var styleWords = String(n.styleWords || '').trim();
+    if (styleWords) {
+      lines.push('- 整体风格：自定义（用户文风词优先）');
+      lines.push('- 自定义文风词（本轮文风以这些词为准）：' + styleWords);
     } else {
-      var sName = STYLE_LABELS[n.style] || STYLE_LABELS.pure_love;
-      var sHint = STYLE_HINTS[n.style] || STYLE_HINTS.pure_love;
-      lines.push('- 整体风格：' + sName + '（' + sHint + '）');
+      var preset = stylePresetOf(n.style) || stylePresetOf(STYLE_DEFAULT);
+      lines.push('- 整体风格：' + preset.label);
+      lines.push(preset.text);
     }
     lines.push('- 回复字数：' + (n.lengthMode === 'custom'
       ? ('不少于 ' + (n.customLengthMin || 300) + ' 字')
@@ -1329,6 +1967,21 @@
     var slots = [];
     var messages = [];          /* 最终输出：system 段 + 历史原文（按序） */
 
+    /* 场景级选择：在**任何 pushSlot 之前**一次性求完全部校验与分配。
+       下面两个 case 只读取 btDec —— 不各自计算、不各自可能失败。 */
+    var btDec = btOfflineDecision();
+    /* 诊断只带**固定原因码 / 版本 / 模块 id 序列**（闭集）。
+       ★ 不含 prompt 正文、用户 override 内容、聊天正文、异常全文、API 配置。
+       ★ used 只表示「本次装配真的采用了新正文」—— 候选可用性不算。
+       ★ 回退时 modules 为空数组，不把候选模块记成已使用。 */
+    var btDiag = {
+      used: btDec.ok,
+      reason: btDec.reason,          /* 固定原因码；成功时为空串 */
+      touched: btDec.touched,
+      VERSION: btDec.VERSION,
+      modules: btDec.modules.slice()
+    };
+
     function pushSlot(def, text) {
       var on = !!text;
       slots.push({
@@ -1351,13 +2004,31 @@
            语言规则与线上同一份（compileLang），译文协议挂在本函数的
            输出协议里（见 offlineOutProto）。 */
         case 'lang': pushSlot(def, compileLang(charId, 'offline')); break;
-        case 'shell': pushSlot(def, cardBody('shell')); break;
-        case 'f2': pushSlot(def, cardBody('f2')); break;
+        /* 两张受影响卡统一读 btDec：任一失败时两者一起回退 cardBody */
+        case 'shell': pushSlot(def, btDec.ok ? btDec.shellText : cardBody('shell')); break;
+        case 'f2': pushSlot(def, btDec.ok ? btDec.f2Text : cardBody('f2')); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
         case 'life': pushSlot(def, compileLife(charId, userId)); break;
         case 'recall': pushSlot(def, compileRecall(charId, userId)); break;
+        /* 已成立的影响（线下）：query 取场景里最后一段 user 输入。
+           线下没有 content 数组，只有 text / paras（见 narrativeText 的取法）。 */
+        case 'taimpact': {
+          var offQ = '';
+          var om = session.messages || [];
+          for (var oi = om.length - 1; oi >= 0; oi--) {
+            if (!om[oi] || om[oi].role !== 'user') continue;
+            offQ = String(om[oi].text || parasText(om[oi].paras) || '');
+            if (offQ.trim()) break;
+          }
+          pushSlot(def, compileTaImpact(charId, userId, offQ));
+          break;
+        }
         case 'worldbook': {
-          var wbOff = (session.messages || []).map(function (m) {
+          /* ⚠️ 同样按 parseFailed 状态排除：失败标记不是世界书素材，
+             塞进检索文本会让世界书按一句无关提示去匹配。 */
+          var wbOff = (session.messages || []).filter(function (m) {
+            return !m.parseFailed;
+          }).map(function (m) {
             if (m.role === 'user') return String(m.text || '');
             return parasText(m.paras);
           }).join('\n').slice(-4000);
@@ -1385,7 +2056,17 @@
         case 'scene': pushSlot(def, sceneText(Object.assign({}, session, { charId: charId }))); break;
         case 'c05off': pushSlot(def, offlineOutProto(session, !!session.pendingSetup)); break;
         case 'history': {
-          var msgs = (session.messages || []).slice(-20);
+          /* ★ 解析失败的那条**不进历史上下文**（2026-10-04 P0 返修）。
+             判据是 **parseFailed 状态**，不是文案匹配 ——
+             文案会改，状态不会；按文案匹配迟早漏。
+             ⚠️ 动机：那条记录 role 也是 'char'，原样进历史就会变成
+                「沈砚：这一轮的回复格式出了点问题。」——
+                模型会把中性提示当成**角色说过的台词**，角色归属被污染。 */
+          var allMsgs = session.messages || [];
+          var keptMsgs = allMsgs.filter(function (m) { return !m.parseFailed; });
+          /* ⚠️ 先过滤再截断：否则 slice(-20) 会把失败记录占掉的额度算进去，
+             过滤后可能只剩 19 条（上限是「最近 20 条正常消息」）。 */
+          var msgs = keptMsgs.slice(-20);
           var charName = (core.findChar(charId) || {}).name || '他';
           var total = 0;
           msgs.forEach(function (m) {
@@ -1403,9 +2084,18 @@
             total += estimate(content);
             messages.push({ role: role, content: content });
           });
+          /* 本轮 user 输入已由 page-offline.js 的 appendMessage 落进
+             session.messages，装配器不再重复追加；线上 assembleOnline
+             不经过此分支。ctx.userInput 只作兜底：历史里确实没有它时
+             才补一条（历史为空、或调用方没先落库的探针形状）。 */
           if (ctx.userInput) {
-            total += estimate(ctx.userInput);
-            messages.push({ role: 'user', content: String(ctx.userInput) });
+            var lastIsThis = messages.length > 0
+              && messages[messages.length - 1].role === 'user'
+              && String(messages[messages.length - 1].content) === String(ctx.userInput);
+            if (!lastIsThis) {
+              total += estimate(ctx.userInput);
+              messages.push({ role: 'user', content: String(ctx.userInput) });
+            }
           }
           slots.push({ id: 'history', slot: def.slot, name: def.name, tokens: total, on: true, required: true, locked: false, hidden: false, note: '最近 ' + msgs.length + ' 条' });
           break;
@@ -1413,7 +2103,7 @@
       }
     });
 
-    return { messages: messages, slots: slots };
+    return { messages: messages, slots: slots, behavior: btDiag };
   }
 
   function parasText(paras) {
@@ -1601,6 +2291,13 @@
     isOverridden: isOverridden,
     cardEnabled: cardEnabled,
     setCardEnabled: setCardEnabled,
+    /* 共享行为决策层（v160）：五场景唯一入口。
+       btDecideScene 跑完整十步校验并**不抛异常**（spec 不合法时整条回退）；
+       btNote 由调用方在 **system 拼完之后**回报「实际用没用到」——
+       工厂不提前宣称，避免「诊断说已使用、system 里其实没有」。 */
+    btDecideScene: btDecideScene,
+    btNote: btNote,
+    btScenes: BT_SCENES.slice(),
     /* 自定义卡 */
     customCards: customCards,
     addCustomCard: addCustomCard,
@@ -1609,6 +2306,10 @@
     /* 语言与翻译：两个下游判据都从这里出发（翻译页/群线下直接用） */
     langOfChar: langOfChar,
     transAsked: transAsked,
+    /* 六套文风统一读取口（2026-10-05 七项批）：私聊线下与群线下共用，
+       未知 id / 空正文 → null（调用方回落 styleDefault）。 */
+    stylePresetOf: stylePresetOf,
+    styleDefault: STYLE_DEFAULT,
     /* 装配与解析 */
     assembleOnline: assembleOnline,
     assembleOffline: assembleOffline,
@@ -1623,6 +2324,9 @@
        不然 TA 永远不会「主动提起你昨天发的那条」。 */
     compileLife: compileLife,
     compileRecall: compileRecall,
+    /* K03d 已成立的影响（第五批）：线下/群聊/主动消息若要同一份影响，
+       一律走这里，别各自去读 taEvents（会绕开知情闸）。 */
+    compileTaImpact: compileTaImpact,
     cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,

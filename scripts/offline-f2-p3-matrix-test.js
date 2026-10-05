@@ -525,10 +525,11 @@ t('★ 结构性证明：本测试不读真凭据、不启浏览器、沙箱内 
 });
 t('★ 生产四文件与本轮基线逐字节一致（本测试只读、不改生产）', function () {
   var BASE = 'D:/projects/sleepy-baseline-2026-10-05-pre13';
-  /* ★ 2026-10-05 更新：page-offline.js 在**解析降级取证批**获准改动
-     （加 sleepy.forensics.parseFail.* 取证落盘），移出本清单；
-     锚定的 pre13 是上一批基线，page-offline.js 的差异属批准改动。 */
-  ['prompt-engine.js', 'api.js', 'behavior-text.js']
+  /* ★ 2026-10-05 更新：page-offline.js（取证批）与 prompt-engine.js
+     （七项文风批 + groupOffline S5 接入）先后获准改动，移出本清单；
+     锚定的 pre13 是上上批基线，两者的差异均属批准改动。
+     prompt-engine 的接线完整性由在线迁移测试（重建等式）继续锁定。 */
+  ['api.js', 'behavior-text.js']
     .forEach(function (f) {
       var a = H.sha256(fs.readFileSync(path.join(ROOT, f)));
       var b = H.sha256(fs.readFileSync(path.join(BASE, f)));

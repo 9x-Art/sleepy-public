@@ -224,7 +224,7 @@
 
   function defaultNarrative() {
     return {
-      pov: 'he_you', tense: 'present', style: 'pure_love',
+      pov: 'he_you', tense: 'present', style: 'nature_life',
       lengthMode: 'medium', customLengthMin: null,
       styleWords: '',
       showSuggests: true, showCharInner: true, charProactive: false,
@@ -2292,11 +2292,14 @@
 
         var styleSec = section('文风');
         styleSec.appendChild(rowSeg('整体风格', '', [
-          { value: 'pure_love', label: '纯爱日常' },
-          { value: 'literary', label: '沉浸文学' },
-          { value: 'casual', label: '轻松互动' },
+          { value: 'nature_life', label: '自然生活' },
+          { value: 'immersive', label: '细腻沉浸' },
+          { value: 'restrained', label: '克制留白' },
+          { value: 'lively', label: '轻快灵动' },
+          { value: 'cool_crisp', label: '冷感利落' },
+          { value: 'cinematic', label: '电影叙事' },
           { value: 'custom', label: '自定义' }
-        ], n.style || 'pure_love', function (v) {
+        ], n.style || 'nature_life', function (v) {
           updateNarrative(id, { style: v });
           wordsWrap.style.display = v === 'custom' ? '' : 'none';
         }));
