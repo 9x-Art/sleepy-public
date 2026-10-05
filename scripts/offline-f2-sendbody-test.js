@@ -1096,7 +1096,9 @@ var GUARDED = ['prompt-engine.js', 'page-offline.js', 'api.js', 'behavior-text.j
    ★ 2026-10-05 总结三字段批（relation/review/uncertain 丢失链）：批准触碰新增
    page-summary.js（ingest 白名单接线），sw.js 跳 v167；基线随本批收口重生成。
    名单**写死在判据里**：下一个批次若要改别的生产文件，必须显式更新这里
-   （与 smoke 的 EXPECTED_SW_CACHE 同一哲学：每次都要有人手动确认一次）。 */
+   （与 smoke 的 EXPECTED_SW_CACHE 同一哲学：每次都要有人手动确认一次）。
+   ★ 2026-10-05 relation.intent 接线批：page-proactive.js（候选队列 + 状态块）
+   与 sw.js（跳 v168）再次触碰，均在既有名单内；基线随本批收口重生成。 */
 var BATCH_APPROVED_TOUCH = ['prompt-engine.js', 'ta-life.js', 'page-proactive.js', 'page-group-ai.js', 'page-presets.js', 'page-summary.js', 'sw.js'];
 
 var baseline = null, baselineWhy = '';

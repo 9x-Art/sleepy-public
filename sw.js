@@ -13,6 +13,14 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v168（2026-10-05）：**relation.intent 接主动消息候选合成**——
+   · page-proactive：candidatesFor 接 relationIntent:<rootId> 的 nextAction
+     为候选（排在 attention/loop/unspoken 之后）；evaluate 加 [RELATION_INTENT]
+     状态块（currentReading/direction/pace/requiredSignal/avoid）。
+     校验：validUntil 可解析且过期 → 整块不取（缺失/不可解析不误杀）；
+     重复沿用「来源:内容指纹」+ handled；剧透保护字段只进主动消息 prompt。
+   → 必须跳版本：page-proactive.js 变了。
+
    v167（2026-10-05）：**总结卡三字段丢失链接上（relation/review/uncertain）**——
    · page-summary：ingest 不再因 changes 为空提前结束；relation.confirmedChange
      → relationship_fact 恒 pending（强制 user 确认闸，模型自称的共识不静默生效）；
@@ -449,7 +457,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v167';
+var CACHE = 'sleepy-v168';
 var CORE = [
   './',
   './index.html',

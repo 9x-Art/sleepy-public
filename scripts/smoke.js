@@ -7201,7 +7201,8 @@ t('ingest：autoAnchor 开 → priority=high 入库即锚定；批量确认 pend
    勘察-2026-10-05 §三：此前 ingest 白名单只接 changes/charState/openLoops/attention，
    relation / review / uncertain 产出即丢弃。2026-10-05 拍板：
    · confirmedChange → relationship_fact 恒 pending（模型自称的共识不静默生效）；
-   · relation.intent → relationIntent:<rootId> 只落库，不接主动消息（另批）；
+   · relation.intent → relationIntent:<rootId> 整块替换落库
+     （2026-10-05 接线批：主动消息候选合成已接，见「诊断键不接消费端」白名单用例）；
    · review / uncertain → reviewLog / uncertainLog:<rootId> 只诊断（capped 10 次）。 */
 console.log('\n--- 总结三字段：confirmedChange / relationIntent / review / uncertain ---');
 t('ingest：changes 为空不再提前结束；confirmedChange 只产 pending；三键落库', () => {
@@ -7411,10 +7412,13 @@ t('changes=[] 时原有状态字段照常落库（early-return 修复覆盖同�
   return { charState: true, openLoops: true, attentionInbox: true };
 });
 
-t('诊断键不接消费端（结构性负向断言：本批只落库，接线另批）', () => {
-  /* 判据落在生产文件源码上：消费端（主动消息 / ta 首页 / prompt 装配）
-     不得出现三个新键 —— 接线时必须显式改这条断言，防止静默溜进 prompt。 */
-  ['page-proactive.js', 'page-ta.js', 'prompt-engine.js'].forEach((f) => {
+t('诊断键不接消费端（reviewLog/uncertainLog 只落库）；relationIntent 白名单限主动消息', () => {
+  /* 2026-10-05 接线批更新：page-proactive 有意接了 relationIntent:（候选队列 +
+     状态块），从「零命中」改为「白名单」—— 但仅限 relationIntent:，
+     reviewLog:/uncertainLog: 仍然三处全禁；page-ta / prompt-engine 对三键照旧全禁。
+     另加一条正向结构断言：page-proactive 确实调用 intentStateOf（装配产物口径，
+     防止「helper 测了但没接线」的假绿）。 */
+  ['page-ta.js', 'prompt-engine.js'].forEach((f) => {
     const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
     ['relationIntent:', 'reviewLog:', 'uncertainLog:'].forEach((k) => {
       if (src.indexOf(k) >= 0) {
@@ -7422,7 +7426,110 @@ t('诊断键不接消费端（结构性负向断言：本批只落库，接线�
       }
     });
   });
-  return { 三个消费端全净: true };
+  const pro = fs.readFileSync(path.join(ROOT, 'page-proactive.js'), 'utf8');
+  ['reviewLog:', 'uncertainLog:'].forEach((k) => {
+    if (pro.indexOf(k) >= 0) {
+      throw new Error('page-proactive.js 出现了 ' + k + ' —— 诊断键不进主动消息');
+    }
+  });
+  if (pro.indexOf('relationIntent:') < 0) {
+    throw new Error('page-proactive.js 丢了 relationIntent: 接线（本批有意接入）');
+  }
+  if (pro.indexOf('intentStateOf(') < 0 || pro.indexOf('intentExpired(') < 0) {
+    throw new Error('page-proactive.js 没调用 intentStateOf/intentExpired（helper 测了但没接线）');
+  }
+  return { ta与promptEngine全净: true, proactive: 'relationIntent 白名单内' };
+});
+
+t('relation.intent 接候选队列：nextAction 进队、过期不进、指纹去重', () => {
+  const c = S.core.upsertChar({ name: '意图候选测试', kind: 'main' }).id;
+  const future = new Date(Date.now() + 3600e3).toISOString();
+  S.store.set('relationIntent:' + c, {
+    currentReading: '刚破冰', evidence: 'explicit', sourceIds: [],
+    intent: { direction: '慢慢熟起来', pace: 2, nextAction: '找个由头聊聊周末的展',
+      requiredSignal: '', avoid: '', validUntil: future },
+    source: 'online', updatedAt: ''
+  });
+  let list = S.proactiveEngine.candidatesFor(c);
+  const ics = list.filter((x) => x.source === 'intent');
+  if (ics.length !== 1) throw new Error('intent 候选没进队或多于一条：' + JSON.stringify(list));
+  if (ics[0].text.indexOf('周末的展') < 0) throw new Error('候选文本不对：' + ics[0].text);
+  if (ics[0].text.indexOf('慢慢熟起来') >= 0) throw new Error('候选该取 nextAction，不是 direction');
+
+  /* 队列刷新（重复调用）→ 内容指纹去重，不堆积 */
+  const again = S.proactiveEngine.candidatesFor(c);
+  if (again.filter((x) => x.source === 'intent').length !== 1) throw new Error('指纹去重失效');
+
+  /* validUntil 已过 → 整块过期，候选不进（direction 也不许顶上） */
+  const past = new Date(Date.now() - 3600e3).toISOString();
+  S.store.set('relationIntent:' + c, {
+    intent: { direction: '旧方向', nextAction: '过期计划', validUntil: past }
+  });
+  if (S.proactiveEngine.candidatesFor(c).some((x) => x.source === 'intent')) {
+    throw new Error('过期意图不该进候选队列');
+  }
+
+  /* 自由文本 validUntil（解析不了）→ 不误杀，照常进队 */
+  S.store.set('relationIntent:' + c, {
+    intent: { nextAction: '再约一次饭', validUntil: '尽快' }
+  });
+  if (!S.proactiveEngine.candidatesFor(c).some((x) => x.source === 'intent')) {
+    throw new Error('不可解析的 validUntil 不该误杀候选');
+  }
+
+  /* 与既有来源并存时，事件优先（intent 排后） */
+  S.store.set('relationIntent:' + c, {
+    intent: { nextAction: '找个由头聊聊周末的展', validUntil: future }
+  });
+  S.store.set('attentionInbox:' + c, { items: ['想约你去看展'], updatedAt: '' });
+  const both = S.proactiveEngine.candidatesFor(c);
+  if (both[0].source !== 'attention' || both[both.length - 1].source !== 'intent') {
+    throw new Error('候选顺序不对：' + both.map((x) => x.source).join(','));
+  }
+
+  S.store.set('attentionInbox:' + c, null);
+  S.store.set('relationIntent:' + c, null);
+  S.core._purgeSync.char(c);
+  return { 进队: true, 过期拦截: true, 不误杀: true, 指纹去重: true, 事件优先: true };
+});
+
+t('relation.intent 状态块：内容进块、过期/缺失回空、pace 缺失不渲染', () => {
+  const E = S.proactiveEngine.intentStateOf, X = S.proactiveEngine.intentExpired;
+  const full = E({
+    currentReading: '刚认识一周',
+    intent: { direction: '熟起来', pace: 3, nextAction: '', requiredSignal: '对方主动提周末',
+      avoid: '别催', validUntil: '' }
+  });
+  if (full.indexOf('[RELATION_INTENT]\n') !== 0) throw new Error('块头不对：' + full);
+  ['刚认识一周', '熟起来', '3/5', '对方主动提周末', '别催'].forEach((s) => {
+    if (full.indexOf(s) < 0) throw new Error('块里缺「' + s + '」：' + full);
+  });
+  /* nextAction 不进状态块 —— 它已经作为候选出现在 [TRIGGER_CANDIDATES]，别写两遍 */
+  if (full.indexOf('nextAction') >= 0) throw new Error('状态块不该出现 nextAction 行');
+
+  /* pace 缺失（null，page-summary paceOf 拒过的形状）→ 不渲染 /5 行，不夹值 */
+  const noPace = E({ intent: { direction: 'd', pace: null } });
+  if (noPace.indexOf('/5') >= 0) throw new Error('pace=null 不该渲染节奏行');
+  if (noPace.indexOf('d') < 0) throw new Error('direction 该照常渲染');
+
+  /* 过期 → 状态块回空（候选与状态块口径一致）；缺失 → 回空不炸 */
+  if (E({ intent: { direction: 'd', validUntil: '2000-01-01T00:00:00Z' } }) !== '') {
+    throw new Error('过期意图的状态块应回空串');
+  }
+  if (E(null) !== '' || E({}) !== '' || E({ intent: {} }) !== '') {
+    throw new Error('缺失/空意图应回空串');
+  }
+
+  /* intentExpired 细分：空 / 非串 / 不可解析 → 有效；可解析且已过 → 过期 */
+  const now = Date.now();
+  if (X(null, now) || X({}, now) || X({ intent: {} }, now)) throw new Error('缺失应视为有效');
+  if (X({ intent: { validUntil: '  ' } }, now)) throw new Error('空白串应视为有效');
+  if (X({ intent: { validUntil: '尽快' } }, now)) throw new Error('不可解析不应误杀');
+  if (!X({ intent: { validUntil: '2000-01-01T00:00:00Z' } }, now)) throw new Error('已过应判过期');
+  if (X({ intent: { validUntil: new Date(now + 60000).toISOString() } }, now)) {
+    throw new Error('未到有效期不该判过期');
+  }
+  return { 状态块: true, pace不夹值: true, 过期口径: '缺失/不可解析=有效' };
 });
 
 /* 失败原因必须能翻成人话 —— 用户六.1：「没填副 api 生成底片失败，
@@ -13538,7 +13645,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
      「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v167';
+const EXPECTED_SW_CACHE = 'sleepy-v168';
 
 t('SW 缓存版本：与独立基准一致（本批改过 page-summary.js，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

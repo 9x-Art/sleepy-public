@@ -1,7 +1,7 @@
 /* ============================================================
    page-proactive.js — 主动消息引擎（第二梯队 4 · 记忆系统 v5 S3 落地）
 
-   数据流：总结引擎产出 attentionInbox / openLoops / charState（store）
+   数据流：总结引擎产出 attentionInbox / openLoops / charState / relationIntent（store）
      → 这里组成【触发候选队列】
      → 程序资格闸门（免打扰时段 / 每日上限 / 冷却 / 未回复不追问 / 开关）
      → 主动消息卡（prompt-engine 'proactive'，Structured JSON）
@@ -97,7 +97,45 @@
     ((loops && loops.items) || []).forEach(function (x) { push('loop', x); });
     var cs = store.get('charState:' + rid);
     ((cs && cs.unspoken) || []).forEach(function (x) { push('unspoken', x); });
+    /* relation.intent（2026-10-05 接线）：char 自己的推进计划（nextAction）。
+       排在三个既有来源之后 —— 它是「TA 想干什么」， attention/loop/unspoken
+       是「具体那件事」，模型看到的候选顺序保持事件优先。 */
+    var ri = store.get('relationIntent:' + rid);
+    if (ri && !intentExpired(ri)) push('intent', { content: ri.intent && ri.intent.nextAction });
     return out;
+  }
+
+  /* ------------------------ relation.intent 校验（2026-10-05 接线） ------------------------
+     交接 §五.1 定的四条规则，这里逐条落地：
+       · 权限 —— 键归 root（rootIdOf），与 charState 同族既有拍板；无 user 马甲维度；
+       · 时间 —— validUntil 可解析且已过 → 整块过期不取（候选 + 状态块都跳过）；
+         缺失 / 自由文本解析不了 → 不误杀（视为长期有效，Date.parse 不猜中文语义）；
+       · 重复 —— 候选 id 沿用「来源:内容指纹」；intent 块本身整块替换，天然无堆积；
+         模型 handled 过的指纹不会卷土重来（与其它来源同一机制）；
+       · 剧透保护 —— nextAction/requiredSignal 只进主动消息 prompt，不进普通聊天、
+         不加 UI；reviewLog/uncertainLog 仍然完全不接（smoke 负向断言钉住）。 */
+
+  /* validUntil 判定（纯函数，smoke 直接测）。nowMs 由调用方传，便于测。 */
+  function intentExpired(ri, nowMs) {
+    var vu = ri && ri.intent && ri.intent.validUntil;
+    if (!vu || typeof vu !== 'string' || !vu.trim()) return false;
+    var t = Date.parse(vu.trim());
+    return !isNaN(t) && t < (nowMs || Date.now());
+  }
+
+  /* 状态块（纯函数）：有可用内容返回 '[RELATION_INTENT]\n…'，否则空串。
+     pace 是 1~5 严格整数（page-summary paceOf 出来的，缺失为 null）——
+     null 不夹值、不渲染「/5」那行。 */
+  var NL = String.fromCharCode(10);   /* 换行（避免源码转义歧义，本函数专用） */
+  function intentStateOf(ri, nowMs) {
+    if (!ri || !ri.intent || intentExpired(ri, nowMs)) return '';
+    var it = ri.intent, ib = [];
+    if (ri.currentReading) ib.push('关系现状：' + ri.currentReading);
+    if (it.direction) ib.push('想推进的方向：' + it.direction);
+    if (it.pace) ib.push('期望节奏：' + it.pace + '/5');
+    if (it.requiredSignal) ib.push('需要等到的信号：' + it.requiredSignal);
+    if (it.avoid) ib.push('不要做：' + it.avoid);
+    return ib.length ? '[RELATION_INTENT]' + NL + ib.join(NL) : '';
   }
 
   /* ---------------------------- 资格闸门 ----------------------------
@@ -300,6 +338,10 @@
       if ((cst.readings || []).length) bits.push('对对方的理解：' + cst.readings.join('；'));
       if (bits.length) user.push('[CONTACT_STATE]\n' + bits.join('\n'));
     }
+    /* relation.intent 状态块（2026-10-05 接线）：意图过期时 helper 回空串，
+       不进 prompt。send 与否仍由候选 + 闸门 + 模型判断决定。 */
+    var rinBlock = intentStateOf(store.get('relationIntent:' + rootIdOf(charId)));
+    if (rinBlock) user.push(rinBlock);
     var recent = (g.chat.messages || []).slice(-10).map(function (m) {
       var who = m.role === 'user' ? '你' : (ch ? ch.name : 'TA');
       return who + '：' + String(m.content || '').slice(0, 80);
@@ -445,6 +487,8 @@
     gateFor: gateFor,
     gateWhyText: gateWhyText,
     candidatesFor: candidatesFor,
+    intentExpired: intentExpired,
+    intentStateOf: intentStateOf,
     settings: settings,
     saveSettings: saveSettings,
     /* 行为文本诊断（**只读深拷贝**）。本批只落内存、不做 UI。 */
