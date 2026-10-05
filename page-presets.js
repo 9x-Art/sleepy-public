@@ -357,6 +357,16 @@
       });
       body.appendChild(fBody.el);
 
+      /* 群聊可用（2026-10-05 K03f）：默认关 = 私聊专属。开着的卡才会被
+         群线上装配接走 —— 全群模型都看得见，别把只对某个角色有意义、
+         或者带私密设定的卡放进群。 */
+      var fGroup = ui.switchField({
+        label: '群聊可用',
+        hint: '开着 = 这张卡也会注入群聊（全群可见）。私聊专属、或只对某一个角色有意义的卡保持关闭。',
+        value: !!(existing && existing.group)
+      });
+      body.appendChild(fGroup.el);
+
       var row = h('div', 'btn-row');
       if (existing) {
         var del = ui.button('删除', 'danger', function () {
@@ -376,8 +386,8 @@
         var title = fTitle.get() || '未命名注入';
         var text = fBody.get();
         if (!text.trim()) { ctx.toast('正文是空的', 'warn'); return; }
-        if (existing) E.saveCustomCard(existing.id, { title: title, body: text });
-        else E.addCustomCard(title, text);
+        if (existing) E.saveCustomCard(existing.id, { title: title, body: text, group: fGroup.get() });
+        else E.addCustomCard(title, text, { group: fGroup.get() });
         ctx.toast('已保存', 'ok');
         ctx.back();
       });

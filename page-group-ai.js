@@ -257,6 +257,24 @@
     var userCore = (PE.compileUserCore && userMaskId) ? PE.compileUserCore(userMaskId) : '';
     if (userCore) sys.push(userCore);
 
+    /* ---- 群线上动态上下文（2026-10-05 K03f：世界书 / 语言 / 自定义卡 / 生活动态）----
+       四个源的**权限等级不同，分开装配，绝不混装**：
+       · 世界书：全局书 → 共享块；个人书 → 只进挂靠本体的 [ENTITY] 块；
+         挂在群外角色身上的个人书整本不注入（编译层分流，
+         见 PE.compileWorldbookGroup，knownBy 语义 = 个人书只归挂靠者知道）。
+       · 语言：逐本体一行进各自块，只说「说什么语言」，不带私聊译文协议。
+       · 自定义卡：只接用户显式标记「群聊可用」的卡；没标记 = 私聊专属，不广播。
+       · 近期生活动态：lifeFeed.text 按角色过滤（朋友圈 canCharSee /
+         日历 visibility 四档 / 日记作者），天然逐本体隔离 ⇒ 进各自块。 */
+    var msgs = gs().messagesOf(groupId);
+    var recent = msgs.slice(-30);
+    var wb = (PE.compileWorldbookGroup)
+      ? PE.compileWorldbookGroup(
+          entities.map(function (e) { return e.ownerId; }),
+          recent.map(function (m) { return m.content || ''; }).join('\n'))
+      : { shared: '', perEntity: {} };
+    if (wb.shared) sys.push(wb.shared);
+
     /* 候选本体与知识切片 */
     var entLines = entities.map(function (e) {
       var k = entityKnowledge(e, groupId) || '';
@@ -275,6 +293,10 @@
          靠 groupRound 的知识边界纪律隔离（软隔离，与 innerText 同级）。 */
       var i01 = (PE.compileI01 && userMaskId) ? PE.compileI01(e.ownerId, userMaskId) : '';
       if (i01) k += '\n' + i01;
+      /* 语言（K03f）：TA 常驻地说什么语言 → 各自块内一行；
+         没有语言资料（国内常驻 / 日历缺位）就静默，不占块内篇幅。 */
+      var langLine = (PE.compileLangGroup) ? PE.compileLangGroup(e.ownerId) : '';
+      if (langLine) k += '\n' + langLine;
       /* 项目 2：群池 L4 **逐成员注入**（α 方案）—— 每个实体的 `[ENTITY]` 块里
          只放它自己的群池摘要（groupTextFor 按它的记忆开关隔离，关了的为空）。
          不再是共享 system 一份（共享路径已删，M5c 反向锁死）。 */
@@ -282,16 +304,34 @@
         var grp = Sleepy.memoryVec.groupTextFor(groupId, e.ownerId);
         if (grp) k += '\n' + grp;
       }
+      /* 近期生活动态（K03f）：lifeFeed 已逐角色过滤 —— 「我能看到」不等于
+         「TA 能看到」，块里每一条都是 TA 自己有权看见的，所以逐本体注入安全。 */
+      if (Sleepy.lifeFeed && typeof Sleepy.lifeFeed.text === 'function') {
+        var life = Sleepy.lifeFeed.text(e.ownerId, userMaskId);
+        if (life) k += '\n' + life;
+      }
+      /* 个人世界书（K03f）：编译层已按挂靠本体分流，这里只取自己那份；
+         群里没人认识的（挂群外角色的）在编译层就被拦下了。 */
+      var wbMine = wb.perEntity ? wb.perEntity[e.ownerId] : '';
+      if (wbMine) k += '\n' + wbMine;
       return '[ENTITY id=' + e.ownerId + ']\n' + k + '\n[/ENTITY]';
     });
     sys.push('[ENTITY_KNOWLEDGE]\n' + entLines.join('\n\n'));
     sys.push('注意：[ENTITY id=…] 是调度用的内部编号，**绝不**出现在消息正文里；群里的人只用账号名相称。');
 
+    /* 自定义卡（K03f）：**只接显式标记 group:true 的卡** ——
+       没标记的卡一律视为私聊专属（可能写着某个角色的私密设定），绝不广播；
+       用户在预设页逐张开关，默认关闭，宁缺勿错。 */
+    (PE.customCards ? PE.customCards() : []).forEach(function (cc) {
+      if (!cc || cc.group !== true) return;
+      if (!String(cc.body || '').trim()) return;
+      if (PE.cardEnabled && !PE.cardEnabled(cc.id)) return;
+      sys.push(String(cc.body).trim());
+    });
+
     /* ---- user：可见历史 + 触发 + 预算 ---- */
     var user = [];
 
-    var msgs = gs().messagesOf(groupId);
-    var recent = msgs.slice(-30);
     var histLines = recent.map(function (m) {
       if (m.type === 'system') return '（系统：' + m.content + '）';
       if (m.recalledAt) return null;    /* 撤回的原文不进历史 */

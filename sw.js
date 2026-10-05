@@ -13,6 +13,17 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v166（2026-10-05）：**群线上动态上下文补齐（K03f）**——
+   · page-group-ai：composeRound 接四源（权限等级分开装配）——
+     世界书按知情范围分流（全局书 → 共享块；个人书 → 挂靠本体的 [ENTITY] 块，
+     群外角色的不注入）；逐本体语言行（只说说什么语言，不带私聊译文协议）；
+     近期生活动态逐本体（lifeFeed 已按角色过滤）；自定义卡只接显式标记
+     「群聊可用」的卡，没标记 = 私聊专属不广播。
+   · prompt-engine：新增 compileWorldbookGroup（shared + perEntity 双出口）与
+     compileLangGroup，导出面补齐；自定义卡 schema 加可选 group 字段。
+   · page-presets：自定义卡编辑页加「群聊可用」开关（默认关）。
+   → 必须跳版本：prompt-engine.js / page-group-ai.js / page-presets.js 都变了。
+
    v165（2026-10-05）：**ta-life 三表接入私聊线上/线下/主动消息（K03e）**——
    · ta-life：新增 compileLivingLife（统一编译出口，只读零模型零写入）：
      按真实状态筛选三表（items 终止=已完成；promises 终止=已兑现/已解除；
@@ -430,7 +441,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v165';
+var CACHE = 'sleepy-v166';
 var CORE = [
   './',
   './index.html',

@@ -1196,9 +1196,13 @@
 
   function customCards() { return cfg().custom; }
 
-  function addCustomCard(title, body) {
+  /* 自定义卡 scope（2026-10-05 K03f）：`group: true` = 用户显式标记
+     「群聊可用」。**默认无标记 = 私聊专属** —— 群线上只接带标记的卡，
+     绝不把没标记的（可能写着某角色的私密设定）广播给全群。 */
+  function addCustomCard(title, body, opts) {
     var v = cfg();
     var card = { id: 'cu_' + Date.now().toString(36), title: String(title || '未命名注入'), body: String(body || ''), at: Date.now() };
+    if (opts && opts.group) card.group = true;   /* 只在开着时落字段，不留 group:false 尸体 */
     v.custom.push(card);
     saveCfg(v);
     return card;
@@ -1210,6 +1214,10 @@
       if (c.id !== id) return;
       if (patch.title != null) c.title = String(patch.title);
       if (patch.body != null) c.body = String(patch.body);
+      if (patch.group != null) {
+        if (patch.group) c.group = true;
+        else delete c.group;   /* 关掉就删字段，别留 group:false 尸体 */
+      }
     });
     saveCfg(v);
   }
@@ -1614,6 +1622,99 @@
     });
     if (!lines.length) return '';
     return '【世界书】以下是当前世界观的设定资料，写作时遵守：\n' + lines.slice(0, 10).join('\n');
+  }
+
+  /* K04 世界书 · 群线上版（2026-10-05 K03f）：复用 compileWorldbook 的
+     书/条目/关键词闸，但按**知情范围**分流 —— 群线上一次请求 = 一条共享
+     system，什么东西能进共享块、什么只能进某个本体的块，必须在编译层
+     分开，不能靠模型自觉：
+     · 全局书（scope 'global'）＝世界级设定，群体共享 ⇒ 进 shared 共享块；
+     · 个人书（scope 'personal'）＝挂在某张脸上的设定，只有 TA 知道 ⇒
+       进 perEntity[该本体] 块（与 innerText/I01 同级的软隔离），
+       **绝不进共享块**；挂在群外角色身上的个人书整本不注入（不广播）。
+     「按当前世界过滤」本批不另做：worldbooks 存档本来就不分岛
+     （page-worldbook 写入不盖 sandboxId 章，私聊线上同样不分），
+     群场景单独加岛过滤只会造成两场景口径分叉。
+     返回 { shared, perEntity } —— 两个出口都可能为空串/空对象，调用方静默跳过。 */
+  function wbEntryHit(it, hay) {
+    if (!it || it.enabled === false) return false;
+    var content = String(it.content || '').trim();
+    if (!content) return false;
+    if (it.always) return true;
+    var keys = wbSplitKeys(it.keys);
+    return keys.length > 0 && keys.some(function (k) {
+      return hay.indexOf(k.toLowerCase()) >= 0;
+    });
+  }
+
+  function compileWorldbookGroup(ownerIds, recentText) {
+    var out = { shared: '', perEntity: {} };
+    var books = store.get('worldbooks');
+    if (!Array.isArray(books) || !books.length) return out;
+    var hay = String(recentText || '').toLowerCase();
+
+    /* 群成员本体集合：ownerId 本尊 + 它 root 下全部皮套（个人书挂在
+       任何一张脸上都归这个本体），反向建「charId → ownerId」映射。 */
+    var ownerOfChar = {};
+    (ownerIds || []).forEach(function (oid) {
+      if (!oid || ownerOfChar[oid]) return;
+      ownerOfChar[oid] = oid;
+      try {
+        var root = core.rootOf(oid);
+        if (root && root.id && !ownerOfChar[root.id]) ownerOfChar[root.id] = oid;
+        core.subChars(oid).forEach(function (s) {
+          if (s && s.id && !ownerOfChar[s.id]) ownerOfChar[s.id] = oid;
+        });
+      } catch (e) { /* rootOf/subChars 拿不到就只认本尊 */ }
+    });
+
+    var sharedLines = [];
+    books.forEach(function (b) {
+      if (!b || b.enabled === false) return;
+      if (b.scope === 'personal') {
+        var oid = ownerOfChar[b.characterId];
+        if (!oid) return;   /* 群里没人认识这本书的主人 ⇒ 不注入、不广播 */
+        (b.entries || []).forEach(function (it) {
+          if (out.perEntity[oid] === undefined) out.perEntity[oid] = [];
+          var lines = out.perEntity[oid];
+          if (lines.length >= 20) return;
+          if (!wbEntryHit(it, hay)) return;
+          lines.push('【' + (it.name || b.name || '条目') + '】' + String(it.content || '').trim());
+        });
+        if (!out.perEntity[oid] || !out.perEntity[oid].length) delete out.perEntity[oid];
+        return;
+      }
+      (b.entries || []).forEach(function (it) {
+        if (sharedLines.length >= 20) return;
+        if (!wbEntryHit(it, hay)) return;
+        sharedLines.push('【' + (it.name || b.name || '条目') + '】' + String(it.content || '').trim());
+      });
+    });
+
+    if (sharedLines.length) {
+      out.shared = '【世界书】以下是当前世界观的设定资料，群里的大家都可能知道，写作时遵守：\n' +
+        sharedLines.slice(0, 10).join('\n');
+    }
+    Object.keys(out.perEntity).forEach(function (oid) {
+      var c = core.findChar(oid);
+      out.perEntity[oid] = '【仅TA知道的世界设定】下面这些是「' + (c ? c.name : '?') +
+        '」自己知道的世界设定资料，别的成员不一定知道；TA 按人设决定用不用，' +
+        '但不会当成人人都懂的事在群里直接说破：\n' + out.perEntity[oid].slice(0, 10).join('\n');
+    });
+    return out;
+  }
+
+  /* I03 语言 · 群线上版（2026-10-05 K03f）：只交代「TA 平时说什么语言」，
+     **不搬私聊的译文协议** —— [译]…[/译] 行是私聊线上气泡的格式
+     （splitBubblesT 消费），线下 dialogue.trans 是另一个场景的协议，
+     群线上的输出是 JSON messages，两套都不适用，塞进来只会污染输出结构。
+     语言档拿不到 / 说中文 → ''（槽静默，不占篇幅）。 */
+  function compileLangGroup(charId) {
+    var lang = langOfChar(charId);
+    if (!lang || lang.same) return '';
+    return '【说话方式】你平时说' + lang.name + '（' + lang.native + '）。' +
+      '在群里也照常用' + lang.name + '说，用你这个人本来会用的说法，' +
+      '不要刻意简化成教科书句子。';
   }
 
   /* ============================ 装配 ============================ */
@@ -2405,6 +2506,10 @@
     compileCharacter: compileCharacter,
     compileUserCore: compileUserCore,
     compileWorldbook: compileWorldbook,
+    /* K04/I03 的群线上版（2026-10-05 K03f）：世界书按知情范围分流
+       （shared 共享块 + perEntity 逐本体块），语言只给说话方式行、不带译文协议。 */
+    compileWorldbookGroup: compileWorldbookGroup,
+    compileLangGroup: compileLangGroup,
     compileRelation: compileRelation,
     charMetaLines: charMetaLines,
     compileI01: compileI01,

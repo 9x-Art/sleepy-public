@@ -2581,6 +2581,205 @@ t('K03e 暂停/受阻/待核实按真实状态表达（不伪装成进行中，�
   return '状态逐条如实';
 });
 
+/* ---------- 群线上动态上下文 K03f（2026-10-05 本批）----------
+   四源权限等级分开验收：worldbook（knownBy 分流）/ language（逐本体）/ 
+   custom（群标记闸）/ lifeFeed（逐角色过滤），全部看**真实 composeRound 出站**。 */
+console.log('\n--- 群线上动态上下文 K03f（世界书/语言/自定义卡/生活动态）---');
+
+const k03f = t('K03f 夹具：岛/两本体一NPC/群/世界书三本/朋友圈一条/两张自定义卡', () => {
+  const sb = S.core.createSandbox('isle', 'K03f群岛');
+  S.core.setActiveSandbox(sb.id);
+  const chA = S.core.upsertChar({ name: 'K03f角色甲', kind: 'main', content: 'K03f甲人设。' }).id;
+  const chJp = S.core.upsertChar({ name: 'K03f角色乙', kind: 'main', content: 'K03f乙人设。', region: 'JP', city: '东京', timezone: 'Asia/Tokyo' }).id;
+  const chN = S.core.upsertChar({ name: 'K03f店长', kind: 'npc', parentId: chA, content: 'K03fNPC人设', knownBy: [] }).id;
+  const chOut = S.core.upsertChar({ name: 'K03f群外角色', kind: 'main', content: 'K03f群外人设。' }).id;
+  const u = S.core.upsertUser({ name: 'K03f我' }).id;
+  S.core.setSandboxChars(sb.id, [chA, chJp, chOut]);
+  const g = S.groupStore.createGroup({
+    name: 'K03f测试群', ownerAccountId: u,
+    members: [
+      { kind: 'char', ownerId: chA, accountId: chA },
+      { kind: 'char', ownerId: chJp, accountId: chJp },
+      { kind: 'npc', ownerId: chN, accountId: chN }
+    ]
+  });
+  if (!g.ok) throw new Error(g.message);
+  const gid = g.group.id;
+  S.groupStore.addMessage(gid, { senderKind: 'user', senderAccountId: u, content: '明晚一起去青岚镇拍胶片吧？' });
+  /* 朋友圈：chA 自己发的动态 —— 只有甲的实体块该看见 */
+  const moments = S.store.get('moments') || [];
+  const mo = { id: 'mo_k03f_1', sandboxId: sb.id, characterId: chA, name: 'K03f角色甲',
+    text: 'K03f动态：修好的相机第一次出片。', at: Date.now() - 3600 * 1000,
+    privacy: 'all', likes: [], comments: [] };
+  S.store.set('moments', moments.concat([mo]));
+  /* 世界书三本：全局共享 / 挂乙（群内）/ 挂群外角色（不该进群） */
+  const books = S.store.get('worldbooks') || [];
+  const mk = [];
+  mk.push({ id: 'wb_k03f_global', name: 'K03f全局书', scope: 'global', enabled: true, entries: [
+    { id: 'e1', name: '共享常驻', always: true, enabled: true, content: 'K03f共享常驻设定：这座城里所有人共用一条有轨电车线。' },
+    { id: 'e2', name: '共享关键词', keys: '青岚镇', enabled: true, content: 'K03f共享关键词条目：青岚镇的钟楼停在三点。' },
+    { id: 'e3', name: '共享不命中', keys: '绝不命中的词K03fX', enabled: true, content: 'K03f不该出现的共享条目。' }
+  ]});
+  mk.push({ id: 'wb_k03f_jp', name: 'K03f乙的书', scope: 'personal', characterId: chJp, enabled: true, entries: [
+    { id: 'e4', name: '乙的常驻', always: true, enabled: true, content: 'K03f仅乙知道：她房间的窗对着神社的屋檐。' },
+    { id: 'e5', name: '乙的关键词', keys: '胶片', enabled: true, content: 'K03f仅乙知道：她那卷胶片是在青岚镇买的。' },
+    { id: 'e6', name: '乙不命中', keys: '绝不命中的词K03fY', enabled: true, content: 'K03f不该出现的乙条目。' }
+  ]});
+  mk.push({ id: 'wb_k03f_out', name: 'K03f群外的书', scope: 'personal', characterId: chOut, enabled: true, entries: [
+    { id: 'e7', name: '群外常驻', always: true, enabled: true, content: 'K03f群外角色的私密设定绝不能进群。' }
+  ]});
+  S.store.set('worldbooks', books.concat(mk));
+  const cGroup = S.promptEngine.addCustomCard('K03f群卡', 'K03f群聊可用卡正文。', { group: true });
+  const cPriv = S.promptEngine.addCustomCard('K03f私卡', 'K03f私聊专属卡正文绝不进群。');
+  return { sb: sb.id, chA, chJp, chN, chOut, u, gid, mo, books, mk,
+    cGroup: cGroup.id, cPriv: cPriv.id };
+});
+
+const k03fSlices = (sys) => {
+  const out = {};
+  const re = /\[ENTITY id=([^\]]+)\]\n([\s\S]*?)\n\[\/ENTITY\]/g;
+  let m;
+  while ((m = re.exec(sys)) !== null) out[m[1]] = m[2];
+  return out;
+};
+const k03fRestore = () => {
+  S.store.set('worldbooks', k03f.books.filter((b) => !k03f.mk.some((x) => x.id === b.id)));
+  S.store.set('moments', (S.store.get('moments') || []).filter((x) => x.id !== k03f.mo.id));
+  S.promptEngine.removeCustomCard(k03f.cGroup);
+  S.promptEngine.removeCustomCard(k03f.cPriv);
+  S.store.set('groupInner:' + k03f.gid, {});
+};
+
+t('K03f 世界书：全局书进共享块、个人书只进挂靠本体的块、群外的书整本不进、关键词闸生效', () => {
+  const r = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f）', budget: { actors: 2, msgs: 5 } });
+  const sys = r.messages[0].content;
+  const slices = k03fSlices(sys);
+  if (!slices[k03f.chA] || !slices[k03f.chJp] || !slices[k03f.chN]) {
+    throw new Error('实体块不齐：' + Object.keys(slices).join(','));
+  }
+    /* 全局书：恰好进共享块一次，任何实体块里都没有 */
+    if (k03eCount(sys, '【世界书】') !== 1) throw new Error('共享世界书块不是恰好一次');
+    if (sys.indexOf('K03f共享常驻设定') < 0) throw new Error('全局常驻条目没进共享块');
+    if (sys.indexOf('K03f共享关键词条目') < 0) throw new Error('关键词命中的共享条目没进（群消息提到青岚镇）');
+    if (Object.keys(slices).some((k) => slices[k].indexOf('K03f共享常驻设定') >= 0)) {
+      throw new Error('全局书条目漏进了实体块');
+    }
+    /* 个人书（乙）：只在乙的块里 */
+    if (slices[k03f.chJp].indexOf('K03f仅乙知道：她房间的窗') < 0) throw new Error('乙的个人常驻条目没进乙的块');
+    if (slices[k03f.chJp].indexOf('K03f仅乙知道：她那卷胶片') < 0) throw new Error('乙的关键词条目没进（群消息提到胶片）');
+    if (slices[k03f.chA].indexOf('K03f仅乙知道') >= 0) throw new Error('乙的个人书漏进了甲的块');
+    if (slices[k03f.chN].indexOf('K03f仅乙知道') >= 0) throw new Error('乙的个人书漏进了NPC的块');
+    /* 群外角色的书：整本不进（knownBy 语义 = 只归挂靠者知道） */
+    if (sys.indexOf('K03f群外角色的私密设定') >= 0) throw new Error('群外角色的个人书被广播进群了');
+    /* 关键词闸：没命中的条目不出现 */
+    if (sys.indexOf('K03f不该出现的共享条目') >= 0) throw new Error('未命中的共享条目漏进来了');
+    if (sys.indexOf('K03f不该出现的乙条目') >= 0) throw new Error('未命中的乙条目漏进来了');
+    return { 共享: 1, 乙块: 2, 群外: 0 };
+});
+
+t('K03f 世界书空数据静默：没有书就没有任何世界书块', () => {
+  const books = S.store.get('worldbooks') || [];
+  S.store.set('worldbooks', []);
+  try {
+    const r = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f空）', budget: { actors: 2, msgs: 5 } });
+    const sys = r.messages[0].content;
+    if (sys.indexOf('【世界书】') >= 0 || sys.indexOf('【仅TA知道的世界设定】') >= 0) {
+      throw new Error('无书却出现了世界书块');
+    }
+    return '静默';
+  } finally { S.store.set('worldbooks', books); }
+});
+
+t('K03f 语言：乙（东京常驻）块内有说话方式行、甲/NPC 块没有、不带私聊译文协议', () => {
+  const r = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f语言）', budget: { actors: 2, msgs: 5 } });
+  const sys = r.messages[0].content;
+  const slices = k03fSlices(sys);
+  if (k03eCount(slices[k03f.chJp], '【说话方式】你平时说日语（日本語）') !== 1) {
+    throw new Error('乙的块里没有（或不止一条）日语说话方式行');
+  }
+  [k03f.chA, k03f.chN].forEach((oid) => {
+    if (slices[oid].indexOf('【说话方式】') >= 0) throw new Error(oid + ' 没设国外常驻地却有语言行');
+  });
+  if (k03eCount(sys, '【说话方式】') !== 1) throw new Error('语言行总数不是 1 —— 泄漏到块外了');
+  /* 不搬私聊协议：群线上输出是 JSON，[译] 行协议和线下 trans 字段都不该出现 */
+  if (sys.indexOf('[译]') >= 0 || sys.indexOf('trans 字段') >= 0 || sys.indexOf('dialogue 段') >= 0) {
+    throw new Error('私聊译文协议被照搬进了群线上');
+  }
+  return '逐本体 + 无协议污染';
+});
+
+t('K03f 生活动态：甲的动态只进甲的块（lifeFeed 逐角色过滤），乙/NPC 块干净', () => {
+  const r = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f生活）', budget: { actors: 2, msgs: 5 } });
+  const sys = r.messages[0].content;
+  const slices = k03fSlices(sys);
+  if (k03eCount(slices[k03f.chA], '[近期生活动态]') !== 1) throw new Error('甲的块里没有生活动态块');
+  if (slices[k03f.chA].indexOf('K03f动态：修好的相机第一次出片。') < 0) throw new Error('动态内容没进');
+  [k03f.chJp, k03f.chN].forEach((oid) => {
+    if (slices[oid].indexOf('[近期生活动态]') >= 0 || slices[oid].indexOf('K03f动态') >= 0) {
+      throw new Error(oid + ' 的块里出现了甲的生活动态 —— 隔离失效');
+    }
+  });
+  if (k03eCount(sys, '[近期生活动态]') !== 1) throw new Error('生活动态块总数不是 1');
+  return '逐本体隔离';
+});
+
+t('K03f 自定义卡：只接显式标记群聊可用的卡；没标记的不广播；停用/去标记后立即退出', () => {
+  try {
+    const r1 = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f卡）', budget: { actors: 2, msgs: 5 } });
+    const sys1 = r1.messages[0].content;
+    if (sys1.indexOf('K03f群聊可用卡正文') < 0) throw new Error('标记了群聊可用的卡没进群');
+    if (sys1.indexOf('K03f私聊专属卡正文') >= 0) throw new Error('没标记的私聊卡被广播进群了');
+    /* 停用 → 立即退出 */
+    S.promptEngine.setCardEnabled(k03f.cGroup, false);
+    const sys2 = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f卡2）', budget: { actors: 2, msgs: 5 } }).messages[0].content;
+    if (sys2.indexOf('K03f群聊可用卡正文') >= 0) throw new Error('停用的群卡还在注入');
+    S.promptEngine.setCardEnabled(k03f.cGroup, true);
+    /* 去掉标记 → 退出，且字段不留尸体 */
+    S.promptEngine.saveCustomCard(k03f.cGroup, { group: false });
+    const card = S.promptEngine.customCards().filter((c) => c.id === k03f.cGroup)[0];
+    if (card.group) throw new Error('group:false 尸体留在卡上');
+    const sys3 = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f卡3）', budget: { actors: 2, msgs: 5 } }).messages[0].content;
+    if (sys3.indexOf('K03f群聊可用卡正文') >= 0) throw new Error('去掉标记后还在注入');
+    S.promptEngine.saveCustomCard(k03f.cGroup, { group: true });
+    return '闸门三态全对';
+  } finally {
+    S.promptEngine.setCardEnabled(k03f.cGroup, true);
+  }
+});
+
+t('K03f 既有块不被顶掉：群协议/成员/时间/内心注记/编号禁令/历史/预算全部原位', () => {
+  const before = JSON.stringify(S.store.get('groupInner:' + k03f.gid) || {});
+  S.groupAI.saveInner(k03f.gid, [{ entityId: k03f.chA, internalUpdate: 'K03f内心注记夹具' }]);
+  try {
+    const r = S.groupAI.composeRound(k03f.gid, { stimulus: '（K03f既有）', budget: { actors: 2, msgs: 5 } });
+    const sys = r.messages[0].content;
+    const usr = r.messages[1].content;
+    if (k03eCount(sys, S.promptEngine.cardBody('groupRound')) !== 1) throw new Error('群协议卡被顶掉或重复');
+    /* groupRound 卡正文里**引用了** [ENTITY_KNOWLEDGE] 字样，不能裸计数 ——
+       用「段头紧跟第一个实体块」的形状判段本体恰一次 */
+    if (k03eCount(sys, '[ENTITY_KNOWLEDGE]\n[ENTITY id=') !== 1) throw new Error('实体知识段被顶掉或重复');
+    /* 群协议卡与编号禁令行自己也引用 '[ENTITY id=' 字样 —— 用配对切片数实体块 */
+    const slices0 = k03fSlices(sys);
+    if (Object.keys(slices0).length !== 3) {
+      throw new Error('实体块数量不对（应 3 本体各一块）：' + Object.keys(slices0).join(','));
+    }
+    if (k03eCount(sys, '[GROUP]') !== 1) throw new Error('[GROUP] 成员清单被顶掉');
+    if (sys.indexOf('【在场时间】') < 0) throw new Error('f493aca 的时间块丢了');
+    if (sys.indexOf('K03f内心注记夹具') < 0) throw new Error('innerText 被顶掉');
+    if (sys.indexOf('是调度用的内部编号') < 0) throw new Error('编号禁令被顶掉');
+    if (sys.indexOf('{{') >= 0) throw new Error('system 里出现了未展开的伪变量');
+    if (usr.indexOf('[RECENT_GROUP]') < 0 || usr.indexOf('青岚镇拍胶片') < 0) throw new Error('群历史丢了');
+    if (usr.indexOf('[BUDGET]') < 0) throw new Error('预算丢了');
+    if (k03eCount(sys, 'K03f甲人设') !== 1 || k03eCount(sys, 'K03f乙人设') !== 1) {
+      throw new Error('本体人设（K01 同源）被顶掉或重复');
+    }
+    return '九件全在';
+  } finally {
+    S.store.set('groupInner:' + k03f.gid, JSON.parse(before) || {});
+    k03fRestore();
+  }
+});
+
 t('ta 首页 v2 接线：taItems/taFollows 优先显示 + 幕后/详情页注册可开 + 仍零写入', () => {
   const src = require('fs').readFileSync('page-ta.js', 'utf8');
   if (/store\.set\(|fetch\(|XMLHttpRequest|streamChat|api\.chat/i.test(src)) {
@@ -13111,7 +13310,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
      「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v165';
+const EXPECTED_SW_CACHE = 'sleepy-v166';
 
 t('SW 缓存版本：与独立基准一致（本批改过 page-offline.js，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

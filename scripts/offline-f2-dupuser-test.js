@@ -308,8 +308,12 @@ t('★ 本批只改了 prompt-engine.js 与 page-offline.js（其余生产文件
   /* ★ 2026-10-05 更新：page-offline.js 在**解析降级取证批**获准改动
      （加 sleepy.forensics.parseFail.* 独立取证落盘），从禁改清单移出；
      其余四个文件仍逐字节锁定。锚定的 BASE 是**dupuser 批开工基线**，
-     跨批次后 page-offline.js 的差异属取证批批准改动，不再算越界。 */
-  ['api.js', 'behavior-text.js', 'page-chat.js', 'page-presets.js']
+     跨批次后 page-offline.js 的差异属取证批批准改动，不再算越界。
+   ★ 2026-10-05 K03f 批更新：page-presets.js 在**群线上动态上下文批**获准改动
+     （自定义卡编辑页加「群聊可用」开关），同样从禁改清单移出；
+     群线上侧的改动另由 behavior-online-migration-test 的 groupOnline
+     受控迁移检查逐字节看守。其余三个文件仍逐字节锁定。 */
+  ['api.js', 'behavior-text.js', 'page-chat.js']
     .forEach(function (f) {
       var a = H.sha256(fs.readFileSync(path.join(H.ROOT, f)));
       var b = H.sha256(fs.readFileSync(path.join(BASE, f)));

@@ -892,6 +892,50 @@ var GO_SCENE_IDS = ['E', 'S4'];
 var GO_TAIL_ANCHOR = '[GROUP]';      /* 原有群现场信息的第一段 */
 var GO_SEP = '\n\n';                /* 装配分隔符 */
 
+/* ---- K03f / f493aca 批准新增块（全部从**生产编译器**现算，不从重捕结果抠）----
+   ★ 夹具形状：createGroup 会把 owner 账号自动带成 user 成员 ⇒ userMaskId =
+     umBig（大号）；umBig 没写 persona ⇒ USER_CORE 缺席（下面有缺席断言），
+     但逐本体 I01 **在场**（f493aca 批准块，逐本体 cognition 独立）；
+     世界书夹具只有一本挂在 chMain 身上的个人书（always 常驻）⇒ 共享块静默；
+     自定义卡夹具没标 group ⇒ 不进群（这正是「不广播」的断言点）。 */
+var GO_ENTITIES = PROBE.S.groupAI.entitiesOf(PROBE.groupId).map(function (e) { return e.ownerId; });
+var GO_USER = (PROBE.S.groupStore.membersOf(PROBE.groupId).filter(function (m) {
+  return m.kind === 'user';
+})[0] || {}).accountId || null;
+var GO_PE = PROBE.S.promptEngine;
+var GO_TIME = GO_PE.compileGroupTimeFacts(GO_ENTITIES);
+var GO_LANG = {};
+var GO_LIFE = {};
+var GO_WB = {};
+var GO_I01 = {};
+(function () {
+  var wbg = GO_PE.compileWorldbookGroup(GO_ENTITIES, '');
+  GO_ENTITIES.forEach(function (oid) {
+    GO_LANG[oid] = GO_PE.compileLangGroup(oid) || '';
+    GO_I01[oid] = (GO_USER && GO_PE.compileI01) ? (GO_PE.compileI01(oid, GO_USER) || '') : '';
+    GO_LIFE[oid] = (PROBE.S.lifeFeed && PROBE.S.lifeFeed.text) ? (PROBE.S.lifeFeed.text(oid, GO_USER) || '') : '';
+    GO_WB[oid] = (wbg.perEntity && wbg.perEntity[oid]) || '';
+  });
+})();
+/* 从文本里摘掉一个批准块：必须唯一命中，并连带摘掉**一个**相邻装配换行
+   （防止残留孤立 \n 破坏逐字比对）。摘了多少字节由调用方记账。 */
+function cutApprovedPiece(text, piece, what) {
+  assert(piece && piece.length, what + '：批准块产出为空（生产编译器没吐内容？）');
+  var n = occurrencesOf(text, piece);
+  assert(n === 1, what + ' 应恰好出现 1 次，实得 ' + n + ' 次');
+  var cands = [GO_SEP + piece, '\n' + piece, piece + GO_SEP, piece + '\n'];
+  for (var i = 0; i < cands.length; i++) {
+    var at = text.indexOf(cands[i]);
+    if (at >= 0) {
+      return {
+        text: text.slice(0, at) + text.slice(at + cands[i].length),
+        bytes: cands[i].length
+      };
+    }
+  }
+  throw new Error(what + '：块唯一命中但找不到可摘的相邻分隔符');
+}
+
 function goBtBlock(ids) {
   var bt = PROBE.S.behaviorText;
   return ids.map(function (id) { return bt.module(id); }).join(GO_SEP);
@@ -1025,7 +1069,7 @@ function strictGroupOnlineCase() {
   var key = 'groupOnline';
   var sys = function () { return CAPS[key].messages[0].content; };
 
-  t('[' + key + '] 受控迁移：除 system 外每个字段与 v1 逐字一致（接线不得外溢）', function () {
+  t('[' + key + '] 受控迁移：除 system 外每个字段与 v1 逐字一致（批准哨兵翻转除外）', function () {
     assert(CAPS[key], key + ' 没捕到');
     /* 把 messages[0].content 挖掉后，其余**每一个字段**都必须与 v1 逐字相同。
        判据卡在「除 system 外零差异」：接线若顺手改了 user 段、entities、
@@ -1034,6 +1078,12 @@ function strictGroupOnlineCase() {
     var v1 = JSON.parse(JSON.stringify(V1_CAPS[key]));
     cur.messages[0].content = '<SYSTEM>';
     v1.messages[0].content = '<SYSTEM>';
+    /* ★ 2026-10-05 K03f 批准哨兵翻转（写死，不放宽判据）：
+       群线上接入了 per-entity 世界书（个人书）与近期生活动态 →
+       worldbook / moment 两个哨兵在群线上从 v1 的 false 变 true。
+       其余哨兵（含 customBody「私聊专属卡不广播」）必须保持 v1 原值。 */
+    v1.sentinels.worldbook = true;
+    v1.sentinels.moment = true;
     eq(diffPaths(v1, cur), [],
       key + ' 除 messages[0].content 外还有差异（接线溢出了 system）：');
   });
@@ -1060,7 +1110,62 @@ function strictGroupOnlineCase() {
     assert(iTail > iScene, '★ 顺序快照：E/S4 应在 ' + GO_TAIL_ANCHOR + ' 之前');
   });
 
-  t('[' + key + '] 去掉新增块与装配分隔符后，剩余 system 与 v1 逐字一致', function () {
+  t('[' + key + '] K03f 批准块逐本体就位：语言/生活动态/个人世界书各只在本体块内', function () {
+    var s = sys();
+
+    function entitySlice(ownerId) {
+      var openTag = '[ENTITY id=' + ownerId + ']';
+      var i = s.indexOf(openTag);
+      assert(i >= 0, '找不到 ' + openTag);
+      var j = s.indexOf('[/ENTITY]', i);
+      assert(j > i, ownerId + ' 的 [/ENTITY] 缺失');
+      return s.slice(i, j);
+    }
+
+    /* ① 时间块（f493aca）：共享恰 1 次 */
+    assert(GO_TIME && GO_TIME.length, 'GO_TIME 产出为空（生产 compileGroupTimeFacts 没吐内容？）');
+    eq(occurrencesOf(s, GO_TIME), 1, '【在场时间】块出现次数：');
+
+    GO_ENTITIES.forEach(function (oid) {
+      var mine = entitySlice(oid);
+      var others = GO_ENTITIES.filter(function (x) { return x !== oid; })
+        .map(entitySlice).join('\n');
+      /* ② 语言行：各自块内 0 或 1 次，别人的块里 0 次（逐本体归属） */
+      var lang = GO_LANG[oid];
+      if (lang) {
+        eq(occurrencesOf(mine, lang), 1, oid + ' 块内语言行次数：');
+        eq(occurrencesOf(others, lang), 0, oid + ' 的语言行不得出现在别的块：');
+      }
+      /* ③ 生活动态：同理（lifeFeed 逐角色过滤后各归各的块） */
+      var life = GO_LIFE[oid];
+      if (life) {
+        eq(occurrencesOf(mine, life), 1, oid + ' 块内生活动态次数：');
+        eq(occurrencesOf(others, life), 0, oid + ' 的生活动态不得出现在别的块：');
+      }
+      /* ③b I01（f493aca 批准块）：同理，逐本体 cognition 只归自己 */
+      var i01 = GO_I01[oid];
+      if (i01) {
+        eq(occurrencesOf(mine, i01), 1, oid + ' 块内 I01 次数：');
+        eq(occurrencesOf(others, i01), 0, oid + ' 的 I01 不得出现在别的块：');
+      }
+      /* ④ 个人世界书：同理（编译层按挂靠本体分流） */
+      var wbMine = GO_WB[oid];
+      if (wbMine) {
+        eq(occurrencesOf(mine, wbMine), 1, oid + ' 块内个人世界书次数：');
+        eq(occurrencesOf(others, wbMine), 0, oid + ' 的个人世界书不得出现在别的块：');
+      }
+    });
+
+    /* ⑤ 不广播三连（夹具形状下必须全部缺席）：
+       · 共享世界书块（夹具只有个人书）；
+       · 私聊专属自定义卡（夹具卡没标 group:true）；
+       · USER_CORE（owner user 成员没写 persona，compileUserCore 空串）。 */
+    eq(occurrencesOf(s, '【世界书】'), 0, '共享世界书块应缺席（夹具无全局书）：');
+    eq(occurrencesOf(s, CAP.S.customBody), 0, '未标记群聊可用的自定义卡不得广播：');
+    eq(occurrencesOf(s, '[USER_CORE]'), 0, '夹具 owner 马甲无 persona，USER_CORE 应缺席：');
+  });
+
+  t('[' + key + '] 去掉全部批准新增块后，剩余 system 与 v1 逐字一致', function () {
     var s = sys(), shell = goShellBlock(), scene = goSceneBlock();
     var v1sys = V1_CAPS[key].messages[0].content;
 
@@ -1071,13 +1176,30 @@ function strictGroupOnlineCase() {
     assert(iShell < iScene, '移除顺序前提：B/P/L 在 E/S4 之前');
     /* 确实移除过东西（否则下面的比对可能因没注入而空转） */
     assert(s.length > v1sys.length,
-      '★ 重捕 system 应比 v1 长（接线后多了两块），实得 ' + s.length + ' vs v1 ' + v1sys.length);
+      '★ 重捕 system 应比 v1 长（接线后多了批准块），实得 ' + s.length + ' vs v1 ' + v1sys.length);
 
-    /* ★ 移除 = 按**偏移量**切掉两处「块 + 其后分隔符」，长度由块本身决定。
+    /* ★ 移除 = 按**偏移量**切掉 v161 两处「块 + 其后分隔符」，长度由块本身决定。
        不用正则、不删所有匹配文本、不清洗空白。 */
     var rebuilt = s.slice(0, iShell)
       + s.slice(iShell + shell.length + GO_SEP.length, iScene)
       + s.slice(iScene + scene.length + GO_SEP.length);
+    var cutBytes = shell.length + scene.length + 2 * GO_SEP.length;
+
+    /* ★ 2026-10-05 起再摘 f493aca + K03f 的批准新增块（时间块 + 逐本体
+       I01/语言行/生活动态/个人世界书）。块文本全部来自生产编译器现算（见 GO_*），
+       每块先断言唯一命中再摘 —— 「判「某段在不在」必须先断言该段真被找到」。 */
+    if (GO_TIME) {
+      var rT = cutApprovedPiece(rebuilt, GO_TIME, '【在场时间】块');
+      rebuilt = rT.text; cutBytes += rT.bytes;
+    }
+    GO_ENTITIES.forEach(function (oid) {
+      [GO_LANG[oid], GO_I01[oid], GO_LIFE[oid], GO_WB[oid]].forEach(function (piece, k) {
+        if (!piece) return;
+        var what = oid + ' 批准块#' + k + '（语言/I01/生活动态/个人世界书）';
+        var r = cutApprovedPiece(rebuilt, piece, what);
+        rebuilt = r.text; cutBytes += r.bytes;
+      });
+    });
 
     /* 逐字比对；失败时报首个差异字符位置与上下文 —— 不截断、不归一。 */
     if (rebuilt !== v1sys) {
@@ -1087,10 +1209,9 @@ function strictGroupOnlineCase() {
         '  实际：' + JSON.stringify(rebuilt.slice(Math.max(0, at - 40), at + 60)) + '\n' +
         '  v1  ：' + JSON.stringify(v1sys.slice(Math.max(0, at - 40), at + 60)));
     }
-    /* 长度守恒：原长 − 两块 − 两个分隔符 = v1 长（证明没多切也没少切） */
-    eq(rebuilt.length,
-      s.length - shell.length - scene.length - 2 * GO_SEP.length,
-      key + ' 剩余 system 长度（应只少两块与两个分隔符）：');
+    /* 长度守恒：原长 − 全部批准块与其分隔符 = v1 长（证明没多切也没少切） */
+    eq(rebuilt.length, s.length - cutBytes,
+      key + ' 剩余 system 长度（应只少批准块与其分隔符）：');
   });
 }
 
