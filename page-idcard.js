@@ -1919,8 +1919,29 @@
     render: function (ctx) {
       var body = ctx.body;
       var id = ctx.params.id || '';
+      /* 目标岛：调用方显式给的优先，否则活动岛。 */
+      var sbId = String(ctx.params.sandboxId || (core.scopeId ? core.scopeId() : '') || '');
       var existing = id ? core.findUser(id) : null;
       if (id && !existing) { ctx.toast('找不到这件马甲', 'err'); ctx.back(); return; }
+      /* ⚠️ 2026-10-03 修（用户报：「改了默认存档之后再加孤岛/群岛，表单
+         直接 copy 那个存档的 user 账号」）：
+         以前只按 id 全局找记录，**不校验它属不属于要编辑的那座岛**。
+         于是从 A 岛点进 B 岛的编辑入口（或 params 串了）时，
+         表单整个 copy 的是 A 岛那件 —— 改一下就是改别座的记录，
+         所有岛的账号信息一起变。
+
+         马甲按岛是硬约定（core.js 2026-09-21 拍板），编辑页就是这条约定的
+         守门人：**记录不属于这座岛就不许编辑**（fail closed），
+         宁可让用户重新点一次，也不给一条跨岛的编辑口子。 */
+      if (existing && sbId && existing.sandboxId !== sbId) {
+        ctx.toast('这件马甲不属于这座岛 · 请在它自己的岛里改', 'err');
+        ctx.back();
+        return;
+      }
+      if (existing && !sbId) {
+        /* 没给岛 = 还没分房的老状态，放行但把章补上（下面 doSave 会显式回写） */
+        sbId = String(existing.sandboxId || '');
+      }
 
       var f = {};
       /* 跟角色编辑页同一套同学录排版（用户：「所有的加人设 char、user、
@@ -2157,8 +2178,28 @@
   Sleepy.register('me-profile', {
     title: '个人资料',
     render: function (ctx) {
-      var u = core.activeUser();
-      if (!u) { ctx.toast('还没有账号', 'warn'); ctx.back(); return; }
+      /* ⚠️ 2026-10-03 修（用户报：「改了默认存档后再加孤岛，表单直接 copy
+         那个存档的 user 账号；后来改孤岛 B，其他岛的账号信息全跟着变」）：
+
+         这里原来问的是 `core.activeUser()` —— 那个口子带
+         `|| ensureDefaultUser()` 的**跨岛兜底**：指针还停在上一座岛时，
+         它照样返回**别座岛的那件「我」**。于是：
+           · 打开孤岛 B 的「个人资料」，表单里是默认存档那件（用户看到的就是 copy）；
+           · 在这里改名字 = 改的**别座岛那条记录** → 全跟着变。
+         而且下面 doSave 不传 sandboxId，upsertUser 的 new 分支会
+         「盖当前房章」→ 岛章也可能被改花。
+
+         改成**指针卫兵**（与 page-switch / 桌面同一把尺子）：
+         戴的不是本岛的人就当「这座岛还没定我是谁」，
+         绝不把别岛的人抓来当表单初值。 */
+      var u = core.activeUserOnIsland();
+      if (!u) {
+        ctx.toast('这座岛还没定「我」是谁 · 先在岛屿总览里加一件马甲', 'warn');
+        ctx.back();
+        return;
+      }
+      /* 岛章以记录上的为准（activeUserOnIsland 已保证它在名册里） */
+      u = core.findUser(u.id) || u;
       var body = ctx.body;
       var f = {};
 
@@ -2236,7 +2277,12 @@
           city: String(f.city.get() || '').trim(),
           avatar: String(f.avatar.get() || '').trim(),
           avatarMedia: f.avatar.getMedia(),
-          isDefault: f.big.get()
+          isDefault: f.big.get(),
+          /* ⚠️ 岛章**显式回写**（2026-10-03）：这条记录的章必须是它自己的岛。
+             不写的话，upsertUser 命中已有记录走「逐键覆盖」分支，
+             sandboxId 没在 patch 里就保持原值（安全）；但写成 `undefined`
+             反而会被 `has()` 判成「显式给了空」→ 章被抹掉。宁可不传。 */
+          sandboxId: u.sandboxId
         });
         /* 打开开关就互斥地把**同一座岛**其他账号降级 —— 每岛只认一件大号 */
         if (f.big.get()) core.setDefaultUser(u.id);

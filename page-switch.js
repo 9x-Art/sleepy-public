@@ -158,7 +158,11 @@
       addU.appendChild(h('span', 'sw-chip-name', '新增'));
       addU.addEventListener('click', function () {
         closeSwitcher();
-        if (switchCtx) switchCtx.open('mask-edit', { id: '' });
+        /* ⚠️ sandboxId 必须带上（2026-10-03）：这一屏的上下文已经是**这座岛**
+           （上面 `if (!sb)` 已挡住没岛的情况），不传的话 mask-edit 退化成
+           「盖当前活动房的章」—— 在别的岛开着这个切换器时，
+           建出来的是**别座岛**的马甲。 */
+        if (switchCtx) switchCtx.open('mask-edit', { id: '', sandboxId: sb.id });
       });
       uList.appendChild(addU);
       cRow.appendChild(uList);

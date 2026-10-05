@@ -1079,10 +1079,33 @@
         /* ---- 初始认知锁（原配置台的这一段，2026-09-22 搬过来）----
            定的是「角色 × 我的每一张脸」这段关系的基调：认知 × 屏障。
            它决定模型此刻知道多少 —— 也是上面那张矩阵读的那份数据。 */
-        if (mains.length && masks.length) {
+        /* ---- 初始认知锁（原配置台的这一段，2026-09-22 搬过来）----
+           定的是「角色 × 我的每一张脸」这段关系的基调：认知 × 屏障。
+           它决定模型此刻知道多少 —— 也是上面那张矩阵读的那份数据。
+
+           ⚠️ 2026-10-03 修（用户报：「默认存档的彼此认知和新加的岛屿里
+           彼此认知不一样，一个有选项，一个没有」）：
+           以前整段挂在 `mains.length && masks.length` 底下 ——
+           新岛刚建、还没建马甲（maskIds 空）→ **整段不渲染**，
+           用户看到的就是「默认存档那边有四档可选，新岛这边啥都没有」。
+           认知锁的**档位是产品常量**（LOCKS 四档），与此刻有几件马甲无关；
+           马甲数为 0 时该显示的是「还没定「我」是谁，去加一件马甲」，
+           而不是把这一整段藏起来。
+
+           所以这里**只按「有没有角色」判**，不再拿马甲数当门槛。 */
+        if (mains.length) {
           body.appendChild(secTitle('初始认知锁'));
           body.appendChild(h('p', 'iol-cog-sub',
             '定这一段关系的基调。改的是同一份数据 —— 上面那张矩阵读的就是它。'));
+          if (!masks.length) {
+            /* 档位一个都不少，只是暂时没有可设的对象 —— 说清去哪加，别让用户以为这里坏了 */
+            body.appendChild(h('p', 'iol-empty',
+              '这座岛还没有「我」的马甲，所以暂时没有可设的组合。' +
+              '去「进入身份 · 新建一件马甲」加一件，下面这四档就会出现。'));
+            LOCKS.forEach(function (lk) {
+              body.appendChild(h('p', 'iol-cog-sub', '· ' + lk.label + ' —— ' + lk.hint));
+            });
+          } else {
           var lockBox = h('div', 'cfg-locks');
           mains.forEach(function (main) {
             masks.forEach(function (u) {
@@ -1108,6 +1131,7 @@
             });
           });
           body.appendChild(lockBox);
+          }
         }
 
         body.appendChild(h('p', 'iol-note',
