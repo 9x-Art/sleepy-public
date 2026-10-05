@@ -2886,6 +2886,15 @@
               /* 主动消息引擎：回复落地后扫一遍当前岛的其他角色
                  （引擎自带节流和资格闸门，这里只管喊一声） */
               if (Sleepy.proactiveEngine) Sleepy.proactiveEngine.sweep();
+              /* ta 已成立的影响（第五批）：这一轮**注入过**的影响，到此刻才算
+                 「角色已经有过反应」（只记第一次，幂等）。放在和总结/主动消息
+                 同一位置 —— 都不阻塞聊天；失败静默：ta 出问题不影响聊天。 */
+              if (Sleepy.taImpact) {
+                try {
+                  var tiChat = getChat(chatId);
+                  if (tiChat && tiChat.characterId) Sleepy.taImpact.noteReply(tiChat.characterId);
+                } catch (e) { /* 静默 */ }
+              }
             } else if (target) {
               /* 正文被表情吃光了，而屏幕上已经有一条占位消息 ——
                  把它删掉，只留表情（不然会剩下一个空气泡）。 */
