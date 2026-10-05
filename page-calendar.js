@@ -119,15 +119,27 @@
     var info = c.dayInfo(iso, cfg);
     var out = [];
     if (info.legal) {
+      /* ⚠️ 2026-10-03：多日连休时**标题要带区间和第几天**。
+         以前标题直接用 `info.legal.name`，而那是**整段连休的名**
+         （国庆假期 = 10 月 1 日—7 日）→ 10 月 3 日点开那天，标题写着「国庆假期」，
+         和「今天是国庆」是同一个错，用户在界面上也会看到。
+         短语与喂模型的那一行**走同一个出口**（calendar.publicDayLine），
+         两边不许各拼一次。 */
+      var lg = info.legal;
+      var multi = !!(lg.from && lg.to && lg.from !== lg.to);
       out.push({
-        readonly: true, type: 'public_holiday', title: info.legal.name,
-        desc: '公共日期 · ' + c.regionMeta(cfg.region).label +
-          (info.legal.kind === 'workday_adjustment' ? ' · 官方调休上班日' : ''),
-        tag: info.legal.tag
+        readonly: true, type: 'public_holiday',
+        title: multi ? (lg.name + ' 第 ' + lg.day + '/' + lg.total + ' 天') : lg.name,
+        desc: (multi ? (c.monthDayText(lg.from) + '—' + c.monthDayText(lg.to) + ' · ') : '公共日期 · ') +
+          c.regionMeta(cfg.region).label +
+          (lg.kind === 'workday_adjustment' ? ' · 官方调休上班日' : ''),
+        tag: lg.tag
       });
     }
     info.festivals.forEach(function (f) {
-      if (info.legal && info.legal.name === f.name) return;  /* 春节不重复出两条 */
+      /* 节日名（中秋节/除夕…）与假期名（国庆假期）本来就不是一回事，
+         所以**不再**按「名字相同」去重 —— 那是拿「节」当「节假日」比。
+         两层各出一条本来就是正确的（法定层给放假、文化层给节日）。 */
       out.push({
         readonly: true, type: 'cultural_day', title: f.name,
         desc: '文化日期 · ' + f.group, tag: f.soft ? '纪念日' : '节日'
@@ -194,6 +206,20 @@
      不比对 sandboxId 的话，新岛的日历上写的还是上一个 char 的名字
      （真机抓过）。 */
   var view = { sbId: null, charId: null, year: 0, month: 0, selected: '', picked: false };
+
+  /* 新建页的「提交钥匙」与「已提交」标记。
+
+     ⚠️ 钥匙**每次打开都要重铸**：页面实例是缓存复用的，钥匙要是固定不变，
+     第二次新建会带着上一次的幂等键，被 action 层当成「这条已经建过」
+     直接返回 —— **第二条根本建不出来**（无头 Edge 预检当场抓到）。
+     重铸的时机就是 `calendar-new` 声明 `freshOnOpen` 的那一次 render。
+     `newSubmitted` 是**防连点**的另一件事：幂等键挡得住「重复请求」，
+     挡不住「用户手抖点两下」—— 那是两趟完整的保存流程。 */
+  var newSubmitKey = null;
+  var newSubmitted = false;
+  function mintSubmitKey() {
+    return 'ui:' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
 
   function charOf(id) {
     var ch = core.findChar(id);
@@ -282,7 +308,6 @@
           ctx.setTitle('日历');
           ctx.setActions([]);
           ctx.body.innerHTML = '';
-          if (ctx.__fab) { ctx.__fab.remove(); ctx.__fab = null; }
           ctx.body.appendChild(h('p', 'empty-hint', '这座岛上还没有角色，日历没有可以记的人。'));
           return;
         }
@@ -376,9 +401,17 @@
     var cfg = c.cfgOf(ch.id);
 
     ctx.setTitle(ph(ch.name) + '的日历');
+    /* 新建入口放在**顶栏「设置」旁边**（2026-10-03 用户：「加号固定死右下角
+       有点遮屏幕」）。原来那个是 .fab-btn —— fixed 挂在屏幕右下，
+       列表长一点就压住最后一条日程。
+       跟记忆页（page-memory.js:1091 的「新增记忆」）用同一个顶栏图标写法。 */
     ctx.setActions([{
       label: '设置',
       onClick: function () { openSettingsSheet(ctx, ch, cfg); }
+    }, {
+      label: '新建日程',
+      svg: IC_PLUS,
+      onClick: function () { ctx.open('calendar-new', { charId: ch.id, date: view.selected }); }
     }]);
     ctx.body.innerHTML = '';
 
@@ -498,18 +531,6 @@
     ctx.body.appendChild(h('p', 'cal-foot',
       '公共日期来自内置离线数据包（' + c.regionMeta(cfg.region).label + '），' +
       '打开、翻月、看日程都不联网、不调用模型。'));
-
-    /* ---- 新建入口（复用全局 .fab-btn：fixed 定位在手机屏右下角） ---- */
-    var fab = h('button', 'fab-btn cal-fab');
-    fab.type = 'button';
-    fab.innerHTML = IC_PLUS;
-    fab.setAttribute('aria-label', '新建');
-    fab.addEventListener('click', function () {
-      ctx.open('calendar-new', { charId: ch.id, date: view.selected });
-    });
-    if (ctx.__fab) ctx.__fab.remove();
-    ctx.__fab = fab;
-    ctx.el.appendChild(fab);
   }
 
   function moveMonth(ctx, delta) {
@@ -605,15 +626,21 @@
         '农历重复先不做：项目里还没有可靠的农历库，硬转会把日子算错。'));
 
       var save = button('让他记住这一天', 'primary', function () {
-        c.saveAnniversary(ch.id, mem, {
+        /* 收口后 saveAnniversary 返回的是统一入口的结构化结果 ——
+           **失败不许当成功**（原来的写法不看返回值，写没写成都报「已写进日历」）。 */
+        var r = c.saveAnniversary(ch.id, mem, {
           date: when,
           repeatRule: repeat.v,
           visibility: vis.v,
           meaningType: 'char_subjective'
         });
+        if (!r || !r.ok) {
+          ctx.toast((r && r.error && r.error.message) || '没写成', 'err');
+          return;
+        }
         close();
         ctx.__paint();
-        ctx.toast('已写进日历，也和这条留痕互相认住了', 'ok');
+        ctx.toast(r.dup ? '这天已经在日历里了' : '已写进日历，也和这条留痕互相认住了', 'ok');
       });
       body.appendChild(save);
     });
@@ -798,6 +825,12 @@
 
   Sleepy.register('calendar-event', {
     title: '日程',
+    /* ⚠️ 详情页必须 freshOnOpen（2026-10-03 真机抓到）：
+       页面实例是缓存复用的，同参短路会把**上一次渲染的 DOM 原样端回来** ——
+       在详情页「记下：他推掉了」之后状态已经是 cancelled，
+       再点进同一页却还显示「待确认 / 还没表态」（真机原话）。
+       同 page-idcard.js / page-ta.js 的表单页：每次 open 全新 render。 */
+    freshOnOpen: true,
     render: function (ctx) {
       var c = C();
       var p = ctx.params || {};
@@ -883,16 +916,53 @@
           '你可以去聊天里问他，让他自己改。'));
       } else {
         if (ev.eventType === 'shared_event') {
-          if (ev.status === 'pending') {
+          /* ---- 表态一律走 calendar.respondSharedEvent ----
+             第二轮施工单第五批。以前这里只写 `ps.user`，char 那一格全库没人写，
+             于是 `both` 永远是 false、**「已确认」这个状态从来没被写过**。
+             现在两边都走同一个入口，事件状态由程序按参与者算出来。 */
+          var st = (ev.participantStates || {}).user || 'pending';
+          if (st !== 'accepted') {
             acts.appendChild(button('答应这次', 'primary', function () {
-              var ps = ev.participantStates || {};
-              ps.user = 'accepted';
-              var both = ps.user === 'accepted' && ps[ch.id] === 'accepted';
-              c.updateEvent(ev.id, { participantStates: ps, status: both ? 'confirmed' : 'pending' });
-              ctx.toast(both ? '双方都答应了，这条算定下' : '你答应了，等他表态', 'ok');
+              var r = c.respondSharedEvent(ev.id, 'user', 'accepted', 'user_record', '你答应了');
+              if (!r.ok) { ctx.toast(r.error.message, 'err'); return; }
+              ctx.toast(r.status === 'confirmed' ? '双方都答应了，这条算定下' : '你答应了，等他表态', 'ok');
               ctx.back();
             }));
           }
+
+          /* ---- 他的回应 ----
+             ⚠️ 这是**玩家替他记下的回应**，不是角色自己在故事里说了什么。
+             本轮没有任何角色自动表态的来源（那需要角色侧候选，还没有），
+             所以宁可让玩家明确记一笔，也不伪造一个「他答应了」。 */
+          var gWho = group('他的回应');
+          var cs = (ev.participantStates || {})[ch.id] || 'pending';
+          gWho.card.appendChild(row({
+            label: '你：' + c.participantText(ev, 'user'),
+            value: ph(ch.name) + '：' + c.participantText(ev, ch.id),
+            plain: true
+          }));
+          gWho.card.appendChild(h('p', 'cal-degrade',
+            '这里记的是「你记下的他的回应」—— 不是他自己说的。' +
+            '等以后有了角色侧的候选，那条路会另走一个来源，不会和这里混。'));
+          var wrow = h('div', 'cal-acts');
+          if (cs !== 'accepted') {
+            wrow.appendChild(button('记下：他答应了', 'ghost', function () {
+              var r = c.respondSharedEvent(ev.id, ch.id, 'accepted', 'user_record', '他答应了');
+              if (!r.ok) { ctx.toast(r.error.message, 'err'); return; }
+              ctx.toast(r.status === 'confirmed' ? '双方都答应了，这条算定下' : '记下了', 'ok');
+              ctx.back();
+            }));
+          }
+          if (cs !== 'declined') {
+            wrow.appendChild(button('记下：他推掉了', 'ghost', function () {
+              var r = c.respondSharedEvent(ev.id, ch.id, 'declined', 'user_record', '他推掉了');
+              if (!r.ok) { ctx.toast(r.error.message, 'err'); return; }
+              ctx.toast('记下了，这条按取消留着（还想约就重新建一条）', 'ok');
+              ctx.back();
+            }));
+          }
+          gWho.card.appendChild(wrow);
+          ctx.body.appendChild(gWho.wrap);
           acts.appendChild(button('改个时间', 'ghost', function () {
             editTime(ctx, c, ev, function () {
               ctx.toast('改了，也留了痕', 'ok');
@@ -991,11 +1061,20 @@
      **不给「直接替他建私人行程」**（§8.2）。 */
   Sleepy.register('calendar-new', {
     title: '新建',
+    /* ⚠️ 必须 freshOnOpen（2026-10-03 真机抓到两个坑，都靠它）：
+       ① 表单残留：同一天再点加号，上次填的标题 / 时间原样还在，得自己清一遍；
+       ② 幂等键复用：页面实例缓存 + 同参短路 → 带着上一次的 requestKey，
+          第二条日程被 action 层当成「已经建过」而建不出来。
+       同 page-idcard.js / page-ta.js 的表单页：每次 open 全新 render。 */
+    freshOnOpen: true,
     render: function (ctx) {
       var c = C();
       var p = ctx.params || {};
       var ch = charOf(p.charId);
       var cfg = c.cfgOf(ch.id);
+      /* 每次进来都是一把新钥匙（freshOnOpen 保证这里的 render 每次都跑） */
+      newSubmitKey = mintSubmitKey();
+      newSubmitted = false;
       var draft = {
         type: 'user_reminder',
         date: p.date || c.todayISO(),
@@ -1118,24 +1197,51 @@
           rec.visibility = 'private';
         }
 
-        var clash = c.conflictOf(ch.id, rec);
-        if (clash.length) {
+        /* 第二轮施工单第二批 / 第三批：**不再自己 addEvent**。
+           组装出来的 payload 交给 action 层 → calendar.requestCreateEvent，
+           校验、幂等、回执都在那一边。UI 只负责两件事：
+             ① 冲突时问用户（统一入口不许弹窗，所以确认永远在这边）；
+             ② 把结构化失败翻成人话，**绝不把失败说成成功**。 */
+        var A = Sleepy.action;
+        if (!A || !A.createRequest) { ctx.toast('动作模块没加载', 'err'); return; }
+        /* 连点保护：**一次打开只提交一次**。幂等键只防「重复请求」，
+           防不住「用户手抖点两下」—— 那是两趟完整的保存流程。 */
+        if (newSubmitted) return;
+        newSubmitted = true;
+
+        var made = A.createRequest({
+          kind: 'calendar.create_event',
+          params: rec,
+          requestKey: newSubmitKey || mintSubmitKey(),   /* 同一次打开重复提交只建一条 */
+          source: { type: 'ui', id: 'user' }
+        });
+        if (!made.ok) { ctx.toast(made.error && made.error.message || '建不了', 'err'); return; }
+        if (made.dup) { after(); return; }
+
+        var run = A.runRequest(made.request.id, { allowConflict: false });
+        if (run.ok) { after(); return; }
+
+        var err = run.error || {};
+        if (run.needConfirm) {
           /* §19.5：冲突不自动覆盖旧日程，也不拦死 —— 说清楚让 user 自己决定 */
+          var names = (run.conflict || []).map(function (e) { return e.title; }).join('、');
           ui.confirm({
             title: '这个时间和别的安排撞了',
-            note: '撞上了：' + clash.map(function (e) { return e.title; }).join('、') +
-              '。要照常记下来吗？（旧的不会被覆盖）',
+            note: '撞上了：' + names + '。要照常记下来吗？（旧的不会被覆盖）',
             ok: '还是记下',
             danger: true
           }).then(function (go) {
-            if (!go) return;
-            c.addEvent(rec);
+            if (!go) { A.cancelRequest(made.request.id, '撞了，用户没记'); return; }
+            var again = A.runRequest(made.request.id, { allowConflict: true });
+            if (!again.ok) {
+              ctx.toast((again.error && again.error.message) || '没记下来', 'err');
+              return;
+            }
             after();
           });
           return;
         }
-        c.addEvent(rec);
-        after();
+        ctx.toast(err.message || '没记下来', 'err');
       });
       ctx.body.appendChild(save);
 
@@ -1154,6 +1260,15 @@
       }
       refreshHint();
       typeWrap.addEventListener('click', refreshHint);
+    },
+
+    /* onShow 兜底重铸一次。正常路径是 freshOnOpen 让 render 每次都跑、
+       render 里已经重铸过；这里再铸一次是**双保险**：万一哪天有人把
+       freshOnOpen 删了，至少不会退化成「永远建不出第二条」。
+       ⚠️ 别把 freshOnOpen 删了 —— 它同时还管着「表单残留」。 */
+    onShow: function () {
+      newSubmitKey = mintSubmitKey();
+      newSubmitted = false;
     }
   });
 

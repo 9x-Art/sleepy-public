@@ -287,13 +287,39 @@
     box.appendChild(h('p', 'wj-sub', '只写入批准且冲突已处理的结构化历史。'));
 
     if (rec.written) {
+      var refs = rec.eventRefs || [];
+      var extra = refs.length
+        ? '，另记了 ' + refs.length + ' 条日历'
+        : '';
       box.appendChild(h('p', 'wj-notice is-ok',
-        '已经写过了（' + (rec.writtenCount || 0) + ' 条，' + whenText(rec.writtenAt) + '）。' +
+        '已经写过了（' + (rec.writtenCount || 0) + ' 条' + extra + '，' + whenText(rec.writtenAt) + '）。' +
         '再点也不会写第二遍 —— 要去记忆里改，去留痕页改那一条。'));
       box.appendChild(btn('回留痕页看看', 'wj-btn', function () {
         Sleepy.nav.open('memory', {});
       }));
       return box;
+    }
+
+    /* ⚠️ **半完成态要说出来**（第三轮施工单 §2/§4）：
+       留痕写进去了，但有候选的日历事件没落成 —— 这时不能显示「已经写过了」，
+       那是谎报（用户会以为全写完了）。要如实说清哪几条没落上，并给重跑入口。
+       重跑是安全的：留痕按内容去重、日历按 requestKey 幂等。 */
+    if (rec.writtenPending) {
+      var cf = rec.calendarFailed || [];
+      box.appendChild(h('p', 'wj-notice is-warn',
+        '留痕已经写进去了，但有 ' + cf.length + ' 条日历没记上' +
+        (rec.writtenAt ? '（' + whenText(rec.writtenAt) + '）' : '') + '。' +
+        '正史本身没丢，可以再点一次补 —— 已经写好的不会重复写。'));
+      if (cf.length) {
+        var flist = h('div', 'wjc-plan');
+        cf.forEach(function (f) {
+          var row = h('div', 'wjc-plan-row');
+          row.appendChild(h('p', 'wjc-plan-line',
+            '没落上的候选：' + String(f.cand || '') + '（' + (f.err || 'unknown') + '）'));
+          flist.appendChild(row);
+        });
+        box.appendChild(flist);
+      }
     }
 
     var p = CAN().plan(w.id);
@@ -320,7 +346,13 @@
     var go = btn('写入现实（' + p.count + ' 条）', 'wj-btn wj-btn-solid', function () {
       var r = CAN().write(w.id);
       if (!r.ok) { Sleepy.toast('没写成：' + (r.blockers ? r.blockers[0] : r.why)); return; }
-      Sleepy.toast('写好了 ' + r.count + ' 条' + (r.events ? '，另记 ' + r.events + ' 条日历' : ''));
+      /* 如实说：日历有失败就不许只报「写好了」（那是谎报）。
+         半完成时明说还差几条，并指向刚加的补跑入口。 */
+      if (r.writtenPending || (r.evFailed && r.evFailed.length)) {
+        Sleepy.toast('留痕写好了，但有 ' + r.evFailed.length + ' 条日历没记上 —— 可以再点一次补');
+      } else {
+        Sleepy.toast('写好了 ' + r.count + ' 条' + (r.events ? '，另记 ' + r.events + ' 条日历' : ''));
+      }
       paint(ctx);
     });
     var why = CAN().blockers(rec);

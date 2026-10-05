@@ -274,10 +274,20 @@
       if (patch && patch[k] !== undefined) m[k] = patch[k];
     });
     if (patch && patch.isUserEdited) m.isUserEdited = true;
+    /* 第三轮：日历绑定是**程序写的引用**，不属于用户可改的语义字段，
+       但它必须能写进去 —— 否则纪念日那条「双向绑定」是假的
+       （事件在、留痕侧没记，removeEvent 的保护和召回都读不到）。
+       ⚠️ 它**不进向量重建**：改的是 id 指针不是内容，
+       白跑一次 embedding 是纯浪费（项目约定：内容变了才 reindex）。 */
+    var bindOnly = !!(patch && patch.calendarEventId !== undefined &&
+      patch.content === undefined && patch.status === undefined && patch.isAnchor === undefined);
+    if (patch && patch.calendarEventId !== undefined) {
+      m.calendarEventId = patch.calendarEventId || null;
+    }
     m.updatedAt = nowIso();
     saveCharMemory(file);
     /* 改一条 → 定向重建那一条（内容 / 状态 / 锚点任一变了都算） */
-    vecCall('refreshMem', [charId, memoryId]);
+    if (!bindOnly) vecCall('refreshMem', [charId, memoryId]);
   }
 
   function addMemoryItem(charId, item) {
