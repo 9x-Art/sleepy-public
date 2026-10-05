@@ -7816,6 +7816,79 @@ div.pp-row:active{background:none;}
   letter-spacing:0.08em;text-transform:uppercase;
   margin-bottom:10px;padding-left:2px;
 }
+
+/* 请求诊断（仅内存 · 默认折叠 · 只放设置页，不进沉浸正文） */
+.off-diag-fold{
+  border:1px solid var(--border);border-radius:8px;
+}
+.off-diag-summary{
+  cursor:pointer;list-style:none;
+  padding:10px 12px;font-size:11px;color:var(--text-dim);
+  display:flex;align-items:center;gap:6px;
+}
+.off-diag-summary::-webkit-details-marker{display:none;}
+.off-diag-summary::before{
+  content:'▸';font-size:9px;color:var(--text-faint);
+  transition:transform .15s ease;
+}
+.off-diag-fold[open] .off-diag-summary::before{transform:rotate(90deg);}
+.off-diag-body{padding:0 12px 12px;}
+.off-diag-line{
+  display:flex;gap:10px;padding:4px 0;
+  font-size:11px;line-height:1.6;
+  border-bottom:1px solid var(--border);
+}
+.off-diag-line:last-of-type{border-bottom:none;}
+.off-diag-k{color:var(--text-faint);flex:0 0 40%;}
+.off-diag-v{
+  color:var(--text);flex:1;
+  font-family:ui-monospace,monospace;
+  word-break:break-all;
+}
+.off-diag-empty{color:var(--text-faint);border-bottom:none;}
+.off-diag-note{
+  margin-top:10px;font-size:10px;line-height:1.6;
+  color:var(--text-faint);
+}
+
+/* ==================== 解析失败的用户可见降级（P0 · 2026-10-04）====================
+   坏 JSON / 空内容 → 正文一条人话提示 + 默认折叠的原始返回。
+   ⚠️ 这一组是**本批新增**（追加在诊断样式之后，不改任何既有行），
+     便于后续按批拆分提交 —— style.css 已混有多批此前改动。 */
+.off-parsefail{
+  margin:0 0 4px;padding:10px 12px;
+  border:1px solid var(--border);border-radius:10px;
+  background:var(--g-accent-pale);
+}
+.off-parsefail-hint{
+  font-size:12px;line-height:1.6;
+  color:var(--text-dim);
+}
+.off-parsefail-fold{margin-top:8px;}
+.off-parsefail-summary{
+  font-size:11px;color:var(--text-faint);
+  cursor:pointer;list-style:none;
+  display:inline-flex;align-items:center;gap:4px;
+}
+.off-parsefail-summary::-webkit-details-marker{display:none;}
+.off-parsefail-summary::before{
+  content:'';width:0;height:0;
+  border-left:4px solid currentColor;
+  border-top:3px solid transparent;border-bottom:3px solid transparent;
+  transition:transform .15s ease;
+}
+.off-parsefail-fold[open] .off-parsefail-summary::before{transform:rotate(90deg);}
+.off-parsefail-raw{
+  margin:8px 0 0;padding:8px 10px;
+  font-size:11px;line-height:1.6;
+  color:var(--text-dim);
+  background:var(--g-base);
+  border:1px solid var(--border);border-radius:6px;
+  /* 原始返回可能是一整段坏 JSON —— 必须允许换行，
+     否则一行拉出去会横向溢出把整个正文撑歪。 */
+  white-space:pre-wrap;word-break:break-word;
+  max-height:40vh;overflow-y:auto;
+}
 .off-settings-row{
   display:flex;align-items:center;justify-content:space-between;
   padding:10px 2px;
@@ -11101,10 +11174,10 @@ button.cal-ev:active{background:var(--g-glass-2);}
   font-weight:600;cursor:pointer;
 }
 
-/* ---------- 新建入口（复用全局 .fab-btn 的定位） ---------- */
-.cal-fab svg{width:21px;height:21px;}
-
 /* ---------- 底弹层 ---------- */
+/* ⚠️ 这里原来还有一条 `.cal-fab`（新建用的悬浮加号）——
+   2026-10-03 按用户要求把加号挪到顶栏「设置」旁边，右下角那个
+   固定悬浮按钮会压住列表最后一条日程，样式已随之删除。 */
 .cal-sheet-mask{
   position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;
   background:rgba(20,14,8,.22);opacity:0;pointer-events:none;transition:opacity .2s;
@@ -11961,6 +12034,10 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 .wjc-fix:disabled{opacity:.45;pointer-events:none;}
 .wj-notice.is-ok{border-left-color:var(--wj-green);color:#9db8a8;}
+/* 半完成态（第三轮：留痕写成了但有日历没落上）——
+   帷境是深色面板，所以按面板自己的语义色取（`--wj-silver` 亮、`--wj-wine` 暗），
+   不用全局焦糖（那是亮底主题的文字色，压在深底上会看不清）。 */
+.wj-notice.is-warn{border-left-color:var(--wj-silver);color:var(--wj-silver);}
 
 /* ==================== 帷境 · 同席共读（T5） ==================== */
 
@@ -14055,3 +14132,314 @@ button.cal-ev:active{background:var(--g-glass-2);}
   font-family:var(--ff-serif);font-size:11.5px;letter-spacing:.06em;cursor:pointer;
 }
 .sk-batch-wipe:active{background:rgba(166,52,38,.08)}
+
+/* ==================== ta 首页（生活窗口 v1，page-ta.js） ====================
+   骨架复用 we- 的纸张语言（we-page-paper / we-sec / we-quote 都是通用排版），
+   这里只补 ta 自己的行 / 头部 / 脚注。颜色只从 --g-accent 系与文本变量取。 */
+
+/* 头部：ta 标识 + 当前角色名 */
+.ta-hero{padding:26px 0 2px;text-align:left}
+.ta-hero-kicker{
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.24em;
+  color:var(--g-accent-deep, var(--g-accent));
+}
+.ta-hero-name{
+  font-family:var(--ff-serif);font-size:26px;letter-spacing:.04em;
+  color:var(--text);margin-top:6px;line-height:1.25;
+}
+.ta-hero-sub{font-size:11.5px;line-height:1.6;color:var(--text-dim);margin-top:6px}
+
+/* 列表行：主文字 + 右侧标签；button 化的那份要补重置（div 改 button 的规矩） */
+.ta-row{display:flex;align-items:baseline;gap:10px;width:100%;padding:10px 0}
+.ta-row + .ta-row{border-top:1px solid rgba(176,138,94,.14)}
+button.ta-row{
+  border:0;background:transparent;font-family:inherit;text-align:left;
+  cursor:pointer;padding:10px 0;
+}
+button.ta-row:active{background:rgba(176,138,94,.07)}
+.ta-row-main{flex:1;min-width:0}
+.ta-row-tx{
+  font-size:14px;line-height:1.55;color:var(--text);margin:0;
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;
+}
+.ta-row-tag{
+  flex:none;font-size:11px;letter-spacing:.04em;
+  color:var(--g-accent-deep, var(--g-accent));white-space:nowrap;
+}
+.ta-meta{font-size:11px;color:var(--text-dim);margin:3px 0 0}
+
+/* 区块内小注 / 占位脚注 */
+.ta-foot{
+  margin:30px 0 4px;font-size:11px;line-height:1.7;color:var(--text-dim);
+  padding-top:12px;border-top:1px dashed rgba(176,138,94,.35);
+}
+
+/* ---- ta 系三页（ta / ta-item / ta-person）：顶栏彻底隐形 + 纸张通到顶 ----
+   默认 .app-head 是一块玻璃（blur + ::after 发丝线），压在纸上就是一条
+   灰白带（2026-10-02 真机验收：用户「顶栏没有一如既往的透明」）。
+   走 island / diary 的先例：顶栏 absolute + 无底无blur无线；
+   纸张从 .page-inner 最顶上铺起，状态栏和返回键直接落在纸上。
+   状态栏字色不用特判 —— #statusbar 跟主题 ink 变量走，夜灯下自动翻浅色。 */
+.page[data-page="ta"] .app-head,
+.page[data-page="ta-item"] .app-head,
+.page[data-page="ta-person"] .app-head{
+  position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;z-index:4;
+  padding:12px 18px 0;background:transparent;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.page[data-page="ta"] .app-head::after,
+.page[data-page="ta-item"] .app-head::after,
+.page[data-page="ta-person"] .app-head::after{display:none;}
+.page[data-page="ta"] .page-inner,
+.page[data-page="ta-item"] .page-inner,
+.page[data-page="ta-person"] .page-inner{padding-top:0;}
+.page[data-page="ta"] .we-page-paper,
+.page[data-page="ta-item"] .we-page-paper,
+.page[data-page="ta-person"] .we-page-paper{
+  /* 顶栏下沉到 safe+32、行高约 46 —— 内容从 safe+90 起才不顶字 */
+  padding-top:calc(env(safe-area-inset-top) + 90px);
+}
+
+/* ---- ta v2（第二批）：详情 kv / 变化线 / 动作行 / 加一行 ---- */
+.ta-label{
+  font-family:var(--ff-serif);font-size:10px;letter-spacing:.2em;
+  color:var(--g-accent-deep, var(--g-accent));margin:14px 0 4px;
+}
+.ta-kv{margin:0 0 8px;padding-left:13px;border-left:2px solid rgba(176,138,94,.16)}
+.ta-kv-k{
+  display:block;font-size:10.5px;letter-spacing:.08em;color:var(--text-dim);
+}
+.ta-kv-v{display:block;font-size:13.5px;line-height:1.6;color:var(--text)}
+.ta-hist-line{
+  margin:0 0 6px;font-size:12px;line-height:1.6;color:var(--text-dim);
+  padding-left:13px;border-left:2px solid rgba(176,138,94,.16);
+}
+.ta-btnrow{display:flex;gap:10px;margin-top:16px}
+.ta-btn{
+  flex:1;padding:10px 0;border:1px solid rgba(176,138,94,.35);border-radius:10px;
+  background:transparent;color:var(--text);font-family:inherit;font-size:13px;
+  cursor:pointer;
+}
+.ta-btn:active{background:rgba(176,138,94,.08)}
+.ta-btn-danger{border-color:rgba(166,52,38,.4);color:#a63426}
+.ta-status-wrap{display:flex;align-items:center;gap:10px;margin:2px 0 12px}
+.ta-select{
+  flex:1;padding:8px 10px;border:1px solid rgba(176,138,94,.35);border-radius:10px;
+  background:transparent;color:var(--text);font-family:inherit;font-size:13px;
+}
+.ta-add-row{
+  display:block;width:100%;margin-top:10px;padding:9px 0;
+  border:1px dashed rgba(176,138,94,.45);border-radius:10px;
+  background:transparent;color:var(--g-accent-deep, var(--g-accent));
+  font-family:var(--ff-serif);font-size:12px;letter-spacing:.06em;cursor:pointer;
+}
+.ta-add-row:active{background:rgba(176,138,94,.07)}
+.ta-foot-row{
+  margin-top:26px;padding-top:12px;width:100%;
+  border-top:1px dashed rgba(176,138,94,.35);
+}
+
+/* ---- We 三页顶栏透明 + We/ta 底部空白修复（2026-10-02 真机验收）----
+   ① We 三页（we / we-time / collection）顶栏走 ta 同款隐形（island 先例）；
+   ② 底部露白：ta 是 .page-inner 的 padding-bottom（--bg）露在纸下面，
+      we 是 .has-tabbar .app-body 的 10px padding 露底 —— 都归零，
+      呼吸感交给纸张自己的 safe-area 底垫。 */
+.page[data-page="we"] .app-head,
+.page[data-page="we-time"] .app-head,
+.page[data-page="collection"] .app-head{
+  position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;z-index:4;
+  padding:12px 18px 0;background:transparent;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.page[data-page="we"] .app-head::after,
+.page[data-page="we-time"] .app-head::after,
+.page[data-page="collection"] .app-head::after{display:none;}
+.page[data-page="we"] .page-inner,
+.page[data-page="we-time"] .page-inner,
+.page[data-page="collection"] .page-inner{padding-top:0;}
+.page[data-page="we"] .we-page-paper,
+.page[data-page="we-time"] .we-page-paper,
+.page[data-page="collection"] .we-page-paper{
+  padding-top:calc(env(safe-area-inset-top) + 90px);
+}
+.page.has-tabbar[data-page="we"] .app-body,
+.page.has-tabbar[data-page="we-time"] .app-body,
+.page.has-tabbar[data-page="collection"] .app-body{padding-bottom:0;}
+.page[data-page="ta"] .page-inner,
+.page[data-page="ta-item"] .page-inner,
+.page[data-page="ta-person"] .page-inner,
+.page[data-page="ta-backstage"] .page-inner{padding-bottom:0;}
+
+/* 切 Tab 免动画（page-we goTab 挂的临时类，350ms 后自摘） */
+#stack.tab-noanim .page{transition:none !important;}
+
+/* ---- 滚动容器垫纸色（2026-10-02 真机验收第二轮）----
+   纸（.we-page-paper）只铺内容，真机橡皮筋回弹 / 滑过头的瞬间
+   露出的是**滚动容器自己的底色**（.page / .app-body 的 --bg 纯白）。
+   给 we / ta 系页的滚动容器垫上同一份纸色 —— 平时被纸盖住看不见，
+   回弹时不再闪白。夜灯下 --we-paper 跟主题走，深色同样成立。 */
+.page[data-page="ta"],
+.page[data-page="ta-item"],
+.page[data-page="ta-person"],
+.page[data-page="ta-backstage"],
+.page[data-page="we"],
+.page[data-page="we-time"],
+.page[data-page="collection"],
+.page[data-page="collection-item"],
+.page[data-page="collection-proposal"]{
+  background-color:var(--we-paper, var(--g-accent-pale));
+}
+.page.has-tabbar[data-page="we"] .app-body,
+.page.has-tabbar[data-page="we-time"] .app-body,
+.page.has-tabbar[data-page="collection"] .app-body{
+  background-color:var(--we-paper, var(--g-accent-pale));
+}
+
+/* ---- ta 第三批：草稿确认区 checkbox 行 ---- */
+.ta-check{
+  display:flex;align-items:baseline;gap:10px;
+  padding:10px 0;border-bottom:1px solid rgba(176,138,94,.14);
+  cursor:pointer;
+}
+.ta-check:last-of-type{border-bottom:0}
+.ta-check input{flex:none;width:18px;height:18px;accent-color:var(--g-accent-deep, var(--g-accent))}
+.ta-check-tx{flex:1;font-size:13.5px;line-height:1.55;color:var(--text)}
+
+/* ---- ta 第四批：待审核提案行 / 小动作钮 ---- */
+.ta-prop{padding:10px 0;border-bottom:1px solid rgba(176,138,94,.14)}
+.ta-prop:last-of-type{border-bottom:0}
+.ta-prop-kind{font-size:10.5px;letter-spacing:.1em;color:var(--g-accent-deep,var(--g-accent));margin:0 0 4px}
+.ta-prop-sum{font-size:13.5px;line-height:1.6;color:var(--text);margin:0 0 4px}
+.ta-p-acts{display:flex;gap:8px;margin-top:6px}
+.ta-mini{
+  padding:7px 14px;border:1px solid rgba(176,138,94,.4);border-radius:9px;
+  background:transparent;color:var(--text);font-family:inherit;font-size:12px;cursor:pointer;
+}
+.ta-mini:active{background:rgba(176,138,94,.08)}
+.ta-mini-danger{border-color:rgba(166,52,38,.4);color:#a63426}
+
+/* ta 第四批复核：开关行提示独立成行（别和 checkbox 挤一个 flex） */
+.ta-checkwrap{padding:8px 0;border-bottom:1px solid rgba(176,138,94,.14)}
+.ta-check{display:flex;align-items:center;gap:10px;cursor:pointer}
+.ta-check .ta-meta{margin-top:4px}
+
+/* ---- ta 第五批：已成立影响 / NPC 事件 ----
+   影响是「已经成立的东西」，视觉上比提案更静：只用极淡的左侧竖线区分，
+   不包卡片（能靠留白分层就别包卡片）。 */
+.ta-ev{
+  padding:10px 0 12px;border-bottom:1px solid rgba(176,138,94,.14);
+}
+.ta-ev:last-of-type{border-bottom:0}
+.ta-imp{
+  margin:8px 0 0;padding:2px 0 2px 10px;
+  border-left:2px solid var(--g-accent-pale, rgba(176,138,94,.28));
+}
+.ta-imp-tag{
+  font-size:10.5px;letter-spacing:.08em;margin:0 0 3px;
+  color:var(--g-accent-deep,var(--g-accent));
+}
+.ta-imp-tx{font-size:13.5px;line-height:1.6;color:var(--text);margin:0 0 3px}
+.ta-imp .ta-p-acts{margin-top:6px}
+
+/* ---- tan：关系网（ta-network 页，第一批）----
+   两条硬约束写在前面，改样式时别踩：
+   ① **不许出现文档级横向滚动** —— SVG 固定 viewBox + width:100% + height:auto，
+      容器 overflow:hidden 兜底；任何新增元素都用 flex:1/min-width:0 收窄，
+      不要给固定 px 宽度。
+   ② **不许遮挡文字** —— 图上文字一律 pointer-events:none（命中交给透明命中圆/
+      加粗命中线），名字限制在圆内（JS 已截断），关系标签只在圆下那一行。
+   色值全部走主题 token，所以夜灯 / 蜜桃 / 海盐自动成立，不写死颜色
+   （唯一例外是沿用既有 ta 系的暖棕虚线，那支在四主题下都够淡）。 */
+.tan-seg{display:flex;gap:4px;margin:0 0 16px;flex:none}
+/* 分段控件沿用 .iol-seg 的结构与尺寸，但底色改走 token ——
+   全局那支是写死的浅色（rgba(255,255,255,.4)），在夜灯底上会浮出一块
+   白砖。这里只在 .tan-seg 作用域里覆盖，不动其他页面的用法。 */
+.tan-seg .iol-seg-btn{
+  background:var(--g-glass-3);
+  border-color:var(--line);
+  color:var(--text-dim);
+}
+.tan-seg .iol-seg-btn.is-on{
+  background:var(--g-accent-pale);
+  border-color:var(--g-accent);
+  color:var(--g-accent-deep,var(--g-accent));
+}
+
+/* --- 图视图 --- */
+.tan-graph{width:100%;overflow:hidden;margin:2px 0 4px}
+.tan-svg{
+  display:block;width:100%;height:auto;overflow:hidden;
+  touch-action:manipulation;
+}
+.tan-edge{stroke:var(--g-accent);stroke-width:1.2;opacity:.5}
+.tan-edge-hit{stroke:transparent;stroke-width:14;cursor:pointer;pointer-events:all}
+.tan-node-g{cursor:pointer}
+.tan-n-c{fill:var(--g-glass-3);stroke:var(--line);stroke-width:1.2}
+.tan-c-c{fill:var(--g-accent-pale);stroke:var(--g-accent);stroke-width:1.6}
+.tan-n-t{
+  font-size:10.5px;font-weight:600;fill:var(--text);
+  font-family:inherit;pointer-events:none;
+}
+.tan-n-lb{
+  font-size:8.5px;fill:var(--text-dim);
+  font-family:inherit;pointer-events:none;
+}
+/* 透明命中区（≥44px 触控）。必须 pointer-events:all —— 默认的
+   visiblePainted 对 transparent 描边不算「已绘制」，点上去会漏。 */
+.tan-hit{fill:transparent;stroke:none;pointer-events:all;cursor:pointer}
+
+/* --- 选中详情（图视图下方） --- */
+.tan-detail{
+  margin-top:16px;padding:12px 0 2px;min-height:66px;
+  border-top:1px dashed rgba(176,138,94,.35);
+}
+.tan-detail-hint{font-size:12px;line-height:1.7;color:var(--text-faint);margin:0}
+.tan-detail-name{font-size:14.5px;font-weight:600;line-height:1.5;color:var(--text);margin:0 0 2px}
+.tan-meta{font-size:11px;line-height:1.6;color:var(--text-dim);margin:3px 0 0}
+.tan-recent{font-size:12.5px;line-height:1.65;color:var(--text);margin:7px 0 0}
+.tan-imp-dot{
+  font-size:10.5px;letter-spacing:.06em;margin:7px 0 0;
+  color:var(--g-accent-deep,var(--g-accent));
+}
+.tan-go{
+  display:inline-block;margin-top:11px;padding:7px 13px;
+  border:0;border-radius:12px;font-family:inherit;
+  font-size:11.5px;line-height:1.4;cursor:pointer;
+  background:var(--g-accent-pale);color:var(--g-accent-deep,var(--g-accent));
+}
+.tan-go:active{background:var(--g-accent-soft)}
+.tan-note{font-size:11px;line-height:1.7;color:var(--text-dim);margin:9px 0 0}
+
+/* --- 列表视图 --- */
+.tan-list{display:flex;flex-direction:column}
+.tan-center-card{padding:12px 0 14px;border-bottom:1px solid rgba(176,138,94,.14)}
+.tan-center-name{font-size:15px;font-weight:600;line-height:1.5;color:var(--text);margin:0}
+.tan-row{
+  display:flex;align-items:baseline;gap:10px;width:100%;
+  padding:10px 0;border-top:1px solid rgba(176,138,94,.14);
+}
+.tan-row-btn{cursor:pointer}
+/* button 重置（div 改 button 必须补）：UA 给按钮自带边框 / 底色 / 字体，
+   不抹掉的话每行都会变成一个盒子（真机截图里那圈框就是它）。 */
+button.tan-row{
+  border:0;background:transparent;font-family:inherit;color:inherit;
+  text-align:left;
+}
+button.tan-row:active{background:rgba(176,138,94,.07)}
+.tan-row-main{flex:1;min-width:0}
+.tan-row-tx{
+  font-size:14px;line-height:1.55;color:var(--text);margin:0;
+  overflow-wrap:anywhere;
+}
+.tan-row-tag{
+  flex:none;font-size:11px;letter-spacing:.04em;white-space:nowrap;
+  color:var(--g-accent-deep,var(--g-accent));
+}
+.tan-edge-row{padding:10px 0;border-top:1px solid rgba(176,138,94,.14)}
+.tan-edge-lb{font-size:13.5px;line-height:1.55;color:var(--text);margin:0}
+
+.tan-foot{
+  margin:30px 0 4px;font-size:11px;line-height:1.7;color:var(--text-dim);
+  padding-top:12px;border-top:1px dashed rgba(176,138,94,.35);
+}

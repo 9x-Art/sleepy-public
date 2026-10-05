@@ -357,7 +357,14 @@
                   'wsInstalls', 'wsRecords',
                   /* 日历（calendar.js）：每个 char 一份配置 + 事件表。
                      两张表都按 (sandboxId, charId) 隔离，删房跟着清。 */
-                  'calConfigs', 'calEvents'];
+                  'calConfigs', 'calEvents',
+                  /* 最小动作协议（action.js，2026-10-03 第二轮施工单第三批）：
+                     action request / result / receipt 记录，按岛隔离，删房跟着清。 */
+                  'actionRequests',
+                  /* ta 首页三张结构化表（ta-life.js，2026-10-02 第二批）：
+                     事项/承诺/关注，tagScope 盖岛章，删房跟着清。 */
+                  'taItems', 'taPromises', 'taFollows',
+                  'taNpcDrafts', 'taProposals', 'taEvents'];
     scoped.forEach(function (key) {
       var all = arr(store.get(key));
       if (!all.length) return;

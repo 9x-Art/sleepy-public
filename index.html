@@ -83,6 +83,12 @@
 <!-- 系统级切号 / 面具轮盘 / 记忆认知层。它要给 'home' 的 render 包一层，
      所以必须排在 page-desktop.js 后面；chat 页要调它的 API，也要排在 page-chat 前 -->
 <script src="page-switch.js" defer></script>
+<!-- 共用行为文本模块（B 批 · 私聊线上迁移）：
+     只依赖 window.Sleepy，自身不依赖任何脚本；唯一消费者是 prompt-engine 的
+     assembleOnline（运行时惰性读 Sleepy.behaviorText）。
+     必须排在 prompt-engine.js **之前** —— 装配发生在页面 render 与启动点火
+     （page-chat-settings.js 末尾的 Sleepy.bootHome）里，都远在本行之后。 -->
+<script src="behavior-text.js" defer></script>
 <!-- 预设注入引擎（第一轮）：prompt-engine 是数据与装配核心，
      page-presets 是它的配置 app。都排在 page-chat 前 —— 后者要调引擎。 -->
 <script src="prompt-engine.js" defer></script>
@@ -193,6 +199,11 @@
      页面排在 page-desktop.js 之后，桌面那格才点得开。 -->
 <script src="calendar-data.js" defer></script>
 <script src="calendar.js" defer></script>
+<!-- 最小动作协议（第二轮施工单第三批）：**排在 calendar.js 之后** ——
+     它执行时要调 calendar.requestCreateEvent。本轮只接 calendar.create_event 一种。
+     数据层，0 模型 / 0 网络 / 0 定时器；store key `actionRequests` 已进
+     core.js 的删房 scoped 名单。 -->
+<script src="action.js" defer></script>
 <script src="page-calendar.js" defer></script>
 
 <!-- 帷境（Veilscape）——《帷境总体设计目标与实施意图总纲 v1》+ 8 张 Demo。
@@ -234,6 +245,36 @@
 <!-- We 收藏馆（门厅 + 藏品详情）：依赖 page-we.js 导出的 weStore（kind 兼容）。
      注册 'collection' 页，We 首页「去收藏馆 →」打开它。不占桌面格。 -->
 <script src="page-collection.js" defer></script>
+<!-- ta 首页（生活窗口 v1 → v2 第二批）：ta-life.js 是三张结构化表的数据层
+     （事项/承诺/关注，0 模型调用，同 calendar.js 的红线），page-ta.js 是页面。
+     依赖 core（指针卫兵）；life-feed / moments 运行时惰性取。
+     page-ta.js 注册 'ta' / 'ta-item' / 'ta-follow' / 'ta-promise' /
+     'ta-person' / 'ta-backstage' / 'ta-draft' / 'ta-draft-edit'，
+     桌面第三屏那格才点得开（版本 18）。第四批：ta-proposal.js 是
+     提案表数据层（0 模型），ta-model.js 是按需模型模块（只在明确
+     入口调用，页面打开 0 调用；依赖 api.js 的 requestOnce）。
+     第五批：ta-impact.js 是已成立影响层（0 模型、0 网络）——
+     有效期/复核/事件更正/注入文本编译/主动消息回执都在它里面，
+     prompt-engine 的 taimpact 槽只认它（知情 × 有效 × 相关三道闸）。
+     加载顺序即依赖顺序：ta-proposal → ta-impact → page-ta。 -->
+<script src="ta-life.js" defer></script>
+<script src="ta-proposal.js" defer></script>
+<script src="ta-model.js" defer></script>
+<script src="ta-impact.js" defer></script>
+<!-- ta 关系网只读 selector（第一批）：把「当前角色身边的人」投影成
+     { center / nodes / edges / visibility / updatedAt }，0 模型 0 网络 0 写入。
+     它是**人物节点集合的唯一出口** —— page-ta.js 的「04 身边的人」和关系网页
+     都读它，图视图与列表视图也读同一份结果，不许各拼一套（设计稿 §7）。
+     依赖：core（charsOfSandbox / npcsOfRoom / findLink）、Sleepy.island
+     （charRel 三态，page-island.js 在 :121 已加载）、momentsTab、taImpact。
+     所以排在 ta-impact 之后、page-ta 之前。 -->
+<script src="ta-network.js" defer></script>
+<script src="page-ta.js" defer></script>
+<!-- ta 关系网页面（第一批）：注册 'ta-network'，图 / 列表双视图，只读。
+     只消费 Sleepy.taNetwork.build()，自己不拼人物数据。
+     排在 page-ta.js 之后：ta 首页 04 的「关系网 →」入口走 ctx.open 运行时
+     惰性取，顺序不敏感，但「依赖在前」读起来更清楚。 -->
+<script src="page-ta-network.js" defer></script>
 <!-- C2 贴纸工坊切片器（固定 3×2 + 四角 flood-fill）：纯函数 + canvas 包装，
      无依赖；工坊页（page-collection.js）运行时取 Sleepy.stickerCut。 -->
 <script src="sticker-cut.js" defer></script>

@@ -180,6 +180,50 @@
        core.js cleanupSandbox 的 scoped 名单已收录，拆岛跟着清。 */
     weProposals: [],
 
+    /* ta 首页三张结构化表（2026-10-02 第二批，ta-life.js 数据层，0 模型调用）：
+       事项 / 承诺 / 关注 —— 设计稿 §4「每个首页对象都能回到同源记录」。
+       { id, sandboxId, refCharId(归 root), refUserId,
+         …各表业务字段（见 ta-life.js 头注释）,
+         sourceType:'manual'|…, sourceId, sourceRef,
+         history[], createdAt, updatedAt }
+       状态只认闭集；**承诺绝不自动判兑现**（只能人手改 + history 留痕）。
+       写入 tagScope 盖章，读取 core.scoped 过滤；删房名单已收录。 */
+    taItems: [],
+    taPromises: [],
+    taFollows: [],
+
+    /* ta NPC 候选草稿（2026-10-02 第三批，ta-life.js）：
+       未确认 NPC 只能是草稿 —— 独立键，不进 characters 表（正式名册），
+       确认入库经 core.upsertChar 回填 formalCharId，重试幂等。
+       { id, sandboxId, refCharId, refUserId, name, role, personality,
+         interactionStyle, meetingOpportunity, reasonToStayConnected,
+         closenessAndBoundary, ownLife, currentThreadProposal,
+         existsConfirmed, userKnowsInStory, autonomousDevelopmentAllowed,
+         status: 'draft'|'discarded'|'confirmed'|'failed',
+         formalCharId, confirmedAt, sourceType, sourceRef, history[],
+         createdAt, updatedAt } */
+    taNpcDrafts: [],
+
+    /* ta 提案表 + 已成立 NPC 事件表（2026-10-02 第四批，ta-proposal.js）：
+       模型输出只准落 taProposals（status=pending），用户确认才由
+       acceptProposal 改正式表（taItems/taFollows/taPromises/taEvents/
+       attentionInbox 候选）。baseVersion 版本过期 → expired。
+       { id, sandboxId, refCharId, refUserId, kind, operation, targetRef,
+         baseVersion, summary, reason, extra{白名单}, sourceRefs, mode,
+         fp, requestId, modelMeta, status: 'pending'|'accepted'|'rejected'|
+         'expired'|'failed', appliedRef, history[], createdAt, updatedAt } */
+    taProposals: [],
+    /* 已成立 NPC 事件：提案接受后写入；knowledge/impact 各自绑定依据 */
+    taEvents: [],
+
+    /* 最小动作协议（2026-10-03 第二轮施工单第三批，action.js）：
+       一次动作 = 一条记录。本轮只有 calendar.create_event 一种。
+       { id, sandboxId, kind, target, params, requestKey, source,
+         status:'pending'|'ok'|'failed'|'cancelled', attempt,
+         createdAt, updatedAt, receiptAt, resultRef, error, receipt }
+       ⚠️ status:'ok' 只能在拿到真实 eventId 之后写 —— 见 action.js 头六条规矩 */
+    actionRequests: [],
+
     /* 名片夹（树状）：见文件头 1) */
     characters: [],
 
