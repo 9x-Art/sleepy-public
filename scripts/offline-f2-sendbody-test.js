@@ -1093,9 +1093,11 @@ var GUARDED = ['prompt-engine.js', 'page-offline.js', 'api.js', 'behavior-text.j
    ★ 2026-10-05 K03f 批（群线上动态上下文）：批准触碰新增
    page-group-ai.js（composeRound 四源接线）/ page-presets.js（自定义卡群聊开关），
    prompt-engine.js / sw.js 再次触碰；基线随本批收口重生成。
+   ★ 2026-10-05 总结三字段批（relation/review/uncertain 丢失链）：批准触碰新增
+   page-summary.js（ingest 白名单接线），sw.js 跳 v167；基线随本批收口重生成。
    名单**写死在判据里**：下一个批次若要改别的生产文件，必须显式更新这里
    （与 smoke 的 EXPECTED_SW_CACHE 同一哲学：每次都要有人手动确认一次）。 */
-var BATCH_APPROVED_TOUCH = ['prompt-engine.js', 'ta-life.js', 'page-proactive.js', 'page-group-ai.js', 'page-presets.js', 'sw.js'];
+var BATCH_APPROVED_TOUCH = ['prompt-engine.js', 'ta-life.js', 'page-proactive.js', 'page-group-ai.js', 'page-presets.js', 'page-summary.js', 'sw.js'];
 
 var baseline = null, baselineWhy = '';
 (function loadBaseline() {

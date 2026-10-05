@@ -20,6 +20,12 @@
      · replaces 指到的旧记忆 → superseded（记 supersededBy）
      · kind/evidence 非法 → 映射到合法值，不丢弃
      · charState / openLoops 存 store，attention 只暂存（主动消息引擎接）
+     · relation.confirmedChange → relationship_fact 恒 pending（强制 user 确认闸，
+       勘察-2026-10-05 §三 + 2026-10-05 拍板）；relation 其余存 relationIntent:<rootId>
+       （剧透保护字段，只给程序侧，本批只落库不接消费）
+     · review / uncertain → reviewLog / uncertainLog:<rootId> 诊断日志（capped 10 次，
+       不进 prompt、不进主动消息、不做 UI）
+     · changes 为空不再提前结束：三字段各自判空、各自落库（零记忆变更也可能有意向）
    ============================================================ */
 (function (global) {
   'use strict';
@@ -35,6 +41,15 @@
 
   function nowIso() { return new Date().toISOString(); }
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+  /* relation.intent.pace 只收 1~5 的整数（2026-10-05 收口拍板）：
+     小数（3.7）、带小数的字符串（"3.7"）、越界（0/6/…）、非数（'abc'/true/null）
+     一律 null，**不做边界夹值**；纯整数字符串（"2"）与整数数字（4）合法。 */
+  function paceOf(v) {
+    var n = (typeof v === 'number' && isFinite(v) && v === Math.floor(v)) ? v
+      : (typeof v === 'string' && /^[0-9]+$/.test(v.trim()) ? parseInt(v, 10) : NaN);
+    return (n >= 1 && n <= 5) ? n : null;
+  }
 
   /* 项目 5 S6：charState / openLoops / attentionInbox 的键也归 root ——
      皮套总结出来的心绪，就是同一个大脑的状态（本地兜底同 page-memory）。 */
@@ -57,17 +72,21 @@
      meta = { source:'online'|'offline', ref:'见面 #07' 等 } */
   function ingest(charId, parsed, meta) {
     meta = meta || {};
-    if (!parsed || !Array.isArray(parsed.changes) || !parsed.changes.length) {
-      return { added: 0, superseded: 0 };
-    }
+    if (!parsed) return { added: 0, superseded: 0 };
+    /* 勘察-2026-10-05 §三：relation/review/uncertain 此前产出即丢弃。
+       一次总结完全可能零记忆变更但有意向与评估 —— 不再因 changes 为空提前结束，
+       各字段各自判空、各自落库（群线下 ingest 只传 changes，行为不变）。 */
+    var changes = Array.isArray(parsed.changes) ? parsed.changes : [];
+    var rel = (parsed.relation && typeof parsed.relation === 'object') ? parsed.relation : null;
+    var added = 0, superseded = 0, confirmedPending = 0;
+    /* store.get 是深拷贝：哪段要写记忆库哪段重新 load，改完 save，不能复用旧引用 */
+    var file = changes.length ? Sleepy.memoryStore.loadCharMemory(charId) : null;
     var M = Sleepy.memoryStore;
-    var file = M.loadCharMemory(charId);
+    var rid = rootIdOf(charId);
     var ref = meta.ref || (meta.source === 'offline' ? '线下见面' : '线上累计 ' +
       pad2(new Date().getMonth() + 1) + '-' + pad2(new Date().getDate()));
 
-    var added = 0, superseded = 0;
-
-    parsed.changes.forEach(function (c) {
+    changes.forEach(function (c) {
       if (!c || typeof c.text !== 'string' || !c.text.trim()) return;
 
       var kind = KIND_OK.indexOf(c.kind) >= 0 ? c.kind
@@ -164,7 +183,6 @@
     }
 
     /* 心绪 / 悬而未决：存下来给心绪面板和主动消息引擎接（先落库；键归 root，S6） */
-    var rid = rootIdOf(charId);
     if (parsed.charState && typeof parsed.charState === 'object') {
       store.set('charState:' + rid, {
         feelings: parsed.charState.feelings || [],
@@ -180,7 +198,98 @@
       store.set('attentionInbox:' + rid, { items: parsed.attention.slice(0, 4), updatedAt: nowIso() });
     }
 
-    return { added: added, superseded: superseded };
+    /* —— relation.confirmedChange：入库但强制过 user 确认闸（2026-10-05 拍板）——
+       卡上语义是「双方共识的关系事实」，但模型自称的共识不能静默生效
+       （同族纪律：confirm:true 需 user 确认）。kind=relationship_fact、
+       status 恒为 pending（即使模型给 user_explicit 也不放行），复用现有留痕
+       确认 UI：user 确认后经 confirmMemoryItems 进既有事实链，拒绝则不成立。 */
+    var cc = rel ? rel.confirmedChange : null;
+    var ccList = Array.isArray(cc) ? cc : (typeof cc === 'string' && cc.trim() ? [cc] : []);
+    if (ccList.length) {
+      file = M.loadCharMemory(charId);
+      var ccEvidence = EVID_OK.indexOf(rel.evidence) >= 0 ? rel.evidence : 'uncertain';
+      ccList.forEach(function (text) {
+        if (typeof text !== 'string' || !text.trim()) return;
+        file.memories.unshift({
+          id: 'mem_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          charId: charId,
+          kind: 'relationship_fact',
+          content: text.trim(),
+          source: meta.source === 'offline' ? 'offline' : 'ai_summary',
+          sourceRef: meta.ref || (meta.source === 'offline' ? '线下大总结' : '线上累计 ' +
+            pad2(new Date().getMonth() + 1) + '-' + pad2(new Date().getDate())),
+          evidenceType: ccEvidence,
+          status: 'pending',
+          isAnchor: false,
+          isUserEdited: false,
+          via: 'relation.confirmedChange',
+          createdAt: nowIso(),
+          updatedAt: nowIso()
+        });
+        confirmedPending++;
+      });
+      M.saveCharMemory(file);
+    }
+
+    /* —— relation.intent（+ currentReading/evidence/sourceIds）：程序侧消费块 ——
+       nextAction/requiredSignal 卡上明写「不展示给 user（剧透保护）」，
+       落点 = 主动消息候选合成（2026-10-05 拍板：本批只落库+键登记，接线另批）。
+       整块替换（同 charState 模式）；本次 relation 无内容时不覆盖旧状态
+       （卡：缺失字段用空结构，不覆盖旧状态）。不进普通聊天 prompt。 */
+    var it0 = rel ? rel.intent : null;
+    var intentHasContent = !!(it0 && typeof it0 === 'object' &&
+      (it0.direction || it0.nextAction || it0.requiredSignal || it0.avoid ||
+        it0.validUntil || paceOf(it0.pace) !== null));
+    var hasIntentBlock = rel && (intentHasContent ||
+      (typeof rel.currentReading === 'string' && rel.currentReading.trim()));
+    if (hasIntentBlock) {
+      var it = (rel.intent && typeof rel.intent === 'object') ? rel.intent : {};
+      store.set('relationIntent:' + rid, {
+        currentReading: typeof rel.currentReading === 'string' ? rel.currentReading : '',
+        evidence: rel.evidence || '',
+        sourceIds: Array.isArray(rel.sourceIds) ? rel.sourceIds.slice(0, 8) : [],
+        intent: {
+          direction: it.direction || '',
+          pace: paceOf(it.pace),
+          nextAction: it.nextAction || '',
+          requiredSignal: it.requiredSignal || '',
+          avoid: it.avoid || '',
+          validUntil: it.validUntil || ''
+        },
+        source: meta.source === 'offline' ? 'offline' : 'online',
+        updatedAt: nowIso()
+      });
+    }
+
+    /* —— review / uncertain：只做诊断（2026-10-05 拍板：只落库不做 UI）——
+       capped 留最近 10 次；不进 prompt、不进主动消息、不加展示入口。
+       review 按次整包入日志（effective/problems/temporary 三类原样），留趋势。 */
+    if (parsed.review && typeof parsed.review === 'object') {
+      var rkey = 'reviewLog:' + rid;
+      var rlog = store.get(rkey) || { items: [] };
+      var ritems = (rlog.items || []).slice(-9);
+      ritems.push({
+        effective: parsed.review.effective || [],
+        problems: parsed.review.problems || [],
+        temporary: parsed.review.temporary || [],
+        source: meta.source === 'offline' ? 'offline' : 'online',
+        at: nowIso()
+      });
+      store.set(rkey, { items: ritems, updatedAt: nowIso() });
+    }
+    if (Array.isArray(parsed.uncertain) && parsed.uncertain.length) {
+      var ukey = 'uncertainLog:' + rid;
+      var ulog = store.get(ukey) || { items: [] };
+      var uitems = (ulog.items || []).slice(-9);
+      uitems.push({
+        items: parsed.uncertain.slice(0, 4),
+        source: meta.source === 'offline' ? 'offline' : 'online',
+        at: nowIso()
+      });
+      store.set(ukey, { items: uitems, updatedAt: nowIso() });
+    }
+
+    return { added: added, superseded: superseded, confirmedPending: confirmedPending };
   }
 
   /* ---------------------------- 模型 ----------------------------

@@ -7197,6 +7197,234 @@ t('ingest：autoAnchor 开 → priority=high 入库即锚定；批量确认 pend
   return { 锚定: true, 关不锚: true, 批量确认: n };
 });
 
+/* ---------------- 总结卡三字段丢失链（relation/review/uncertain） ----------------
+   勘察-2026-10-05 §三：此前 ingest 白名单只接 changes/charState/openLoops/attention，
+   relation / review / uncertain 产出即丢弃。2026-10-05 拍板：
+   · confirmedChange → relationship_fact 恒 pending（模型自称的共识不静默生效）；
+   · relation.intent → relationIntent:<rootId> 只落库，不接主动消息（另批）；
+   · review / uncertain → reviewLog / uncertainLog:<rootId> 只诊断（capped 10 次）。 */
+console.log('\n--- 总结三字段：confirmedChange / relationIntent / review / uncertain ---');
+t('ingest：changes 为空不再提前结束；confirmedChange 只产 pending；三键落库', () => {
+  const ch = S.core.upsertChar({ name: '三字段测试', kind: 'main' }).id;
+  const root = S.core.rootOf(ch).id;
+  const parsed = {
+    changes: [],
+    relation: {
+      confirmedChange: '双方确认了恋爱关系',
+      currentReading: '关系明显更近了',
+      evidence: 'user_explicit',
+      sourceIds: ['3'],
+      intent: { direction: 'closer', pace: 3, nextAction: '下次见面聊旅行计划',
+        requiredSignal: 'user 主动提起周末安排', avoid: '不要催促', validUntil: '2026-11-01' }
+    },
+    review: { effective: ['节奏合适'], problems: [], temporary: [] },
+    uncertain: ['那句「随便」分不清是玩笑还是敷衍']
+  };
+  const stat = S.summaryEngine.ingest(ch, parsed, { source: 'online', ref: '测试' });
+  if (stat.added !== 0) throw new Error('changes 为空不应入库普通记忆');
+  if (stat.confirmedPending !== 1) throw new Error('confirmedChange 应产 1 条 pending，实 ' + stat.confirmedPending);
+  const file = S.memoryStore.loadCharMemory(ch);
+  const pend = file.memories.filter((m) => m.via === 'relation.confirmedChange');
+  if (pend.length !== 1) throw new Error('应有 1 条 confirmedChange 痕迹');
+  const it = pend[0];
+  /* 关键：模型给了 user_explicit 也必须 pending —— 共识不自认 */
+  if (it.status !== 'pending' || it.kind !== 'relationship_fact') {
+    throw new Error('confirmedChange 必须是 pending 的 relationship_fact，实 ' + it.status + '/' + it.kind);
+  }
+  if (it.evidenceType !== 'user_explicit') throw new Error('evidence 应保留（只压状态不压证据）');
+
+  const ri = S.store.get('relationIntent:' + root);
+  if (!ri || ri.intent.direction !== 'closer' || ri.intent.pace !== 3 ||
+      ri.intent.validUntil !== '2026-11-01' || ri.currentReading !== '关系明显更近了') {
+    throw new Error('relationIntent 落库内容不对：' + JSON.stringify(ri));
+  }
+  const rl = S.store.get('reviewLog:' + root);
+  if (!rl || rl.items.length !== 1 || rl.items[0].effective[0] !== '节奏合适') {
+    throw new Error('reviewLog 落库不对：' + JSON.stringify(rl));
+  }
+  const ul = S.store.get('uncertainLog:' + root);
+  if (!ul || ul.items.length !== 1 || ul.items[0].items.length !== 1) {
+    throw new Error('uncertainLog 落库不对：' + JSON.stringify(ul));
+  }
+
+  /* 确认前不进入已成立事实读取：getMemoryInjection 只吃 active
+     （page-memory.js getMemoryInjection 过滤 status==='active'；主角默认开开关，
+     断言非空转）——pending 的 confirmedChange 只能出现在留痕待确认里 */
+  const injBefore = S.memoryStore.getMemoryInjection(ch) || '';
+  if (injBefore.indexOf('双方确认了恋爱关系') >= 0) {
+    throw new Error('pending 的 confirmedChange 不应进记忆注入（确认前不得成立）');
+  }
+
+  /* 确认闸闭环：user 确认后经 confirmMemoryItems 进既有事实链 */
+  const n = S.memoryStore.confirmMemoryItems(ch, [it.id]);
+  if (n !== 1) throw new Error('确认数不对：' + n);
+  const after = S.memoryStore.loadCharMemory(ch);
+  const done = after.memories.find((m) => m.id === it.id);
+  if (!done || done.status !== 'active') throw new Error('确认后应转 active');
+
+  S.store.set('charMem:' + ch, null);
+  S.store.set('relationIntent:' + root, null);
+  S.store.set('reviewLog:' + root, null);
+  S.store.set('uncertainLog:' + root, null);
+  S.core._purgeSync.char(ch);
+  return { confirmedPending: stat.confirmedPending, 确认后active: true, 三键落库: true };
+});
+
+t('ingest：relation 缺失 / 空意向不覆盖旧状态；capped 10 次', () => {
+  const ch = S.core.upsertChar({ name: '三字段覆盖测试', kind: 'main' }).id;
+  const root = S.core.rootOf(ch).id;
+  const rel = { relation: { intent: { direction: 'hold', pace: 2, nextAction: '陪他修相机',
+    requiredSignal: '', avoid: '', validUntil: '' } } };
+  S.summaryEngine.ingest(ch, rel, { source: 'online', ref: '测试' });
+  const first = S.store.get('relationIntent:' + root);
+  if (!first || first.intent.direction !== 'hold') throw new Error('首次应落库');
+
+  /* 本次 relation 整个缺失（卡：缺失字段用空结构，不覆盖旧状态） */
+  S.summaryEngine.ingest(ch, { changes: [] }, { source: 'online', ref: '测试' });
+  if (JSON.stringify(S.store.get('relationIntent:' + root)) !== JSON.stringify(first)) {
+    throw new Error('relation 缺失时不应覆盖旧 relationIntent');
+  }
+  /* intent 是空对象且 currentReading 也空 → 同样不算内容，不覆盖 */
+  S.summaryEngine.ingest(ch, { changes: [], relation: { intent: {} } }, { source: 'online', ref: '测试' });
+  if (JSON.stringify(S.store.get('relationIntent:' + root)) !== JSON.stringify(first)) {
+    throw new Error('空 intent 不应覆盖旧 relationIntent');
+  }
+
+  /* review / uncertain：capped 留最近 10 次 */
+  for (let i = 0; i < 12; i++) {
+    S.summaryEngine.ingest(ch, { review: { problems: ['p' + i] }, uncertain: ['u' + i] },
+      { source: 'online', ref: '测试' });
+  }
+  const rl = S.store.get('reviewLog:' + root);
+  const ul = S.store.get('uncertainLog:' + root);
+  if (rl.items.length !== 10) throw new Error('reviewLog 应 capped 10，实 ' + rl.items.length);
+  if (rl.items[9].problems[0] !== 'p11') throw new Error('应保留最近一次 p11');
+  if (rl.items[0].problems[0] !== 'p2') throw new Error('最老应滚到 p2');
+  if (ul.items.length !== 10) throw new Error('uncertainLog 应 capped 10，实 ' + ul.items.length);
+
+  S.store.set('charMem:' + ch, null);
+  S.store.set('relationIntent:' + root, null);
+  S.store.set('reviewLog:' + root, null);
+  S.store.set('uncertainLog:' + root, null);
+  S.core._purgeSync.char(ch);
+  return { 不覆盖: true, capped: rl.items.length };
+});
+
+t('群线下口径：只传 changes 时行为不变（无 confirmedPending、不写新键）', () => {
+  const ch = S.core.upsertChar({ name: '三字段群下测试', kind: 'main' }).id;
+  const root = S.core.rootOf(ch).id;
+  const stat = S.summaryEngine.ingest(ch, { changes: [
+    { op: 'add', kind: 'shared_event', evidence: 'confirmed_event', text: '一起逛了夜市' }
+  ] }, { source: 'offline', ref: '见面 #01' });
+  if (stat.added !== 1 || stat.confirmedPending !== 0) {
+    throw new Error('群线下 changes-only 应原样入库，实 ' + JSON.stringify(stat));
+  }
+  ['relationIntent:', 'reviewLog:', 'uncertainLog:'].forEach((k) => {
+    if (S.store.get(k + root)) throw new Error('changes-only 不应写 ' + k);
+  });
+  S.store.set('charMem:' + ch, null);
+  S.core._purgeSync.char(ch);
+  return { added: stat.added, 新键全无: true };
+});
+
+t('pace 只收 1~5 整数：小数/越界/非数一律 null，不做边界夹值', () => {
+  const ch = S.core.upsertChar({ name: 'pace测试', kind: 'main' }).id;
+  const root = S.core.rootOf(ch).id;
+  const mk = (pace) => {
+    S.summaryEngine.ingest(ch, { relation: { intent: { direction: 'hold', pace } } },
+      { source: 'online', ref: '测试' });
+    return (S.store.get('relationIntent:' + root) || {}).intent.pace;
+  };
+  const cases = [
+    [4, 4], ['2', 2], [' 5 ', 5],            /* 合法：整数数字 / 纯整数字符串 */
+    [3.7, null], ['3.7', null],              /* 小数（含字符串形态）→ null，不截断成 3 */
+    [0, null], [-1, null], [6, null], ['99', null],  /* 越界 → null，不夹值 */
+    ['abc', null], [true, null], [null, null], [undefined, null], ['1.0', null]
+  ];
+  const got = cases.map(([v]) => mk(v));
+  cases.forEach(([v, want], i) => {
+    if (got[i] !== want) {
+      throw new Error('pace=' + JSON.stringify(v) + ' 应得 ' + JSON.stringify(want) +
+        '，实得 ' + JSON.stringify(got[i]));
+    }
+  });
+  S.store.set('relationIntent:' + root, null);
+  S.core._purgeSync.char(ch);
+  return { 合法: '4/"2"/" 5 "', 越界与非数全null: true, 不夹值: true };
+});
+
+t('confirmedChange 现状：重复申报重复建 pending（无内容级幂等）+ 拒绝即不成立', () => {
+  const ch = S.core.upsertChar({ name: '三字段幂等测试', kind: 'main' }).id;
+  const parsed = { relation: { confirmedChange: '确定了要一起养猫', evidence: 'confirmed_event' } };
+  S.summaryEngine.ingest(ch, parsed, { source: 'online', ref: '测试' });
+  S.summaryEngine.ingest(ch, parsed, { source: 'online', ref: '测试' });
+  const file = S.memoryStore.loadCharMemory(ch);
+  const dups = file.memories.filter((m) =>
+    m.via === 'relation.confirmedChange' && m.content === '确定了要一起养猫');
+  /* 现状如实钉死：ingest 沿用 changes 通道纪律 —— 无内容级去重，
+     幂等靠模型 replaces 引用旧 id + user 在留痕侧处理；重复申报 = 重复 pending */
+  if (dups.length !== 2) throw new Error('现状应产生 2 条 pending，实 ' + dups.length);
+  if (dups.some((m) => m.status !== 'pending')) throw new Error('重复条目都应是 pending');
+  /* 拒绝 = user 在留痕里「标记错误」（invalidateMemoryItem）——
+     ⚠️ deleteMemoryItem 只许 user_manual 物理删除（page-memory.js :316），
+     ai_summary 来源的拒绝出口就是 invalidate：不再召回，原始数据保留 */
+  S.memoryStore.invalidateMemoryItem(ch, dups[0].id);
+  const after = S.memoryStore.loadCharMemory(ch);
+  const rejected = after.memories.find((m) => m.id === dups[0].id);
+  if (!rejected || rejected.status !== 'invalid') throw new Error('拒绝后应标 invalid');
+  if (after.memories.some((m) => m.id === dups[1].id && m.status !== 'pending')) {
+    throw new Error('未拒绝的那条应保持 pending');
+  }
+  const injAfter = S.memoryStore.getMemoryInjection(ch) || '';
+  if (injAfter.indexOf('确定了要一起养猫') >= 0) {
+    throw new Error('拒绝（invalid）后不应进记忆注入');
+  }
+  S.store.set('charMem:' + ch, null);
+  S.core._purgeSync.char(ch);
+  return { 重复建pending: dups.length, 拒绝出口: 'invalidate', 拒绝不成立: true };
+});
+
+t('changes=[] 时原有状态字段照常落库（early-return 修复覆盖同族四键）', () => {
+  const ch = S.core.upsertChar({ name: '同族状态测试', kind: 'main' }).id;
+  const root = S.core.rootOf(ch).id;
+  const stat = S.summaryEngine.ingest(ch, {
+    changes: [],
+    charState: { feelings: ['有点想你'], readings: ['你最近在赶due'], unspoken: [] },
+    openLoops: [{ text: '修相机的事' }],
+    attention: [{ content: '留意楼下的猫' }]
+  }, { source: 'online', ref: '测试' });
+  if (stat.added !== 0) throw new Error('changes 为空不入普通记忆');
+  const cs = S.store.get('charState:' + root);
+  if (!cs || cs.feelings[0] !== '有点想你' || cs.readings[0] !== '你最近在赶due') {
+    throw new Error('charState 应照常落库：' + JSON.stringify(cs));
+  }
+  if (!(S.store.get('openLoops:' + root) || { items: [] }).items.length) {
+    throw new Error('openLoops 应照常落库');
+  }
+  if (!(S.store.get('attentionInbox:' + root) || { items: [] }).items.length) {
+    throw new Error('attentionInbox 应照常落库');
+  }
+  S.store.set('charState:' + root, null);
+  S.store.set('openLoops:' + root, null);
+  S.store.set('attentionInbox:' + root, null);
+  S.core._purgeSync.char(ch);
+  return { charState: true, openLoops: true, attentionInbox: true };
+});
+
+t('诊断键不接消费端（结构性负向断言：本批只落库，接线另批）', () => {
+  /* 判据落在生产文件源码上：消费端（主动消息 / ta 首页 / prompt 装配）
+     不得出现三个新键 —— 接线时必须显式改这条断言，防止静默溜进 prompt。 */
+  ['page-proactive.js', 'page-ta.js', 'prompt-engine.js'].forEach((f) => {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    ['relationIntent:', 'reviewLog:', 'uncertainLog:'].forEach((k) => {
+      if (src.indexOf(k) >= 0) {
+        throw new Error(f + ' 出现了 ' + k + ' —— 若是有意接线，请同步更新本断言');
+      }
+    });
+  });
+  return { 三个消费端全净: true };
+});
+
 /* 失败原因必须能翻成人话 —— 用户六.1：「没填副 api 生成底片失败，
    只显示『生成失败』」，查下去发现 7 处都写 `res.message || '请求失败'`，
    而 requestOnce 的结果里**根本没有 message 字段** → 超时 / HTTP 401 /
@@ -13305,14 +13533,14 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* ---------- SW 缓存版本：独立基准，不是「读当前值再与当前值比」 ----------
    ⚠️ 反面教材（必须避免）：从 sw.js 读出 CASH 再断言它等于自己 ——
      那样永远为真，版本号忘了跳也测不出来。
-   ★ 这里的基准是**手写的常量**：本批改了运行时脚本 page-offline.js，
-     按项目约定必须同步 CACHE +1。基准写死 'sleepy-v157'，
+   ★ 这里的基准是**手写的常量**：本批改了运行时脚本 page-summary.js
+     （总结卡三字段丢失链），按项目约定必须同步 CACHE +1。基准写死 'sleepy-v167'，
      跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
      「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v166';
+const EXPECTED_SW_CACHE = 'sleepy-v167';
 
-t('SW 缓存版本：与独立基准一致（本批改过 page-offline.js，必须跳位）', () => {
+t('SW 缓存版本：与独立基准一致（本批改过 page-summary.js，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   const m = sw.match(/var CACHE = '([^']+)'/);
   if (!m) throw new Error('sw.js 里找不到 var CACHE = \'…\'');
@@ -13322,8 +13550,8 @@ t('SW 缓存版本：与独立基准一致（本批改过 page-offline.js，必�
   }
   /* 附带护栏：跳位必须在文件头留下本批的跳版本说明，
      否则下一个人会怀疑「这个号是不是手滑改的」。 */
-  if (sw.indexOf('v160（2026-10-04）') < 0) {
-    throw new Error('CACHE 已跳到 v160，但文件头缺少 v160 的变更说明');
+  if (sw.indexOf('v167（2026-10-05）') < 0) {
+    throw new Error('CACHE 已跳到 v167，但文件头缺少 v167 的变更说明');
   }
   return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
 });

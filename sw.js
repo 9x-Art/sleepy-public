@@ -13,6 +13,14 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v167（2026-10-05）：**总结卡三字段丢失链接上（relation/review/uncertain）**——
+   · page-summary：ingest 不再因 changes 为空提前结束；relation.confirmedChange
+     → relationship_fact 恒 pending（强制 user 确认闸，模型自称的共识不静默生效）；
+     relation.intent（+currentReading）→ relationIntent:<rootId> 整块替换
+     （剧透保护字段只落库，主动消息接线另批）；review/uncertain →
+     reviewLog/uncertainLog:<rootId> 诊断日志（capped 10 次，不进 prompt/UI）。
+   → 必须跳版本：page-summary.js 变了。
+
    v166（2026-10-05）：**群线上动态上下文补齐（K03f）**——
    · page-group-ai：composeRound 接四源（权限等级分开装配）——
      世界书按知情范围分流（全局书 → 共享块；个人书 → 挂靠本体的 [ENTITY] 块，
@@ -441,7 +449,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v166';
+var CACHE = 'sleepy-v167';
 var CORE = [
   './',
   './index.html',
