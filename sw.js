@@ -13,6 +13,233 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v161（2026-10-04）：**群线上接入冻结 B/P/L/E/S4**——
+   · prompt-engine：只把 `BT_SPECS.groupOnline` 的
+     `injectShell`/`injectScene` 由 `false/false` 改为 `true/true`，
+     连带删掉「shell 与 plans 两条要求互斥」的断言（用户裁决：**不注入旧 shell、
+     不做裁节机制**）。C1 核对已确认 `plans[].internalUpdate` 是**可选结构化状态**
+     （`validateRound` 不要求存在、不校验类型/长度；`saveInner`/`saveDefer`
+     截断至 120 字）。**本批不注入旧 shell 卡，因此未证明 shell ⑦
+     构成本批接线的阻碍**（不注入 ≠ 已证明互斥不存在）。共享决策工厂未动。
+   · page-group-ai：`composeRound` 顺序固定为
+     **B/P/L → groupRound → E/S4 → 原有群现场信息**。
+     `btDecideScene` 只调用一次；两段**各自**满足
+     「ok + 对应 inject 为 true + 正文是非空字符串」才 push，并按**实际 push** 记账。
+     groupRound 卡及 [GROUP] / [ENTITY_KNOWLEDGE] / 编号禁令**正文一行未改**，
+     解析/校验/存取/投递一律未动，**本批不新增任何存储写入**。
+     诊断只在内存（`groupAI.behaviorNote()` 返回**只读深拷贝**），
+     每次尝试开头重置 —— 早退也不留上轮的成功记账。
+   · 诊断正常态：`modules=['B','P','L','E','S4']`、`pendingModules=[]`、
+     `partial=false`、`shellCard='behavior'`。
+
+   v160（2026-10-04）：**共享行为决策层 + 主动消息/群线下最小接线**——
+   · prompt-engine：新增 `btDecide(spec)` 为**五场景唯一实现**（十步校验）。
+     原 btOnlineDecision / btOfflineDecision 改成**薄包装**（返回字段逐字不变），
+     因为 behavior-offline-migration-test.js 的 67 条断言锚在它们身上。
+     新增 spec 护栏 G1–G8（未知场景 / 契约形状 / 重复模块 / 非布尔 inject 标志
+     一律 throw，由 btDecideScene 接住转成整条回退，**不向页面泄漏异常**）。
+     ★ G4 允许 S1–S5 任意场景专属段（只做形状校验；
+       「scene 契约 == 计划剩余序列」留到拿到真 plan 之后再判）。
+   · 诊断口径：`modules` 只报**真的进 system** 的模块；未接通的进 `pendingModules`
+     且 `partial=true`；`sceneSkippedByOverride` 区分「被 override 跳过」
+     与「本批没接通」。工厂不提前宣称，调用方装配完成后经 `btNote` 回报。
+   · page-proactive：默认注入 B/P/L/E/S3，**proactive 协议卡保留在原位**
+     （顺序 shell → 卡 → E/S3）。proactive 卡被 override → 保留 B/P/L、
+     跳过 E/S3；shell 被 override → 整条回退。
+   · page-group-offline：**部分接线**，只注入 B/P/L；
+     f2 / [SCENE] / [PARTICIPANTS] / [LANGUAGES] / [PRESENCE RULES] / [OUTPUT]
+     **全部原样保留**，N/S5 暂不进 system。
+   · page-group-ai.js **本批零改动**（shell 卡与 groupRound 的
+     plans[].internalUpdate 存在硬冲突，接线前需先裁决）。
+   · 诊断只落内存、只读深拷贝快照，**本批不做 UI**；Sleepy.offlineDiag 未动。
+   ⚠️ 已知待裁决：smoke「通查②」断言主动消息 system 含 `[角色声音]`。
+     `[角色声音]`/`[身份与场景]` 属 shell **卡**正文，行为文本 B 批起
+     私聊线上 shell 位已被 B/P/L 顶替、同样不含这两节 —— 接线后 proactive
+     与线上对齐。该断言是行为文本之前写的，本批**未擅自改断言也未改产品**。
+
+   v159（2026-10-04）：**解析失败记录不再进模型上下文**（P0 返修第二批）——
+   起因：v158 的降级消息 `paras` 里那句中性标记会**以角色身份**进历史 ——
+   证据里出现「沈砚：这一轮的回复格式出了点问题。」，
+   模型会把它当成角色说过的台词。中性措辞解决不了**角色归属污染**。
+   · prompt-engine `assembleOffline` 的 **history 槽**：按 **parseFailed 状态**
+     排除失败记录（**不按文案匹配** —— 文案会改，状态不会）。
+     ⚠️ 先过滤再 `slice(-20)`，否则被排除的记录仍占额度、只剩 19 条。
+   · 同函数 **worldbook 槽**同样排除：失败标记不是世界书素材，
+     留着会让世界书按一句无关提示去匹配。
+   · page-offline `generateSummary` 同样排除：否则总结里会出现
+     一句角色没说过的话。
+   · 解析器、协议、offlineOutProto、B/P/L/N/S2、诊断、UI 记录全部未动；
+     **失败记录仍完整留在会话里并在 UI 正常渲染**，只是不进任何模型上下文。
+   ★ 附带查明（实测，如实记录）：rawReturn 的内存容器在 page-offline.js 的
+     **模块作用域**（IIFE 内），生命周期等于**整个页面**而不是单个场景页 ——
+     离开页面再回来原始返回仍在，**刷新才丢**。本批只核对不改动。
+   → 必须跳版本：prompt-engine.js / page-offline.js 都改了。
+
+   v158（2026-10-04）：**线下解析失败的用户可见降级**（P0 · 方案 A）——
+   起因：真机效果验收发现模型有相当比例返回**语法不合法的 JSON**
+   （`{"type":"prose":"…"}` 缺冒号 / 末尾截断 / 输出「修正版：」双份），
+   以及 **HTTP 200 但 content 为空**；旧代码把降级后的整段原文当 paras 渲染，
+   正文里直接出现裸 JSON。
+   · page-offline：`parseOfflineReply` 返回 `ok:false` 时（坏 JSON **与**空串统一）
+     走一条专用降级路径 —— 正文一条人话提示 + **默认折叠**的「查看原始返回」。
+   · `prompt-engine.js` 的 `parseOfflineReply` **一行未改**（它的降级行为是对的，
+     问题在消费方无条件照单渲染）；协议 / offlineOutProto / B·P·L·N·S2 /
+     诊断 / 超时 / 重试 / maxTokens 全部未动。
+   · ★ **rawReturn 只放模块级内存 Map**，绝不挂消息对象 ——
+     `appendMessage → mutateSession → saveAll` 会把挂在 msg 上的字段写进 store，
+     挂上去等于把模型原始返回落库。刷新 / 离开即失，不进 store / 导出 / 收藏 /
+     日志 / 诊断，也不被「通用消息持久化逻辑」顺手保存。
+   · 降级消息的 `paras` 里**只有一句中性失败标记**（不含「JSON」「格式错误」这类词，
+     否则下一轮模型会读到「上一轮出了个 JSON 错」这种莫名其妙的话）。
+   · 成功路径（paras / trans / suggests / envUpdate / scene）完全不受影响。
+   → 必须跳版本：page-offline.js / style.css 都改了。
+   ⚠️ 本条只证明降级可见性与数据隔离，**模型效果仍未验收**；
+     style.css / sw.js 两个文件已混有多批此前改动，本批只追加、不改既有行。
+
+   v157（2026-10-04）：**线下请求诊断返修**（F1/F2/F3 三处真缺陷）——
+   ⚠️ v156 那版把 page-offline.js 改成了**模块级就崩**的状态，本条是修它。
+   · **致命**：`STAGE_TO_DIAG`（引用 DIAG_STAGE 的值）被放在 DIAG_STAGE
+     声明**之前**。`var` 会提升但值是 undefined → 模块顶层求值即抛 TypeError
+     → 整个 page-offline.js 的导出全丢（Sleepy.offlineStore / offlineUI /
+     offlineDiag 全变 undefined，**线下场景功能完全不可用**）。
+     同时导出面上挂着 `__recordIfCurrent: diagRecordIfCurrent`，
+     而那个函数 v1 删了之后**从未定义** → 又一个 ReferenceError。
+     修法：诊断常量块整体上移到使用点之前；导出面删到只剩两个只读入口。
+   · **F1 请求身份**：`diagRecord` 每写一条就自增 `diagSeq`，v1 拿它当请求身份，
+     于是「无连接」分支写一次诊断就把本请求作废，回调里
+     `if (diagSeq !== seq) return;` 命中 → **整段业务回调被丢弃**，
+     pending 永久占位、按钮不解禁、无错误提示。
+     修法：拆成 `requestSeq`（请求身份，每次新请求只分配一次，阶段更新沿用）
+     与 `diagSeq`（诊断记录序号，只给面板排序看）。守卫只管共享 UI 状态，
+     **绝不丢弃业务回调**。
+   · **异步边界**：请求身份改在 requestTurn 入口分配（预取阶段就占位 pending，
+     否则召回那几百毫秒能连发两次）；预取回来先核对「页面还在 / 会话还在」，
+     否则记 canceled 并收尾；onShow 重新置 `ctx.__alive`
+     （页面实例缓存复用，只在 render 入口置位会导致离开一次后永久作废）。
+   · **F2 失败语义**：只有 stage=http/parse 才算「服务端确实收到了并拒绝」；
+     network/timeout/unknown **无法确认** → request-failed-unknown；
+     config 是本地判定**没出网**。同步抛 / Promise reject / 非 thenable
+     三条路径都收尾，不再沿用上次成功状态。
+   · **F3 生产接口**：`Sleepy.offlineDiag` 只剩 `snapshot` / `stageLabel`。
+     阶段/原因码/模块/版本全部走闭集校验，未知一律固定文案、不回显原串。
+     面板字段 modelOk → requestOk，新增「请求身份」行。
+   · 另修 `diagPanelRef` 词法作用域（声明在 buildSettingsSheet 内、
+     refreshDiagPanel 在同层看不见 → 点「请求诊断」页签必 ReferenceError）。
+   ⚠️ 只验接线与收尾，**模型效果仍未验收**；未提交 / 未 push / 未部署。
+
+   v156（2026-10-03）：私聊线下接共用行为文本（B/P/L/N/S2）+ 线下最小请求诊断 ——
+   线上那批之后，线下一直是全库唯一没有行为迁移的场景。
+   · prompt-engine：新增 btOfflineDecision（槽位契约 shell=B/P/L、f2=N/S2，
+     拼平逐项等于 PLANS.offline）；assembleOffline 两卡统一读决策结果，
+     任一失败**整体**回退 cardBody，不混用半套；返回值加 behavior 诊断。
+   · 线上专属的 f1 / c05 override **不再**牵连线下回退（线下只判 shell / f2）。
+   · **输出协议一行未动**：线下 JSON 仍由既有 offlineOutProto + 消费者契约保障，
+     本批不新建平行协议常量。
+   · page-offline：诊断只从**实际出站那次**的 built 采集，区分装配失败 /
+     已到达调用边界 / 模型已返回 / 无连接四阶段；仅内存保存最近一次，
+     设置页「请求诊断」折叠查看，**不进沉浸正文、不入库不上传**。
+   ⚠️ 模型效果**尚未真机验收** —— 本条只证明装配路径与回退语义。
+
+   v155（2026-10-03）：假期表述按「节 ≠ 节假日」分层 + 给全事实 ——
+   用户报「模型说今天是国庆第一天」，**换了几个 API 都一样**，上次中秋也犯过。
+   根因不是措辞不精确，是**事实错了**：CN_OFFICIAL 的 name 是**整段连休的名**
+   （国庆 = 10-01~10-07），而旧句式连着 7 天都说「今天是国庆节」—— 7 天里 6 天是假的。
+   模型同时读到「今天是 10 月 3 日」和「今天是国庆节」两条打架的信息，
+   只能采信假期名、忽略日期 → 说成「第一天」。**它不是算错，是我们逼它二选一。**
+   ① 数据层改名：**假期名**（国庆假期/春节假期/清明节假期…），
+      单日的 2025 元旦不加后缀（没有区间就没有歧义）；2025 合并块 → 国庆中秋假期。
+      规则型区域（JP/US/UK/KR）全是 MM-DD 单日、name 就是当天名，**不动**。
+   ② buildYear 记下区间与第几天（daysBetween 已含首尾，from 当天=第 1 天，别再 +1）。
+   ③ 新增 calendar.publicDayLine —— **公共日期那一行的唯一出口**，
+      timeFacts 与日历页日列表共用（以前两边各拼一次，同一个错显示两处）。
+      句式改成「国庆假期（10月1日—10月7日，共 7 天）· 今天是 10月3日，是这段假期的第 3 天」
+      —— 三件不需要模型推理的事实一次给全；单日假日仍走「今天是X（法定放假日）」。
+   ④ 日历页多日连休标题带「第 3/7 天」；节日名与假期名不再按「名字相同」去重
+      （那是拿节当节假日比）。
+   → 必须跳版本：改了 calendar.js / calendar-data.js / page-calendar.js，
+     老用户缓存优先复用旧代码，不跳位拿到的还是会瞎排的旧版。
+
+   v154（2026-10-03）：孤岛/群岛马甲真隔离 + 彼此认知档位一致（用户真机报）——
+   ① me-profile 改走**指针卫兵** activeUserOnIsland：原来用 activeUser，
+      那个口子带 `|| ensureDefaultUser()` 的跨岛兜底 → 新岛打开「个人资料」
+      会把**别座岛那件**当表单初值（用户看到的就是「表单 copy 过去了」），
+      在这里改名 = 改别座岛的记录 → 「改孤岛B，其他岛账号全跟着变」。
+   ② mask-edit 补岛归属闸（记录不属于要编辑的那座岛就拒，fail closed）；
+      它原来只按 id 全局找，不校验归属 → 跨岛打开整个 copy 过去。
+   ③ 时空切换器「新增马甲」补 sandboxId。
+   ④ me-profile 的 doSave 显式回写 sandboxId（传 undefined 会被 has() 判成
+      「显式给了空」→ 把岛章抹掉）。
+   ⑤ 彼此认知：认知锁渲染门槛从 `mains && masks` 改成只看 `mains` ——
+      档位是产品常量（LOCKS 四档），与此刻有几件马甲无关；以前新岛没马甲
+      就整段不渲染（用户看到「一个岛有选项、一个岛没有」）。空马甲改为
+      给出四档说明 + 「去哪加马甲」的指引。
+   冒烟加了三条（数据层 + 静态），另立 scripts/browser-island-isolation-test.js
+   走真浏览器端到端复验 14 项。四处修复都做了负向对照（退化即报红）。
+   → 必须跳版本：改了 page-idcard.js / page-island.js / page-switch.js，
+     页面级改动不跳位老用户拿到的是旧页面。
+
+   v153（2026-10-03）：日历年缓存键漏了 cultures（跨角色串味修复）——
+   `calendar.js buildYear` 的缓存键从 `year|region` 补成 `year|region|cultures`。
+   文化节日那层是按 cfg.cultures 逐组铺的，旧键会让同一年的缓存被
+   **第一个来问的 char** 定死：甲只选「中国传统节日」先问 2026，
+   乙（选了国际节日）再问 12-25 就拿不到圣诞节；反向还会串到
+   自己没选的中文节日。设置页每次点 chips 都调 clearCache()，
+   所以**手动改完看着是对的**，漏的是「两个 char 交替问同一年」这条路
+   （聊天 I02 注入与月历都会走）。冒烟补了两条护栏，其中一条**故意不清缓存**。
+   → 必须跳版本：改了 calendar.js（不跳位老用户缓存优先复用旧代码）。
+
+   v151（2026-10-03）：日历写入全链路收口（第三轮施工单）——
+   ① saveAnniversary 改走 requestCreateEvent，并补入口边界三道闸
+      （缺 memoryId / 本岛名册没有这条留痕 / 留痕不属于本角色），
+      幂等键换成「anniversary:<sandboxId>:<memoryId>」（去掉标题日期弱键）；
+      **补上双向绑定的反向那一半** —— 写回 memory.calendarEventId
+      （以前全库没有一处写它，「双向绑定」其实只有单向）。
+   ② wj-canon 定史改走统一入口，rec.written 只在「留痕都在 + 日历全落成」
+      时置真；日历部分失败留 calendarFailed / writtenPending，可重跑补，
+      rec.eventRefs 存真实 eventId。事件类型三元（两分支同值）按原样保留。
+   ③ addEvent 从 Sleepy.calendar 顶层导出表拿掉，只挂 __internal.addEvent
+      （测试夹具专用）；生产脚本碰它就红。
+   → 必须跳版本：改了 calendar.js / wj-canon.js / page-wj-canon.js /
+     page-memory.js / style.css —— 尤其 calendar.js 的导出表变了，
+     不跳位老用户拿到的还是能直接调 addEvent 的旧版。
+
+   v150（2026-10-03）：日历真机反馈三修 ——
+   ① 新建入口从右下角悬浮加号挪到**顶栏「设置」旁边**（用户：固定死右下
+      有点遮屏幕，会压住列表最后一条日程）；`.cal-fab` 样式随之删除。
+   ② page-calendar.js 的 calendar-new / calendar-event 声明 freshOnOpen：
+      修「同一天再点加号，上次填的还在」与「记下他推掉了之后再看详情页
+      还是待确认」—— 都是页面实例缓存 + 同参短路把旧 DOM 端了回来。
+   → 必须跳版本：改了 page-calendar.js 与 style.css（顶栏按钮位置变了，
+     不跳位老用户看到的还是右下角那个加号）。
+
+   v149（2026-10-03）：日历安全边界与最小执行器（第二轮施工单）——
+   新增 action.js（最小动作协议：request / attempt / result / receipt）；
+   calendar.js 收紧 I02 日程层可见性（复用 life-feed 的 charViewOf，
+   user 私人提醒不再进 char 的 prompt）、新增统一写入出口
+   requestCreateEvent、冲突检测改为绝对时间区间（跨午夜 / 时区 /
+   重复实例）、新增共同事件表态入口 respondSharedEvent；
+   page-calendar.js 新建改走 action 层、详情页补「他的回应」；
+   core.js 删房名单与 store.js 默认值加 actionRequests。
+   → 必须跳版本：新增了一个运行时脚本，还改了 calendar.js / page-calendar.js /
+     core.js / store.js / index.html —— 不跳位老用户缓存优先复用旧代码，
+     动作模块根本不存在，而且那条隐私缺口还会继续留着。
+
+   v148（2026-10-02）：ta 关系网 v1（第一批，**只读**）—— 新增
+   ta-network.js（人物节点 / 关系边的唯一 selector）与 page-ta-network.js
+   （关系图 + 列表双视图），index.html 两个 script 标签、
+   page-ta.js「04 身边的人」改为消费同一 selector（并转发
+   latestVisibleMoment），style.css 补 .tan-* 样式。
+   → 必须跳版本：新增了两个运行时脚本、改了 page-ta.js / style.css /
+     index.html —— 不跳位老用户缓存优先复用旧代码，关系网页根本不存在，
+     首页 04 也会继续走旧的两套拼法。
+   v147（2026-10-02）：ta 首页第五批 —— 已成立影响接入聊天与主动消息。
+   新增 ta-impact.js（影响层：有效期/复核/事件更正/注入文本编译/主动消息回执），
+   prompt-engine 新增 taimpact 槽（K03d，线上+线下各一处），
+   page-chat 在回复落地后记「角色已有反应」，page-proactive 把决策结果
+   写回 ta 提案，page-ta 人物详情/幕后新增影响区，style.css 补影响样式。
+   → 必须跳版本：多个运行时脚本改了（prompt-engine / page-chat /
+     page-proactive / page-ta / ta-proposal），不跳位老用户缓存优先
+     复用旧代码，注入槽根本不会出现。
    v119（2026-09-27）：项目4 删除边界（forgetCharSet 按 fromCharId 集合精确命中）
    部署配套跳版本 —— 本次改动了运行时脚本 core.js / memory-vec.js /
    page-idcard.js / page-island.js / page-chat-settings.js，老用户 PWA 缓存里仍是
@@ -191,7 +418,7 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v133';
+var CACHE = 'sleepy-v162';
 var CORE = [
   './',
   './index.html',
