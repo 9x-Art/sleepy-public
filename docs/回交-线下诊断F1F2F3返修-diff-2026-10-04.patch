@@ -1,0 +1,608 @@
+diff --git a/page-offline.js b/page-offline.js
+index 425705c..c9228c2 100644
+--- a/page-offline.js
++++ b/page-offline.js
+@@ -260,19 +260,198 @@
+     return base;
+   }
+ 
+-  /* 线下一律非流式：返回的是 JSON，流式切片没有意义 */
++  /* 线下一律非流式：返回的是 JSON，流式切片没有意义。
++
++     ★ v2：`res.stage` 原样带出（api.requestOnce 会给 config/http/parse/
++       network/timeout 五种）。**必须带出** —— 否则诊断分不清
++       「服务端确实收到并拒绝」（http/parse）与「根本没送到」（network/timeout）。
++       describeError 只把 stage 拼进一句中文，会把它吃掉。 */
+   function callModel(cand, messages) {
+     if (!cand) {
+-      return Promise.resolve({ ok: false, error: '还没有可用的模型连接，去 设置 → 主 API 填一个' });
++      /* stage='config'：本地判定，**没有出网**。与 network 区分开。 */
++      return Promise.resolve({ ok: false, stage: 'config',
++        error: '还没有可用的模型连接，去 设置 → 主 API 填一个' });
+     }
+     return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
+       if (res.ok) return { ok: true, text: res.content };
+-      return { ok: false, error: Sleepy.api.describeError(res) };
++      return { ok: false, stage: (res && res.stage) || 'unknown',
++        error: Sleepy.api.describeError(res) };
+     }, function (e) {
+-      return { ok: false, error: (e && e.message) || '请求失败' };
++      /* 同步到 Promise 链上的 reject（网络库抛的）：无法确认服务端是否收到 */
++      return { ok: false, stage: 'unknown', error: (e && e.message) || '请求失败' };
+     });
+   }
+ 
++  /* ============================ 实际请求诊断（F2 批返修 · 仅内存） ============================
++     ★ 放置位置说明：整块常量必须**排在下面 candForSession / callModel /
++       STAGE_TO_DIAG 之前**。v2 曾把 STAGE_TO_DIAG 放在 DIAG_STAGE 之前，
++       `var DIAG_STAGE` 虽被提升但值为 undefined → 模块顶层求值即抛
++       TypeError → **整个 page-offline.js 的导出全部丢失**
++       （Sleepy.offlineStore / offlineUI / offlineDiag 全变 undefined，
++         线下场景功能完全不可用）。
++       ★ 规矩：本块只依赖对象字面量与 var 声明，**不调用下方任何函数**；
++         下方 STAGE_TO_DIAG 引用 DIAG_STAGE 的值，必须在本块之后执行。
++
++     ★ 目的：回答「**这一轮出站请求**用的是新行为正文还是旧卡」。
++       预览（预设 app 里重新装配一次）**不算** —— 它证明不了真机那次用了哪条路。
++
++     ★ 只在内存保存最近一次，**不入库、不上传、不写聊天记录**。
++     ★ 保留字段：请求身份、本地序号、时间、阶段、原因码、布尔状态、版本、模块标识。
++     ★ **不记录**：prompt 正文、聊天内容、角色名称、用户 override 内容、
++       异常全文、API 配置（baseUrl / model / key 一个都不碰）。
++
++     ---------- 两个计数器，职责不同（v1 混用导致业务回调被丢弃）----------
++     requestId —— **请求身份**。每次**新请求**分配一次，该请求内的所有阶段
++                   更新**沿用同一个**（不因阶段推进而变）。
++     diagSeq   —— 诊断记录序号。每写一条诊断自增，仅用于「诊断面板按写入顺序看」。
++
++     v1 的错法：拿 diagSeq 当请求身份，于是「已到达调用边界」写一次、
++     「无连接」再写一次 → 序号变了 → 回调里的 `if (diagSeq !== seq) return;`
++     命中 → **整段业务回调被丢弃**（pending 永久 true、按钮不解禁、无错误提示）。
++
++     ---------- 诊断守卫的职责边界（v2 修掉的核心）----------
++     守卫**只管「这条诊断要不要写」**，**绝不管业务回调要不要跑**。
++     业务收尾（pending / setBusy / toast / 落地）无条件执行，
++     只用「我是不是最新那个请求」判断**要不要动共享 UI 状态**。
++
++     ---------- 阶段闭集（严格区分，不互相顶替）----------
++       assemble-failed        装配就失败 —— **没有出站请求**
++       at-call-boundary       已装配完成、正要交给 callModel
++       no-connection          没有可用连接 —— **没有出网**（本地判定）
++       request-rejected       服务端确实收到了并拒绝（stage=http/parse）
++       request-failed-unknown 失败，但**无法确认服务端是否收到**（stage=network/timeout）
++       canceled               本轮被放弃（页面离开 / 被更新请求取代）
++       model-returned         成功拿到内容
++
++     ⚠️ 删除了 v1 的错误结论「ok 与 fail 都算到达服务端」——
++        network / timeout 根本没到服务端，不能记成 request-rejected。 */
++
++  var DIAG_STAGE = {
++    ASSEMBLE_FAILED: 'assemble-failed',
++    AT_CALL_BOUNDARY: 'at-call-boundary',
++    NO_CONNECTION: 'no-connection',
++    REQUEST_REJECTED: 'request-rejected',
++    REQUEST_FAILED_UNKNOWN: 'request-failed-unknown',
++    CANCELED: 'canceled',
++    MODEL_RETURNED: 'model-returned'
++  };
++
++  /* 阶段闭集（自校验用）：不在表内的阶段一律归到 unknown，不回显任意原串。 */
++  var DIAG_STAGE_SET = {};
++  Object.keys(DIAG_STAGE).forEach(function (k) { DIAG_STAGE_SET[DIAG_STAGE[k]] = 1; });
++  var STAGE_UNKNOWN = 'unknown';
++
++  /* 原因码闭集：与 prompt-engine 的 BT_REASON 对齐（同一批契约）。
++     成功时是空串。诊断只认这张表里的值。 */
++  var DIAG_REASON_SET = {};
++  ['', 'module-missing', 'version-mismatch', 'call-threw', 'not-ok',
++   'bad-shape', 'bad-part', 'bad-text', 'plan-mismatch', 'join-mismatch',
++   'slot-contract', 'user-override'].forEach(function (r) { DIAG_REASON_SET[r] = 1; });
++  var REASON_UNKNOWN = 'unknown';
++
++  /* 模块标识闭集：线下就是 B/P/L/N/S2。 */
++  var DIAG_MODULE_SET = {};
++  ['B', 'P', 'L', 'N', 'S2'].forEach(function (m) { DIAG_MODULE_SET[m] = 1; });
++
++  /* 版本：只认受校验的那一个；其余一律 'unknown'，**不回显任意原串**
++     （原串可能是被污染的任意文本，回显等于把它写进 UI）。 */
++  var DIAG_VERSION_KNOWN = 'sleepy-behavior-v1-review-01';
++  var VERSION_UNKNOWN = 'unknown';
++
++  var requestSeq = 0;        /* 请求身份计数器 */
++  var diagSeq = 0;           /* 诊断记录计数器 */
++  var diagLast = null;       /* 最近一次线下调用诊断（内存，刷新即失） */
++
++  /* 阶段文案（闭集 → 中文）。未知阶段落到固定文案，不回显原值。 */
++  var DIAG_STAGE_LABELS = {
++    'assemble-failed': '装配失败（没有出站请求）',
++    'at-call-boundary': '已到达调用边界（尚未确认服务端收到）',
++    'no-connection': '无可用连接（没有出网）',
++    'request-rejected': '服务端已收到并拒绝',
++    'request-failed-unknown': '请求失败（无法确认服务端是否收到）',
++    'canceled': '本轮已放弃',
++    'model-returned': '已成功拿到内容',
++    'unknown': '未知阶段'
++  };
++
++  function normStage(s) { return DIAG_STAGE_SET[s] ? s : STAGE_UNKNOWN; }
++  function normReason(r) { return DIAG_REASON_SET[r] ? r : REASON_UNKNOWN; }
++  function normVersion(v) { return v === DIAG_VERSION_KNOWN ? v : VERSION_UNKNOWN; }
++
++  /* 模块列表收口：逐项过滤 + 去重，非闭集项丢掉。 */
++  function normModules(list) {
++    if (!Array.isArray(list)) return [];
++    var seen = {}, out = [];
++    for (var i = 0; i < list.length; i++) {
++      var m = list[i];
++      if (typeof m !== 'string' || !DIAG_MODULE_SET[m] || seen[m]) continue;
++      seen[m] = 1;
++      out.push(m);
++    }
++    return out;
++  }
++
++  /* 分配一个新的请求身份。**每次新请求一次**，阶段更新不调用它。 */
++  function diagNewRequest() {
++    requestSeq += 1;
++    return requestSeq;
++  }
++
++  /* 写一条诊断。requestId 由调用方传入并**跨阶段保持不变**。
++     ★ 这里不再有任何「守卫」—— 守卫属于业务侧，诊断侧只负责把状态写对。 */
++  function diagRecord(requestId, stage, behavior, extra) {
++    diagSeq += 1;
++    var b = behavior || {};
++    var x = extra || {};
++    diagLast = {
++      requestId: requestId,
++      seq: diagSeq,
++      at: new Date().toISOString(),
++      stage: normStage(stage),
++      /* used 只反映「本次装配真的采用了新正文」；候选可用不算。
++         回退时 modules 必为空数组 —— 不把候选模块记成已使用。 */
++      behaviorUsed: b.used === true,
++      reason: normReason(typeof b.reason === 'string' ? b.reason : ''),
++      touched: b.touched === true,
++      version: normVersion(typeof b.VERSION === 'string' ? b.VERSION : ''),
++      modules: normModules(b.modules),
++      /* requestOk：true=拿到内容；false=失败；null=尚未有结论。
++         ⚠️ 不再把「失败」一律说成服务端拒绝 —— 由 stage 表达失败性质。 */
++      requestOk: (typeof x.requestOk === 'boolean') ? x.requestOk : null
++    };
++    return diagLast;
++  }
++
++  /* 只带出可展示的深拷贝 —— 外部改不到内部状态。 */
++  function diagSnapshot() {
++    if (!diagLast) return null;
++    return JSON.parse(JSON.stringify(diagLast));
++  }
++
++  /* ---------- 失败性质 → 诊断阶段（必须排在 DIAG_STAGE 之后）----------
++
++     ★ 语义边界（这一段是 v1 说错的地方）：
++       - config    → **本地判定，根本没出网**。不能说「服务端拒绝」。
++       - http/parse→ 服务端**确实收到了**并拒绝/返回了无法解析的内容。
++       - network   → fetch 的 catch 分支：连接失败，**无法确认**是否送达。
++       - timeout   → 超时，**无法确认**（服务端可能仍在生成）。
++       - unknown   → 兜底，同样**无法确认**。
++     ⚠️ v1 那句「ok 与 fail 都算到达服务端」「失败一定是服务端拒绝」是错的：
++        network / timeout 根本没到服务端，混记成 request-rejected 会误导排查。 */
++  var STAGE_TO_DIAG = {
++    'config': DIAG_STAGE.NO_CONNECTION,
++    'http': DIAG_STAGE.REQUEST_REJECTED,
++    'parse': DIAG_STAGE.REQUEST_REJECTED,
++    'network': DIAG_STAGE.REQUEST_FAILED_UNKNOWN,
++    'timeout': DIAG_STAGE.REQUEST_FAILED_UNKNOWN,
++    'unknown': DIAG_STAGE.REQUEST_FAILED_UNKNOWN
++  };
++  function diagStageForResult(r) {
++    if (!r || r.ok) return DIAG_STAGE.MODEL_RETURNED;
++    var s = STAGE_TO_DIAG[r.stage];
++    return s || DIAG_STAGE.REQUEST_FAILED_UNKNOWN;
++  }
++
+   /* ============================ 转录 / 总结 ============================ */
+ 
+   function charNameOf(session) {
+@@ -762,8 +941,13 @@
+       var E = Sleepy.promptEngine;
+       var charName = charNameOf(session);
+       var rootEl = null;           /* .off-root：off-* 变量都定义在它身上 */
+-      var pending = null;          /* 在途请求 */
++      var pending = null;          /* 在途请求（存请求身份，不是布尔） */
+       var themeTimer = null;
++      /* 诊断面板的 DOM 引用。**必须与 refreshDiagPanel 同层**（见下方注释）。 */
++      var diagPanelRef = null;
++      /* 本页是否还在前台。onHide 置 false —— 在途请求的迟到回调据此判断
++         「不要再去动 DOM / 忙碌态 / toast」（页面已经不在了）。 */
++      ctx.__alive = true;
+ 
+       body.innerHTML = '';
+       body.appendChild(buildRoot());
+@@ -1096,6 +1280,20 @@
+         if (send) send.disabled = b || session.status === 'ended';
+       }
+ 
++      /* 收尾本轮：解除忙碌 + 滚到底。
++         ★ 只应由**本轮自己**调用（isLatest 为真时）——
++           旧请求调它会把新请求的忙碌态误关掉。
++         ★ pending 存的是**这一轮占用的请求身份**（不是布尔）：
++           预取阶段就要先占位，否则召回那几百毫秒里用户能连点两次发送，
++           发出两个在途请求，回来时两个都跑 go()，落地顺序与诊断都会乱。 */
++      function finishTurn(ownId) {
++        /* ownId 给了就核对身份：不是自己的活不碰共享状态。
++           防御性用法 —— 正常路径上调用方已判过 isLatest。 */
++        if (ownId != null && ownId !== requestSeq) return;
++        pending = null;
++        setBusy(false);
++      }
++
+       function doSend() {
+         var input = body.querySelector('.off-input-field');
+         var text = String(input && input.value || '').trim();
+@@ -1119,6 +1317,15 @@
+         if (session.status === 'ended') return;
+         if (pending) { ctx.toast('还在等他回应', 'warn'); return; }
+ 
++        /* ★ 请求身份在这里分配一次（不是 go() 里）：预取也是本轮的一部分，
++           从这一行起本轮就已经「在途」，必须占住 pending。
++           阶段更新（装配失败 / 到达调用边界 / 无连接 / 返回 / 放弃）
++           全部沿用这一个 id —— v1 拿「诊断记录序号」当请求身份，
++           于是无连接分支写一次诊断就自行把本请求作废，
++           回调整段被丢弃 → 永久忙碌 + 无错误提示。 */
++        var reqId = diagNewRequest();
++        pending = reqId;
++
+         if (userInput != null) {
+           appendMessage(id, { role: 'user', text: userInput });
+           session = findSession(id);
+@@ -1129,35 +1336,135 @@
+         setBusy(true);
+ 
+         /* L4 召回（和线上同一套）：先把「和这句话相关的旧片段」捞出来。
+-           prefetch 自带超时 —— 宁可这轮不召回，也不能把场景卡住。 */
++           prefetch 自带超时 —— 宁可这轮不召回，也不能把场景卡住。
++
++           ★ 预取是**异步边界**：等待期间用户可能已经离开页面、会话可能被删。
++             回来时必须重新核对，不能对着已失效的 session 继续跑。 */
+         var mv = Sleepy.memoryVec;
+         var q = userInput != null ? String(userInput) : lastUserTextOf(session);
+         if (mv && mv.prefetch && session.charId && q) {
+-          mv.prefetch(session.charId, session.userId, q).then(function () { go(userInput); });
++          mv.prefetch(session.charId, session.userId, q).then(function () {
++            afterPrefetch(reqId, userInput);
++          }, function () {
++            /* 预取失败**不该打断这一轮**（召回是锦上添花），照样往下走。 */
++            afterPrefetch(reqId, userInput);
++          });
++          return;
++        }
++        go(reqId, userInput);
++      }
++
++      /* 预取回来后的续跑判断。三种情形：
++           1) 正常 → 继续装配出站；
++           2) 页面已离开 → 本轮作废（记 canceled），解掉忙碌态，不碰 DOM；
++           3) 会话已删 → 同上。
++         ★ 作废也必须 finishTurn(reqId)，否则 pending 永久占位、按钮永久禁用。 */
++      function afterPrefetch(reqId, userInput) {
++        if (ctx.__alive === false || !findSession(id)) {
++          finishTurn(reqId);
++          diagRecord(reqId, DIAG_STAGE.CANCELED, null, { requestOk: null });
+           return;
+         }
+-        go(userInput);
++        go(reqId, userInput);
+       }
+ 
+       /* 线下这一轮的正文。拆出来是因为装配是同步的 ——
+          召回只能先落进 memoryVec 的缓存，再回来装配。 */
+-      function go(userInput) {
+-          var built = E.assembleOffline({
+-            charId: session.charId, userId: null, session: session, userInput: userInput
+-          });
++      function go(reqId, userInput) {
++          /* reqId 由 requestTurn 分配并传进来 —— **本请求全程只用这一个身份**，
++             阶段更新不再重新分配。 */
++
++          /* 装配本身可能抛（缺模块、槽位契约不过等）。抛了就只记「装配失败」——
++             **这一轮没有出站请求**，不能沿用上一轮的成功状态。
++             收尾照做：解除忙碌 + 提示。 */
++          var built = null;
++          try {
++            built = E.assembleOffline({
++              charId: session.charId, userId: null, session: session, userInput: userInput
++            });
++          } catch (e) {
++            diagRecord(reqId, DIAG_STAGE.ASSEMBLE_FAILED, null, { requestOk: null });
++            finishTurn(reqId);
++            if (ctx.__alive !== false) {
++              ctx.toast('✗ 装配失败，这一轮没有发出去', 'err');
++            }
++            return;
++          }
++          if (!built || !Array.isArray(built.messages) || !built.messages.length) {
++            diagRecord(reqId, DIAG_STAGE.ASSEMBLE_FAILED,
++              (built && built.behavior) || null, { requestOk: null });
++            finishTurn(reqId);
++            if (ctx.__alive !== false) {
++              ctx.toast('✗ 装配没有产出内容，这一轮没有发出去', 'err');
++            }
++            return;
++          }
++          /* ★ 诊断只从**这一份 built** 取 —— 与真正出站的是同一个对象。
++             预览（预设 app）走 assembleOffline 是另一次调用，不写这里。 */
++          var behavior = built.behavior || null;
+           if (userInput == null) {
+             built.messages.push({ role: 'user', content: '（开场。请按输出协议开始这个场景。）' });
+           }
+ 
+-          pending = true;
+           var cand = candForSession(session);
+-          callModel(cand, built.messages).then(function (r) {
+-            pending = null;
+-            setBusy(false);
+-            if (!r.ok) {
+-              ctx.toast('✗ ' + r.error, 'err');
++          /* 已到达调用边界 —— 只是「准备调用」，还不知道服务端收没收到。 */
++          diagRecord(reqId, DIAG_STAGE.AT_CALL_BOUNDARY, behavior, { requestOk: null });
++          if (!cand) {
++            /* 没有可用连接：**没有出网**。本地判定，不等 callModel。 */
++            diagRecord(reqId, DIAG_STAGE.NO_CONNECTION, behavior, { requestOk: false });
++            finishTurn(reqId);
++            if (ctx.__alive !== false) {
++              ctx.toast('✗ 还没有可用的模型连接，去 设置 → 主 API 填一个', 'err');
++            }
++            return;
++          }
++
++          var p = null;
++          try {
++            p = callModel(cand, built.messages);
++          } catch (e) {
++            /* callModel 同步抛（不该发生，但要收尾）：无法确认服务端是否收到。
++               同步抛意味着**请求可能根本没发出去**，所以不写异常全文进诊断。 */
++            diagRecord(reqId, DIAG_STAGE.REQUEST_FAILED_UNKNOWN, behavior, { requestOk: false });
++            finishTurn(reqId);
++            if (ctx.__alive !== false) ctx.toast('✗ 请求没能发出去', 'err');
++            return;
++          }
++          if (!p || typeof p.then !== 'function') {
++            diagRecord(reqId, DIAG_STAGE.REQUEST_FAILED_UNKNOWN, behavior, { requestOk: false });
++            finishTurn(reqId);
++            if (ctx.__alive !== false) ctx.toast('✗ 请求没能发出去', 'err');
++            return;
++          }
++
++          /* ★ 业务守卫：**只决定「要不要动共享 UI 状态」**。
++             它**不控制诊断写不写**，也**绝不丢弃业务回调** ——
++             pending / setBusy / 落地 / 错误提示一律执行。
++             两个方向的坑都要避开：
++               - 迟到旧请求若整段 return → 新请求被永久卡在忙碌态（v1 的 bug）；
++               - 迟到旧请求若无条件清 pending/setBusy → 把新请求的忙碌态误关掉。
++             正确做法：**照常收尾自己的活，但只在自己仍是最新请求时才动共享状态。** */
++          p.then(function (r) {
++            var isLatest = (reqId === requestSeq);
++            /* 页面已经离开（onHide 置位）→ 本轮 UI 归位交给下次进入，
++               此时只做纯内存记账，不碰 DOM、不弹 toast。 */
++            var alive = ctx.__alive !== false;
++
++            var ok = !!(r && r.ok);
++            diagRecord(reqId, diagStageForResult(r), behavior, { requestOk: ok });
++
++            /* 收尾 pending + 忙碌态。**只有最新请求能解** ——
++               旧请求解会把新请求的忙碌态误关掉（那样新请求的迟到回调
++               就会去关一个已经能发的输入框）。 */
++            if (isLatest) finishTurn(reqId);
++
++            if (!ok) {
++              if (isLatest && alive) {
++                ctx.toast('✗ ' + (r && r.error ? r.error : '请求失败'), 'err');
++              }
+               return;
+             }
++
+             var parsed = E.parseOfflineReply(r.text);
+             /* 第一次生成顺带定场景：解析出 scene 就回填会话并刷新顶栏/环境条。
+                模型没带 scene（不听话）就回落默认，不打断这轮。 */
+@@ -1172,8 +1479,7 @@
+                 s.pendingSetup = false;
+               });
+               session = findSession(id);
+-              refreshHeader();
+-              refreshEnvStrip();
++              if (alive) { refreshHeader(); refreshEnvStrip(); }
+             }
+             if (parsed.paras.length) {
+               /* 开场若有对话段，用带名字的 char 块；纯描写就用场景块 */
+@@ -1188,10 +1494,26 @@
+               updateEnv(id, { clockTime: parsed.envUpdate.clockTime });
+             }
+             session = findSession(id);
+-            fillMessages(body.querySelector('.off-chat-scroll'));
+-            refreshEnvStrip();
++            /* ★ 消息一定落库（appendMessage 已写），但重绘 DOM 只在页面还在时做 ——
++               页面走了以后往旧 DOM 写既无效也可能抛。 */
++            if (alive) {
++              fillMessages(body.querySelector('.off-chat-scroll'));
++              refreshEnvStrip();
++            }
+             /* 这一轮落地了 → 后台索引进向量库（L4，不挡场景） */
+             kickOfflineSweep();
++          }, function (e) {
++            /* ★ callModel 自身的 reject 兜底（它内部已兜了一层，这里是防御）。
++               必须收尾：否则 pending 永久卡住、按钮永久禁用、无法重试。
++               reject 只说明本地链路断了，**无法确认服务端是否收到** →
++               request-failed-unknown，不是 request-rejected。 */
++            var isLatest = (reqId === requestSeq);
++            var alive = ctx.__alive !== false;
++            diagRecord(reqId, DIAG_STAGE.REQUEST_FAILED_UNKNOWN, behavior, { requestOk: false });
++            if (isLatest) {
++              finishTurn(reqId);
++              if (alive) ctx.toast('✗ ' + ((e && e.message) || '请求失败'), 'err');
++            }
+           });
+       }
+ 
+@@ -1458,7 +1780,10 @@
+ 
+         var tabs = h('div', 'off-settings-tabs');
+         var panels = {};
+-        [['sys', '系统设置'], ['narrative', '叙事设置']].forEach(function (t, i) {
++        /* 第三个页签 = 诊断（折叠查看）。
++           ★ 刻意**不在沉浸正文里常驻技术状态行** —— 只放设置里，
++             默认折叠，不影响读场景。 */
++        [['sys', '系统设置'], ['narrative', '叙事设置'], ['diag', '请求诊断']].forEach(function (t, i) {
+           var b = h('button', 'off-settings-tab' + (i === 0 ? ' active' : ''), t[1]);
+           b.type = 'button';
+           b.addEventListener('click', function () {
+@@ -1467,6 +1792,8 @@
+             Object.keys(panels).forEach(function (k) {
+               panels[k].classList[k === t[0] ? 'add' : 'remove']('active');
+             });
++            /* 切到诊断页签时刷新一次（诊断只在内存，可能已变化） */
++            if (t[0] === 'diag') refreshDiagPanel();
+           });
+           tabs.appendChild(b);
+         });
+@@ -1474,8 +1801,16 @@
+ 
+         panels.sys = buildSysPanel();
+         panels.narrative = buildNarrativePanel();
++        panels.diag = buildDiagPanel();
++        /* ★ diagPanelRef 必须挂在**与 refreshDiagPanel 同层**的作用域上。
++           v2 曾把它声明成 buildSettingsSheet 的局部变量，而
++           refreshDiagPanel 是同层的另一个函数 —— 两者互相看不见，
++           点「请求诊断」页签时 refreshDiagPanel 读到未声明的 diagPanelRef
++           → ReferenceError（面板永远刷不出来，且报在点击那一刻）。 */
++        diagPanelRef = panels.diag;
+         box.appendChild(panels.sys);
+         box.appendChild(panels.narrative);
++        box.appendChild(panels.diag);
+ 
+         var close = h('button', 'off-sheet-cancel', '关闭');
+         close.type = 'button';
+@@ -1492,6 +1827,72 @@
+         return sec;
+       }
+ 
++      /* ============================ 诊断面板（折叠 · 仅内存） ============================
++
++         ★ 数据源是 diagSnapshot() —— **实际出站那次装配**的记录，不是预览。
++         ★ 页面刷新即失（只在内存），**不入库、不上传**。
++         ★ 展示字段就那几项：序号 / 时间 / 阶段 / 是否用了新正文 / 原因码 /
++           版本 / 模块标识 / 模型是否成功。**不含** prompt、聊天、角色名、
++           override 内容、异常全文、API 配置。 */
++      function buildDiagPanel() {
++        var wrap = h('div', 'off-settings-panel');
++        var sec = section('最近一次线下请求');
++        var fold = h('details', 'off-diag-fold');
++        fold.appendChild(h('summary', 'off-diag-summary', '展开查看'));
++        var body = h('div', 'off-diag-body');
++        fold.appendChild(body);
++        sec.appendChild(fold);
++        wrap.appendChild(sec);
++        wrap.refreshDiag = function () { fillDiagBody(body); };
++        fillDiagBody(body);
++        return wrap;
++      }
++
++      function refreshDiagPanel() {
++        if (diagPanelRef && diagPanelRef.refreshDiag) diagPanelRef.refreshDiag();
++      }
++
++      function fillDiagBody(body) {
++        body.textContent = '';
++        var d = diagSnapshot();
++        if (!d) {
++          body.appendChild(h('div', 'off-diag-line off-diag-empty',
++            '还没有过线下请求。这一页只记录最近一次出站请求的装配结果，刷新页面即清空。'));
++          return;
++        }
++        /* 阶段文案**必须走闭集**：normStage 已把未知值归成 'unknown'，
++           这里再兜一层，绝不回显任意原串。 */
++        var lines = [
++          ['请求身份', '#' + d.requestId],
++          ['诊断记录序号', '#' + d.seq],
++          ['时间', d.at],
++          ['阶段', DIAG_STAGE_LABELS[d.stage] || DIAG_STAGE_LABELS[STAGE_UNKNOWN]],
++          ['本次是否用了新行为正文', d.behaviorUsed ? '是' : '否'],
++          ['回退原因码', d.reason ? d.reason : '（无）'],
++          ['用户覆盖命中', d.touched ? '是' : '否'],
++          /* 版本未知时显示固定文案（normVersion 已把非受校验值归成 'unknown'）。
++             ⚠️ override 提前返回那条路径在读到 BT.VERSION 之前就 return 了，
++               所以那一轮的版本**必然**是「未知」—— 这是正确结果，不是缺陷。 */
++          ['行为文本版本', d.version === VERSION_UNKNOWN ? '未知（本次未走到读取版本那一步）'
++            : d.version],
++          ['实际使用模块', d.modules.length ? d.modules.join(' / ') : '（无 —— 回退时不记候选）'],
++          ['请求结果', d.requestOk === null ? '（本轮还没有结论）'
++            : (d.requestOk ? '成功拿到内容' : '未拿到内容')]
++        ];
++        lines.forEach(function (r) {
++          var line = h('div', 'off-diag-line');
++          line.appendChild(h('span', 'off-diag-k', r[0]));
++          line.appendChild(h('span', 'off-diag-v', r[1]));
++          body.appendChild(line);
++        });
++        body.appendChild(h('div', 'off-diag-note',
++          '「已到达调用边界」只说明本轮已把请求交给模型通道，' +
++          '**不代表服务端已收到**。「服务端已收到并拒绝」只出现在确实拿到过' +
++          '服务端响应（HTTP 错误或无法解析的响应体）时；网络失败与超时' +
++          '无法确认服务端是否收到，一律记「请求失败（无法确认服务端是否收到）」。' +
++          '本页只记录最近一次出站请求的装配结果，刷新即清空。'));
++      }
++
+       function rowToggle(label, desc, val, onSet) {
+         var row = h('div', 'off-settings-row');
+         var left = h('div', 'off-settings-row-left');
+@@ -1740,8 +2141,26 @@
+     onShow: function (ctx) {
+       /* 状态没变就不重建 —— 避免每次 onShow 都重跑一遍渲染
+          （双开场就是它和 render 连击造成的）。 */
++      /* ★ 页面实例是缓存复用的：再次进入走 onShow，不会重跑 render。
++         所以 __alive 必须在这里重新置位。
++         v2 只在 renderScene 入口置 true、onHide 置 false ——
++         离开一次之后 __alive 永远停在 false，于是本场景之后所有请求
++         在预取回来时都被当成「页面已离开」而作废（回复根本发不出去）。 */
++      ctx.__alive = true;
+       var s = Sleepy.offlineStore.findSession(ctx.params.id);
+       if (ctx.rebuild && s && s.status !== ctx.__sceneStatus) ctx.rebuild();
++    },
++    onHide: function (ctx) {
++      /* 离开页面时把「本页还有效」标记清掉。
++         * 在途请求的迟到回调据此判断**不要再去动 DOM / 忙碌态 / toast** ——
++           页面已经不在了，往旧 DOM 写既无效也可能抛。
++         * 诊断仍照写（那是纯内存记账，与 DOM 无关）。
++         *
++         * 标记只有一处：**ctx.__alive**（renderScene 入口置 true，本处置 false）。
++           v2 只改了 ctx.el.__offlineAlive 与一个**从未被赋值**的
++           Sleepy.__offlineSceneCtx —— 而在途回调读的是 ctx.__alive，
++           于是 onHide 一个标记都没真清掉，页面离开后迟到回调照样写旧 DOM。 */
++      if (ctx) ctx.__alive = false;
+     }
+   });
+ 
+@@ -1771,4 +2190,22 @@
+     openDoorSheet: openDoorSheet
+   };
+ 
++  /* 线下实际请求诊断（**只读**对外口）。
++
++     ★ 正常运行环境**只有两个只读入口**：snapshot（读最近一次深拷贝）、
++       stageLabel（阶段闭集文案，UI 与测试共用一份避免枚举漂移）。
++     ★ **不暴露任何写入/清库入口**。v2 曾在导出面上挂 __record /
++       __recordIfCurrent / __reset / __snapshot 四个测试钩子，其中
++       __recordIfCurrent 还是个**根本不存在的函数引用**（v1 删除后没清理）——
++       模块顶层求值到 `__recordIfCurrent: diagRecordIfCurrent` 就抛
++       ReferenceError，把整个 IIFE 的导出全拖垮。
++     ★ 需要构造诊断记录的测试一律走**真实发送链**（mock 模型通道），
++       不再从生产接口直接写 —— 见 scripts/browser-offline-f2-req-test.js。 */
++  Sleepy.offlineDiag = {
++    /* 读取最近一次线下调用诊断的深拷贝；从未调用过返回 null */
++    snapshot: diagSnapshot,
++    /* 阶段闭集文案（UI 与测试共用一份，避免两处枚举漂移） */
++    stageLabel: function (s) { return DIAG_STAGE_LABELS[s] || DIAG_STAGE_LABELS[STAGE_UNKNOWN]; }
++  };
++
+ })(window);

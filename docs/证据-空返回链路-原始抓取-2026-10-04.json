@@ -1,0 +1,990 @@
+{
+ "端点": "https://api.rua.chat/v1",
+ "模型": "[按量]glm-5.2",
+ "密钥": "sk-5…UW（len51）",
+ "抓取": [
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096542532,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 3896,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 8,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 200,
+   "httpOk": true,
+   "respHeaders": {
+    "cache-control": "no-store",
+    "content-length": "1367",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 785,
+   "respTopKeys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "usage"
+   ],
+   "respShape": {
+    "id": {
+     "__字符串": true,
+     "长度": 36,
+     "首20": "cmb-b01bcc24bfbf11f1"
+    },
+    "object": {
+     "__字符串": true,
+     "长度": 15,
+     "首20": "chat.completion"
+    },
+    "created": 1791096549,
+    "model": {
+     "__字符串": true,
+     "长度": 7,
+     "首20": "glm-5.2"
+    },
+    "choices": {
+     "__数组": true,
+     "长度": 1,
+     "首项": {
+      "index": 0,
+      "message": {
+       "role": "…",
+       "content": "…"
+      },
+      "finish_reason": {
+       "__字符串": true,
+       "长度": 4,
+       "首20": "stop"
+      }
+     }
+    },
+    "usage": {
+     "prompt_tokens": 2007,
+     "completion_tokens": 244,
+     "total_tokens": 2251,
+     "prompt_tokens_details": {
+      "cached_tokens": 1280
+     }
+    }
+   },
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "stop",
+     "message的键": [
+      "content",
+      "role"
+     ],
+     "content类型": "string",
+     "content长度": 427,
+     "content前20": "```json\n{\"paras\":[{\"",
+     "reasoning_content存在": false,
+     "reasoning_content长度": null,
+     "reasoning_content前40": null,
+     "delta的键": null,
+     "text字段长度": null
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 2007,
+    "completion_tokens": 244,
+    "total_tokens": 2251,
+    "prompt_tokens_details": {
+     "cached_tokens": 1280
+    }
+   },
+   "usage键": [
+    "completion_tokens",
+    "prompt_tokens",
+    "prompt_tokens_details",
+    "total_tokens"
+   ],
+   "error字段": null,
+   "ms": 8915
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096552142,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4076,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 10,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 200,
+   "httpOk": true,
+   "respHeaders": {
+    "cache-control": "no-store",
+    "content-length": "1417",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 817,
+   "respTopKeys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "usage"
+   ],
+   "respShape": {
+    "id": {
+     "__字符串": true,
+     "长度": 36,
+     "首20": "cmb-b5079debbfbf11f1"
+    },
+    "object": {
+     "__字符串": true,
+     "长度": 15,
+     "首20": "chat.completion"
+    },
+    "created": 1791096558,
+    "model": {
+     "__字符串": true,
+     "长度": 7,
+     "首20": "glm-5.2"
+    },
+    "choices": {
+     "__数组": true,
+     "长度": 1,
+     "首项": {
+      "index": 0,
+      "message": {
+       "role": "…",
+       "content": "…"
+      },
+      "finish_reason": {
+       "__字符串": true,
+       "长度": 4,
+       "首20": "stop"
+      }
+     }
+    },
+    "usage": {
+     "prompt_tokens": 2118,
+     "completion_tokens": 256,
+     "total_tokens": 2374,
+     "prompt_tokens_details": {
+      "cached_tokens": 1280
+     }
+    }
+   },
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "stop",
+     "message的键": [
+      "content",
+      "role"
+     ],
+     "content类型": "string",
+     "content长度": 453,
+     "content前20": "{\"paras\":[{\"type\":\"p",
+     "reasoning_content存在": false,
+     "reasoning_content长度": null,
+     "reasoning_content前40": null,
+     "delta的键": null,
+     "text字段长度": null
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 2118,
+    "completion_tokens": 256,
+    "total_tokens": 2374,
+    "prompt_tokens_details": {
+     "cached_tokens": 1280
+    }
+   },
+   "usage键": [
+    "completion_tokens",
+    "prompt_tokens",
+    "prompt_tokens_details",
+    "total_tokens"
+   ],
+   "error字段": null,
+   "ms": 8177
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096561567,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4428,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 12,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "assistant",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 200,
+   "httpOk": true,
+   "respHeaders": {
+    "cache-control": "no-store",
+    "content-length": "1043",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 565,
+   "respTopKeys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "usage"
+   ],
+   "respShape": {
+    "id": {
+     "__字符串": true,
+     "长度": 36,
+     "首20": "cmb-bc71fa62bfbf11f1"
+    },
+    "object": {
+     "__字符串": true,
+     "长度": 15,
+     "首20": "chat.completion"
+    },
+    "created": 1791096569,
+    "model": {
+     "__字符串": true,
+     "长度": 7,
+     "首20": "glm-5.2"
+    },
+    "choices": {
+     "__数组": true,
+     "长度": 1,
+     "首项": {
+      "index": 0,
+      "message": {
+       "role": "…",
+       "content": "…"
+      },
+      "finish_reason": {
+       "__字符串": true,
+       "长度": 4,
+       "首20": "stop"
+      }
+     }
+    },
+    "usage": {
+     "prompt_tokens": 2321,
+     "completion_tokens": 165,
+     "total_tokens": 2486,
+     "prompt_tokens_details": {
+      "cached_tokens": 1280
+     }
+    }
+   },
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "stop",
+     "message的键": [
+      "content",
+      "role"
+     ],
+     "content类型": "string",
+     "content长度": 240,
+     "content前20": "沈砚：沈砚愣了一下。雨？他下意识抬头看了",
+     "reasoning_content存在": false,
+     "reasoning_content长度": null,
+     "reasoning_content前40": null,
+     "delta的键": null,
+     "text字段长度": null
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 2321,
+    "completion_tokens": 165,
+    "total_tokens": 2486,
+    "prompt_tokens_details": {
+     "cached_tokens": 1280
+    }
+   },
+   "usage键": [
+    "completion_tokens",
+    "prompt_tokens",
+    "prompt_tokens_details",
+    "total_tokens"
+   ],
+   "error字段": null,
+   "ms": 9791
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096572004,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4458,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 13,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "assistant",
+     "user",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 200,
+   "httpOk": true,
+   "respHeaders": {
+    "content-length": "5488",
+    "content-type": "application/json"
+   },
+   "respBodyLength": 5004,
+   "respTopKeys": [
+    "api_key_id",
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "provider",
+    "usage"
+   ],
+   "respShape": {
+    "api_key_id": 5363,
+    "choices": {
+     "__数组": true,
+     "长度": 1,
+     "首项": {
+      "finish_reason": {
+       "__字符串": true,
+       "长度": 6,
+       "首20": "length"
+      },
+      "index": 0,
+      "logprobs": null,
+      "message": {
+       "content": "…",
+       "reasoning_content": "…",
+       "role": "…"
+      }
+     }
+    },
+    "created": 1791096603,
+    "id": {
+     "__字符串": true,
+     "长度": 36,
+     "首20": "cmb-d3697054bfbf11f1"
+    },
+    "model": {
+     "__字符串": true,
+     "长度": 7,
+     "首20": "glm-5.2"
+    },
+    "object": {
+     "__字符串": true,
+     "长度": 15,
+     "首20": "chat.completion"
+    },
+    "usage": {
+     "cache_creation_input_tokens": 0,
+     "cache_read_input_tokens": 0,
+     "cached_tokens": 0,
+     "completion_thinking_tokens": 1020,
+     "completion_tokens": 1024,
+     "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "cached_tokens": 0,
+      "reasoning_tokens": 1020,
+      "rejected_prediction_tokens": 0
+     },
+     "credit": 0.07,
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 2329,
+     "prompt_cache_write_tokens": 0,
+     "prompt_tokens": 2329,
+     "prompt_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "cached_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "total_tokens": 3353
+    },
+    "provider": {
+     "__字符串": true,
+     "长度": 12,
+     "首20": "ant*********"
+    }
+   },
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "length",
+     "message的键": [
+      "content",
+      "reasoning_content",
+      "role"
+     ],
+     "content类型": "string",
+     "content长度": 0,
+     "content前20": "",
+     "reasoning_content存在": true,
+     "reasoning_content长度": 4044,
+     "reasoning_content前40": "Let me look at the situation. The user s",
+     "delta的键": null,
+     "text字段长度": null
+    }
+   ],
+   "usage": {
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cached_tokens": 0,
+    "completion_thinking_tokens": 1020,
+    "completion_tokens": 1024,
+    "completion_tokens_details": {
+     "accepted_prediction_tokens": 0,
+     "audio_tokens": 0,
+     "cached_tokens": 0,
+     "reasoning_tokens": 1020,
+     "rejected_prediction_tokens": 0
+    },
+    "credit": 0.07,
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 2329,
+    "prompt_cache_write_tokens": 0,
+    "prompt_tokens": 2329,
+    "prompt_tokens_details": {
+     "accepted_prediction_tokens": 0,
+     "audio_tokens": 0,
+     "cached_tokens": 0,
+     "reasoning_tokens": 0,
+     "rejected_prediction_tokens": 0
+    },
+    "total_tokens": 3353
+   },
+   "usage键": [
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "cached_tokens",
+    "completion_thinking_tokens",
+    "completion_tokens",
+    "completion_tokens_details",
+    "credit",
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+    "prompt_cache_write_tokens",
+    "prompt_tokens",
+    "prompt_tokens_details",
+    "total_tokens"
+   ],
+   "error字段": null,
+   "ms": 59441
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096632000,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4491,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 14,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "assistant",
+     "user",
+     "user",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 403,
+   "httpOk": false,
+   "respHeaders": {
+    "content-length": "269",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 177,
+   "respTopKeys": [
+    "error"
+   ],
+   "respShape": {
+    "error": {
+     "message": {
+      "__字符串": true,
+      "长度": 86,
+      "首20": "当前账户余额不足，请补充余额后重试。（—"
+     },
+     "type": {
+      "__字符串": true,
+      "长度": 13,
+      "首20": "new_api_error"
+     },
+     "param": {
+      "__字符串": true,
+      "长度": 0,
+      "首20": ""
+     },
+     "code": {
+      "__字符串": true,
+      "长度": 23,
+      "首20": "insufficient_user_qu"
+     }
+    }
+   },
+   "choices": [],
+   "usage": null,
+   "usage键": null,
+   "error字段": [
+    "code",
+    "message",
+    "param",
+    "type"
+   ],
+   "ms": 1047
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096634351,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4526,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 15,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "assistant",
+     "user",
+     "user",
+     "user",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 403,
+   "httpOk": false,
+   "respHeaders": {
+    "content-length": "269",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 177,
+   "respTopKeys": [
+    "error"
+   ],
+   "respShape": {
+    "error": {
+     "message": {
+      "__字符串": true,
+      "长度": 86,
+      "首20": "当前账户余额不足，请补充余额后重试。（—"
+     },
+     "type": {
+      "__字符串": true,
+      "长度": 13,
+      "首20": "new_api_error"
+     },
+     "param": {
+      "__字符串": true,
+      "长度": 0,
+      "首20": ""
+     },
+     "code": {
+      "__字符串": true,
+      "长度": 23,
+      "首20": "insufficient_user_qu"
+     }
+    }
+   },
+   "choices": [],
+   "usage": null,
+   "usage键": null,
+   "error字段": [
+    "code",
+    "message",
+    "param",
+    "type"
+   ],
+   "ms": 1117
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096636708,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4566,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 16,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "assistant",
+     "user",
+     "user",
+     "user",
+     "user",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 403,
+   "httpOk": false,
+   "respHeaders": {
+    "content-length": "269",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 177,
+   "respTopKeys": [
+    "error"
+   ],
+   "respShape": {
+    "error": {
+     "message": {
+      "__字符串": true,
+      "长度": 86,
+      "首20": "当前账户余额不足，请补充余额后重试。（—"
+     },
+     "type": {
+      "__字符串": true,
+      "长度": 13,
+      "首20": "new_api_error"
+     },
+     "param": {
+      "__字符串": true,
+      "长度": 0,
+      "首20": ""
+     },
+     "code": {
+      "__字符串": true,
+      "长度": 23,
+      "首20": "insufficient_user_qu"
+     }
+    }
+   },
+   "choices": [],
+   "usage": null,
+   "usage键": null,
+   "error字段": [
+    "code",
+    "message",
+    "param",
+    "type"
+   ],
+   "ms": 1078
+  },
+  {
+   "url": "https://api.rua.chat/v1/chat/completions",
+   "t": 1791096639067,
+   "initKeys": [
+    "body",
+    "headers",
+    "method",
+    "mode",
+    "signal"
+   ],
+   "headers": [
+    "Content-Type",
+    "Authorization"
+   ],
+   "method": "POST",
+   "bodyLength": 4617,
+   "bodyTopKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "bodyParams": {
+    "model": "[按量]glm-5.2",
+    "stream": false,
+    "max_tokens": 1024,
+    "temperature": 0.85,
+    "messages段数": 17,
+    "messages角色序列": [
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "system",
+     "assistant",
+     "user",
+     "assistant",
+     "user",
+     "user",
+     "user",
+     "user",
+     "user",
+     "user",
+     "user"
+    ],
+    "思考相关字段": []
+   },
+   "httpStatus": 403,
+   "httpOk": false,
+   "respHeaders": {
+    "content-length": "269",
+    "content-type": "application/json; charset=utf-8"
+   },
+   "respBodyLength": 177,
+   "respTopKeys": [
+    "error"
+   ],
+   "respShape": {
+    "error": {
+     "message": {
+      "__字符串": true,
+      "长度": 86,
+      "首20": "当前账户余额不足，请补充余额后重试。（—"
+     },
+     "type": {
+      "__字符串": true,
+      "长度": 13,
+      "首20": "new_api_error"
+     },
+     "param": {
+      "__字符串": true,
+      "长度": 0,
+      "首20": ""
+     },
+     "code": {
+      "__字符串": true,
+      "长度": 23,
+      "首20": "insufficient_user_qu"
+     }
+    }
+   },
+   "choices": [],
+   "usage": null,
+   "usage键": null,
+   "error字段": [
+    "code",
+    "message",
+    "param",
+    "type"
+   ],
+   "ms": 1065
+  }
+ ],
+ "会话": {
+  "消息数": 11,
+  "降级记录数": 2,
+  "有内容的回复数": 2
+ }
+}

@@ -1,0 +1,1620 @@
+最终收口合并 · F2 私聊线下验收脚本
+生成：scripts/make-final-closure-bundle.js
+基线：D:\projects\sleepy-baseline-2026-10-05-pre5（本轮开工前保存）
+本批：零模型请求 · timeout 120s · P3 暂停 · 未改生产代码 · 未提交/push/部署
+
+本文件四块：① 精确 diff ② 完整源码摘录 ③ 四条前置消息清单 ④ 定向测试结果
+
+#==========================================================================
+# ① 本次精确 diff（对基线 sleepy-baseline-2026-10-05-pre5）
+#==========================================================================
+
+变更统计：
+  scripts/offline-f2-effect-acceptance.js   1 file changed, 32 insertions(+), 28 deletions(-)
+  scripts/lib/f2-body-capture.js   1 file changed, 12 insertions(+), 4 deletions(-)
+  scripts/offline-f2-sendbody-test.js   1 file changed, 9 insertions(+), 3 deletions(-)
+  scripts/offline-f2-fixture-trace-test.js   1 file changed, 209 insertions(+), 18 deletions(-)
+  scripts/make-closure-excerpt.js   1 file changed, 77 insertions(+), 51 deletions(-)
+  scripts/verify-closure-excerpt.js   1 file changed, 32 insertions(+)
+
+──────────────────────────────────────────────────────────────────────────
+diff -- scripts/offline-f2-effect-acceptance.js
+──────────────────────────────────────────────────────────────────────────
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\offline-f2-effect-acceptance.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-effect-acceptance.js"
+index 79a0f37..96c8bb6 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\offline-f2-effect-acceptance.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-effect-acceptance.js"
+@@ -313,24 +313,23 @@ var SETUP = function (arg) {
+   }());
+ 
+-  /* 前置消息：全部走 appendMessage（它内部 mutateSession → saveAll）。
+-     ⚠️ 旧写法还往孤儿副本的 s2.messages 上 push —— 那一段**同样没落库**，
+-        现在这些内容只通过下面的 appendMessage 进入会话。 */
+-  f.preActions.forEach(function (txt, i) {
+-    Sleepy.offlineStore.appendMessage(s.id, {
+-      id: 'pre' + i, role: 'scene', paras: [{ type: 'prose', text: txt }]
+-    });
+-  });
+-  /* 在场 NPC 的存在也要写进历史（模型才知道他在场） */
+-  Sleepy.offlineStore.appendMessage(s.id, {
+-    id: 'npc0', role: 'scene',
+-    paras: [{ type: 'prose', text: '楼下的老板娘刚喊过一声「茶刚泡好」，就再没上来。' }]
+-  });
+-  /* 不自动开场，全部由我们的 user 轮驱动。
+-     ⚠️ openingBy 也一样：孤儿副本上改它没用。
+-     createSession 的 form 已传 openingBy，这里不再重复设。 */
+-  Sleepy.offlineStore.appendMessage(s.id, {
+-    id: 'npcname', role: 'scene',
+-    paras: [{ type: 'prose', text: '（这间阁楼里现在只有沈砚和你两个人；老板娘在楼下。）' }]
+-  });
++  /* ------------------------------------------------------------
++     前置消息：**只保留原报告 #6–#9 四条，顺序不变**
++     ------------------------------------------------------------
++     2026-10-05 收口：上一轮修持久化时，把原先写进孤儿副本（因而未落库）的
++     5 条历史写入**也**改走 appendMessage，结果落库从 4 条变 9 条，
++     `preActions` 出现两次（逐条 3 条 + 拼接 1 条）———
++     同一段现场动作在模型上下文里重复了一遍。
++
++     ★ 这里的处理是**明确取消多余的历史写入**，
++       **不是**把代码退回孤儿副本写法（那种写法静默失效，是本轮要修的病根）。
++       保留的是「原报告实际落库的那四条」——它们一直是唯一起作用的写入，
++       语义与原报告**完全一致**。
++
++     被移除的三类（原本就没落库，补上它们反而是**引入新输入**）：
++       · preActions 逐条 3 条  → 下面第 2 条已用拼接版覆盖同样内容
++       · npc0（老板娘喊茶）    → 与第 2 条内容重叠
++       · npcname（阁楼里只有两人）→ 与第 3 条重叠
++     ⚠️ openingBy 仍由 createSession 的 form 传入（正式创建参数），
++        不在这里重复设 —— 孤儿副本上改它没用。 */
+   Sleepy.offlineStore.appendMessage(s.id, { role: 'user', text: '（我推开阁楼的门，上来了。)' });
+   Sleepy.offlineStore.appendMessage(s.id, { role: 'scene', paras: [{ type: 'prose', text: f.preActions.join(' ') }] });
+@@ -938,11 +937,15 @@ function makeSnapshotWriter(dir) {
+          ★ 只包最外层网络通道，**中间的装配/判定全走生产代码**。
+ 
+-         ⚠️ 2026-10-05 补上「发送瞬间」这一侧：
++         ⚠️ 2026-10-05 补上「提交给 fetch 的请求体」这一侧：
+            此前只记响应侧（finish_reason/usage/reasoning），
+            于是**装配与发送之间没有任何快照** ——
+-           「存在于响应后装配快照」被误当成「已证实送达模型」。
++           「存在于响应后装配快照」被误当成「客户端提交给 fetch 的内容」。
+            installFetchBypass 在**调用 origFetch 之前**同步采集 init.body：
+            原始 body 字符串的 SHA-256 + 脱敏后的
+            model/messages/stream/max_tokens/temperature（messages 保留 role+content 原文）。
++           ⚠️ 措辞口径（2026-10-05 收口统一）：这一份叫
++             **「客户端提交给 fetch 的请求体」**。
++             它是客户端这一侧提交的**输入**，**不声称**服务端已收到、
++             更不声称模型已消费 —— 那需要响应/正文侧证据，不是这一份能给的。
+            响应侧采集**原样保留**（见 __HTTP 与 rec.发送瞬间）。 */
+       window.__RAW = [];
+@@ -1160,14 +1163,15 @@ function makeSnapshotWriter(dir) {
+         return all;
+       });
+-      /* ★★ 发送瞬间请求体（2026-10-05 · 补上「装配 → 发送」之间那层证据）
+-         —— 这是「**实际发送给模型的请求体」」的唯一来源。
+-         ⚠️ 口径（2026-10-05 收口更正）：它证明的是「**送达模型的输入**」，
+-           **不是**「模型消费/处理了什么」—— 后者由回复正文体现，请求体证明不了。
++      /* ★★ 客户端提交给 fetch 的请求体（2026-10-05）
++         —— 这是「**客户端提交给 fetch 的内容**」的唯一来源。
++         ⚠️ 口径（2026-10-05 收口统一）：它是**客户端这一侧提交的输入**。
++           **不声称**服务端已收到，**更不声称**模型已消费 ——
++           那需要响应侧 / 回复正文侧证据，不是这一份能给的。
+            也不等于「模型一定注意到了场景」：那要看它写出来什么。
+          ⚠️ 与上面 归因/出站messages 是**三份不同的东西**，不可互相替代：
+             · 出站messages = 响应**之后**重新跑一次装配的结果（快照，可能已漂）
+             · 归因        = 响应**之后**的 HTTP 元数据
+-            · 发送瞬间    = **调用 origFetch 之前**的 init.body（唯一时序正确的一份）
+-         ⚠️ 失败轮也可能有发送瞬间记录（发出去了但没落地）→ 照样取，
++            · 请求体      = **调用 origFetch 之前**的 init.body（唯一时序正确的一份）
++         ⚠️ 失败轮也可能有请求体记录（发出去了但没落地）→ 照样取，
+             绝不因为「这轮失败」就丢掉请求体证据。 */
+       var sendRec = await page.evaluate(function () {
+
+──────────────────────────────────────────────────────────────────────────
+diff -- scripts/lib/f2-body-capture.js
+──────────────────────────────────────────────────────────────────────────
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\f2-body-capture.js" "b/D:\\projects\\sleepy\\scripts\\lib\\f2-body-capture.js"
+index 6c7c30e..2a4bf5d 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\f2-body-capture.js"
++++ "b/D:\\projects\\sleepy\\scripts\\lib\\f2-body-capture.js"
+@@ -1,5 +1,12 @@
+ /* ============================================================
+    scripts/lib/f2-body-capture.js
+-   —— 「发送瞬间请求体」采集（fetch 旁路用）· 零依赖
++   —— 「客户端提交给 fetch 的请求体」采集（fetch 旁路用）· 零依赖
++
++   ⚠️ 措辞口径（2026-10-05 收口统一，全项目一致）：
++     这一份证据叫「**客户端提交给 fetch 的请求体**」。
++     它是**客户端这一侧提交的输入**，**不声称**服务端已收到、
++     **更不声称**模型已消费 —— 那需要响应侧 / 回复正文侧证据。
++     旧称「发送瞬间请求体」在字段名与内部变量里仍保留（改名会波及
++     落盘样本的字段契约），但**对外表述**一律用上面的口径。
+ 
+    ★ 为什么单独成文件：这段逻辑要同时在**两个环境**里跑 ——
+@@ -17,5 +24,5 @@
+         只落哈希别人无法判断「到底注了什么」）；
+      ④ API key / Authorization / 真实凭据**删掉或脱敏**；
+-     ⑤ 记 body 的 SHA-256，并**明确标注**它是「发送瞬间请求体」的哈希；
++     ⑤ 记 body 的 SHA-256，并**明确标注**它是「客户端提交给 fetch 的请求体」的哈希；
+      ⑥ 响应侧 finish_reason / usage / reasoning_content 采集**全部保留**；
+      ⑦ 采集失败**不许静默伪造** → 记 bodyCaptureError，messages 留 null。
+@@ -313,6 +320,7 @@
+       采集时刻: '调用 origFetch 之前',
+       bodySHA256: null,
+-      bodySHA256含义: '这是**发送瞬间**请求体（init.body 原始字符串）的 SHA-256，' +
+-        '不是任何装配快照的哈希',
++      bodySHA256含义: '这是**客户端提交给 fetch 的请求体**（init.body 原始字符串）的 SHA-256，' +
++        '不是任何装配快照的哈希。⚠️ 它是客户端这一侧提交的**输入**，' +
++        '**不声称**服务端已收到、更不声称模型已消费。',
+       body字节数: null,
+       脱敏改动数: 0,
+
+──────────────────────────────────────────────────────────────────────────
+diff -- scripts/offline-f2-sendbody-test.js
+──────────────────────────────────────────────────────────────────────────
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\offline-f2-sendbody-test.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-sendbody-test.js"
+index 83e5616..4bbd308 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\offline-f2-sendbody-test.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-sendbody-test.js"
+@@ -2,5 +2,5 @@
+ /* ============================================================
+    scripts/offline-f2-sendbody-test.js
+-   —— 「发送瞬间请求体采集」的零网络单元 / 桩测试
++   —— 「客户端提交给 fetch 的请求体」采集的零网络单元 / 桩测试
+ 
+    ★ 硬边界（用户 2026-10-05 明确）：
+@@ -186,6 +186,12 @@ t('★ bodySHA256 = node 对 init.body 原始串的哈希（不是装配快照
+   var r = CAP.captureRequestBody('u', { body: BODY_STR });
+   eq(r.bodySHA256, nodeSha(BODY_STR), 'bodySHA256');
+-  assert(/发送瞬间/.test(r.bodySHA256含义), '哈希含义必须写明是发送瞬间的请求体');
++  /* ⚠️ 口径 2026-10-05 收口统一：这一份叫「**客户端提交给 fetch 的请求体**」，
++     不再叫「发送瞬间请求体」/「已证实送达模型」。 */
++  assert(/客户端提交给 fetch/.test(r.bodySHA256含义),
++    '哈希含义必须写明是「客户端提交给 fetch 的请求体」');
+   assert(/init\.body/.test(r.bodySHA256含义), '哈希含义必须写明对象是 init.body');
++  /* 反向：不得出现「已送达模型」这类越界表述 */
++  assert(!/送达模型|已证实送达/.test(r.bodySHA256含义),
++    '哈希含义不得声称送达模型');
+ });
+ t('哈希在脱敏之前算（脱敏不改变 bodySHA256）', function () {
+@@ -1043,5 +1049,5 @@ Promise.all(pending).then(function () {
+   var total = pass + fail;
+   process.stdout.write('\n' + '─'.repeat(52) + '\n');
+-  process.stdout.write('发送瞬间请求体采集 · 零网络测试：' + pass + ' / ' + total + ' 通过\n');
++  process.stdout.write('客户端提交给 fetch 的请求体 · 零网络测试：' + pass + ' / ' + total + ' 通过\n');
+   if (fail) {
+     process.stdout.write('✗ 失败 ' + fail + ' 项：\n');
+
+──────────────────────────────────────────────────────────────────────────
+diff -- scripts/offline-f2-fixture-trace-test.js
+──────────────────────────────────────────────────────────────────────────
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\offline-f2-fixture-trace-test.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-fixture-trace-test.js"
+index 5b9eb72..e25505d 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\offline-f2-fixture-trace-test.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-fixture-trace-test.js"
+@@ -60,4 +60,7 @@ function t(name, fn) {
+ var FIELDS = ['location', 'timeOfDay', 'weather', 'clockTime'];
+ var FIX = ACC.FIXTURE.scene;
++/* ⚠️ preActions 在 FIXTURE 顶层，**不在** FIXTURE.scene 里。
++   上一版误用 PRE → undefined.join 抛错。 */
++var PRE = ACC.FIXTURE.preActions;
+ var WANT = { sceneName: FIX.sceneName };
+ FIELDS.forEach(function (f) { WANT[f] = FIX[f]; });
+@@ -207,6 +210,56 @@ t('③ updateEnv 被调用 1 次且只带 env 四字段（已验证的保存入
+     'updateEnv 的 patch 不应含 sceneName（它会被静默忽略）');
+ });
+-t('③ appendMessage 被调用 9 次（前置消息全部走保存入口）', function () {
+-  eq(h.spy.appendMessage, 9, 'appendMessage 调用次数');
++/* ⚠️ 调用次数只是**辅助**检查 —— 上一版只有这一条：
++     「appendMessage 被调用 9 次」。它抓不住「顺序错了 / role 错了 /
++     内容错了」，只抓「条数不对」。
++   ★ 用户 2026-10-05 要求：调用次数四次**只作辅助**，
++     **不能替代内容断言**。所以下面以逐项内容断言为主。 */
++t('★ 前置消息恰为 4 条，且逐项 role/正文/顺序全部正确（内容断言）', function () {
++  var msgs = S.offlineStore.findSession(SID).messages;
++  /* 期望的就是原报告 #6–#9 四条，顺序固定 */
++  var expect = [
++    { role: 'user', text: '（我推开阁楼的门，上来了。)' },
++    { role: 'scene', text: PRE.join(' ') },
++    { role: 'scene', text: '（老板娘在楼下，没有上来。）' },
++    { role: 'user', text: '（我坐下了，湿外套搭在椅背上。）' }
++  ];
++  eq(msgs.length, expect.length, '★ 落库消息条数（应为 4，不是 9）');
++  expect.forEach(function (want, i) {
++    var got = msgs[i];
++    assert(got, '第 ' + (i + 1) + ' 条缺失');
++    eq(got.role, want.role, '第 ' + (i + 1) + ' 条 role');
++    var body = (got.paras || []).map(function (p) {
++      return p.type === 'dialogue' ? '「' + p.text + '」' : p.text;
++    }).join('\n');
++    if (body === '' && got.text) body = got.text;
++    eq(body, want.text, '第 ' + (i + 1) + ' 条正文');
++  });
++});
++t('★ preActions 只保存拼接版一次（不重复进历史）', function () {
++  var msgs = S.offlineStore.findSession(SID).messages;
++  var joined = PRE.join(' ');
++  var joinedCount = 0, perItemCount = 0;
++  msgs.forEach(function (m) {
++    var b = (m.paras || []).map(function (p) { return p.text; }).join('\n');
++    if (b === '' && m.text) b = m.text;
++    if (b === joined) joinedCount++;
++    PRE.forEach(function (pa) { if (b === pa) perItemCount++; });
++  });
++  eq(joinedCount, 1, '★ 拼接版应恰好 1 条');
++  eq(perItemCount, 0, '★ 逐条版应为 0 条（上一轮多出来的就是这些）');
++});
++t('★ 整段会话里没有任何逐字重复的消息', function () {
++  var msgs = S.offlineStore.findSession(SID).messages;
++  var seen = {}, dup = [];
++  msgs.forEach(function (m, i) {
++    var b = (m.paras || []).map(function (p) { return p.text; }).join('\n');
++    if (b === '' && m.text) b = m.text;
++    if (seen[b] !== undefined) dup.push({ 重复于: [seen[b] + 1, i + 1], 正文: b.slice(0, 30) });
++    seen[b] = i;
++  });
++  eq(dup, [], '重复消息');
++});
++t('③ appendMessage 被调用 4 次（辅助检查，不替代上面的内容断言）', function () {
++  eq(h.spy.appendMessage, 4, 'appendMessage 调用次数');
+ });
+ t('★ 负向对照：SETUP 里不再有对孤儿副本的直接赋值', function () {
+@@ -321,6 +374,120 @@ t('★ 请求体里**不含** createSession 的默认值（证明没被覆盖）
+ });
+ t('请求体采集无错误（bodyCaptureError 应为 null）', function () {
+-  eq(cap.bodyCaptureError, null, 'bodyCaptureError');
+-  assert(cap.messages.length === built.messages.length, 'messages 条数应与装配一致');
++eq(cap.bodyCaptureError, null, 'bodyCaptureError');
++assert(cap.messages.length === built.messages.length, 'messages 条数应与装配一致');
++});
++
++/* ============================================================
++   §2.5 沿**生产链**再走一遍：装配 → requestOnce → 假 fetch
++   ------------------------------------------------------------
++     §2.4 是「装配产物 → 本地旁路采集」，走的是 bodyFor 同构口径。
++     这里补一条**真正走生产序列化链**的：调 `Sleepy.api.requestOnce`，
++     只换底层 fetch，验证落到**假 fetch 实际收到的 body** 里：
++       · 历史没有新增重复（这是本轮修复的重点）
++       · 五个现场字段仍然正确（不能因为删了 5 条写入而丢）
++   ============================================================ */
++head('§2.5 沿生产链（requestOnce → 假 fetch）复核');
++
++var pending = [];
++function ta(name, fn) {
++  pending.push(Promise.resolve().then(fn).then(function () { ok(name); },
++    function (e) { bad(name + ' -> ' + (e && e.message ? e.message : e)); }));
++}
++function blockOtherNetwork() {
++  var net = require('net'), http = require('http'), https = require('https');
++  var saved = [];
++  function trip(name) {
++    return function () { throw new Error('网络已被测试阻断：' + name); };
++  }
++  [['http', http, ['request', 'get']], ['https', https, ['request', 'get']],
++    ['net', net, ['connect', 'createConnection']]].forEach(function (grp) {
++    grp[2].forEach(function (m) {
++      if (typeof grp[1][m] === 'function') {
++        saved.push([grp[1], m, grp[1][m]]);
++        grp[1][m] = trip(grp[0] + '.' + m);
++      }
++    });
++  });
++  return function restore() {
++    saved.forEach(function (x) { x[0][x[1]] = x[2]; });
++  };
++}
++ta('生产 requestOnce 落到的 body：四个现场锚点齐全、历史无重复', function () {
++  var restore = blockOtherNetwork();
++  try {
++    /* 全新沙箱，走完整夹具 → SETUP → 装配 → requestOnce */
++    var h2 = H.boot('trace-prod-chain');
++    assert(h2.failed.length === 0, '生产脚本加载失败');
++    var S2 = h2.S;
++    var sb2 = S2.core.createSandbox('archipelago', '追踪生产链岛');
++    S2.core.setActiveSandbox(sb2.id);
++    h2.win.__API_BASE = 'stub://trace/v1';
++    h2.win.__API_KEY = 'stub-trace-key-not-real';
++    h2.win.__API_MODEL = 'stub-model';
++    h2.win.__APPROVED = { temperature: 0.85, maxTokens: 8192,
++      contextMessages: 40, stream: false, timeoutSec: 120 };
++    h2.ctx.__FIXTURE__ = ACC.FIXTURE;
++    var navO = S2.nav.open;
++    S2.nav.open = function (p, a) {
++      if (p === 'offline-scene') return { __stub: 1 };
++      return navO.apply(this, arguments);
++    };
++    vm.runInContext('(' + ACC.SETUP_SRC + ')({f: __FIXTURE__})', h2.ctx,
++      { filename: 'SETUP' });
++    var sid2 = h2.win.__sid;
++    assert(sid2, 'SETUP 应产出 sid');
++
++    var sess = S2.offlineStore.findSession(sid2);
++    var built2 = S2.promptEngine.assembleOffline({
++      charId: sess.charId, userId: sess.userId, session: sess, userInput: '我到了。'
++    });
++    assert(built2 && built2.messages.length, '装配应产出 messages');
++
++    var seen = [];
++    h2.win.AbortController = AbortController;
++    h2.win.fetch = function (url, init) {
++      seen.push({ url: String(url), init: init });
++      var txt = JSON.stringify({ choices: [{ finish_reason: 'stop',
++        message: { role: 'assistant', content: '（桩）' } }],
++        usage: { prompt_tokens: 1, completion_tokens: 1 } });
++      return Promise.resolve({ ok: true, status: 200,
++        text: function () { return Promise.resolve(txt); },
++        clone: function () { return { text: function () { return Promise.resolve(txt); } }; } });
++    };
++    return S2.api.requestOnce({ cfg: {
++      baseUrl: 'stub://trace/v1', apiKey: 'stub-trace-key-not-real',
++      model: 'stub-model', temperature: 0.85, maxTokens: 8192,
++      contextMessages: 40, stream: false, timeoutSec: 120 } },
++      built2.messages, null).then(function (res) {
++        assert(res.ok, '生产链应成功：' + JSON.stringify(res));
++        eq(seen.length, 1, '假 fetch 被调用次数');
++        var body = JSON.parse(seen[0].init.body);
++
++        /* ---- 五个现场字段仍在 ---- */
++        ['雨夜的旧书店', '城西旧书店二楼阁楼', '深夜', '雨', '23:40'].forEach(function (a) {
++          assert(JSON.stringify(body.messages).indexOf(a) >= 0,
++            '生产 body 里应有现场锚点 ' + a);
++        });
++        /* ---- 历史无新增重复：拼接版 1 次、逐条版 0 次 ---- */
++        var joined = PRE.join(' ');
++        var joinedN = 0, perItemN = 0;
++        body.messages.forEach(function (m) {
++          var b = String(m.content == null ? '' : m.content);
++          if (b.indexOf(joined) >= 0) joinedN++;
++          PRE.forEach(function (pa) { if (b === pa) perItemN++; });
++        });
++        eq(joinedN, 1, '★ 生产 body 里拼接版应恰好出现 1 次');
++        eq(perItemN, 0, '★ 生产 body 里逐条版应为 0 次');
++        /* ---- 全量逐字重复检测 ---- */
++        var seenBody = {}, dup = [];
++        body.messages.forEach(function (m, i) {
++          var b = String(m.content == null ? '' : m.content);
++          if (seenBody[b] !== undefined) dup.push((seenBody[b] + 1) + ' vs ' + (i + 1));
++          seenBody[b] = i;
++        });
++        eq(dup, [], '生产 body 里的重复消息');
++        ok('✓ 生产 body：五锚点齐全 · 拼接版 1 次 · 逐条版 0 次 · 无重复');
++      });
++  } finally { restore(); }
+ });
+ 
+@@ -414,7 +581,18 @@ var payload = {
+   生成时间: new Date().toISOString(),
+   说明: '本文件登记「夹具预期」与「链路各步实际」。**不含**任何' +
+-    '「模型当时收到了什么」的结论 —— 响应后装配快照不代表发送瞬间内容' +
++    '「模型当时收到了什么」的结论 —— 响应后装配快照不代表客户端提交给 fetch 的内容' +
+     '（真实那一份要等 fetch 旁路记到 init.body）。',
+-  结论: '五个现场字段在 SETUP 之后**全部正确落库**，并出现在请求体 messages 里。',
++  口径: '本文件提到的「请求体」一律指**客户端提交给 fetch 的请求体**（init.body）。' +
++    '它是客户端这一侧提交的**输入**，**不声称**服务端已收到、更不声称模型已消费。',
++  结论: '五个现场字段在 SETUP 之后**全部正确落库**，并出现在客户端提交给 fetch 的请求体 messages 里。',
++  前置消息: {
++    条数: (S.offlineStore.findSession(SID) || { messages: [] }).messages.length,
++    说明: '只保留原报告 #6–#9 四条，顺序不变；preActions 只保存拼接版一次',
++    逐条: (S.offlineStore.findSession(SID) || { messages: [] }).messages.map(function (m, i) {
++      var b = (m.paras || []).map(function (x) { return x.text; }).join('\n');
++      if (b === '' && m.text) b = m.text;
++      return { 序: i + 1, role: m.role, 正文: b };
++    })
++  },
+   夹具预期: WANT,
+   createSession默认值: defaultsFromSource(),
+@@ -444,10 +622,19 @@ t('取证 JSON 落盘', function () {
+   ok('✓ ' + OUT + '（' + fs.statSync(OUT).size + ' 字节）');
+ });
+-t('口径护栏：取证文件不含「模型收到」类断言', function () {
++t('口径护栏：取证文件不含「模型收到 / 已送达模型」类越界断言', function () {
+   var s = JSON.stringify(JSON.parse(fs.readFileSync(OUT, 'utf8')));
+-  ['模型收到', '已送达模型', '模型当时看到'].forEach(function (w) {
++  ['模型收到', '已送达模型', '模型当时看到', '已证实送达'].forEach(function (w) {
+     assert(s.indexOf(w) < 0, '取证里出现越界表述：' + w);
+   });
+ });
++t('口径护栏：统一用「客户端提交给 fetch 的请求体」', function () {
++  var back = JSON.parse(fs.readFileSync(OUT, 'utf8'));
++  assert(/客户端提交给 fetch/.test(JSON.stringify(back)) ||
++    /客户端提交给 fetch/.test(back.说明),
++  '取证里要点名新口径');
++  /* 断言旧口径**不再**作为对外表述出现（字段名兼容不算） */
++  var s = JSON.stringify(back);
++  assert(s.indexOf('已证实实际发送内容') < 0, '仍有旧口径「已证实实际发送内容」');
++});
+ t('口径护栏：明确标注未取真实 init.body', function () {
+   var back = JSON.parse(fs.readFileSync(OUT, 'utf8'));
+@@ -459,13 +646,17 @@ t('口径护栏：明确标注未取真实 init.body', function () {
+ /* ============================================================
+    汇总
++   ★ 必须等异步用例（§2.5 走生产链那条）落地再统计 ——
++     否则退出码先于 then 里的断言跑掉（假绿）。
+    ============================================================ */
+-var total = pass + fail;
+-process.stdout.write('\n' + '─'.repeat(56) + '\n');
+-process.stdout.write('夹具现场值持久化验证：' + pass + ' / ' + total + ' 通过\n');
+-if (fail) {
+-  process.stdout.write('✗ 失败 ' + fail + ' 项：\n');
+-  problems.forEach(function (p) { process.stdout.write('  · ' + p + '\n'); });
+-  process.exit(1);
+-}
+-process.stdout.write('✓ 全绿（零网络 · 未启动浏览器 · 未调模型 · **未改生产代码**）\n');
+-process.exit(0);
++Promise.all(pending).then(function () {
++  var total = pass + fail;
++  process.stdout.write('\n' + '─'.repeat(56) + '\n');
++  process.stdout.write('夹具现场值持久化验证：' + pass + ' / ' + total + ' 通过\n');
++  if (fail) {
++    process.stdout.write('✗ 失败 ' + fail + ' 项：\n');
++    problems.forEach(function (p) { process.stdout.write('  · ' + p + '\n'); });
++    process.exit(1);
++  }
++  process.stdout.write('✓ 全绿（零网络 · 未启动浏览器 · 未调模型 · **未改生产代码**）\n');
++  process.exit(0);
++});
+
+──────────────────────────────────────────────────────────────────────────
+diff -- scripts/make-closure-excerpt.js
+──────────────────────────────────────────────────────────────────────────
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\make-closure-excerpt.js" "b/D:\\projects\\sleepy\\scripts\\make-closure-excerpt.js"
+index 9b064d4..a391ab7 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\make-closure-excerpt.js"
++++ "b/D:\\projects\\sleepy\\scripts\\make-closure-excerpt.js"
+@@ -32,5 +32,31 @@ var stat = { 段数: 0, 行数: 0 };
+ function w(s) { buf.push(s); }
+ 
+-/* ---------- 段：按文件+起止行号切片（1-based，含端点） ---------- */
++/* ---------- 段：按**锚点文本**定位，再切片（1-based，含端点） ----------
++   ⚠️⚠️ 原来这里是**硬编码行号**。踩到的坑：
++     本轮 SETUP 删掉了 20 行 → 后面所有段的行号**整体偏移**，
++     而 `verify-closure-excerpt.js` 是拿**同一批硬编码行号**去比对的，
++     于是「摘录内容 == 仓库第 N 行」依然成立 → **回验照样全绿**。
++     ⚠️ 这类「判据与被测对象共用同一个错误来源」= 假绿的典型形态。
++     回验只证明「摘录忠实于行号」，**证明不了行号指向的是预期的代码**。
++   → 改为：按**唯一锚点串**现找行号，行号由锚点推导。
++     这样代码增删行时行号自动跟随，且 verify 能独立复核锚点。 */
++
++/* 在 lines 里找包含 needle 的唯一行号（1-based）；找不到或多处都抛错 */
++function anchorLine(lines, needle, what) {
++  var hit = [];
++  for (var i = 0; i < lines.length; i++) {
++    if (lines[i].indexOf(needle) >= 0) hit.push(i + 1);
++  }
++  if (hit.length === 0) throw new Error('锚点找不到：' + what + ' → ' + needle);
++  if (hit.length > 1) throw new Error('锚点不唯一（' + hit.length + ' 处）：' + what + ' → ' + needle);
++  return hit[0];
++}
++/* 以锚点定位的段：from = 锚点行 + offsetFrom，to = 锚点行 + offsetTo */
++function segA(title, fileLabel, lines, anchor, what, offFrom, offTo, note) {
++  var a = anchorLine(lines, anchor, what);
++  seg(title, fileLabel, lines, a + offFrom, a + offTo, note);
++}
++
++/* ---------- 段：按行号切片（1-based，含端点） ---------- */
+ function seg(title, fileLabel, lines, from, to, note) {
+   stat.段数++;
+@@ -66,37 +92,37 @@ w('本轮状态：冻结收口（未启动真机模型验收 · 未发新请求
+ head('一、验收脚本 scripts/offline-f2-effect-acceptance.js');
+ 
+-seg('SETUP 开头（角色/会话创建）', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 235, 271,
++segA('SETUP 开头（角色/会话创建）', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, 'var SETUP = function (arg) {', 'SETUP 函数头', 0, 36,
+   '场景持久化的正式入口：createSession 的 form 一次写全五个现场字段');
+-seg('SETUP 持久化修正：创建参数 + updateEnv reaffirm', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 272, 295,
++segA('SETUP 持久化修正：创建参数 + updateEnv reaffirm', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, 'var s = Sleepy.offlineStore.createSession(ch.id, {', 'createSession form', 0, 23,
+   '⚠️ updateEnv 传 sceneName 会被静默忽略（实测），所以场景名只能走 createSession 的 form');
+-seg('SETUP 写完立刻回读自检（不对就抛）', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 296, 317,
++segA('SETUP 写完立刻回读自检（不对就抛）', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '(function verifyScenePersisted() {', '回读自检', 0, 21,
+   '静默失效会让后续每轮都用错现场值 —— 宁可第一轮就炸');
+-seg('SETUP 前置消息：全部走 appendMessage（保存入口）', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 318, 340,
++segA('SETUP 前置消息：全部走 appendMessage（保存入口）', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '前置消息：**只保留原报告 #6–#9 四条，顺序不变**', '前置消息四条', 0, 22,
+   '★ 本轮修复点：旧写法往孤儿副本 s2.messages push，那一段同样没落库');
+-seg('SETUP 结尾（API 配置 + 返回已写入现场）', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 341, 365);
++segA('SETUP 结尾（API 配置 + 返回已写入现场）', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '/* ★ 真实 API 配置：凭据来自 Node 侧注入，绝不落到磁盘 */', 'API 配置与返回', 0, 24);
+ 
+-seg('旁路安装（knownSecrets + 记录失败回调）', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 946, 975,
++segA('旁路安装（knownSecrets + 记录失败回调）', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '/* ---------- 旁路模块装载（2026-10-05）----------', '旁路模块装载与 installFetchBypass', 0, 55,
+   'knownSecrets 是脱敏的第一条腿：真实凭据未必长得像 sk-…/JWT，形状匹配会漏');
+ 
+-seg('本轮记录关联：HTTP / 记录错误 / 发送瞬间 三次读取', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 1145, 1176,
++segA('本轮记录关联：HTTP / 记录错误 / 发送瞬间 三次读取', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '/* ★ 归因记录（v2 新增）：取本轮对应的最后一次出站。', '本轮记录三次读取', 0, 31,
+   '★ 每轮取走即清空（window.__SEND = [] 等），避免下一轮抓到上一轮残留');
+-seg('轮记录构造：三层对齐口径', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 1177, 1211,
++segA('轮记录构造：三层对齐口径', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '/* ★ 三层对齐用的对照口径（用户 2026-10-05）：', '三层对齐口径', 0, 34,
+   '⚠️ 两个哈希口径本就不同，不相等是正常的');
+-seg('轮记录构造：字段落位', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 1212, 1240);
++segA('轮记录构造：字段落位', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '三层对齐: 对齐,', '轮记录字段落位(自此向后)', 0, 18);
+ 
+-seg('持久化调用：persistPhase 是唯一写入口', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 700, 712,
++segA('持久化调用：persistPhase 是唯一写入口', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, '/* ★ 终态落盘：允许比轮数多写一次。', 'persistPhase', 0, 12,
+   '契约：n 轮 → n+1 次写入（末尾多一次终态）');
+-seg('hardStopKind（含发送记录写入失败的接线）', 'scripts/offline-f2-effect-acceptance.js',
+-  accLines, 800, 830,
++segA('hardStopKind（含发送记录写入失败的接线）', 'scripts/offline-f2-effect-acceptance.js',
++  accLines, 'function hardStopKind(t) {', 'hardStopKind', 0, 30,
+   '⚠️ 记录写入失败的判定必须排在 network 之前，否则会被 network 抢走');
+ 
+@@ -104,33 +130,33 @@ seg('hardStopKind（含发送记录写入失败的接线）', 'scripts/offline-f
+ head('二、采集模块 scripts/lib/f2-body-capture.js');
+ 
+-seg('脱敏：三条正则（键名 / 形状 / URL query）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 140, 150);
+-seg('脱敏：改动账本（统一记账的载体）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 151, 175);
+-seg('脱敏：scrubString（已知凭据精确匹配 + 形状匹配）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 176, 197);
+-seg('脱敏：scrubUrl（URL query + 已知凭据）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 198, 219);
+-seg('脱敏：redactDeep（结构化 content / 嵌套 URL / 账本路径）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 220, 266);
+-seg('脱敏：scrubError（错误文本）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 267, 270);
+-
+-seg('请求体采集：字段骨架与五种失败形态', 'scripts/lib/f2-body-capture.js',
+-  libLines, 302, 345,
++segA('脱敏：三条正则（键名 / 形状 / URL query）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'var SECRET_KEY_RE =', '脱敏正则', 0, 10);
++segA('脱敏：改动账本（统一记账的载体）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function newLedger()', '改动账本', 0, 24);
++segA('脱敏：scrubString（已知凭据精确匹配 + 形状匹配）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function scrubString(s, known)', 'scrubString', 0, 21);
++segA('脱敏：scrubUrl（URL query + 已知凭据）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function scrubUrl(u, known)', 'scrubUrl', 0, 21);
++segA('脱敏：redactDeep（结构化 content / 嵌套 URL / 账本路径）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function redactDeep(v, known, path, led, depth)', 'redactDeep', 0, 46);
++segA('脱敏：scrubError（错误文本）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function scrubError(msg, known)', 'scrubError', 0, 3);
++
++segA('请求体采集：字段骨架与五种失败形态', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function captureRequestBody(input, init, opts)', 'captureRequestBody 骨架', 0, 43,
+   '★ 采集失败一律 messages = null（不填空数组/默认值）');
+-seg('请求体采集：messages 保留 role+content 并逐条记账', 'scripts/lib/f2-body-capture.js',
+-  libLines, 346, 401);
+-
+-seg('fetch 旁路：红线三条的声明', 'scripts/lib/f2-body-capture.js',
+-  libLines, 404, 440);
+-seg('fetch 旁路：请求侧同步采集（含红线①）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 441, 480);
+-seg('fetch 旁路：响应侧（红线③ —— 原样返回 r）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 481, 540);
+-seg('fetch 旁路：fetch 自身失败（红线②）', 'scripts/lib/f2-body-capture.js',
+-  libLines, 541, 553);
+-seg('与停机调度的接线：stopKindForSend', 'scripts/lib/f2-body-capture.js',
+-  libLines, 554, 570);
++segA('请求体采集：messages 保留 role+content 并逐条记账', 'scripts/lib/f2-body-capture.js',
++  libLines, 'if (Array.isArray(parsed.messages))', 'messages 采集', 0, 55);
++
++segA('fetch 旁路：红线三条的声明', 'scripts/lib/f2-body-capture.js',
++  libLines, '4. fetch 旁路安装', '旁路红线声明', 0, 36);
++segA('fetch 旁路：请求侧同步采集（含红线①）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function wrapped(input, init)', '请求侧采集', 0, 39);
++segA('fetch 旁路：响应侧（红线③ —— 原样返回 r）', 'scripts/lib/f2-body-capture.js',
++  libLines, 'return origFetch.apply(this, arguments).then(function (r) {', '响应侧', 0, 59);
++segA('fetch 旁路：fetch 自身失败（红线②）', 'scripts/lib/f2-body-capture.js',
++  libLines, '/* ---------- 红线②', 'fetch 自身失败', 0, 12);
++segA('与停机调度的接线：stopKindForSend', 'scripts/lib/f2-body-capture.js',
++  libLines, 'function stopKindForSend(send)', 'stopKindForSend', 0, 16);
+ 
+ /* ---------- 凭据扫描 ---------- *
+
+──────────────────────────────────────────────────────────────────────────
+diff -- scripts/verify-closure-excerpt.js
+──────────────────────────────────────────────────────────────────────────
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\verify-closure-excerpt.js" "b/D:\\projects\\sleepy\\scripts\\verify-closure-excerpt.js"
+index 7c8c58b..15f8388 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre5\\verify-closure-excerpt.js"
++++ "b/D:\\projects\\sleepy\\scripts\\verify-closure-excerpt.js"
+@@ -41,4 +41,29 @@ lines.forEach(function (l) {
+ if (cur) segs.push(cur);
+ 
++/* ---- 关键锚点必须**恰好**出现在摘录里（独立复核）----
++   ⚠️ 这一段是为了补一个真实的洞：
++     上一版生成器用**硬编码行号**，而本轮 SETUP 删了 20 行 → 行号整体偏移，
++     但回验是拿**同一批硬编码行号**去比对的 ⇒「摘录 == 仓库第 N 行」依然成立
++     ⇒ **回验全绿，而摘录实际指向了错误的代码**。
++     那是「判据与被测对象共用同一个错误来源」的假绿。
++     现在生成器按锚点定位；本回验**独立地**检查每个关键锚点
++     出现在摘录中 —— 不依赖生成器的行号推导。 */
++var ANCHORS = [
++  'var SETUP = function (arg) {',
++  'Sleepy.offlineStore.createSession(ch.id, {',
++  'Sleepy.offlineStore.updateEnv(s.id, {',
++  '(function verifyScenePersisted() {',
++  '前置消息：**只保留原报告 #6–#9 四条，顺序不变**',
++  'F2BodyCapture.installFetchBypass(window, {',
++  'async function persistPhase(phase) {',
++  'function hardStopKind(t) {',
++  'var 对齐 = {',
++  'function captureRequestBody(input, init, opts) {',
++  'function stopKindForSend(send) {'
++];
++var missingAnchors = ANCHORS.filter(function (a) {
++  return lines.join('\n').indexOf(a) < 0;
++});
++
+ var bad = [];
+ segs.forEach(function (s, i) {
+@@ -71,4 +96,11 @@ process.stdout.write('回验摘录：' + EXCERPT + '\n');
+ process.stdout.write('段数 ' + segs.length + ' · 摘录行数 ' +
+   segs.reduce(function (a, s) { return a + s.rows.length; }, 0) + '\n');
++if (missingAnchors.length) {
++  process.stdout.write('✗ 摘录里缺少关键锚点 ' + missingAnchors.length + ' 个' +
++    '（说明行号漂移后没重新生成，或生成器锚点失效）：\n');
++  missingAnchors.forEach(function (a) { process.stdout.write('  · ' + a + '\n'); });
++  process.exit(4);
++}
++process.stdout.write('✓ ' + ANCHORS.length + ' 个关键锚点全部在摘录内（独立复核）\n');
+ if (bad.length) {
+   process.stdout.write('✗ 内容不符 ' + bad.length + ' 处：\n');
+
+#==========================================================================
+# ② 完整收口源码摘录
+#==========================================================================
+
+生成：已生成：D:\projects\sleepy\docs\收口源码摘录-2026-10-05.txt
+段数 24 · 摘录行数 715 · 文件 56553 字节
+凭据扫描：通过
+
+独立回验：✓ 11 个关键锚点全部在摘录内（独立复核） ｜ ✓ 全部与仓库**逐字一致**（含行号）
+
+（以下为摘录全文，逐字内嵌）
+
+收口源码摘录 · 2026-10-05
+生成方式：scripts/make-closure-excerpt.js **按行号从仓库切片**
+        ⇒ 摘录内容与仓库**同一份字节**，非人工转抄
+范围：验收脚本的 SETUP / 旁路安装 / 本轮记录关联读取 / 轮记录构造 /
+      hardStopKind / 持久化调用 + 采集模块相关实现
+约束：片段完整（无省略号）· 已过凭据脱敏扫描 · 行号真实
+
+仓库根：D:\projects\sleepy
+本轮状态：冻结收口（未启动真机模型验收 · 未发新请求 · P3 暂停 · timeout 120s）
+
+################################################################
+# 一、验收脚本 scripts/offline-f2-effect-acceptance.js
+################################################################
+
+════════════════════════════════════════════════════════════════
+【1】SETUP 开头（角色/会话创建）
+文件：scripts/offline-f2-effect-acceptance.js
+行号：235–271（真实行号，共 37 行）
+说明：场景持久化的正式入口：createSession 的 form 一次写全五个现场字段
+────────────────────────────────────────────────────────
+  235 | var SETUP = function (arg) {
+  236 |   var f = arg.f;
+  237 |   var core = Sleepy.core;
+  238 |   var sb = core.listSandboxes()[0];
+  239 | 
+  240 |   var ch = core.upsertChar({
+  241 |     id: f.char.id, kind: 'main', name: f.char.name,
+  242 |     content: f.char.content, sandboxId: sb && sb.id
+  243 |   });
+  244 |   var npc = core.upsertChar({
+  245 |     id: f.npc.id, kind: 'main', name: f.npc.name,
+  246 |     content: f.npc.content, sandboxId: sb && sb.id
+  247 |   });
+  248 | 
+  249 |   /* ------------------------------------------------------------
+  250 |      ★★ 场景持久化：两条**正式**入口，2026-10-05 修
+  251 |      ------------------------------------------------------------
+  252 |      旧写法（**静默失效**）：
+  253 |          var s2 = findSession(s.id);
+  254 |          s2.sceneName = …;  s2.env = …;
+  255 |      `findSession` 内部 `allSessions() → store.get`，而 **`store.get` 返回
+  256 |      深拷贝** ⇒ 拿到的是**孤儿副本**，直接赋值**不落库**。
+  257 |      结果五个现场字段全部退回 `createSession` 的默认值
+  258 |      （未命名场景 / — / 傍晚 / 晴 / 16:42），
+  259 |      装配快照里读到的也是这些默认值 —— 但**这不等于**模型当时收到了它们。
+  260 | 
+  261 |      ⚠️ 生产的深拷贝是**设计如此**（否则外部能改内部状态）——
+  262 |         要改的是这里的调用方式，不是 store。
+  263 | 
+  264 |      核实过的两个正式入口（已用行为验证，不是照源码猜的）：
+  265 |        ① `createSession(charId, form)` 的 **form 参数**认这五个字段
+  266 |           （page-offline.js:153–160）——**创建时一次写全**，最稳。
+  267 |        ② `offlineStore.updateEnv(id, patch)` → `mutateSession` → `saveAll`，
+  268 |           能落库，但**只管 `env` 里的四个**。
+  269 |      ⚠️ **`updateEnv` 传 `sceneName` 会被静默忽略**（不报错、不生效）——
+  270 |         实测确认过。所以场景名只能走 ①。
+  271 |      ------------------------------------------------------------ */
+
+════════════════════════════════════════════════════════════════
+【2】SETUP 持久化修正：创建参数 + updateEnv reaffirm
+文件：scripts/offline-f2-effect-acceptance.js
+行号：272–295（真实行号，共 24 行）
+说明：⚠️ updateEnv 传 sceneName 会被静默忽略（实测），所以场景名只能走 createSession 的 form
+────────────────────────────────────────────────────────
+  272 |   var s = Sleepy.offlineStore.createSession(ch.id, {
+  273 |     openingBy: f.scene.openingBy,
+  274 |     pendingSetup: f.scene.pendingSetup,
+  275 |     /* 正式创建参数：场景名 + 四个现场值一次写全 */
+  276 |     sceneName: f.scene.sceneName,
+  277 |     location: f.scene.location,
+  278 |     timeOfDay: f.scene.timeOfDay,
+  279 |     weather: f.scene.weather,
+  280 |     clockTime: f.scene.clockTime
+  281 |   });
+  282 | 
+  283 |   /* 再用 updateEnv 显式 reaffirm 四个 env 值（走已验证的保存入口）。
+  284 |      这一步是**冗余但有意的**：万一将来 createSession 的 form 参数改名，
+  285 |      updateEnv 这条路仍然有效，且下面的自检会把不一致**抓出来**而不是静默通过。 */
+  286 |   Sleepy.offlineStore.updateEnv(s.id, {
+  287 |     location: f.scene.location, timeOfDay: f.scene.timeOfDay,
+  288 |     weather: f.scene.weather, clockTime: f.scene.clockTime
+  289 |   });
+  290 | 
+  291 |   /* ★★★ 自检：写完立刻**回读**核对，不对就抛。
+  292 |      为什么必须在这里抛而不是留给测试看：
+  293 |        静默失效是这个 bug 的本质 —— 如果 SETUP 悄悄写不进去，
+  294 |        后面每一轮都会用错误的现场值去跑，**烧掉的请求全是废的**。
+  295 |      宁可第一轮就炸，也不要跑完三组才发现现场值从头到尾都是默认值。 */
+
+════════════════════════════════════════════════════════════════
+【3】SETUP 写完立刻回读自检（不对就抛）
+文件：scripts/offline-f2-effect-acceptance.js
+行号：296–317（真实行号，共 22 行）
+说明：静默失效会让后续每轮都用错现场值 —— 宁可第一轮就炸
+────────────────────────────────────────────────────────
+  296 |   (function verifyScenePersisted() {
+  297 |     var back = Sleepy.offlineStore.findSession(s.id);   /* 走 store 深拷贝回读 */
+  298 |     if (!back) throw new Error('SETUP 自检：会话回读不到（id=' + s.id + '）');
+  299 |     var bad = [];
+  300 |     function chk(name, got, want) {
+  301 |       if (got !== want) bad.push(name + '：期望 ' + JSON.stringify(want) +
+  302 |         '，实得 ' + JSON.stringify(got));
+  303 |     }
+  304 |     chk('sceneName', back.sceneName, f.scene.sceneName);
+  305 |     chk('env.location', back.env && back.env.location, f.scene.location);
+  306 |     chk('env.timeOfDay', back.env && back.env.timeOfDay, f.scene.timeOfDay);
+  307 |     chk('env.weather', back.env && back.env.weather, f.scene.weather);
+  308 |     chk('env.clockTime', back.env && back.env.clockTime, f.scene.clockTime);
+  309 |     if (bad.length) {
+  310 |       throw new Error('SETUP 自检失败（现场值没落库，**不要继续发请求**）：\n  ' +
+  311 |         bad.join('\n  '));
+  312 |     }
+  313 |   }());
+  314 | 
+  315 |   /* ------------------------------------------------------------
+  316 |      前置消息：**只保留原报告 #6–#9 四条，顺序不变**
+  317 |      ------------------------------------------------------------
+
+════════════════════════════════════════════════════════════════
+【4】SETUP 前置消息：全部走 appendMessage（保存入口）
+文件：scripts/offline-f2-effect-acceptance.js
+行号：316–338（真实行号，共 23 行）
+说明：★ 本轮修复点：旧写法往孤儿副本 s2.messages push，那一段同样没落库
+────────────────────────────────────────────────────────
+  316 |      前置消息：**只保留原报告 #6–#9 四条，顺序不变**
+  317 |      ------------------------------------------------------------
+  318 |      2026-10-05 收口：上一轮修持久化时，把原先写进孤儿副本（因而未落库）的
+  319 |      5 条历史写入**也**改走 appendMessage，结果落库从 4 条变 9 条，
+  320 |      `preActions` 出现两次（逐条 3 条 + 拼接 1 条）———
+  321 |      同一段现场动作在模型上下文里重复了一遍。
+  322 | 
+  323 |      ★ 这里的处理是**明确取消多余的历史写入**，
+  324 |        **不是**把代码退回孤儿副本写法（那种写法静默失效，是本轮要修的病根）。
+  325 |        保留的是「原报告实际落库的那四条」——它们一直是唯一起作用的写入，
+  326 |        语义与原报告**完全一致**。
+  327 | 
+  328 |      被移除的三类（原本就没落库，补上它们反而是**引入新输入**）：
+  329 |        · preActions 逐条 3 条  → 下面第 2 条已用拼接版覆盖同样内容
+  330 |        · npc0（老板娘喊茶）    → 与第 2 条内容重叠
+  331 |        · npcname（阁楼里只有两人）→ 与第 3 条重叠
+  332 |      ⚠️ openingBy 仍由 createSession 的 form 传入（正式创建参数），
+  333 |         不在这里重复设 —— 孤儿副本上改它没用。 */
+  334 |   Sleepy.offlineStore.appendMessage(s.id, { role: 'user', text: '（我推开阁楼的门，上来了。)' });
+  335 |   Sleepy.offlineStore.appendMessage(s.id, { role: 'scene', paras: [{ type: 'prose', text: f.preActions.join(' ') }] });
+  336 |   Sleepy.offlineStore.appendMessage(s.id, { role: 'scene', paras: [{ type: 'prose', text: '（老板娘在楼下，没有上来。）' }] });
+  337 |   Sleepy.offlineStore.appendMessage(s.id, { role: 'user', text: '（我坐下了，湿外套搭在椅背上。）' });
+  338 | 
+
+════════════════════════════════════════════════════════════════
+【5】SETUP 结尾（API 配置 + 返回已写入现场）
+文件：scripts/offline-f2-effect-acceptance.js
+行号：339–363（真实行号，共 25 行）
+  339 |   /* ★ 真实 API 配置：凭据来自 Node 侧注入，绝不落到磁盘 */
+  340 |   Sleepy.store.set('mainApi', {
+  341 |     name: '验收模型', baseUrl: window.__API_BASE, apiKey: window.__API_KEY,
+  342 |     model: window.__API_MODEL,
+  343 |     temperature: window.__APPROVED.temperature, maxTokens: window.__APPROVED.maxTokens,
+  344 |     contextMessages: window.__APPROVED.contextMessages,
+  345 |     stream: window.__APPROVED.stream,
+  346 |     timeoutSec: window.__APPROVED.timeoutSec, enabled: true
+  347 |   });
+  348 | 
+  349 |   window.__sid = s.id;
+  350 |   Sleepy.nav.open('offline-scene', { id: s.id });
+  351 |   /* 返回现场值，供调用方（测试/验收主流程）直接核对，不必再回读一次 */
+  352 |   return {
+  353 |     sid: s.id, charId: ch.id, npcId: npc.id,
+  354 |     已写入现场: {
+  355 |       sceneName: f.scene.sceneName,
+  356 |       location: f.scene.location, timeOfDay: f.scene.timeOfDay,
+  357 |       weather: f.scene.weather, clockTime: f.scene.clockTime
+  358 |     }
+  359 |   };
+  360 | };
+  361 | 
+  362 | var SCENE_READY = function () {
+  363 |   var p = document.querySelector('[data-page="offline-scene"]');
+
+════════════════════════════════════════════════════════════════
+【6】旁路安装（knownSecrets + 记录失败回调）
+文件：scripts/offline-f2-effect-acceptance.js
+行号：923–978（真实行号，共 56 行）
+说明：knownSecrets 是脱敏的第一条腿：真实凭据未必长得像 sk-…/JWT，形状匹配会漏
+────────────────────────────────────────────────────────
+  923 |       /* ---------- 旁路模块装载（2026-10-05）----------
+  924 |          ★ 为什么用源码注入而不是在 evaluate 里重写一遍：
+  925 |            采集逻辑（脱敏 / SHA-256 / messages 保留）**必须只有一份实现** ——
+  926 |            Node 侧单测要 require 同一份，页内要跑同一份。
+  927 |            两处各写一遍必然漂移，而漂移的方向恰好是「测的和发的不是一个东西」。
+  928 |          ★ 页内没有 require、没有同步 crypto，所以传文本 + new Function 求值。 */
+  929 |       (0, eval)(cfg.captureSrc);
+  930 | 
+  931 |       /* ---------- 归因字段抓取（v2 新增 · P0 产出）----------
+  932 |          ★ 为什么必须包 fetch：生产 callModel 只透传 {ok, text}，
+  933 |            **丢掉了 res.data**（api.js 的 requestOnce 成功结果里 data 是完整响应体）。
+  934 |            不包这一层就永远拿不到 finish_reason / usage / reasoning_content ——
+  935 |            而这三项正是 8192 截断归因的唯一依据。
+  936 |          ★ 只旁路记录，**不改变任何返回内容**（读 clone，原 body 透传给生产代码）。
+  937 |          ★ 只包最外层网络通道，**中间的装配/判定全走生产代码**。
+  938 | 
+  939 |          ⚠️ 2026-10-05 补上「提交给 fetch 的请求体」这一侧：
+  940 |            此前只记响应侧（finish_reason/usage/reasoning），
+  941 |            于是**装配与发送之间没有任何快照** ——
+  942 |            「存在于响应后装配快照」被误当成「客户端提交给 fetch 的内容」。
+  943 |            installFetchBypass 在**调用 origFetch 之前**同步采集 init.body：
+  944 |            原始 body 字符串的 SHA-256 + 脱敏后的
+  945 |            model/messages/stream/max_tokens/temperature（messages 保留 role+content 原文）。
+  946 |            ⚠️ 措辞口径（2026-10-05 收口统一）：这一份叫
+  947 |              **「客户端提交给 fetch 的请求体」**。
+  948 |              它是客户端这一侧提交的**输入**，**不声称**服务端已收到、
+  949 |              更不声称模型已消费 —— 那需要响应/正文侧证据，不是这一份能给的。
+  950 |            响应侧采集**原样保留**（见 __HTTP 与 rec.发送瞬间）。 */
+  951 |       window.__RAW = [];
+  952 |       var origFetch = window.fetch;
+  953 |       /* ★ 传 knownSecrets：脱敏的**第一条腿**是「已知凭据精确匹配」。
+  954 |          为什么必需：真实测试凭据（`stub-…`、自造的固定串）**未必**长得像
+  955 |          sk-…／JWT，纯形状匹配会漏。实测：`stub-trace-key-not-real`
+  956 |          在不传 knownSecrets 时**脱敏改动数 = 0**（漏）。
+  957 |          ⚠️ 凭据只在本页内存里；传进去的是**值**，不会落盘
+  958 |          （落盘的是脱敏后的记录 + sha8 指纹）。 */
+  959 |       window.__SEND_ERRORS = [];
+  960 |       window.fetch = window.F2BodyCapture.installFetchBypass(window, {
+  961 |         knownSecrets: [window.__API_KEY].filter(Boolean),
+  962 |         onRecordError: function (why, rec) {
+  963 |           /* 记录失败要**看得见**，且不能被后续轮次覆盖掉 */
+  964 |           try { window.__SEND_ERRORS.push({ at: window.__SEND.length, why: why }); }
+  965 |           catch (e) { /* 连这个都写不进去就只剩 reject 本身了 */ }
+  966 |         }
+  967 |       });
+  968 |       /* 归因数组由 installFetchBypass 建（__HTTP / __SEND）。
+  969 |          ⚠️ 这里**不再自己包一层** —— 旧实现与新实现并存会记两次出站，
+  970 |             采集顺序也会变得无法解释（旧那层在 origFetch 之后才记 body）。 */
+  971 |       void origFetch;   /* 保留引用仅为可读性：确认我们包的是真实 fetch */
+  972 |       /* 观测钩子：把 requestOnce 的**原始失败结果**留下来。
+  973 |          ⚠️ 只读不改：包一层记结果再原样调用，不改变任何返回内容。 */
+  974 |       var orig = Sleepy.api.requestOnce;
+  975 |       Sleepy.api.requestOnce = function () {
+  976 |         var args = arguments;
+  977 |         return orig.apply(this, args).then(function (r) {
+  978 |           if (r && r.ok === false) {
+
+════════════════════════════════════════════════════════════════
+【7】本轮记录关联：HTTP / 记录错误 / 发送瞬间 三次读取
+文件：scripts/offline-f2-effect-acceptance.js
+行号：1149–1180（真实行号，共 32 行）
+说明：★ 每轮取走即清空（window.__SEND = [] 等），避免下一轮抓到上一轮残留
+────────────────────────────────────────────────────────
+ 1149 |       /* ★ 归因记录（v2 新增）：取本轮对应的最后一次出站。
+ 1150 |          fetch 旁路与 requestOnce 是同一个请求，按序对齐。 */
+ 1151 |       var http = await page.evaluate(function () {
+ 1152 |         var h = window.__HTTP || [];
+ 1153 |         var last = h.length ? h[h.length - 1] : null;
+ 1154 |         window.__HTTP = [];
+ 1155 |         return last;
+ 1156 |       });
+ 1157 |       /* ★ 记录写入失败（红线①）单独取一次，**不吞**。
+ 1158 |          这些是「这一轮的发送证据丢了」的事实，必须进轮记录。 */
+ 1159 |       var sendErrs = await page.evaluate(function () {
+ 1160 |         var e = window.__SEND_ERRORS || [];
+ 1161 |         var all = e.slice();
+ 1162 |         window.__SEND_ERRORS = [];
+ 1163 |         return all;
+ 1164 |       });
+ 1165 |       /* ★★ 客户端提交给 fetch 的请求体（2026-10-05）
+ 1166 |          —— 这是「**客户端提交给 fetch 的内容**」的唯一来源。
+ 1167 |          ⚠️ 口径（2026-10-05 收口统一）：它是**客户端这一侧提交的输入**。
+ 1168 |            **不声称**服务端已收到，**更不声称**模型已消费 ——
+ 1169 |            那需要响应侧 / 回复正文侧证据，不是这一份能给的。
+ 1170 |            也不等于「模型一定注意到了场景」：那要看它写出来什么。
+ 1171 |          ⚠️ 与上面 归因/出站messages 是**三份不同的东西**，不可互相替代：
+ 1172 |             · 出站messages = 响应**之后**重新跑一次装配的结果（快照，可能已漂）
+ 1173 |             · 归因        = 响应**之后**的 HTTP 元数据
+ 1174 |             · 请求体      = **调用 origFetch 之前**的 init.body（唯一时序正确的一份）
+ 1175 |          ⚠️ 失败轮也可能有请求体记录（发出去了但没落地）→ 照样取，
+ 1176 |             绝不因为「这轮失败」就丢掉请求体证据。 */
+ 1177 |       var sendRec = await page.evaluate(function () {
+ 1178 |         var s = window.__SEND || [];
+ 1179 |         var last = s.length ? s[s.length - 1] : null;
+ 1180 |         window.__SEND = [];
+
+════════════════════════════════════════════════════════════════
+【8】轮记录构造：三层对齐口径
+文件：scripts/offline-f2-effect-acceptance.js
+行号：1198–1232（真实行号，共 35 行）
+说明：⚠️ 两个哈希口径本就不同，不相等是正常的
+────────────────────────────────────────────────────────
+ 1198 |       /* ★ 三层对齐用的对照口径（用户 2026-10-05）：
+ 1199 |          「发送瞬间」与「响应后装配快照」必须能并排比。
+ 1200 |          记录 body 哈希与装配快照哈希的口径差，别让读者以为它们本该相等。 */
+ 1201 |       var 装配messages原文 = obText;
+ 1202 |       var 对齐 = {
+ 1203 |         说明: '发送瞬间请求体（init.body）与响应后装配快照是**两层**，本字段只登记口径，不下结论',
+ 1204 |         发送瞬间bodySHA256: sendRec ? sendRec.bodySHA256 : null,
+ 1205 |         响应后装配SHA256: sha256hex(装配messages原文),
+ 1206 |         两者相等: sendRec && sendRec.bodySHA256
+ 1207 |           ? (sendRec.bodySHA256 === sha256hex(装配messages原文)) : null,
+ 1208 |         口径差说明: '两个哈希的对象不同：前者是 init.body 整段 JSON 串，' +
+ 1209 |           '后者是「role\\ncontent」按 --- 拼接的装配快照。**不相等是正常的**，' +
+ 1210 |           '不能用它判断「模型没收到场景」—— 那种判断必须看 messages 原文逐字段比。'
+ 1211 |       };
+ 1212 |       return {
+ 1213 |         轮: ti + 1,
+ 1214 |         输入: g.turns[ti],
+ 1215 |         已落地: landed,
+ 1216 |         最终阶段: finalStage,
+ 1217 |         原始请求结果: rawres,
+ 1218 |         归因: http,
+ 1219 |         发送瞬间请求体: sendRec,
+ 1220 |         /* ★ 红线①的证据：记录写不进去 = 这一轮的发送瞬间丢了。
+ 1221 |            数组（可能多条），空数组 = 没有丢。 */
+ 1222 |         发送记录错误: sendErrs,
+ 1223 |         /* ★ 与停机调度的接线：把这个 stopKind 交给 runGroupSchedule 的
+ 1224 |            stopKind 参数（见调用处），记录写入失败即判「采集异常」硬停。 */
+ 1225 |         发送停机建议: sendRec ? STOP_KIND_FOR_SEND(sendRec) : null,
+ 1226 |         三层对齐: 对齐,
+ 1227 |         出站messages: 出站,
+ 1228 |         原始输出: rec.latest ? rec.latest.text : null,
+ 1229 |         段落: rec.latest ? rec.latest.paras : null,
+ 1230 |         诊断: rec.diag,
+ 1231 |         /* ★ 判分表骨架：**只落空表 + 原文引用位，绝不预填结论**。
+ 1232 |            评分由人工/后续批次按方案 §5 填写，每档必须引用触发原文。 */
+
+════════════════════════════════════════════════════════════════
+【9】轮记录构造：字段落位
+文件：scripts/offline-f2-effect-acceptance.js
+行号：1226–1244（真实行号，共 19 行）
+ 1226 |         三层对齐: 对齐,
+ 1227 |         出站messages: 出站,
+ 1228 |         原始输出: rec.latest ? rec.latest.text : null,
+ 1229 |         段落: rec.latest ? rec.latest.paras : null,
+ 1230 |         诊断: rec.diag,
+ 1231 |         /* ★ 判分表骨架：**只落空表 + 原文引用位，绝不预填结论**。
+ 1232 |            评分由人工/后续批次按方案 §5 填写，每档必须引用触发原文。 */
+ 1233 |         判分: { D1行为正确性: null, D2人物保真: null, D3现场连续: null,
+ 1234 |           D4user主体性: null, D5格式稳定: null, D6重复说教模板化: null,
+ 1235 |           证据引用: '', 是否否决: null, 否决项: '' }
+ 1236 |       };
+ 1237 |     };
+ 1238 |     /* ★★ 交给共用调度器 —— 它保证「每组恰好登记一次」与「先持久化再下一轮」。
+ 1239 |        旧的写法在两处 results.push（L706 拦截分支 + L905 循环后），
+ 1240 |        而普通 break 只跳出**内层轮次循环**，外层 push **照常执行** →
+ 1241 |        **同一组会被登记两次**。这是本轮修掉的真 bug。 */
+ 1242 |     /* ★ 字段名统一为「样本组」—— 与 results 的所有消费者一致。
+ 1243 |        之前这里叫「组」，而下游读 g.样本组 → 读到 undefined。 */
+ 1244 |     var 记录集 = { 样本组: g.id, 名称: g.key, 目标: g.goal, 观察点: g.watch, 轮次: null };
+
+════════════════════════════════════════════════════════════════
+【10】持久化调用：persistPhase 是唯一写入口
+文件：scripts/offline-f2-effect-acceptance.js
+行号：701–713（真实行号，共 13 行）
+说明：契约：n 轮 → n+1 次写入（末尾多一次终态）
+────────────────────────────────────────────────────────
+  701 |   /* ★ 终态落盘：允许比轮数多写一次。
+  702 |      上一轮把「n 轮只能写 n 次」当通过条件，结果**末轮失败被漏掉** ——
+  703 |      终态（停机原因/计数）是必须留存的证据，不能因为「次数对不上」而不写。 */
+  704 |   async function persistPhase(phase) {
+  705 |     state.当前写入阶段 = phase;
+  706 |     await persist(state, phase);
+  707 |     state.持久化次数++;
+  708 |   }
+  709 | 
+  710 |   return (async function run() {
+  711 |     for (var ti = 0; ti < turns.length; ti++) {
+  712 |       state.调度次数 = ti + 1;
+  713 |       /* ---- 防线①：发送前依赖检查（保留）---- */
+
+════════════════════════════════════════════════════════════════
+【11】hardStopKind（含发送记录写入失败的接线）
+文件：scripts/offline-f2-effect-acceptance.js
+行号：808–838（真实行号，共 31 行）
+说明：⚠️ 记录写入失败的判定必须排在 network 之前，否则会被 network 抢走
+────────────────────────────────────────────────────────
+  808 | function hardStopKind(t) {
+  809 |   if (!t || t.未跑) return null;
+  810 |   /* 「未发出」不是硬停止 —— 它根本没到网络；由调度器的「未发出」分支处理 */
+  811 |   if (t.未发出) return null;
+  812 |   /* ★★ 发送记录写入失败（2026-10-05 · 与停机调度的接线点）
+  813 |      旁路已把 fetch 换成 reject，所以 raw.stage 会是 network ——
+  814 |      但**不能只靠那个**：`network` 也可能是真的网络故障。
+  815 |      这里显式判一次：记录写不进去 ⇒ 这一轮的**发送瞬间证据永久缺失**，
+  816 |      继续跑只会产出「无法核验」的样本 ⇒ 归为 link（采集异常，硬停）。
+  817 |      ⚠️ 顺序必须在 network 判定**之前** —— 否则它会被 network 抢走，
+  818 |         停机原因就写成「网络故障」，而真实原因是「证据没留下」。 */
+  819 |   if (t.发送瞬间请求体 && t.发送瞬间请求体.记录写入失败) return 'link';
+  820 |   if (t.发送记录错误 && t.发送记录错误.length) return 'link';
+  821 |   var raw = t.原始请求结果 || {};
+  822 |   if (raw.status === 403 || /403/.test(String(raw.error || ''))) return 'perm';
+  823 |   if (raw.stage === 'network' || raw.stage === 'timeout') return 'net';
+  824 |   if (!t.诊断 || (t.已落地 && t.诊断.requestId === undefined)) return 'link';
+  825 |   return null;
+  826 | }
+  827 | 
+  828 | /* ============================================================
+  829 |    逐轮快照落盘（正式流程用；测试注入自己的替身）
+  830 | 
+  831 |    ★ 为什么要每轮都写：原先只在**全部跑完后**写一次文件。
+  832 |      若中途崩溃/断电，已跑的轮次**一个都不剩** ——
+  833 |      而那正是「已经花了钱」的证据。
+  834 |    ★ 写入失败**不吞**：抛给调度器 → 它停止后续发送。
+  835 |      这条很关键：落盘失败还继续发，等于「付了钱没留下证据」。
+  836 |    ============================================================ */
+  837 | function makeSnapshotWriter(dir) {
+  838 |   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+################################################################
+# 二、采集模块 scripts/lib/f2-body-capture.js
+################################################################
+
+════════════════════════════════════════════════════════════════
+【12】脱敏：三条正则（键名 / 形状 / URL query）
+文件：scripts/lib/f2-body-capture.js
+行号：151–161（真实行号，共 11 行）
+  151 |   var SECRET_KEY_RE = /(api[_-]?key|apikey|secret|token|password|passwd|credential|authorization|auth|session[_-]?key|access[_-]?key|private[_-]?key|refresh[_-]?token|bearer)/i;
+  152 |   /* 取值形状：OpenAI 风格 sk-…、Bearer …、JWT */
+  153 |   var SECRET_VAL_RE = /(\bsk-[A-Za-z0-9._-]{8,})|(\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*)|(\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})/g;
+  154 |   /* URL 里的凭据 query：?key=… / ?access_token=… */
+  155 |   var SECRET_QUERY_RE = /([?&](?:key|api_key|apikey|token|access_token|refresh_token|secret|password|auth|authorization)=)([^&#]*)/gi;
+  156 | 
+  157 |   function maskSecret(v) {
+  158 |     var s = String(v == null ? '' : v);
+  159 |     if (!s) return '';
+  160 |     var h = sha256hex(s).slice(0, 8);
+  161 |     return '***已脱敏(sha8=' + h + ')***';
+
+════════════════════════════════════════════════════════════════
+【13】脱敏：改动账本（统一记账的载体）
+文件：scripts/lib/f2-body-capture.js
+行号：166–190（真实行号，共 25 行）
+  166 |   function newLedger() { return { 改动: [], 计数: 0 }; }
+  167 |   function noteChange(ledger, where, why, n) {
+  168 |     ledger.计数 += (n || 1);
+  169 |     ledger.改动.push({ 位置: where, 原因: why, 命中: n || 1 });
+  170 |   }
+  171 |   /* 账本 → 记录字段。**空改动就是空数组**，不塌成布尔。 */
+  172 |   function ledgerFields(ledger) {
+  173 |     return {
+  174 |       脱敏改动数: ledger.计数,
+  175 |       脱敏改动: ledger.改动,
+  176 |       已脱敏: ledger.计数 > 0
+  177 |     };
+  178 |   }
+  179 | 
+  180 |   /* ---------- 字符串脱敏（已知凭据 + 形状）----------
+  181 |      opts.knownSecrets 走**字面精确匹配**（先跑，避免形状正则把
+  182 |      已知串截成半个 token）。 */
+  183 |   function scrubString(s, known) {
+  184 |     var led = newLedger();
+  185 |     var out = String(s == null ? '' : s);
+  186 |     if (!out) return { text: out, 命中: 0, 账本: led };
+  187 |     var n = 0;
+  188 |     (known || []).forEach(function (sec) {
+  189 |       if (!sec || String(sec).length < 4) return;   /* 太短的别乱替换 */
+  190 |       var needle = String(sec);
+
+════════════════════════════════════════════════════════════════
+【14】脱敏：scrubString（已知凭据精确匹配 + 形状匹配）
+文件：scripts/lib/f2-body-capture.js
+行号：183–204（真实行号，共 22 行）
+  183 |   function scrubString(s, known) {
+  184 |     var led = newLedger();
+  185 |     var out = String(s == null ? '' : s);
+  186 |     if (!out) return { text: out, 命中: 0, 账本: led };
+  187 |     var n = 0;
+  188 |     (known || []).forEach(function (sec) {
+  189 |       if (!sec || String(sec).length < 4) return;   /* 太短的别乱替换 */
+  190 |       var needle = String(sec);
+  191 |       var parts = out.split(needle);
+  192 |       if (parts.length > 1) {
+  193 |         n += parts.length - 1;
+  194 |         out = parts.join(maskSecret(needle));
+  195 |       }
+  196 |     });
+  197 |     if (n) noteChange(led, '文本', '已知凭据精确匹配', n);
+  198 |     var m = 0;
+  199 |     out = out.replace(SECRET_VAL_RE, function () { m++; return maskSecret(arguments[0]); });
+  200 |     if (m) noteChange(led, '文本', '凭据形状匹配', m);
+  201 |     return { text: out, 命中: n + m, 账本: led };
+  202 |   }
+  203 | 
+  204 |   /* ---------- URL 脱敏（query 凭据 + 已知凭据）---------- */
+
+════════════════════════════════════════════════════════════════
+【15】脱敏：scrubUrl（URL query + 已知凭据）
+文件：scripts/lib/f2-body-capture.js
+行号：205–226（真实行号，共 22 行）
+  205 |   function scrubUrl(u, known) {
+  206 |     var led = newLedger();
+  207 |     var out = String(u == null ? '' : u);
+  208 |     if (!out) return { text: out, 账本: led };
+  209 |     var n = 0;
+  210 |     out = out.replace(SECRET_QUERY_RE, function (m, pre) {
+  211 |       n++; return pre + '***';
+  212 |     });
+  213 |     if (n) noteChange(led, 'url', 'URL query 凭据', n);
+  214 |     var knownN = 0;
+  215 |     (known || []).forEach(function (sec) {
+  216 |       if (!sec || String(sec).length < 4) return;
+  217 |       var parts = out.split(String(sec));
+  218 |       if (parts.length > 1) { knownN += parts.length - 1; out = parts.join('***'); }
+  219 |     });
+  220 |     if (knownN) noteChange(led, 'url', '已知凭据精确匹配', knownN);
+  221 |     return { text: out, 账本: led };
+  222 |   }
+  223 | 
+  224 |   /* ---------- 深度脱敏（结构化 content / 嵌套对象）----------
+  225 |      ⚠️ **只动凭据本身**，其余字符逐字保留 ——
+  226 |         脱敏会改掉「模型当时看到了什么」，所以必须最小化改动并记账。 */
+
+════════════════════════════════════════════════════════════════
+【16】脱敏：redactDeep（结构化 content / 嵌套 URL / 账本路径）
+文件：scripts/lib/f2-body-capture.js
+行号：227–273（真实行号，共 47 行）
+  227 |   function redactDeep(v, known, path, led, depth) {
+  228 |     depth = depth || 0;
+  229 |     path = path || '';
+  230 |     led = led || newLedger();
+  231 |     if (depth > 12) return '[深度超限]';
+  232 |     if (v === null || v === undefined) return v;
+  233 |     if (typeof v === 'string') {
+  234 |       var r = scrubString(v, known);
+  235 |       if (r.命中) {
+  236 |         noteChange(led, path || '(根)', '字符串内凭据', r.命中);
+  237 |         r.账本.改动.forEach(function (c) { led.改动.push(c); });
+  238 |       }
+  239 |       return r.text;
+  240 |     }
+  241 |     if (typeof v !== 'object') return v;
+  242 |     if (Array.isArray(v)) {
+  243 |       return v.map(function (x, i) {
+  244 |         return redactDeep(x, known, path + '[' + i + ']', led, depth + 1);
+  245 |       });
+  246 |     }
+  247 |     var out = {};
+  248 |     var keys = Object.keys(v);
+  249 |     for (var i = 0; i < keys.length; i++) {
+  250 |       var k = keys[i];
+  251 |       var here = path ? path + '.' + k : k;
+  252 |       if (SECRET_KEY_RE.test(k)) {
+  253 |         out[k] = maskSecret(v[k]);
+  254 |         noteChange(led, here, '凭据字段名', 1);
+  255 |         continue;
+  256 |       }
+  257 |       /* 键名像 URL 的，值也要走 URL 脱敏（?key= 在 image_url.url 里很常见） */
+  258 |       if (typeof v[k] === 'string' && /url$/i.test(k)) {
+  259 |         var u = scrubUrl(v[k], known);
+  260 |         out[k] = u.text;
+  261 |         if (u.账本.计数) {
+  262 |           noteChange(led, here, 'URL 内凭据', u.账本.计数);
+  263 |           u.账本.改动.forEach(function (c) { led.改动.push(c); });
+  264 |         }
+  265 |         continue;
+  266 |       }
+  267 |       out[k] = redactDeep(v[k], known, here, led, depth + 1);
+  268 |     }
+  269 |     return out;
+  270 |   }
+  271 | 
+  272 |   /* 错误文本脱敏（bodyCaptureError / parseError 会带上原始串片段，
+  273 |      那里也可能含凭据 —— 用户 2026-10-05 点名要覆盖）。 */
+
+════════════════════════════════════════════════════════════════
+【17】脱敏：scrubError（错误文本）
+文件：scripts/lib/f2-body-capture.js
+行号：274–277（真实行号，共 4 行）
+  274 |   function scrubError(msg, known) {
+  275 |     var r = scrubString(String(msg == null ? '' : msg), known);
+  276 |     return r;
+  277 |   }
+
+════════════════════════════════════════════════════════════════
+【18】请求体采集：字段骨架与五种失败形态
+文件：scripts/lib/f2-body-capture.js
+行号：315–358（真实行号，共 44 行）
+说明：★ 采集失败一律 messages = null（不填空数组/默认值）
+────────────────────────────────────────────────────────
+  315 |   function captureRequestBody(input, init, opts) {
+  316 |     opts = opts || {};
+  317 |     var known = opts.knownSecrets || [];
+  318 |     var led = newLedger();
+  319 |     var out = {
+  320 |       采集时刻: '调用 origFetch 之前',
+  321 |       bodySHA256: null,
+  322 |       bodySHA256含义: '这是**客户端提交给 fetch 的请求体**（init.body 原始字符串）的 SHA-256，' +
+  323 |         '不是任何装配快照的哈希。⚠️ 它是客户端这一侧提交的**输入**，' +
+  324 |         '**不声称**服务端已收到、更不声称模型已消费。',
+  325 |       body字节数: null,
+  326 |       脱敏改动数: 0,
+  327 |       脱敏改动: [],
+  328 |       已脱敏: false,
+  329 |       model: null, messages: null, stream: null,
+  330 |       max_tokens: null, temperature: null,
+  331 |       bodyTopKeys: null,
+  332 |       bodyCaptureError: null
+  333 |     };
+  334 |     var raw = rawBodyOf(input, init);
+  335 |     if (raw === null) {
+  336 |       out.bodyCaptureError = init && has(init, 'body')
+  337 |         ? 'init.body 存在但不是可同步读取的字符串（可能是 Request 流 / Blob / FormData）'
+  338 |         : 'init.body 不存在（该 fetch 无请求体）';
+  339 |       out.脱敏改动数 = led.计数; out.脱敏改动 = led.改动; out.已脱敏 = led.计数 > 0;
+  340 |       return out;
+  341 |     }
+  342 |     /* 哈希对**原始串**算，且必须在任何脱敏之前 */
+  343 |     out.bodySHA256 = sha256hex(raw);
+  344 |     out.body字节数 = utf8Bytes(raw).length;
+  345 | 
+  346 |     var parsed;
+  347 |     try {
+  348 |       parsed = JSON.parse(raw);
+  349 |     } catch (e) {
+  350 |       /* 解析失败 → 记原文长度 + 错误，**不填任何字段**（不许伪造）。
+  351 |          ⚠️ 错误文本本身也要过脱敏（可能带上原始片段里的凭据）。 */
+  352 |       var e1 = scrubError('JSON.parse 失败：' + String((e && e.message) || e), known);
+  353 |       out.bodyCaptureError = e1.text;
+  354 |       led.改动.push.apply(led.改动, e1.账本.改动);
+  355 |       led.计数 += e1.账本.计数;
+  356 |       out.body原始长度 = raw.length;
+  357 |       out.脱敏改动数 = led.计数; out.脱敏改动 = led.改动; out.已脱敏 = led.计数 > 0;
+  358 |       return out;
+
+════════════════════════════════════════════════════════════════
+【19】请求体采集：messages 保留 role+content 并逐条记账
+文件：scripts/lib/f2-body-capture.js
+行号：377–432（真实行号，共 56 行）
+  377 |     if (Array.isArray(parsed.messages)) {
+  378 |       var msgs = [];
+  379 |       for (var i = 0; i < parsed.messages.length; i++) {
+  380 |         var m = parsed.messages[i] || {};
+  381 |         var entry = { role: m.role == null ? null : m.role, content: null };
+  382 |         if (typeof m.content === 'string') {
+  383 |           var sc = scrubString(m.content, known);
+  384 |           entry.content = sc.text;
+  385 |           if (sc.命中) {
+  386 |             noteChange(led, 'messages[' + i + '].content', '凭据', sc.命中);
+  387 |             sc.账本.改动.forEach(function (c) { led.改动.push(c); });
+  388 |           }
+  389 |         } else if (m.content !== undefined) {
+  390 |           /* 多模态等**结构化** content：深脱敏（键名/URL/字符串三条腿），
+  391 |              仍是**内容**本身，不退化成长度或摘要。 */
+  392 |           entry.content = redactDeep(m.content, known, 'messages[' + i + '].content', led, 0);
+  393 |         }
+  394 |         /* content 里可能混着 name/tool_calls 等 —— 一律不落，
+  395 |            落它们就等于把工具协议一起抄进来，超出「请求体证据」的范围。 */
+  396 |         msgs.push(entry);
+  397 |       }
+  398 |       out.messages = msgs;
+  399 |       out.messages条数 = msgs.length;
+  400 |     } else {
+  401 |       out.messages = null;
+  402 |       out.bodyCaptureError = 'init.body 里没有 messages 数组（是 ' +
+  403 |         (has(parsed, 'messages') ? typeof parsed.messages : '缺字段') + '）';
+  404 |     }
+  405 |     out.脱敏改动数 = led.计数;
+  406 |     out.脱敏改动 = led.改动;
+  407 |     out.已脱敏 = led.计数 > 0;
+  408 |     return out;
+  409 |   }
+  410 | 
+  411 |   /* ============================================================
+  412 |      4. fetch 旁路安装
+  413 |      ★ 只旁路记录，**不改变任何返回内容**（读 clone，原 body 透传生产）。
+  414 |      ★ 请求侧采集在**同步**段完成（origFetch 之前）；
+  415 |        响应侧采集仍在 .then 里（要求 ⑥），两侧互不影响。
+  416 | 
+  417 |      ---- 三条「不许静默」的红线（2026-10-05）----
+  418 |        ① **请求记录写入失败 → 不得静默续发**。
+  419 |           写不进去 = 这一轮的发送瞬间**永远丢了**；继续发 = 付了钱却没有证据。
+  420 |           所以把 fetch 换成 reject，让生产链按失败处理（调度器据此停机）。
+  421 |        ② **请求被拒绝 / 超时（fetch 自己 reject）→ 仍要留下请求侧记录**。
+  422 |           「发出去了但没回来」是**已付费**的事实，不能因为没响应就抹掉。
+  423 |        ③ **返回已有响应时，旁路记录异常不得把成功响应改成失败**。
+  424 |           响应读取失败（clone().text() 抛）时**原样返回 r** ——
+  425 |           生产代码已经拿到成功响应，旁路没有资格改写它。
+  426 |      ---- 与停机调度的接线：见文件末尾 stopKindForSend ----
+  427 |      ============================================================ */
+  428 |   function installFetchBypass(win, opts) {
+  429 |     opts = opts || {};
+  430 |     var known = opts.knownSecrets || [];
+  431 |     /* 记录写入失败时的回调（可注入观测器；不注入就只靠 reject 表达） */
+  432 |     var onRecordError = typeof opts.onRecordError === 'function' ? opts.onRecordError : null;
+
+════════════════════════════════════════════════════════════════
+【20】fetch 旁路：红线三条的声明
+文件：scripts/lib/f2-body-capture.js
+行号：412–448（真实行号，共 37 行）
+  412 |      4. fetch 旁路安装
+  413 |      ★ 只旁路记录，**不改变任何返回内容**（读 clone，原 body 透传生产）。
+  414 |      ★ 请求侧采集在**同步**段完成（origFetch 之前）；
+  415 |        响应侧采集仍在 .then 里（要求 ⑥），两侧互不影响。
+  416 | 
+  417 |      ---- 三条「不许静默」的红线（2026-10-05）----
+  418 |        ① **请求记录写入失败 → 不得静默续发**。
+  419 |           写不进去 = 这一轮的发送瞬间**永远丢了**；继续发 = 付了钱却没有证据。
+  420 |           所以把 fetch 换成 reject，让生产链按失败处理（调度器据此停机）。
+  421 |        ② **请求被拒绝 / 超时（fetch 自己 reject）→ 仍要留下请求侧记录**。
+  422 |           「发出去了但没回来」是**已付费**的事实，不能因为没响应就抹掉。
+  423 |        ③ **返回已有响应时，旁路记录异常不得把成功响应改成失败**。
+  424 |           响应读取失败（clone().text() 抛）时**原样返回 r** ——
+  425 |           生产代码已经拿到成功响应，旁路没有资格改写它。
+  426 |      ---- 与停机调度的接线：见文件末尾 stopKindForSend ----
+  427 |      ============================================================ */
+  428 |   function installFetchBypass(win, opts) {
+  429 |     opts = opts || {};
+  430 |     var known = opts.knownSecrets || [];
+  431 |     /* 记录写入失败时的回调（可注入观测器；不注入就只靠 reject 表达） */
+  432 |     var onRecordError = typeof opts.onRecordError === 'function' ? opts.onRecordError : null;
+  433 |     var origFetch = win.fetch;
+  434 |     if (typeof origFetch !== 'function') throw new Error('installFetchBypass：win.fetch 不是函数');
+  435 |     if (origFetch.__f2BodyBypass) return origFetch;   /* 幂等：别包两层 */
+  436 | 
+  437 |     /* 把一条响应记录写进 __HTTP；写不进去只**如实标记**，绝不抛 ——
+  438 |        ★ 红线③：记录异常没有资格把生产已经拿到的成功响应改成失败。 */
+  439 |     function pushHttp(rec) {
+  440 |       try { win.__HTTP.push(rec); }
+  441 |       catch (pushErr) {
+  442 |         rec.记录写入失败 = '响应记录写入失败：'
+  443 |           + String((pushErr && pushErr.message) || pushErr);
+  444 |         if (onRecordError) {
+  445 |           try { onRecordError(rec.记录写入失败, rec); } catch (e) { /* 观测器自己炸了也不改写这里 */ }
+  446 |         }
+  447 |       }
+  448 |     }
+
+════════════════════════════════════════════════════════════════
+【21】fetch 旁路：请求侧同步采集（含红线①）
+文件：scripts/lib/f2-body-capture.js
+行号：450–489（真实行号，共 40 行）
+  450 |     function wrapped(input, init) {
+  451 |       var rawUrl = String((input && input.url) || input || '');
+  452 |       var u = scrubUrl(rawUrl, known);
+  453 |       var url = u.text;               /* ★ URL 也要脱敏后才进记录 */
+  454 |       var t0 = win.Date.now();
+  455 |       /* ---------- 请求侧：同步采集，必须早于 origFetch ---------- */
+  456 |       var send;
+  457 |       try {
+  458 |         send = captureRequestBody(input, init, { knownSecrets: known });
+  459 |       } catch (e) {
+  460 |         /* 采集本身抛错也必须留痕，不许静默 */
+  461 |         send = { bodyCaptureError: '采集函数抛错：' + String((e && e.message) || e),
+  462 |           bodySHA256: null, messages: null, model: null,
+  463 |           脱敏改动数: 0, 脱敏改动: [], 已脱敏: false };
+  464 |       }
+  465 |       send.url = url;
+  466 |       /* URL 上的改动并进同一本账（统一口径：不靠字段名推断有没有脱敏） */
+  467 |       u.账本.改动.forEach(function (c) { send.脱敏改动.push(c); send.脱敏改动数++; });
+  468 |       send.已脱敏 = send.脱敏改动数 > 0;
+  469 | 
+  470 |       /* ---------- 红线①：记录写不进去 → 不许静默续发 ---------- */
+  471 |       try {
+  472 |         win.__SEND.push(send);
+  473 |       } catch (pushErr) {
+  474 |         var why = '发送瞬间记录写入失败：' + String((pushErr && pushErr.message) || pushErr);
+  475 |         send.记录写入失败 = why;
+  476 |         if (onRecordError) {
+  477 |           try { onRecordError(why, send); } catch (e) { /* 同上 */ }
+  478 |         }
+  479 |         return Promise.reject(new Error(why));   /* 让生产链走失败分支，调度器据此停机 */
+  480 |       }
+  481 | 
+  482 |       return origFetch.apply(this, arguments).then(function (r) {
+  483 |         /* ---------- 响应侧：全部保留（要求 ⑥）---------- */
+  484 |         var rec = { url: url, ms: win.Date.now() - t0, status: r.status };
+  485 |         /* 请求侧摘要挂到同一条记录上，按 url 对齐 */
+  486 |         rec.发送瞬间 = send;
+  487 |         /* ---------- 红线③：任何记录异常都**不得改写结果**，原样返回 r ---------- */
+  488 |         if (!r || typeof r.clone !== 'function') {
+  489 |           rec.responseCaptureError = '响应对象没有 clone()（读不到副本）';
+
+════════════════════════════════════════════════════════════════
+【22】fetch 旁路：响应侧（红线③ —— 原样返回 r）
+文件：scripts/lib/f2-body-capture.js
+行号：482–541（真实行号，共 60 行）
+  482 |       return origFetch.apply(this, arguments).then(function (r) {
+  483 |         /* ---------- 响应侧：全部保留（要求 ⑥）---------- */
+  484 |         var rec = { url: url, ms: win.Date.now() - t0, status: r.status };
+  485 |         /* 请求侧摘要挂到同一条记录上，按 url 对齐 */
+  486 |         rec.发送瞬间 = send;
+  487 |         /* ---------- 红线③：任何记录异常都**不得改写结果**，原样返回 r ---------- */
+  488 |         if (!r || typeof r.clone !== 'function') {
+  489 |           rec.responseCaptureError = '响应对象没有 clone()（读不到副本）';
+  490 |           pushHttp(rec);
+  491 |           return r;
+  492 |         }
+  493 |         var cloned;
+  494 |         try { cloned = r.clone(); }
+  495 |         catch (cloneErr) {
+  496 |           /* clone() 本身就抛（如 body 已消耗）—— 同样不能改写结果 */
+  497 |           var ce = scrubError('clone() 抛错：'
+  498 |             + String((cloneErr && cloneErr.message) || cloneErr), known);
+  499 |           rec.responseCaptureError = ce.text;
+  500 |           pushHttp(rec);
+  501 |           return r;
+  502 |         }
+  503 |         return cloned.text().then(function (txt) {
+  504 |           try {
+  505 |             var d = JSON.parse(txt);
+  506 |             var ch = d.choices && d.choices[0];
+  507 |             var msg = ch && ch.message;
+  508 |             rec.finish_reason = ch ? (ch.finish_reason === undefined ? null : ch.finish_reason) : null;
+  509 |             rec.usage = d.usage || null;
+  510 |             /* ⚠️ 字段缺失必须记成「接口未提供」（null / has_*=false），
+  511 |                **绝不填 0** —— 0 与「没给」是两件事，填 0 会让归因结论反向。 */
+  512 |             rec.has_reasoning = !!(msg &&
+  513 |               Object.prototype.hasOwnProperty.call(msg, 'reasoning_content'));
+  514 |             rec.reasoning_len = (msg && typeof msg.reasoning_content === 'string')
+  515 |               ? msg.reasoning_content.length : null;
+  516 |             rec.content_len = (msg && typeof msg.content === 'string')
+  517 |               ? msg.content.length : null;
+  518 |             rec.topKeys = Object.keys(d);
+  519 |             rec.choiceKeys = ch ? Object.keys(ch) : null;
+  520 |             rec.msgKeys = msg ? Object.keys(msg) : null;
+  521 |           } catch (e) {
+  522 |             var pe = scrubError(String((e && e.message) || e), known);
+  523 |             rec.parseError = pe.text;
+  524 |           }
+  525 |           pushHttp(rec);
+  526 |           return r;   /* ★ 原响应对象，一个字都没改 */
+  527 |         }, function (readErr) {
+  528 |           /* 读副本失败：**不吞掉生产已经拿到的响应**（用户 2026-10-05 点名） */
+  529 |           var re = scrubError('响应副本读取失败：'
+  530 |             + String((readErr && readErr.message) || readErr), known);
+  531 |           rec.responseCaptureError = re.text;
+  532 |           pushHttp(rec);
+  533 |           return r;
+  534 |         });
+  535 |       }, function (fetchErr) {
+  536 |         /* ---------- 红线②：fetch 自己 reject（网络失败 / 超时）----------
+  537 |            请求侧记录**已经写进去了**（上面 push 过），这里只补失败原因。
+  538 |            ⚠️ 绝不能因为「没拿到响应」就把请求记录删掉 —— 那是已付费的事实。 */
+  539 |         var fe = scrubError('fetch 失败：'
+  540 |           + String((fetchErr && fetchErr.message) || fetchErr), known);
+  541 |         send.fetchError = fe.text;
+
+════════════════════════════════════════════════════════════════
+【23】fetch 旁路：fetch 自身失败（红线②）
+文件：scripts/lib/f2-body-capture.js
+行号：536–548（真实行号，共 13 行）
+  536 |         /* ---------- 红线②：fetch 自己 reject（网络失败 / 超时）----------
+  537 |            请求侧记录**已经写进去了**（上面 push 过），这里只补失败原因。
+  538 |            ⚠️ 绝不能因为「没拿到响应」就把请求记录删掉 —— 那是已付费的事实。 */
+  539 |         var fe = scrubError('fetch 失败：'
+  540 |           + String((fetchErr && fetchErr.message) || fetchErr), known);
+  541 |         send.fetchError = fe.text;
+  542 |         send.fetchErrorName = (fetchErr && fetchErr.name) || null;
+  543 |         return Promise.reject(fetchErr);   /* ★ 原样抛给生产，不改写语义 */
+  544 |       });
+  545 |     }
+  546 |     wrapped.__f2BodyBypass = true;
+  547 |     win.__SEND = [];
+  548 |     win.__HTTP = [];
+
+════════════════════════════════════════════════════════════════
+【24】与停机调度的接线：stopKindForSend
+文件：scripts/lib/f2-body-capture.js
+行号：563–579（真实行号，共 17 行）
+  563 |   function stopKindForSend(send) {
+  564 |     if (!send) return null;
+  565 |     /* 记录写不进去 = 这一轮的发送证据永久缺失 → 继续跑只会产出
+  566 |        「无法核验」的样本 → 归为 link（采集异常，硬停）。 */
+  567 |     if (send.记录写入失败) return 'link';
+  568 |     /* fetch 自己失败（网络 / 超时）—— 生产已按 stage 归因，
+  569 |        旁路只标记，不在这里替调度器决定停不停。 */
+  570 |     if (send.fetchErrorName === 'AbortError') return 'net';
+  571 |     /* 采集失败但记录还在：证据存在（知道自己没采到），可继续。
+  572 |        这里**不**判停 —— 停不停是调度层的口径问题。 */
+  573 |     return null;
+  574 |   }
+  575 | 
+  576 |   return {
+  577 |     sha256hex: sha256hex,
+  578 |     utf8Bytes: utf8Bytes,
+  579 |     maskSecret: maskSecret,
+
+################################################################
+# 摘录统计：24 段 · 715 行
+# 凭据扫描：通过（规则1 形状正则 0 命中 · 规则2 真实凭据 0 命中 · 规则3 代码内硬编码假凭据 0 命中）
+# 行号自检：每段均按实际起止行号回显，未使用任何省略号
+################################################################
+
+#==========================================================================
+# ③ 四条前置消息清单（SETUP 落库实况）
+#==========================================================================
+
+总条数：4（原报告 #6–#9 四条，顺序不变）
+
+| 序 | role | 正文 |
+|---|---|---|
+| 1 | user | （我推开阁楼的门，上来了。) |
+| 2 | scene | 沈砚已经推开阁楼的门上来了，雨水顺着他的外套下摆往下滴。 老板娘在楼下喊了一声「茶刚泡好」，然后就没有再上来。 沈砚已经把湿外套搭在椅背上了。 |
+| 3 | scene | （老板娘在楼下，没有上来。） |
+| 4 | user | （我坐下了，湿外套搭在椅背上。） |
+
+要点：
+  · preActions **只保存拼接版一次**（位置 2）——逐条版已移除，本轮不再重复进历史。
+  · 移除的是**上一轮多补的 5 条写入**（逐条 3 条 + npc0 + npcname），
+    它们在原报告里本就没落库；恢复它们等于**引入新输入**。
+  · ★ 不是恢复孤儿副本写法 —— 五字段仍走 createSession form + updateEnv + 回读自检。
+  · 五字段：{"sceneName":"雨夜的旧书店","location":"城西旧书店二楼阁楼","timeOfDay":"深夜","weather":"雨","clockTime":"23:40"}
+
+（完整取证见 docs\取证-F2前置消息清单-2026-10-05.json）
+
+#==========================================================================
+# ④ 定向测试结果
+#==========================================================================
+
+── offline-f2-sendbody-test.js  （受影响：口径统一断言）
+   退出码 0　断言 68 / 68 通过
+   ✓ 全绿
+── offline-f2-fixture-trace-test.js  （受影响：四条消息 + 生产链复核）
+   退出码 0　断言 32 / 32 通过
+   ✓ 全绿
+── offline-f2-effect-fields-test.js  （必要回归：source 一致性）
+   退出码 0　断言 123 / 0 通过
+   ✓ 全绿
+── offline-f2-depstop-test.js  （必要回归）
+   退出码 0　断言 36 / 0 通过
+   ✓ 退出码 0
+── offline-f2-edge-test.js  （必要回归）
+   退出码 0　断言 48 / 0 通过
+   ✓ 退出码 0
+── offline-f2-schedule-test.js  （必要回归（n+1 持久化契约））
+   退出码 0　断言 50 / 0 通过
+   ✓ 退出码 0
+── check.js  （必要回归）
+   退出码 0
+   ✓ 全绿
+── smoke.js  （必要回归）
+   退出码 0
+   ✓ 全绿
+
+生产代码未改动核对：
+  0bf2a87e34638cbe539e7fbb056391514fadae3e1d438463f534fcedb3da49a3  prompt-engine.js
+  9c4fc136fd3f2f09e0de3376e94317dc630841343760425aac9dee29991abf02  page-offline.js
+  1df743af4648b07e9254f216b4592e900432b7a1924c51da615a93cd75f4fbb2  api.js
+  194d40c4763281a66f5eb7e7c3977d959ebe4ee25eaaa90ffbe3b3d2db0e431b  behavior-text.js
+  （与本轮开工前逐字节一致 —— 见 docs/收口-核对 系列的哈希对照）
+
+#==========================================================================
+# 汇总：八个检查退出码全 0
+#==========================================================================

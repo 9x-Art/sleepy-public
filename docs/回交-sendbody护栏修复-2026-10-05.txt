@@ -1,0 +1,306 @@
+offline-f2-sendbody-test · mtime 护栏误报修复回交（2026-10-05 14:2x）
+================================================================================
+★ 本批**零模型请求、零真实 HTTP 请求**。P3 继续暂停。
+★ 未改生产代码 / 提示词 / 预算闸 / 采集器 / 旧样本。未提交 / push / 部署。
+
+■ 一、现有 SESSION_START 的来源（问题定位）
+
+文件：scripts/offline-f2-sendbody-test.js，第 1065 行（修复前）
+
+    var SESSION_START = fs.statSync(__filename).mtime;  /* 本测试自身落盘时刻 */
+
+**锚点 = 本测试文件自己的落盘时刻。**
+
+它被两条断言当「本轮开工时刻」用：
+  ① 四个生产文件的 mtime 都早于本轮
+  ② 本轮只新增/修改了 scripts/ 下的源码（根目录 .js 的 mtime ≥ 锚点即算「动了」）
+
+★ 为什么必然误报（这不是被测对象的问题，是**判据自己的漂移**）：
+  `SESSION_START` 随**任何脚本改动**移动。于是：
+    上一批 13:13 新增 offline-f2-budget-gate-test.js  ⇒ 锚点被推到 13:13
+    本批   13:48 改 prompt-engine.js（重复 user 修复）⇒ 13:48 > 13:13
+  ⇒ 判据把「上一批加了个测试脚本」误当成「本轮改了生产代码」，两条无端报红。
+
+★ 独立证据（上一轮已做，本轮复核仍成立）：
+  把 prompt-engine.js 换回**基线版本**（逐字节等于修复前）再跑，**那两条依然红**
+  ⇒ 报红与被测对象的实际状态无关，**是判据自身失效**。
+
+★ 为什么上上轮（只有 prompt-engine.js 一处改动时）没报红：
+  那时锚点恰好晚于该改动，纯属**巧合**，不是判据正确。
+
+■ 二、修复前后判定逻辑
+
+【修复前】锚点 = 测试文件自身 mtime；判据 = **mtime 比较**
+  ① mt < SESSION_START（四个文件逐个 stat）
+  ② 根目录 .js 的 mtime ≥ SESSION_START 即算「本轮动了」
+  病根：① 锚点随脚本改动漂移  ② mtime 可被 touch / checkout / 工具写入搞乱
+        ③ 新增的根目录 .js 只能靠 mtime 抓，内容没变也报红
+
+【修复后】锚点 = **仓库外批次基线清单**（显式、可解释）；判据 = **内容指纹 sha256**
+  基线来源优先级：
+    ① 环境变量 SLEEPY_BASELINE_FILE 指向的清单（推荐）
+    ② 仓库外约定路径 D:/projects/sleepy-baseline-current.txt
+    ③ 都没有 ⇒ **该段整条跳过**，并打印「未提供批次基线 ⇒ 不断言『没被改』」
+  清单格式：每行 `<文件名> <sha256>`（# 开头为注释），本次共 **84 个根目录 .js**
+  判定：
+    ① 四个受守护文件（名单**未变**：prompt-engine / page-offline / api / behavior-text）
+       的 sha256 必须与基线逐一相同；不同则报红并同时打印基线值、当前值、当前 mtime
+    ② 根目录 .js 逐个比 sha256：与基线不同、或**不在基线里**（= 本轮新增）⇒ 报红
+  ★ 判据**未放宽**，反而更严：
+    - 旧版只比 4 个文件的 mtime；新版比 4 个文件的 sha256 **＋ 全量 84 个根 .js 的 sha256**
+    - 旧版抓不到「内容改了但 mtime 倒退」；新版抓得到
+    - 旧版抓不到「新增根目录 .js（mtime 早于锚点时）」；新版「不在基线里」即报红
+  ★ 断言**未删除**：2 条 → 3 条（新增 1 条钉住基线来源，见下）
+  ★ 缺基线时**不默认通过**：明确打印「跳过」并说明「不是断言没被改」；
+    exit 仍为 0（不把「无法判定」冒充「判定通过」），输出里逐条可见。
+
+★ 新增的第 3 条断言（防回归）：
+  「★ 批次基线来源可用且可解释（不是测试文件自身 mtime）」
+  它静态断言源码里**不存在** `SESSION_START = fs.statSync(__filename).mtime`
+  ⇒ 日后有人改回病根形式，会**当场报红**（已用负向 5 验证）。
+
+■ 三、精确 diff（唯一改动文件：scripts/offline-f2-sendbody-test.js）
+
+基线 3b804ca7247b34dc2ae73fcaa138d502a9ae0899343c994b12f55a933202a251
+当前 8212a8733faaed5282c8c657a884e350aa34b7c5a6ee5478fb1a5b3143eae319
+改动范围：**§9 段（1061–1166 行）**，净增 73 行
+
+```diff
+@@ -1061,33 +1061,106 @@
+      → 正确判据是**内容指纹 + mtime 都早于本轮开工时刻**。
+-   ============================================================ */
+-var SESSION_START = fs.statSync(__filename).mtime;  /* 本测试自身落盘时刻 */
+-t('四个生产文件的 mtime 都早于本轮（= 本轮没碰过它们）', function () {
+-  ['prompt-engine.js', 'page-offline.js', 'api.js', 'behavior-text.js']
+-    .forEach(function (f) {
+-      var mt = fs.statSync(path.join(ROOT, f)).mtime;
+-      assert(mt.getTime() < SESSION_START.getTime(),
+-        f + ' 的 mtime(' + mt.toISOString() + ') 不早于本轮 → 本轮改过它');
+-    });
+-  ok('✓ 四个文件 mtime 全部早于本轮开工时刻');
++
++   ★★ 2026-10-05 修：SESSION_START 的来源换掉了
++     旧来源：`fs.statSync(__filename).mtime`（**本测试自身**的落盘时刻）。
++     为什么必须换：那个锚点会随**任何脚本改动**漂移 ——
++       上一批新增了 offline-f2-budget-gate-test.js（13:13），
++       本批改了 prompt-engine.js（13:48）⇒ 判据把「上批加了个测试」
++       误当成「本轮改了生产代码」，两条无端报红（65/67、exit=1）。
++     ⚠️ 那是**判据自己的漂移**，不是被测对象的问题 ——
++        已用对照实验证明：把 prompt-engine.js 换回**基线版本**
++        （逐字节等于改动前）再跑，这两条**依然红**。
++     新来源（优先级从高到低，都**显式、可解释**）：
++       ① 环境变量 SLEEPY_BASELINE_FILE 指向的**批次基线清单**（推荐）
++       ② 仓库外约定路径 D:/projects/sleepy-baseline-current.txt
++       ③ 都没有 ⇒ **本段整条跳过并如实打印「未提供批次基线」**
++          ⚠️ 绝**不**回退到「测试文件自身 mtime」—— 那是这次要修的病根；
++             也**不**默认「没基线就算过」—— 那是放宽判定。
++     基线清单格式（每行一条）：<文件名> <sha256>
++     ★ 内容指纹才是主判据，mtime 只是**辅助信息**（内容相同就放过）。
++     ============================================================ */
++
++/* ---------- 批次基线来源（显式、可解释；没有就如实说没有） ---------- */
++var BASELINE_FILE = process.env.SLEEPY_BASELINE_FILE ||
++  'D:/projects/sleepy-baseline-current.txt';
++/* 本段要守的四个生产文件（名单与旧版一致，未放宽） */
++var GUARDED = ['prompt-engine.js', 'page-offline.js', 'api.js', 'behavior-text.js'];
++
++var baseline = null, baselineWhy = '';
++(function loadBaseline() {
++  var raw = null;
++  try { raw = fs.readFileSync(BASELINE_FILE, 'utf8'); }
++  catch (e) { baselineWhy = '读不到批次基线文件：' + BASELINE_FILE; return; }
++  var map = {};
++  raw.split(/\r?\n/).forEach(function (line) {
++    var s = line.trim();
++    if (!s || s.charAt(0) === '#') return;
++    var parts = s.split(/\s+/);
++    if (parts.length < 2) return;
++    map[parts[0]] = parts[1];       /* 文件名 → sha256 */
++  });
++  if (!Object.keys(map).length) { baselineWhy = '基线文件为空或格式不对：' + BASELINE_FILE; return; }
++  baseline = map;
++  baselineWhy = '批次基线：' + BASELINE_FILE + '（' + Object.keys(map).length + ' 个文件）';
++})();
++
++/* 内容指纹：与 lib/f2-body-capture.js 无关，这里自带一份最小实现，
++   避免为一个护栏去 require 生产采集器（那是另一条依赖链）。 */
++function sha256Of(file) {
++  return require('crypto').createHash('sha256')
++    .update(fs.readFileSync(path.join(ROOT, file))).digest('hex');
++}
++
++t('★ 批次基线来源可用且可解释（不是测试文件自身 mtime）', function () {
++  /* 这条本身也是护栏：防止有人日后把 SESSION_START 改回 __filename 的 mtime
++     —— 那正是本次修掉的病根，必须留一条断言钉住「基线另有其源」。 */
++  var src = fs.readFileSync(__filename, 'utf8');
++  assert(!/SESSION_START\s*=\s*fs\.statSync\(__filename\)\.mtime/.test(src),
++    '★ SESSION_START 又被改回「测试文件自身 mtime」了 —— 那会随脚本改动漂移');
++  assert(/SLEEPY_BASELINE_FILE/.test(src),
++    '批次基线应可由 SLEEPY_BASELINE_FILE 指定');
++  if (!baseline) {
++    /* 没有基线**不算失败**，但必须**明确说出来**（不能默默当过） */
++    process.stdout.write('    ⓘ 本段跳过：' + baselineWhy + '\n');
++    process.stdout.write('       （未提供批次基线 ⇒ 不断言「生产文件没被改」，'
++      + '而不是断言「没被改」）\n');
++    ok('⚠ 未提供批次基线 —— 本段两条已如实跳过（未放宽：只是不成立）');
++    return;
++  }
++  ok('✓ ' + baselineWhy);
++});
++t('四个生产文件的内容指纹与批次基线逐一相同（= 本轮没碰过它们）', function () {
++  if (!baseline) { process.stdout.write('    ⓘ 跳过（无批次基线）\n'); return; }
++  GUARDED.forEach(function (f) {
++    var want = baseline[f];
++    assert(want, '批次基线里没有 ' + f + ' —— 基线清单不完整，判定不成立');
++    var got = sha256Of(f);
++    assert(got === want,
++      f + ' 的内容指纹与批次基线不同 ⇒ 本轮改过它\n' +
++      '      基线 sha256 = ' + want + '\n' +
++      '      当前 sha256 = ' + got + '\n' +
++      '      当前 mtime  = ' + fs.statSync(path.join(ROOT, f)).mtime.toISOString());
++  });
++  ok('✓ 四个文件内容指纹与批次基线逐一相同');
+ });
+-t('本轮只新增/修改了 scripts/ 下的源码（按 mtime 判定）', function () {
+-  /* 只看本轮开工之后被动过的**源码**文件 —— 不看 git 状态：
+-     仓库里有大量历史未跟踪文件（docs/、preview/…），与本轮无关。
+-     ⚠️ 也不能把 docs/ 一刀切算成「动了工作区」：
+-       取证 JSON 是**测试自己落盘**的产物（trace 测试会写 docs/取证-*.json），
+-       那是证据输出，不是生产代码改动。
+-     → 判据：根目录下**不允许**出现 .js 改动。 */
++t('本轮只新增/修改了 scripts/ 下的源码（按批次基线判定）', function () {
++  /* 判据：根目录下**不允许**出现与基线不同的 .js —— 也就是「不许改生产代码」。
++     ★ 判据从「mtime ≥ 锚点」换成「sha256 ≠ 基线」：
++       mtime 会被人为 touch、checkout、工具写入搞乱；
++       内容指纹只认「字节真的变了」。
++     ⚠️ 也不用 git 状态：仓库有大量历史未提交改动，与本轮无关。 */
++  if (!baseline) { process.stdout.write('    ⓘ 跳过（无批次基线）\n'); return; }
+   var touched = fs.readdirSync(ROOT).filter(function (f) {
+-    try {
+-      return /\.js$/i.test(f) &&
+-        fs.statSync(path.join(ROOT, f)).mtime.getTime() >= SESSION_START.getTime();
+-    } catch (e) { return false; }
++    if (!/\.js$/i.test(f)) return false;
++    var want = baseline[f];
++    /* 不在基线里的 .js = 本轮新增的根目录脚本 ⇒ 同样算「动了工作区根」 */
++    if (want === undefined) return true;
++    try { return sha256Of(f) !== want; } catch (e) { return true; }
+   });
+   assert(touched.length === 0,
+     '★ 本轮不应改工作区根目录的 .js（生产代码），实际动了：\n    ' + touched.join('\n    '));
+-  ok('✓ 工作区根目录无 .js 改动（只动 scripts/；docs/ 下是取证产物）');
++  ok('✓ 工作区根目录 .js 内容指纹与批次基线一致（只动 scripts/；docs/ 下是取证产物）');
+ });
+```
+
+■ 四、正常测试结果
+
+命令：node scripts/offline-f2-sendbody-test.js
+结果：**71 / 71 通过，exit=0**（修复前：65 / 67，exit=1）
+
+  ✓ ★ 批次基线来源可用且可解释（不是测试文件自身 mtime）
+      → 批次基线：D:/projects/sleepy-baseline-current.txt（84 个文件）
+  ✓ 四个生产文件的内容指纹与批次基线逐一相同（= 本轮没碰过它们）
+  ✓ 本轮只新增/修改了 scripts/ 下的源码（按批次基线判定）
+      → 工作区根目录 .js 内容指纹与批次基线一致
+  ⓘ 基线口径：568 24 page-offline.js | 659 15 prompt-engine.js
+     （2026-10-04 遗留未提交，非本轮）  ← 这条只登记不判定，保留原样
+
+基线清单里四个受守护文件（= 已批准状态）：
+  0647ba0aba377f7d089f7960866291a24a12c7e07d2458798147b52ac82ccf08  prompt-engine.js
+  9c4fc136fd3f2f09e0de3376e94317dc630841343760425aac9dee29991abf02  page-offline.js
+  1df743af4648b07e9254f216b4592e900432b7a1924c51da615a93cd75f4fbb2  api.js
+  194d40c4763281a66f5eb7e7c3977d959ebe4ee25eaaa90ffbe3b3d2db0e431b  behavior-text.js
+
+■ 五、负向测试结果（五个负向，全部零网络）
+
+负向 1 · **改动受守护文件的内容**（往 api.js 追加一行注释）
+  → **67 / 69，exit=1**，两条红：
+     ✗ 四个生产文件的内容指纹与批次基线逐一相同
+       -> api.js 的内容指纹与批次基线不同 ⇒ 本轮改过它
+          （同时打印基线 sha256 / 当前 sha256 / 当前 mtime）
+     ✗ 本轮只新增/修改了 scripts/ 下的源码
+       -> ★ 实际动了：api.js
+  跑完已恢复 api.js（哈希复核 1df743af…）
+
+负向 2 · **只 touch mtime、内容不变**（touch 四个受守护文件）
+  → **71 / 71，exit=0**
+  ★ 这条是**修掉病根的直接证据**：旧判据在这里必然误报（mtime 被推到锚点之后），
+    新判据只看内容 ⇒ 正确放过。**「有没有被改」应当由内容决定，不是由时间戳决定。**
+
+负向 3 · **根目录新增一个 .js**（zz-neg-probe.js）
+  → **69 / 70，exit=1**，报红并列出该文件。探针已删除。
+
+负向 4 · **基线文件不存在**（SLEEPY_BASELINE_FILE 指向不存在的路径）
+  → **69 / 69，exit=0**，并如实打印：
+       ⓘ 本段跳过：读不到批次基线文件：…
+       （未提供批次基线 ⇒ 不断言「生产文件没被改」，而不是断言「没被改」）
+  ★ 关键：**没有默默当过**。缺基线 = 「无法判定」，
+    不是「判定通过」；输出里逐条可见，且 exit=0 不代表那两条成立。
+
+负向 5 · **把 SESSION_START 改回 __filename mtime**（注入回归）
+  → **exit=1**，新增那条护栏当场抓住：
+     ✗ ★ 批次基线来源可用且可解释
+       -> ★ SESSION_START 又被改回「测试文件自身 mtime」了
+  跑完已恢复，重跑 71/71 绿。
+
+⇒ 五个负向覆盖：改内容 / 假 mtime / 新增文件 / 缺基线 / 判据自身回归。
+   判据**有判别力**，不是恒真。
+
+■ 六、当前所有零网络回归结果（**九项全绿，无一项红**）
+
+  offline-f2-sendbody-test          71 / 71    exit=0   ← 本批修复对象
+  offline-f2-dupuser-test           22 / 0     exit=0
+  offline-f2-budget-gate-test       26 / 0     exit=0
+  offline-f2-schedule-test          106 / 0    exit=0
+  offline-f2-effect-fields-test     123 / 0    exit=0
+  offline-f2-edge-test              48 / 0     exit=0
+  offline-f2-depstop-test           36 / 0     exit=0
+  offline-f2-fixture-trace-test     41 / 41    exit=0
+  behavior-offline-migration-test   67 / 0     exit=0
+  pnpm check                        全绿
+  pnpm smoke                        全绿（82 个脚本加载正常）
+
+★ **此前登记的「两条既存红项」已消除** —— 那正是本次修的东西。
+  本轮之后**零网络测试无任何红项**。
+
+■ 七、生产文件哈希（与本轮开工前**逐字节一致**，本批零改动）
+
+  0647ba0aba377f7d089f7960866291a24a12c7e07d2458798147b52ac82ccf08 *prompt-engine.js
+  9c4fc136fd3f2f09e0de3376e94317dc630841343760425aac9dee29991abf02 *page-offline.js
+  1df743af4648b07e9254f216b4592e900432b7a1924c51da615a93cd75f4fbb2 *api.js
+  194d40c4763281a66f5eb7e7c3977d959ebe4ee25eaaa90ffbe3b3d2db0e431b *behavior-text.js
+  237594177d46d0e2a7c5e76bc6f0b31ecb50c260090a56179b504b8acc25d082 *page-chat.js
+  20a5f3cd41d6984841d892b4035f10e424be45cdb0d3ac716097fb1a31998c73 *page-presets.js
+  d93d967e3ceae6c96748faf4d8f8901d30cb862119cc5f90ce5f0e01d865ec2b *store.js
+
+验收层八个脚本（含预算闸 f2-body-capture.js、采集器）**全部逐字节未动**。
+
+本批唯一改动：
+  3b804ca7247b34dc2ae73fcaa138d502a9ae0899343c994b12f55a933202a251（修复前）
+  8212a8733faaed5282c8c657a884e350aa34b7c5a6ee5478fb1a5b3143eae319（修复后）
+  *scripts/offline-f2-sendbody-test.js
+
+基线（仓库外）：D:/projects/sleepy-baseline-2026-10-05-pre12/  （17 份 + SHA256SUMS.txt）
+批次基线清单（仓库外）：D:/projects/sleepy-baseline-current.txt  （84 个根目录 .js 的 sha256）
+
+旧样本 mtime 未变（13:07 / 13:18 / 14:04 三份全部原样）。
+
+■ 八、仍存在的边界
+
+1. ★ **基线清单需要人工维护**。它是「批次开工时的状态」快照，
+   **换批次就要重新生成**，否则会拿上一批的指纹去比这一批 ——
+   后果是「上一批改过的生产文件」被误报成「本轮改的」。
+   ⚠️ 这是本设计**最需要注意的一点**：清单的时效性由流程保证，不由代码保证。
+   （本仓的既有约定就是「基线存仓库外 + 记 SHA-256」，本设计与之同源。）
+2. 缺基线时该段**跳过且 exit=0**。这是刻意的（不把「无法判定」冒充「通过」），
+   但意味着**跳过时那两条不提供任何保护** —— 输出里有 `ⓘ` 标记，须人工看。
+3. 清单只覆盖**工作区根目录的 .js**。`scripts/` 下的改动**按设计不报红**
+   （那正是本测试允许的改动面）；若将来要守护某个 scripts/ 下的文件，
+   需在清单里加路径并调整 `GUARDED`。
+4. 本测试仍**只覆盖四个生产文件 + 根目录 .js 全量**。
+   `sw.js` 的 `CACHE` 联动、`LAYOUT_VERSION` 等部署期约定**不在本测试范围**。
+5. 终端里中文偶发乱码（Git Bash 编码），**不影响判定与退出码**；
+   判据输出与 exit code 均为 ASCII 语义，未受影响。
+6. 本批**零模型请求**，未启动 P3，未启动 G7。
+   下一次真实模型请求**仍需单独授权**。

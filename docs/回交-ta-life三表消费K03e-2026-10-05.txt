@@ -1,0 +1,308 @@
+══════════════════════════════════════════════════════════════════
+回交 · ta-life 三表动态接入私聊线上/线下/主动消息（K03e 批）
+日期：2026-10-05  ·  基线：工作区（HEAD = f493aca + 此前批次未提交改动）
+零模型请求 · 零网络 · 未部署 · 未提交 · 完成后停止等待验收
+══════════════════════════════════════════════════════════════════
+
+一、修改清单（本批实际触碰的 9 个文件）
+------------------------------------------------------------------
+生产/运行时（4）：
+ 1. ta-life.js          新增统一编译出口 compileLivingLife（§二）
+ 2. prompt-engine.js    新增 K03e 槽 ×2、compileTaLife 包装、
+                        assembleOnline/assembleOffline 各一 case、
+                        offlineLastUserQuery 抽取、导出面补 compileTaLife
+ 3. page-proactive.js   buildSystem 接入 K03e（recall 与 worldbook 之间）
+ 4. sw.js               CACHE v164 → v165 + 文件头跳版本说明
+测试（4）：
+ 5. scripts/smoke.js                       新增 K03e 用例 9 条 + SW 基准 v165
+ 6. scripts/behavior-online-migration-test.js   批准槽位插入判据（§四）
+ 7. scripts/behavior-offline-migration-test.js  OFFLINE_SLOTS 期望表补 talife
+ 8. scripts/offline-f2-sendbody-test.js         批次护栏改「批准触碰名单」口径
+取证探针（新增，入仓库供复跑）：
+ 9. scripts/k03e-evidence-probe.js         零网络抓最终 messages 证据
+
+归属口径（重要）：
+ · ta-life.js 在 git 里是 **未提交文件（??，提交时状态 A）**，属此前批次
+   遗留工作区成果；本批在其上**追加**了 K03e 段，未改动既有数据层一行
+   （剥离验证见 §九）。
+ · scripts/offline-f2-sendbody-test.js 同样是**此前未提交文件（??，A）**
+   （2026-10-05 sendbody 批成果，有 docs/回交-sendbody护栏修复-2026-10-05.txt
+   验收留痕）；本批在其上窄修了两条批次护栏判据，其余原样（§九）。
+ · prompt-engine.js / page-proactive.js / sw.js / scripts/smoke.js /
+   scripts/behavior-online-migration-test.js / scripts/behavior-offline-
+   migration-test.js 开工时工作树干净（不在开工时 git status 修改清单内）
+   ⇒ 这六个文件相对 HEAD 的 diff = 本批全部改动，无归属歧义。
+   （修正：初版回交把 sendbody 误记为「M」，实际开工时它是 ??。）
+ · 两条迁移测试 + sendbody 测试开工时同样干净，diff = 本批判据窄修。
+
+二、实际定位与关键 diff（行号为收口后实测，逐条 sed 验证过）
+------------------------------------------------------------------
+【ta-life.js】编译出口（唯一实现）
+ :400-401   var LIFE_MAX_EACH = 2; var LIFE_BUDGET = 900;
+ :403-437   lifeGrams / lifeRel（二字片段重合，只做选序、不做阈值闸）/
+            lifeClip / lifeRankPick（相关 > 状态优先级 > updatedAt，稳定可复现）
+ :439-519   compileLivingLife(charId, userId, opts)  ← 统一出口
+ :523-525   导出 compileLivingLife / LIFE_MAX_EACH / LIFE_BUDGET
+ 筛选（按真实状态枚举，未造新状态名）：
+   items    排除「已完成」；进行中(0)＞待核实(1)＞受阻(2)＞暂停(3)
+   promises 排除「已兑现/已解除」；待核实(0)＞未兑现(1)；
+            绝不出现「已兑现」表述（footer 明写「不由你在这轮宣布」）
+   follows  无状态机（设计稿 §1 红线），全部按仍有效，不补造进展
+ 读取：只走既有 itemsOf/promisesOf/followsOf（当前岛 × root × 适用 user），
+      零写入、零模型、零网络；taProposals（pending 提案）完全不经过。
+ 依赖声明：不借 ta-impact.relevance —— 那边 rel<REL_MIN 是拒绝闸、
+      这里只做选序且三表消费不得依赖 ta-impact 在场（函数头注释写明）。
+
+【prompt-engine.js】
+ :1147-1151  ONLINE_SLOTS 新增 { id:'talife', slot:'K03e', program, required:false }
+             位置：taimpact(K03d) 之后、worldbook(K04) 之前
+ :1809-1812  OFFLINE_SLOTS 同位置同款
+ :1489-1502  compileTaLife(charId, userId, queryText)：
+             惰性取 Sleepy.taLife（ta-life.js 排在本文件之后加载）+
+             try/catch 回空串（与 compileTaImpact 同款）
+ :1744-1745  assembleOnline：case 'talife'，query = lastUserText(history)
+ :2030-2038  新增 offlineLastUserQuery(session)——线下「末条 user 输入」
+             取法从 taimpact case 内联循环抽出，K03d/K03e 共用（只此一份）
+ :2098-2107  assembleOffline：taimpact 改用该 helper；case 'talife' 同 query
+ :2418-2421  导出 compileTaLife
+
+【page-proactive.js】
+ :234-244  buildSystem：recall 之后、worldbook 之前 push K03e。
+           ★ 直接调 PE.compileTaLife（**不挂 `PE.compileX &&` 弱导出守卫**
+             —— 2026-10-05 交接 §五.6 的教训），匹配文本 = evaluate 传入的
+             最近聊天原文 matchText（真实数据，不假造 user 输入）。
+
+【sw.js】:16-27 v165 跳版本说明；:436 var CACHE = 'sleepy-v165'
+【scripts/smoke.js】SW 基准 :12901 → 'sleepy-v165'；K03e 用例段 :2279-2496 附近
+【scripts/behavior-online-migration-test.js】withTalifeSlot 批准插入判据 :157-192
+【scripts/behavior-offline-migration-test.js】OFFLINE_SLOTS 期望表 :601-608
+【scripts/offline-f2-sendbody-test.js】BATCH_APPROVED_TOUCH 口径 :1087-1096、:1139-1185
+
+三、最终 messages 证据（生产装配入口 assembleOnline，零网络实抓）
+------------------------------------------------------------------
+复跑：node scripts/k03e-evidence-probe.js
+· messages 共 9 条，[TA_LIFE] 恰好出现在 messages[5]（1 次）
+· 槽位：{ id:'talife', slot:'K03e', on:true, tokens:355, required:false }
+· 生活块原文（逐字节）：
+[TA_LIFE]
+这是你自己正在进行的生活记录（事项 / 承诺 / 关注），只作为背景，帮你想得起自己正在过什么日子。
+· 事项（进行中）：相机还差一个零件 —— 快门件到货就能装（下一复核：零件到货再看）
+· 承诺（待核实）：「周末陪你去拍胶片」（对象：你）；条件：等天晴；完成标准：把一卷拍完（待核实原因：最近连着下雨）
+· 关注：楼下的三花猫 —— 最新已知：上周开始没出现（缘由：它认得他）
+这些只是背景：不必每句话都提，不必因此主动联络对方；属于你自己的打算和缘由，说与不说由你按人设和关系判断。
+承诺是否兑现不由你在这轮宣布，照实承认现状就好。
+[/TA_LIFE]
+· 装配全程三表（taItems/taPromises/taFollows）逐字节不变（探针内断言）。
+
+四、测试结果（全部仓库内，可复跑）
+------------------------------------------------------------------
+✅ node scripts/check.js                全绿
+✅ node scripts/smoke.js                全绿（82 脚本；含新增 K03e 用例 9 条）：
+   · 夹具：岛/本体×2/马甲×2/三表记录（含终止态 + pending 提案）
+   · 导出面真实存在（缺导出不能被守卫静默掩盖）+ 线下槽序 taimpact>talife
+   · F1：真实 messages 注入恰 1 次、K03e 槽命中、槽序 taimpact<talife<worldbook、
+         历史/协议/relation/taimpact 槽未被顶掉、三表逐字节不变
+   · F2：同一份记录注入恰 1 次
+   · 主动：buildSystem 注入恰 1 次、不碰闸门/设置状态
+   · 无数据静默：三场景全不出现、槽不命中
+   · 切岛/切本体不串；切 user 身份：承诺跟马甲走、事项/关注按设计共享
+   · 容量：4 选 2、两次编译逐字相同、点名「三号事项」后相关优先入选
+   · 暂停/受阻按真实状态标注（不伪装进行中、不推断复核结果）
+✅ behavior-offline-migration-test      结构测试通过
+✅ behavior-online-migration-test       本批相关项全过
+   （online×4 / offline / offlineOverrideEmpty 等受控检查绿；
+    3 条残留红为**既有漂移**，见 §六）
+✅ offline-f2-sendbody-test             71/71（批次护栏改批准触碰名单口径）
+✅ offline-f2-dupuser-test              全绿（零网络）
+✅ offline-f2-edge-test 48/0、effect-fields 123/0、schedule 106/0、
+   depstop 36/0、behavior-text-test 66 通过 3 跳过、budget-gate 全绿
+✅ offline-f2-p3-matrix-test            仅打印计划（:512 断言无真 KEY，
+   设计上发不出真请求）；按指令未补跑 P3
+✅ SW 基准：smoke 断言 'sleepy-v165' 与 sw.js 一致
+
+判据窄修说明（全部为批准变更，注释已写日期与理由）：
+ 1. online-migration：**不重捕黄金基线**（当前工作区有本批之外未验收漂移，
+    重捕会把它们洗进黄金文件）。改为 withTalifeSlot 在期望侧**写死**插入
+    talife 槽（元信息+插入位+on:false/tokens:0 全部写死）——生产改名/挪位/
+    误注入当场红，黄金文件一字未动。
+ 2. offline-migration：OFFLINE_SLOTS 期望表补 talife（批准的结构变化）。
+ 3. sendbody：旧前提「本轮只许改 scripts/」随本批收口失效；改「改动 ⊆
+    BATCH_APPROVED_TOUCH（写死 4 文件）」口径，名单外改动照样当场红。
+ 4. smoke：EXPECTED_SW_CACHE → v165（改了运行时脚本，按约定手动跳位）。
+
+五、权限与字段缺口（如实报告，未凭设计稿造字段）
+------------------------------------------------------------------
+ 1. 三表**没有**逐条「揭示限制/私密」字段（items/promises/follows 的字段
+    白名单里无 visibility 类字段）⇒「某条 user 不可知」无法在数据上表达。
+    本批保守口径：整块只作角色内部背景 + footer 明写「自己的打算和缘由，
+    说与不说由你按人设和关系判断」，不生成任何「告知对方」的许可；
+    承诺已按 refUserId 隔离（同源 promisesOf 保证）。若日后要逐条私密
+    标记，需先立字段设计（新字段 + page-ta 录入口 + 本出口消费）。
+ 2. 「待处理/准备/部分完成」无对应状态名：承诺状态闭集实际是
+    待核实/已兑现/未兑现/已解除 四态，本批按真实状态如实标注，
+    未虚构「准备中」等状态名。
+ 3. follows 无 status、无 nextCheck 字段（add 白名单只有 target/reason/
+    latest/note）⇒ 「到复核时间」语义只对 items 成立（nextCheck 是**文字**
+    复核条件，非时间戳，本批原样展示、不据此推断任何结果）。
+ 4. 「未兑现」被本批判为仍然有效并注入（标注「承诺（未兑现）」）——
+    它不是撤回/解除类终止态，且是真实的当前生活事实。若你裁定未兑现
+    也不注入，改动点在 ta-life.js :458 的过滤条件一行。
+
+六、残留与既有漂移（非本批造成，附归属证据）
+------------------------------------------------------------------
+ behavior-online-migration-test 剩 3 条红：
+  · [groupOnline] 去掉新增块后剩余 system 与 v1 不一致（首个差异第 1525 字符）
+  · [proactive] 差异恰为批准的 2 条 → 实得多出
+    sentinels.memory / userWechat / worldbook / probe.memoryHead
+ 归属证据（两条独立实验）：
+  ① 对照实验：临时禁用本批 proactive 接线复跑 → 3 条照红；
+  ② 捕获夹具 0 处 taLife（grep behavior-baseline-capture.js / harness.js
+    均为 0）⇒ 本批 proactive 改动在捕获中贡献字节为空串；
+  ③ 本批 prompt-engine 改动只增槽位，[online]/[offline] 全部受控检查绿
+    = system 文本逐字未变。
+ 判断：这 3 条来自 f493aca（群上下文 + 主动消息世界书）接线后未同步
+ 该测试的批准差异清单，或来自更早的未提交工作区改动 —— 建议下批处置，
+ 本批**未**擅自放宽其判据。
+ 另注：sw.js 文件头只有 v161/v160 说明而 CACHE 已到 v164 —— v162-164
+ 跳位时未留说明（本批已按规矩给 v165 留说明）。
+
+七、待提交文件清单（本批完毕，等你验收后再提交）
+------------------------------------------------------------------
+ M  prompt-engine.js                    （相对 HEAD 的 diff 全部 = 本批）
+ M  page-proactive.js                   （同上）
+ M  sw.js                               （同上）
+ M  scripts/smoke.js                    （同上）
+ M  scripts/behavior-online-migration-test.js
+ M  scripts/behavior-offline-migration-test.js
+ A  scripts/offline-f2-sendbody-test.js （**此前批次遗留未提交**（??）；
+                                         本批窄修两条护栏判据，其余原样）
+ ?? scripts/k03e-evidence-probe.js      （本批新增取证探针）
+ ?? ta-life.js                          （**此前批次遗留未提交**；本批追加了
+                                         K03e 段。提交时须与该批成果一并入库）
+ 不动：index.html / store.js / page-chat.js 等此前批次未提交文件，本批未碰。
+ 批次基线：D:\projects\sleepy-baseline-current.txt（本批收口后重生成，
+ 137 个代码文件的 sha256；sendbody 护栏已改用该口径）。
+
+八、红线自查（对应施工单验收清单逐条）
+------------------------------------------------------------------
+ 只增加数据编译与消费 ✓（零模型、零网络、零业务状态写入）
+ 不推进生活、不改三表状态 ✓（装配前后三表逐字节断言）
+ 不读 pending 提案 ✓（编译出口不触碰 taProposals，smoke 负向断言）
+ 不依赖 UI 当前选中对象 ✓（charId/userId 全部来自调用参数）
+ 三场景共用唯一编译出口 ✓（prompt-engine / page-proactive 均只调
+   compileLivingLife，无第二份文案）
+ 每类 ≤2 条 + 合计 900 字预算 ✓（超限按稳定顺序如实裁剪）
+ 主动权限/冷却/免打扰/请求计数未动 ✓（buildSystem 不写任何闸门状态，
+   evaluate/gateFor 一行未改；闸门先于一切模型调用的结构未变）
+ 不接群线上/群线下、不动 useEngine=false、不动 relation/confirmedChange、
+ 不调 ta-impact 阈值 ✓（page-group-ai / page-group-offline / ta-impact 零改动）
+ 未部署、未提交 ✓
+══════════════════════════════════════════════════════════════════
+
+══════════════════════════════════════════════════════════════════
+九、提交前范围核对补遗（2026-10-05 20:54 验收通过后追加）
+══════════════════════════════════════════════════════════════════
+
+9.1 暂存区内容（git add 后、未 commit）
+------------------------------------------------------------------
+$ git diff --cached --name-status
+M	page-proactive.js
+M	prompt-engine.js
+M	scripts/behavior-offline-migration-test.js
+M	scripts/behavior-online-migration-test.js
+A	scripts/k03e-evidence-probe.js
+A	scripts/offline-f2-sendbody-test.js
+M	scripts/smoke.js
+M	sw.js
+A	ta-life.js
+（name-only 共 9 条，无其他文件混入）
+
+$ git diff --cached --stat（尾行）
+ 9 files changed, 2109 insertions(+), 27 deletions(-)
+ ⚠️ 口径：A 状态三个文件（ta-life.js +539 / sendbody +1210 / probe +26）
+ 的「整文件行数」含**此前已验收内容**，不是本批净增；M 状态六个文件的
+ diff = 本批全部改动。本批净增见 §一归属口径。
+
+9.2 ta-life.js 内容归属（剥离验证）
+------------------------------------------------------------------
+ · 开工底稿：402 行（本会话开工时全文 Read 留痕），结束于 `})(window);`。
+ · 剥离方法：从当前文件剥掉本批唯一新增段（:374-506 K03e 块 + 导出面
+   :522-525 三行）→ 还原底稿，node --check 通过，402 行，:44 KEYS 行与
+   开工 Read 逐字一致。
+   底稿 sha256 = 0ee5b48887a603b68a7d8abe5d84b337a26bb1da264fa2092aac81a58c8e3bbb
+   （副本 D:/tmp/ta-life.prestrip.js）
+ · diff(底稿, 当前) = 137 行全部为 `>` 新增，`<` 删除行 = 0
+   ⇒ **纯追加**，此前内容一行未动。
+ · 此前内容 = 已验收范围：ta 首页 v1 第二批（三表数据层/状态机/闭集）、
+   第三批（一键转正 + NPC 草稿）、v2 接线批 —— 验收留痕
+   docs/验收-ta首页第二/三/四/五批-2026-10-02.md。
+ · 本批新增依赖完整：LIFE_MAX_EACH/LIFE_BUDGET(:400-401)、
+   lifeGrams/lifeRel/lifeClip/lifeRankPick(:403-437)、
+   compileLivingLife(:439)、导出(:522-525)；数据函数 itemsOf/promisesOf/
+   followsOf(:81-83) 原样。
+ · pending 提案：全文对 taProposals 仅 1 处提及且在注释里（:380），
+   代码零引用。
+ · 无其他未验收功能混入（diff 仅 K03e 段；smoke 既有 ta 用例全绿）。
+
+9.3 offline-f2-sendbody-test.js 内容归属（同法剥离验证）
+------------------------------------------------------------------
+ · 该文件同样是此前未提交（??）的 2026-10-05 sendbody 批成果
+   （验收留痕 docs/回交-sendbody护栏修复-2026-10-05.txt）。
+ · 本批改动 = 两处判据窄修：① GUARDED 注释后追加 BATCH_APPROVED_TOUCH
+   块；② 两条批次护栏用例改「批准触碰名单」口径。
+ · 逆向还原底稿成功（node --check 通过），
+   底稿 sha256 = 8212a8733faaed5282c8c657a884e350aa34b7c5a6ee5478fb1a5b3143eae319
+   （副本 D:/tmp/sendbody.prestrip.js）；除这两处外逐字原样。
+
+9.4 九文件指纹（工作区 SHA-256；暂存区 git blob 指纹已逐一比对一致）
+------------------------------------------------------------------
+4a672e98ad1d9a311b847d35d86467154380fba5f4ef50a35c9d7afb350a741a  ta-life.js
+1c37086c4a29c6dd38cd5f8c87dc64df805a0d797a2dc2ace967be93b1d2a12d  prompt-engine.js
+f8a403ec1c10ea37f027ba76161550075f5b008c54572ecbfa7093d252f711b5  page-proactive.js
+0debd624dcc9021bd579b88e09add6050a7639fbe336d2b4d121c97e15d1fb1a  sw.js
+faebf11dc073ef2a3d7e3065f2b100f5228f2a02be612961c3ad87a1ce9071e1  scripts/smoke.js
+f54a6770aad77e8c512ef7080f47edc3cd12753d0ec7368d0cb79c9ae4bb30ff  scripts/behavior-online-migration-test.js
+4d36dd7db84da6fd8f3cf2f6a8c4ea787b95846565b239b03e25a272166f8ead  scripts/behavior-offline-migration-test.js
+06f58cfc4f09fda0a77c64e8039f552b101ddcb538da6277264643a120a55c4b  scripts/offline-f2-sendbody-test.js
+fcb5ab9eb276c54d045c43a16ac2598f093de94382c970ab5e786267fe97e244  scripts/k03e-evidence-probe.js
+（暂存 vs 工作区：git ls-files -s vs git hash-object，9/9 一致）
+
+9.5 提交前 git status --short（摘要）
+------------------------------------------------------------------
+已暂存（本批 9 个）：
+ M  page-proactive.js / prompt-engine.js / sw.js / scripts/smoke.js
+ M  scripts/behavior-offline-migration-test.js / behavior-online-migration-test.js
+ A  scripts/k03e-evidence-probe.js / scripts/offline-f2-sendbody-test.js / ta-life.js
+未暂存（此前批次历史改动，本批未碰，保持原样）：
+ calendar-data.js calendar.js core.js index.html page-calendar.js
+ page-chat.js page-desktop.js page-idcard.js page-island.js page-memory.js
+ page-switch.js page-we.js page-wj-canon.js store.js style.css wj-canon.js
+ docs/验收-贴纸工坊C2-2026-10-02.md scripts/browser-collection-p2-test.js
+ scripts/browser-collection-test.js
+未跟踪（??，均不入本次提交）：action.js、ta-impact.js、ta-model.js、
+ ta-network.js、ta-proposal.js、page-ta.js、page-ta-network.js、
+ scripts/harness.js、behavior-baseline-capture.js、behavior-text-test.js、
+ offline-f2-* 各测试、docs/ 下大批勘察/验收/回交文档、preview/ 等。
+
+9.6 依赖性说明（如实记录，不阻塞本次范围）
+------------------------------------------------------------------
+ · scripts/k03e-evidence-probe.js 依赖 scripts/harness.js（?? 未入库）；
+ · 两条 migration 测试依赖 scripts/harness.js + behavior-baseline-capture.js
+   + scripts/fixtures/behavior-baseline-v1.json（均 ?? 未入库）。
+ ⇒ 「K03e 独立复现」在本仓当前状态（大量基建文件本就未提交）不受影响，
+    但若追求克隆后即可复跑，需后续批次把这套测试基建一并入库。
+
+9.7 测试口径（修正后最终版）
+------------------------------------------------------------------
+ ✓ check 全绿
+ ✓ smoke 全绿（82 脚本，含 K03e 新用例 9 条）
+ ✓ k03e-evidence-probe 通过（[TA_LIFE] 恰一次 @ messages[5]，三表逐字节不变）
+ ✓ behavior-offline-migration-test：结构测试通过
+ ✓ behavior-online-migration-test：本批相关项全部通过；
+   **3 条既有漂移红原样保留、未修未放宽**：
+     · [groupOnline] 去掉新增块后剩余 system 与 v1 不一致（首差异第 1525 字符）
+     · [proactive] 差异恰为批准 2 条 → 实得多出 4 条哨兵（memory/userWechat/
+       worldbook/probe.memoryHead）
+     · [proactive] 重建期望 vs 重捕实际（同源哨兵差异）
+   归属证据见 §六；这是 f493aca 批的历史遗留，不属本批修复范围。
+══════════════════════════════════════════════════════════════════

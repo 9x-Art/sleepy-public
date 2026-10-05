@@ -1,0 +1,204 @@
+「本轮 user 输入在出站 messages 里重复」修复回交（2026-10-05 13:5x）
+================================================================================
+★ 本批**零真实模型 HTTP 请求**、零重试、零回退、零下一轮。P3 继续暂停。
+★ 未提交 / 未 push / 未部署。旧样本未改写。
+
+■ 一、精确 diff（唯一改动文件：prompt-engine.js）
+
+文件：prompt-engine.js
+位置：assembleOffline → case 'history' 槽，2031–2034（改动后 2031–2042）
+基线：D:/projects/sleepy-baseline-2026-10-05-pre10/prompt-engine.js
+      0bf2a87e34638cbe539e7fbb056391514fadae3e1d438463f534fcedb3da49a3
+当前：0647ba0aba377f7d089f7960866291a24a12c7e07d2458798147b52ac82ccf08
+净增：461 字节（新增块 627 − 旧块 166）
+
+```diff
+--- a/prompt-engine.js
++++ b/prompt-engine.js
+@@ -2028,9 +2028,18 @@
+             total += estimate(content);
+             messages.push({ role: role, content: content });
+           });
++          /* 本轮 user 输入已由 page-offline.js 的 appendMessage 落进
++             session.messages，装配器不再重复追加；线上 assembleOnline
++             不经过此分支。ctx.userInput 只作兜底：历史里确实没有它时
++             才补一条（历史为空、或调用方没先落库的探针形状）。 */
+           if (ctx.userInput) {
+-            total += estimate(ctx.userInput);
+-            messages.push({ role: 'user', content: String(ctx.userInput) });
++            var lastIsThis = messages.length > 0
++              && messages[messages.length - 1].role === 'user'
++              && String(messages[messages.length - 1].content) === String(ctx.userInput);
++            if (!lastIsThis) {
++              total += estimate(ctx.userInput);
++              messages.push({ role: 'user', content: String(ctx.userInput) });
++            }
+           }
+           slots.push({ id: 'history', ... });
+           break;
+```
+
+⚠️ **不是**按你批的「2031–2034 整段删除」，而是改成**幂等补齐**。理由见下。
+
+■ 二、为什么不是「整段删除」——勘察中发现的两个真实约束
+
+约束一：**有第二条调用形状依赖它。**
+  grep 全仓，`assembleOffline` 只有两个调用方：
+    · page-offline.js:1452（生产形状：先 appendMessage 落库，再传 userInput）
+    · page-presets.js:500（预览形状：传 userInput: ''，空值假值，不受影响）
+  但**测试与探针**大量直接传参、**不**先落库：
+    · scripts/smoke.js:5699-5702 断言「当前输入没垫底」——直接传参
+    · scripts/behavior-offline-migration-test.js 的 offCtx()（第 60 行）
+    · behavior-baseline-capture.js:351 的 offSession **本身就含** histUser2，
+      而第 521 行又传 userInput: histUser2 ⇒ **同一句话**，同一种双写
+  ⇒ 整段删除会让 smoke 与迁移测试变红。你要求「不删断言、不放宽」，
+     所以走**幂等**：末尾已是它就不补，历史里没有才补。两种形状都对。
+
+约束二：**`slice(-20)` 截断**（第 2013 行）。
+  整段删除后，历史满 20 条时，落库的本轮输入会被挤出 slice(-20)
+  ⇒ 用户刚说的话这一轮彻底消失，模型看不到 —— 比重复更严重。
+  幂等方案里落库那条在 session.messages 末尾，slice(-20) 优先保留最新，
+  **截断隐患自然不存在**（已加断言，见测试 §4）。
+
+职责结论（勘察得出）：
+  page-offline.js:1400 的 appendMessage = 本轮 user 输入的**正确入口**
+  （走 mutateSession 落库；气泡显示、历史、下一轮全靠它）
+  prompt-engine 的追加 = **兜底**，只在历史里确实没有它时生效
+
+■ 三、变更前后 messages 结构（同一夹具：四条前置历史 + 本轮「我到了。」）
+
+【修复前】非 system 消息 **6 条**，总 messages **13**（含 7 system）
+   1 [user]      len=14  "（我推开阁楼的门，上来了。）"
+   2 [assistant] len=75  "【场景】沈砚已经推开阁楼的门上来了，雨水顺着他的外套下摆往下…"
+   3 [assistant] len=18  "【场景】（老板娘在楼下，没有上来。）"
+   4 [user]      len=16  "（我坐下了，湿外套搭在椅背上。）"
+   5 [user]      len=4   "我到了。"     ← 落库那条
+   6 [user]      len=4   "我到了。"     ← ★ 装配器重复追加（缺陷）
+
+【修复后】非 system 消息 **5 条**，总 messages **12**（含 7 system）
+   1 [user]      len=14  "（我推开阁楼的门，上来了。）"
+   2 [assistant] len=75  "【场景】沈砚已经推开阁楼的门上来了…"
+   3 [assistant] len=18  "【场景】（老板娘在楼下，没有上来。）"
+   4 [user]      len=16  "（我坐下了，湿外套搭在椅背上。）"
+   5 [user]      len=4   "我到了。"     ← 只剩落库那条
+
+⇒ 差的**只有**第 6 条；前 5 条 role、顺序、长度**逐项未变**。
+⇒ 与真机样本对齐：13 条 → 12 条，与 2026-10-05 13:18 那份 body 的 13 条
+   差 1 条（真机那 13 条里第 12/13 条都是「我到了。」）。
+   ⚠️ 本次**未发请求**，所以这只是**装配层**证据；真机复验需另行授权。
+
+■ 四、零网络测试
+
+命令：node scripts/offline-f2-dupuser-test.js
+结果：**22 / 0 通过，exit=0**
+（新增文件；不启动浏览器、不发网络请求、不调模型，走 scripts/harness.js
+  的 boot() 起的是**生产脚本本身**，期望值从生产模块取，不抄）
+
+覆盖对照你列的 8 条：
+  ① 四条前置历史全部保留 ……… §2「四条前置历史全部保留」+「前置历史没有被重复」
+  ② 本轮「我到了。」只 1 次 …… §2 核心断言 + §3 判别力 + §4 两种历史长度
+  ③ role 与顺序符合原契约 …… §3 user 序列逐项 + 最后一条 role/content + scene 前缀
+  ④ 历史不足 / 满 20 条都在 … §4（满 20 条时仍 1 次且垫底）
+  ⑤ 线上 assembleOnline 不受影响 §5 两条（它走 ctx.history，压根不读 userInput）
+  ⑥ 自动开场 / 空串不受影响 … §6 四条（null / '' / 空历史开场 / 历史不被削）
+  ⑦ 退出码非零时明确报失败 … 见下方「负向验证」
+  ⑧ 未改旧样本、未删放宽断言 … §7 三条
+
+★ 负向验证（**注入真实缺陷**跑同一份判据）：
+   把 prompt-engine.js 换回基线版本（逐字节等于修复前）再跑同一测试
+   ⇒ **9 条红 + exit=1**，核心那条明确报：
+      「我到了。」出现次数 期望 1，实得 2
+   ⇒ 判据抓得到回归，且失败**确实**反映到退出码。
+   ⚠️ 换回的是文件本体（临时），跑完已恢复；当前磁盘是修复版，
+      哈希 0647ba0a…（已复核）。
+
+■ 五、生产文件哈希
+
+prompt-engine.js（本批唯一改动）
+  修复前 0bf2a87e34638cbe539e7fbb056391514fadae3e1d438463f534fcedb3da49a3
+  修复后 0647ba0aba377f7d089f7960866291a24a12c7e07d2458798147b52ac82ccf08
+
+**逐字节未动**（与基线一致）：
+  9c4fc136fd3f2f09e0de3376e94317dc630841343760425aac9dee29991abf02 *page-offline.js
+  1df743af4648b07e9254f216b4592e900432b7a1924c51da615a93cd75f4fbb2 *api.js
+  194d40c4763281a66f5eb7e7c3977d959ebe4ee25eaaa90ffbe3b3d2db0e431b *behavior-text.js
+  237594177d46d0e2a7c5e76bc6f0b31ecb50c260090a56179b504b8acc25d082 *page-chat.js
+  20a5f3cd41d6984841d892b4035f10e424be45cdb0d3ac716097fb1a31998c73 *page-presets.js
+  d93d967e3ceae6c96748faf4d8f8901d30cb862119cc5f90ce5f0e01d865ec2b *store.js
+  d068873b8c0b93084ba295b55b510eb33315f8f668b04e99bc44c535ec887516 *sw.js
+
+未动：提示词正文、timeout、预算闸、body 采集、落盘、任何旧样本。
+基线目录：D:/projects/sleepy-baseline-2026-10-05-pre10/（含 SHA256SUMS.txt）
+
+■ 六、回归结果（全部零网络）
+
+  offline-f2-dupuser-test       22 / 0     exit=0   ← 本批新增
+  offline-f2-budget-gate-test   26 / 0     exit=0
+  offline-f2-schedule-test     106 / 0     exit=0
+  offline-f2-effect-fields-test 123 / 0    exit=0
+  offline-f2-edge-test          48 / 0     exit=0
+  offline-f2-depstop-test       36 / 0     exit=0
+  offline-f2-fixture-trace-test 41 / 41    exit=0
+  behavior-offline-migration-test 67 / 0   exit=0
+  pnpm check                    全绿
+  pnpm smoke                    全绿（82 个脚本加载正常）
+
+⚠️ **一项既存红项，如实登记（不是本批引入）**：
+  offline-f2-sendbody-test **65 / 67，exit=1**，两条红：
+    · 四个生产文件的 mtime 都早于本轮
+    · 本轮只新增/修改了 scripts/ 下的源码
+  这两条是上一批的「零生产改动」护栏，它把「本轮」锚定在
+  **该测试文件自身的 mtime**；而上一批我新增了 offline-f2-budget-gate-test.js
+  （13:13）⇒ SESSION_START 前移 ⇒ prompt-engine.js（13:40 改）自然「晚于本轮」。
+  **独立证据**：把 prompt-engine.js 换回**基线版本**（内容逐字节等于改动前）
+  再跑，**那两条依然红** ⇒ 与本次代码改动无关。
+  按你「不删断言、不放宽」的要求，**本批未改这两条**。
+  ⚠️ 它们的判据本身有缺陷（锚点应是「批次开工时刻」而非测试文件 mtime），
+     但修它属于改既有断言，需另行批准。
+
+■ 七、影响面核对
+
+会被影响（仅此一条路径）：
+  · 私聊线下普通轮（page-offline.js:1452 → assembleOffline）
+    效果：出站 messages 少一条重复的 user；其余逐项不变。
+
+明确**不会**受影响（已逐一核实，不是推测）：
+  · 线上私聊 ……… page-chat.js:2630 走 assembleOnline，传 history: out，
+                  **不传 userInput**；其 history 槽（1690）读 ctx.history 数组
+  · 群聊（线上/线下）· 群线下的 history 同样走 assembleOnline
+  · 自动开场 …… userInput === null ⇒ 旧代码的 if 本就不成立；
+                  开场文案由 page-offline.js:1476 单独 push，未动
+  · 预设预览 …… page-presets.js:500 传 userInput: ''（假值），行为不变
+  · 记忆召回 / 世界书 / ta-impact 槽 …… 它们各读 session.messages，
+                  本次一行未改（§4 的 parseFailed 断言专门守这一点）
+  · 采集 / 预算闸 / timeout / 落盘 …… 全部未动
+  · 历史不足与满 20 条 …… §4 两种长度都有断言
+  · parseFailed 过滤 …… §6 有专项断言
+
+■ 八、是否仍有未处理边界
+
+1. ★ **真机未复验**。本次只证明**装配层**输出正确（12 条、无重复）。
+   「真实 HTTP body 里只有 1 条」需要再发一次请求才能取证 ——
+   按你的指示**未做**，需单独授权。
+2. ★ 群线下（groupOffline）**没找到 assembleOffline 调用**，
+   本次未触及；但若它另有装配入口，值得下一批单独核一遍。
+3. 上述 sendbody 两条既存红项的判据缺陷，**未修**（需批准改既有断言）。
+4. 兜底判据是「**末尾**那条 user 的 content 逐字等于 userInput」。
+   若将来历史末尾恰是同一句话、而本轮输入是**另一句**，判据仍成立（末尾不是它 ⇒ 补）；
+   但若本轮输入与**末尾那条**逐字相同且它并非本轮落库的那条，
+   兜底会不补 —— 这种情况在生产形状下不出现（本轮输入必落库且在末尾），
+   已由「满 20 条」与「短历史」两条断言覆盖。
+5. 本批**没有**改任何旧样本；`docs/样本-private-f2-效果/` 12 个文件仍为
+   2026-10-04 原样（§7 有断言按 mtime 核）。
+6. `docs/样本-G4轮1-2026-10-05/` 下两份真实样本（13:07 / 13:18）
+   **仍然都是双写的** —— 这是**修复前**的真实产物，如实保留，不改写。
+   ⇒ 引用它们时必须注明「修复前」。
+
+■ 九、下一次真实请求是否仍需你单独授权
+
+★ **需要。** 本批不包含任何真机复验。
+若要确认「出站 body 只有 1 条 user」，需要：
+  · 一次新的 G4 第 1 轮真机请求（预算 1 次）
+  · 环境变量 SLEEPY_API_BASE / SLEEPY_API_KEY / SLEEPY_API_MODEL
+  · SLEEPY_EFFECT_BUDGET=1 · SLEEPY_EFFECT_MAX_TURNS=1 · SLEEPY_EFFECT_GROUP=4
+在你明确授权前**不会发送**。P3 继续暂停，G7 未启动。

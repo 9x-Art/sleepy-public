@@ -1,0 +1,1096 @@
+回交 · 定点收尾（2026-10-05 第七轮）
+零**新增模型请求** · timeout 120s · P3 暂停 · 仅验收/测试层 · 未改生产代码 · 未提交/push/部署
+基线：D:////projects////sleepy-baseline-2026-10-05-pre7（修改前已存）
+
+####################################################################
+# 〇、外网请求尝试的如实登记（重要）
+####################################################################
+
+⚠️ 调试期间，本仓库的测试探针对 **example.com** 发起过**非模型的公网请求尝试**。
+   当时本机网络对example.com 放行，Node 真的建了连，随后收到 ECONNRESET。
+   触发路径：验证「断网阻断是否已恢复」的探针，直接调用了 https.request(公网地址) ——
+   阻断生效时它抛错没问题；**还原之后**它就真连了出去。
+
+⇒ 结论修正：
+   · 整批过程**不再自称「零网络」**。准确说法是「零**模型**请求」：
+     没有向任何模型端点发过请求、没花任何模型费用。
+   · 但**确实发生过一次公网连接尝试**（非模型、无API、无凭据、无数据上传）。
+   · 本轮**未联网重现**该尝试，只做了代码层修正。
+
+代码层修正（见下方 diff）：
+   ① 探针一律**先换本地永不联网替身**，**再**叠阻断绊线；
+      顺序颠倒的话，绊线一失效探针就会顺着真实入口发出去 —— 那正是出事原因。
+   ② 断言「已恢复」一律用**引用对比**，永不调用被测入口。
+   ③ 新增一条用例：人为撤掉绊线，验证探针**只命中本地替身**。
+
+####################################################################
+# 一、精确 diff
+####################################################################
+
+── scripts/offline-f2-fixture-trace-test.js ──
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-fixture-trace-test.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-fixture-trace-test.js"
+index aff4fe4..ef90579 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-fixture-trace-test.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-fixture-trace-test.js"
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env node
+ /* ============================================================
+    scripts/offline-f2-fixture-trace-test.js
+-   —— 夹具现场值持久化的**逐字段验证**（零网络）
++   —— 夹具现场值持久化的**逐字段验证**（零模型请求）
+ 
+    ★ 目的：验「夹具预期的现场值，真的进了 assembleOffline 的请求体 messages」。
+      这条链是：`FIXTURE.scene → SETUP → offlineStore → assembleOffline → 请求体`。
+@@ -27,7 +27,10 @@
+      它证明生产的深拷贝契约是设计如此，要改的是调用方。
+ 
+    ---- 硬边界 ----
+-     · 零网络：不启动浏览器、不调模型。
++     · 零**模型**请求：不启动浏览器、不调模型、不发任何 API 请求。
++     ⚠️ **不再自称「零网络」**：调试期间曾对 example.com 做过一次
++        **非模型的公网请求尝试**（详见 §2.6 顶部登记）。本轮起全部探针
++        只打本地替身，不会触达公网 —— 但历史那一次确实发生过。
+      · **不改生产代码**：本测试只读生产、只跑验收脚本的 SETUP。
+      · 最后一环「请求体」用**生产 bodyFor 同构**取，
+        并显式标注它**不是** init.body（真实那份要等 fetch 旁路）。
+@@ -308,7 +311,7 @@ function stripCommentsAndStrings(src) {
+ }
+ 
+ head('§2.4 ④ assembleOffline 的【当前场景】段 + 请求体 messages');
+-/* 装配（零网络） */
++/* 装配（零模型请求） */
+ var built = S.promptEngine.assembleOffline({
+   charId: (S.offlineStore.findSession(SID) || {}).charId,
+   userId: (S.offlineStore.findSession(SID) || {}).userId,
+@@ -518,105 +521,196 @@ tas('生产 requestOnce 落到的 body：四个现场锚点齐全、历史无重
+ });
+ 
+ /* ---------- A 的补测：延迟替身下，阻断在「处理中」仍有效、退出后正确恢复 ---------- */
+-head('§2.6 断网保护的生命周期（延迟替身）');
+-
+-/* ⚠️⚠️ 探针必须**只看函数身份**，绝不能真去联网。
+-   第一版 netTripped() 直接 `https.request('https://example.com')`：
+-   阻断态下它抛错、能测到「已阻断」；但**还原后**它会真的建连 ——
+-   于是「验证恢复」这一步自己发出了一个请求，还因为 ClientRequest 的
+-   'error' 事件没人监听直接把进程搞崩（socket hang up / ECONNRESET）。
+-   ⇒ 拆成两个探针：
+-     · isBlocked()：**调用**它，看是否抛「已被阻断」—— 只在**阻断态**下调用；
+-     · identityOf()：**只比对引用**，永不调用 —— 用于验证「已恢复」。 */
+-function isBlocked() {
++head('§2.6 断网保护的生命周期（本地替身，零外网）');
++
++/* ⚠️⚠️⚠️ 本节**不接触任何公网地址**。
++   历史（已如实登记，见交接文档）：调试期间的探针曾对 example.com 发起过
++   **非模型的公网请求尝试**（本机网络已放行，Node 真的建了连，随后
++   ECONNRESET）。那不是模型请求，但**确实发生在调试过程里** ——
++   所以整批过程**不再自称「零网络」**，只能称「零模型请求」。
++   ⇒ 现在的探针做法：
++     ① 先把底层入口换成**永不联网的本地替身**（localStub）；
++     ② 再叠一层「网络已被测试阻断」的绊线；
++     ③ 断言只打这两个本地对象，**即使阻断失效也只会命中本地替身**，
++        碰不到任何真实网络。
++
++   ⚠️ 顺序很关键：**先替身后绊线**。反过来的话，绊线一旦失效，
++      探针就会顺着真实入口发出去 —— 那正是上一轮出事的原因。 */
++
++/* 本地替身：任何调用都只记账并返回假句柄，**永不建连**。 */
++function localStub(tag) {
++  var fn = function () {
++    fn.calls.push({ tag: tag, argc: arguments.length });
++    /* 假句柄：有 on/once/destroy/end 等常见方法，够测试代码安全摆弄 */
++    return {
++      on: function () { return this; }, once: function () { return this; },
++      removeListener: function () { return this; },
++      setTimeout: function () { return this; },
++      write: function () { return true; }, end: function () { return this; },
++      destroy: function () { return this; }, abort: function () { return this; }
++    };
++  };
++  fn.calls = [];
++  fn.__localStub = tag;
++  return fn;
++}
++/* 被测的六个网络入口 —— 全部先换成本地替身 */
++var ENTRY_MODULES = [
++  ['https', 'https', ['request', 'get']],
++  ['http', 'http', ['request', 'get']],
++  ['net', 'net', ['connect', 'createConnection']]
++];
++function entryRefs() {
++  var out = [];
++  ENTRY_MODULES.forEach(function (g) {
++    var mod = require(g[1]);
++    g[2].forEach(function (m) { out.push([mod, m]); });
++  });
++  return out;
++}
++/* ★ 本节的安装器：先本地替身、后绊线；返回还原函数与两侧引用 */
++function installLocalThenBlock() {
++  var orig = entryRefs().map(function (p) { return p[0][p[1]]; });
++  var stubs = entryRefs().map(function (p, i) {
++    var s = localStub('entry' + i);
++    p[0][p[1]] = s;
++    return s;
++  });
++  /* 现在才叠绊线：即使它失效，探针也只会打到上面的本地替身 */
++  var tripped = [];
++  entryRefs().forEach(function (p) {
++    p[0][p[1]] = function () {
++      tripped.push(1);
++      throw new Error('网络已被测试阻断');
++    };
++  });
++  return {
++    stubs: stubs,
++    tripped: tripped,
++    /* 还原：先撤绊线，再把本地替身换回原始引用 */
++    restore: function () {
++      entryRefs().forEach(function (p, i) { p[0][p[1]] = orig[i]; });
++    }
++  };
++}
++/* 探针：只打**本地对象**。阻断有效 → 抛「已被阻断」；失效 → 命中本地替身。 */
++function probeLocalOnly() {
+   var https = require('https');
+-  try { https.request('https://example.com'); return false; }
+-  catch (e) { return /网络已被测试阻断/.test(e.message); }
++  try {
++    var r = https.request('https://example.invalid/never');
++    /* ⚠️ 走到这里说明**绊线失效**了 —— 但它只会命中本地替身 */
++    if (r && typeof r.destroy === 'function') r.destroy();
++    return { 阻断: false, 命中本地替身: true };
++  } catch (e) {
++    return { 阻断: /网络已被测试阻断/.test(e.message), 命中本地替身: false };
++  }
+ }
+-function identityOf() {
+-  var https = require('https'), net = require('net'), http = require('http');
+-  return [https.request, https.get, net.connect, net.createConnection,
+-    http.request, http.get];
++/* 引用对比：**永不调用**，用于验证「已恢复」 */
++function entryRefsNow() {
++  return entryRefs().map(function (p) { return p[0][p[1]]; });
+ }
++tas('探针本身零外网：即使阻断失效也只命中本地替身', async function () {
++  var orig = entryRefsNow();
++  var inst = installLocalThenBlock();
++  try {
++    /* ① 阻断生效时：探针抛「已被阻断」，不触达本地替身 */
++    var p1 = probeLocalOnly();
++    assert(p1.阻断 === true, '阻断态下探针应抛「已被测试阻断」');
++    assert(p1.命中本地替身 === false, '阻断态下不该命中本地替身');
++    /* ② 人为撤掉绊线（模拟阻断失效）：此时入口是**本地替身**，
++       探针只可能命中它 —— 不可能触达真实网络。 */
++    var https = require('https');
++    https.request = inst.stubs[0];
++    var p2 = probeLocalOnly();
++    assert(p2.命中本地替身 === true,
++      '★ 阻断失效时探针只命中本地替身（不会触达真实网络）');
++    assert(p2.阻断 === false, '撤掉绊线后不该再抛阻断错');
++    ok('✓ 阻断失效也只命中本地替身 —— 本节零外网');
++  } finally { inst.restore(); }
++  entryRefsNow().forEach(function (fn, i) {
++    assert(fn === orig[i], '还原后第 ' + (i + 1) + ' 个入口未回到原引用');
++  });
++});
+ tas('处理中阻断仍有效：await 期间网络入口仍被挡', async function () {
+-  var restore = blockOtherNetwork();
++  var orig = entryRefsNow();
++  var inst = installLocalThenBlock();
+   try {
+-    assert(isBlocked(), '开始时就应处于阻断态');
++    assert(probeLocalOnly().阻断, '开始时就应处于阻断态');
+     /* 延迟替身：在 await 期间让出事件循环，模拟真实网络耗时 */
+     await new Promise(function (r) { setTimeout(r, 20); });
+-    assert(isBlocked(), '★ await 之后仍应处于阻断态');
++    assert(probeLocalOnly().阻断, '★ await 之后仍应处于阻断态');
+     await new Promise(function (r) { setTimeout(r, 20); });
+-    assert(isBlocked(), '★ 第二次 await 之后仍应处于阻断态');
+-  } finally { restore(); }
++    assert(probeLocalOnly().阻断, '★ 第二次 await 之后仍应处于阻断态');
++  } finally { inst.restore(); }
+ });
+ tas('正常完成后恢复：restore 之后函数引用回到原值', async function () {
+-  var before = identityOf();
+-  var restore = blockOtherNetwork();
+-  assert(isBlocked(), '阻断生效');
++  var before = entryRefsNow();
++  var inst = installLocalThenBlock();
++  assert(probeLocalOnly().阻断, '阻断生效');
+   await new Promise(function (r) { setTimeout(r, 10); });
+-  restore();
+-  /* ★ 只比对引用，**不调用** —— 调用会真联网（见上方注释） */
+-  var after = identityOf();
+-  eq(after.length, before.length, '探针数量');
++  inst.restore();
++  /* ★ 只比对引用，**不调用** */
++  var after = entryRefsNow();
++  eq(after.length, before.length, '入口数量');
+   before.forEach(function (fn, i) {
+     assert(after[i] === fn, '第 ' + (i + 1) + ' 个网络入口未还原');
+   });
+   ok('✓ 六个网络入口全部还原为原始引用');
+ });
+ tas('异常退出也恢复：try 内抛错时 finally 仍还原', async function () {
+-  var before = identityOf();
+-  var restore = blockOtherNetwork();
++  var before = entryRefsNow();
++  var inst = installLocalThenBlock();
+   var caught = null;
+   try {
+     await new Promise(function (r) { setTimeout(r, 10); });
+     throw new Error('故意抛错，验证 finally');
+   } catch (e) { caught = e; }
+-  finally { restore(); }
++  finally { inst.restore(); }
+   assert(caught && /故意抛错/.test(caught.message), '应捕到预期的错');
+-  var after = identityOf();
++  var after = entryRefsNow();
+   before.forEach(function (fn, i) {
+     assert(after[i] === fn, '★ 异常退出后第 ' + (i + 1) + ' 个网络入口未还原');
+   });
+ });
+ tas('★ 反向：非 async 回调会让 finally 提前释放（复现原缺陷）', async function () {
+-  var savedRef = identityOf();
+-  var restore = blockOtherNetwork();
++  var savedRef = entryRefsNow();
++  var inst = installLocalThenBlock();
+   try {
+     /* 模拟旧写法：非 async 回调 + return promise。
+        它的 `finally`（含 restore）**同步执行** —— promise 还没落地。 */
+     var p = (function () {
+       try { return Promise.resolve('x'); }
+-      finally { restore(); }          /* ← 非 async：此刻就执行 */
++      finally { inst.restore(); }      /* ← 非 async：此刻就执行 */
+     })();
+     /* 同步点：p 未落地，但 restore 已跑过 ⇒ 保护已被提前释放 */
+-    var releasedEarly = identityOf()[0] === savedRef[0];
+-    var releasedAtSettle = null;
+-    await p.then(function () {
+-      releasedAtSettle = identityOf()[0] === savedRef[0];
+-    });
++    var releasedEarly = entryRefsNow()[0] === savedRef[0];
++    await p;                          /* ★ 显式 await 内部 Promise */
++    var releasedAtSettle = entryRefsNow()[0] === savedRef[0];
+     assert(releasedEarly,
+       '★ 非 async 回调：promise 尚未落地，finally 里的 restore 就已执行');
+     assert(releasedAtSettle,
+       '★ 等 promise 落地时，保护**早已**被释放（这正是修掉的那个缺陷）');
+     ok('✓ 复现确认：非 async 回调的 finally 早于 promise 落地 → 保护失效');
+-  } finally { restore(); }
++  } finally { inst.restore(); }
+ });
+ tas('★ 对照：async 回调的 finally 晚于 await 落地（修好的形态）', async function () {
+-  var savedRef = identityOf();
+-  var restore = blockOtherNetwork();
++  var savedRef = entryRefsNow();
++  var inst = installLocalThenBlock();
++  var stillBlockedAtAwait = null;
+   try {
+-    var stillBlockedAtAwait = null;
+-    (async function () {
++    /* ★ 显式 await 内部 async 函数 —— 不再用「等 40ms 当作完成」 */
++    await (async function () {
+       try {
+         await new Promise(function (r) { setTimeout(r, 15); });
+         /* await 落地后、finally 之前 —— 保护应当**仍然生效** */
+-        stillBlockedAtAwait = identityOf()[0] !== savedRef[0];
+-      } finally { restore(); }
++        stillBlockedAtAwait = entryRefsNow()[0] !== savedRef[0];
++      } finally { inst.restore(); }
+     })();
+-    await new Promise(function (r) { setTimeout(r, 40); });
+     assert(stillBlockedAtAwait,
+       '★ async 回调：await 期间保护仍在（与上面那条非 async 的形成对照）');
+-  } finally { restore(); }
++    assert(entryRefsNow()[0] === savedRef[0],
++      '★ 内层 finally 已执行（await 返回即代表它跑完了）');
++  } finally { inst.restore(); }
+ });
+ 
+ /* createSession 默认值：从**生产源码**读，不手抄 */
+@@ -785,6 +879,6 @@ Promise.all(pending).then(function () {
+     problems.forEach(function (p) { process.stdout.write('  · ' + p + '\n'); });
+     process.exit(1);
+   }
+-  process.stdout.write('✓ 全绿（零网络 · 未启动浏览器 · 未调模型 · **未改生产代码**）\n');
++  process.stdout.write('✓ 全绿（零**模型**请求 · 未启动浏览器 · 未改生产代码）\n');
+   process.exit(0);
+ });
+
+── scripts/offline-f2-sendbody-test.js ──
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-sendbody-test.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-sendbody-test.js"
+index 1c75929..c38959d 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-sendbody-test.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-sendbody-test.js"
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env node
+ /* ============================================================
+    scripts/offline-f2-sendbody-test.js
+-   —— 「客户端提交给 fetch 的请求体」采集的零网络单元 / 桩测试
++   —— 「客户端提交给 fetch 的请求体」采集的零**模型**请求单元 / 桩测试
+ 
+    ★ 硬边界（用户 2026-10-05 明确）：
+      · **不启动 Edge / 任何浏览器**
+@@ -461,7 +461,12 @@ function okResponse() {
+ /* ---- 网络出口阻断：除 fetch 外全部 trip 掉 ----
+    ★ 要求：「只替换底层 fetch，并阻断其他网络出口」。
+      harness 的 D5 已经把 XHR/WebSocket 置 undefined，但 Node 的
+-     http/https/net 仍能发包 —— 必须显式挡掉，否则「零网络」是空话。 */
++     http/https/net 仍能发包 —— 必须显式挡掉，否则「零模型请求」之外
++     还留着能对外发包的入口。
++   ⚠️⚠️ 但**光挡不够**：绊线一旦失效，探针就会顺着真实入口发出去。
++     ⇒ 凡是要**调用**这些入口做断言，必须先把入口换成
++       **永不联网的本地替身**（见 localEntryGuard）。
++     断言「已恢复」一律用**引用对比**，永不调用。 */
+ function blockOtherNetwork() {
+   var net = require('net'), http = require('http'), https = require('https');
+   var saved = [];
+@@ -484,6 +489,56 @@ function blockOtherNetwork() {
+   };
+ }
+ 
++/* ---- 本地入口守卫：**先替身、后绊线** ----
++   ⚠️ 顺序不可颠倒。历史教训：调试期间的探针曾直接对 example.com
++   发起过**非模型的公网请求尝试**（本机放行、真的建了连，随后 ECONNRESET）。
++   ⇒ 现在任何「调用入口看阻断」的断言，都先换成永不联网的本地替身；
++     即使绊线失效，也只会命中本地替身。 */
++function localEntryGuard() {
++  var mods = [
++    [require('https'), ['request', 'get']],
++    [require('http'), ['request', 'get']],
++    [require('net'), ['connect', 'createConnection']]
++  ];
++  var pairs = [];
++  mods.forEach(function (g) {
++    g[1].forEach(function (m) { pairs.push([g[0], m]); });
++  });
++  var orig = pairs.map(function (p) { return p[0][p[1]]; });
++  var stubs = pairs.map(function (p, i) {
++    var fn = function () {
++      fn.calls++;
++      return { on: function () { return this; }, once: function () { return this; },
++        removeListener: function () { return this; },
++        write: function () { return true; }, end: function () { return this; },
++        destroy: function () { return this; }, abort: function () { return this; } };
++    };
++    fn.calls = 0;
++    p[0][p[1]] = fn;         /* ① 先换本地替身 */
++    return fn;
++  });
++  var tripped = 0;
++  pairs.forEach(function (p) {
++    p[0][p[1]] = function () { tripped++; throw new Error('网络已被测试阻断'); };
++  });                          /* ② 再叠绊线 */
++  return {
++    stubs: stubs,
++    /* 探针：只打本地对象。阻断有效→抛；失效→命中本地替身。 */
++    probe: function () {
++      try {
++        var r = require('https').request('https://example.invalid/never');
++        if (r && r.destroy) r.destroy();
++        return { 阻断: false, 命中本地: true };
++      } catch (e) {
++        return { 阻断: /网络已被测试阻断/.test(e.message), 命中本地: false };
++      }
++    },
++    /* 引用对比：永不调用 */
++    refs: function () { return pairs.map(function (p) { return p[0][p[1]]; }); },
++    restore: function () { pairs.forEach(function (p, i) { p[0][p[1]] = orig[i]; }); }
++  };
++}
++
+ /* ---- 一条完整的「生产链」夹具 ---- */
+ function prodChain(label, fetchBehave) {
+   var H = require('./harness.js');
+@@ -594,17 +649,25 @@ ta('★ timeoutSec=120 被保留（不被 60s 下限改写）', function () {
+   } finally { restore(); }
+ });
+ 
+-ta('★ 网络出口确实被阻断（证明「零网络」不是空话）', function () {
+-  var restore = blockOtherNetwork();
++ta('★ 网络出口确实被阻断，且探针零公网（本地替身 + 绊线）', function () {
++  var g = localEntryGuard();
+   try {
+-    var https = require('https');
+-    var threw = false;
+-    try { https.request('https://example.com'); } catch (e) {
+-      threw = /网络已被测试阻断/.test(e.message);
+-    }
+-    assert(threw, 'https.request 应被阻断');
+-    ok('✓ https.request 被阻断（旁路之外没有别的出口）');
+-  } finally { restore(); }
++    /* ① 阻断生效 */
++    var p1 = g.probe();
++    assert(p1.阻断 === true, 'https.request 应被阻断');
++    assert(p1.命中本地 === false, '阻断态下不该命中本地替身');
++    /* ② 人为撤掉绊线，模拟「阻断失效」——
++       此时入口是本地替身，探针**只可能**命中它，不会触达公网。 */
++    require('https').request = g.stubs[0];
++    var p2 = g.probe();
++    assert(p2.命中本地 === true,
++      '★ 阻断失效时也只命中本地替身（证明探针零公网）');
++    ok('✓ 出口被阻断；即使阻断失效，探针也只打本地替身');
++  } finally { g.restore(); }
++  /* 恢复检查：引用对比，**永不调用** */
++  var https = require('https');
++  assert(typeof https.request === 'function', 'https.request 已还原为函数');
++  ok('✓ 还原后 https.request 仍是函数引用（未调用它，不触达网络）');
+ });
+ 
+ ta('★ 装配产物经生产链进入 body（把 trace 的场景锚点一路带到发送体）', function () {
+@@ -1048,11 +1111,11 @@ t('如实登记：这两个文件相对 HEAD 有历史未提交改动（不是
+ Promise.all(pending).then(function () {
+   var total = pass + fail;
+   process.stdout.write('\n' + '─'.repeat(52) + '\n');
+-  process.stdout.write('客户端提交给 fetch 的请求体 · 零网络测试：' + pass + ' / ' + total + ' 通过\n');
++  process.stdout.write('客户端提交给 fetch 的请求体 · 零模型请求测试：' + pass + ' / ' + total + ' 通过\n');
+   if (fail) {
+     process.stdout.write('✗ 失败 ' + fail + ' 项：\n');
+     problems.forEach(function (p) { process.stdout.write('  · ' + p + '\n'); });
+-    process.stdout.write('（本测试**不启动浏览器、不发任何网络请求**）\n');
++    process.stdout.write('（本测试**不启动浏览器、不发任何模型请求**）\n');
+     process.exit(1);
+   }
+   process.stdout.write('✓ 全绿（本测试**不启动浏览器、不发任何网络请求**）\n');
+
+── scripts/offline-f2-schedule-test.js ──
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-schedule-test.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-schedule-test.js"
+index 9df600a..1e7dce7 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-schedule-test.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-schedule-test.js"
+@@ -317,10 +317,17 @@ fs.rmSync(tmp, { recursive: true, force: true });
+    ============================================================ */
+ section('§9 请求体缺证 → 按采集异常停止续发');
+ 
+-/* ---- 9.1 单轮组：唯一一轮就缺证 ---- */
+-['缺记录', '采集失败', 'messages空'].forEach(function (form) {
++/* ---- 9.1 单轮组：唯一一轮就缺证 ----
++   ⚠️⚠️ 原来是 `['缺记录','采集失败','messages空'].forEach(async-ish …)`：
++     `forEach` **不等待**回调返回的 Promise ⇒ 这三条断言在
++     外层 async 函数**继续往下跑之后**才落地，可能撞上汇总 ⇒
++     「用例全部完成才汇总」被破坏（典型症状：退出码 0 但少了几条断言）。
++   → 改 `for…of` + **显式 await**。 */
++var FORMS_9A = ['缺记录', '采集失败', 'messages空'];
++for (var fi = 0; fi < FORMS_9A.length; fi++) {
++  var form = FORMS_9A[fi];
+   var sent9a = [];
+-  return runGroupSchedule({
++  var st9a = await runGroupSchedule({
+     id: 'T9a-' + form, turns: ['x'],
+     send: async function (ti, input) {
+       sent9a.push(input);
+@@ -328,13 +335,48 @@ section('§9 请求体缺证 → 按采集异常停止续发');
+     },
+     persist: async function () {},
+     stopKind: hardStopKind
+-  }).then(function (st) {
+-    ok(st.停机原因 !== null, '单轮组[' + form + '] 判停机', String(st.停机原因));
+-    ok(/采集关联异常/.test(st.停机原因 || ''),
+-      '单轮组[' + form + '] 停机原因=采集异常', String(st.停机原因));
+-    ok(st.停止整跑 === true, '单轮组[' + form + '] 停止整跑=true');
+-    ok(sent9a.length === 1, '单轮组[' + form + '] 只发了 1 次（无后续可发）');
+   });
++  ok(st9a.停机原因 !== null, '单轮组[' + form + '] 判停机', String(st9a.停机原因));
++  ok(/采集关联异常/.test(st9a.停机原因 || ''),
++    '单轮组[' + form + '] 停机原因=采集异常', String(st9a.停机原因));
++  ok(st9a.停止整跑 === true, '单轮组[' + form + '] 停止整跑=true');
++  ok(sent9a.length === 1, '单轮组[' + form + '] 只发了 1 次（无后续可发）');
++}
++
++/* ---- 9.1b 错误类型反例：messages 结构不合法也算缺证 ---- */
++[
++  { form: 'messages非数组', rec: { bodySHA256: 'x', messages: { a: 1 } } },
++  { form: 'messages为null', rec: { bodySHA256: 'x', messages: null } },
++  { form: '条目缺role', rec: { bodySHA256: 'x', messages: [{ content: 'x' }] } },
++  { form: 'role为空串', rec: { bodySHA256: 'x', messages: [{ role: '', content: 'x' }] } },
++  { form: 'content为空串', rec: { bodySHA256: 'x', messages: [{ role: 'user', content: '' }] } },
++  { form: 'content为null', rec: { bodySHA256: 'x', messages: [{ role: 'user', content: null }] } },
++  { form: '条目是字符串', rec: { bodySHA256: 'x', messages: ['just a string'] } },
++  { form: '条目是数组', rec: { bodySHA256: 'x', messages: [['role', 'user']] } },
++  { form: '条目为null', rec: { bodySHA256: 'x', messages: [null] } },
++  { form: '多条里第二条坏', rec: { bodySHA256: 'x',
++    messages: [{ role: 'user', content: 'ok' }, { role: 'user' }] } }
++].forEach(function (c) {
++  var t = okTurn(0, 'x');
++  t.发送瞬间请求体 = c.rec;
++  var r = ACC.requestBodyEvidence(t);
++  ok(r.缺证 === true, '缺证反例[' + c.form + '] 应判缺证', r.原因);
++  ok(hardStopKind(t) === 'link',
++    '缺证反例[' + c.form + '] hardStopKind=link', String(hardStopKind(t)));
++});
++/* 正常证据不得误停（含 content 为结构化数组的多模态形态） */
++[
++  { form: '常规', messages: [{ role: 'system', content: '【当前场景】' }, { role: 'user', content: '我到了。' }] },
++  { form: '单条', messages: [{ role: 'user', content: 'x' }] },
++  { form: 'content结构化数组', messages: [{ role: 'user',
++    content: [{ type: 'text', text: '看图' }, { type: 'image_url', image_url: { url: 'u' } }] }] }
++].forEach(function (c) {
++  var t = okTurn(0, 'x');
++  t.发送瞬间请求体 = { bodySHA256: 'x', bodyCaptureError: null, messages: c.messages };
++  var r = ACC.requestBodyEvidence(t);
++  ok(r.缺证 === false, '正常证据[' + c.form + '] 不得误判缺证', r.原因);
++  ok(hardStopKind(t) === null,
++    '正常证据[' + c.form + '] 不得误停', String(hardStopKind(t)));
+ });
+ 
+ /* ---- 9.2 末轮缺证：前两轮正常，第三轮缺证 ---- */
+@@ -427,8 +469,14 @@ process.stdout.write('\n────────\n');
+ process.stdout.write('通过 ' + pass + ' / 失败 ' + fail + '\n');
+ if (fail) process.stdout.write('红项: ' + FAILS.join(' | ') + '\n');
+ process.stdout.write(fail === 0
+-  ? '✅ 真实调度已用**零网络**测试锁住（8 条覆盖全过）。\n'
++  ? '✅ 真实调度已用**零模型请求**测试锁住（9 条覆盖全过）。\n'
+   : '❌ 有红项：调度保证没锁住。\n');
++/* ⚠️⚠️ 失败必须给**非零退出码**。
++   原先这里只写文本就结束 —— `fail>0` 时进程仍以 0 退出，
++   于是「有红项」在 CI / 批处理里会被当成通过。
++   ⚠️ 这也是「所有用例完成后才汇总」的一部分：
++     汇总点一旦决定，必须把结论**反映到退出码**上。 */
++if (fail) process.exit(1);
+ })().catch(function (e) {
+   process.stdout.write("测试脚本异常：" + (e && e.stack ? e.stack : e) + String.fromCharCode(10));
+   process.exit(1);
+
+── scripts/offline-f2-effect-acceptance.js ──
+diff --git "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-effect-acceptance.js" "b/D:\\projects\\sleepy\\scripts\\offline-f2-effect-acceptance.js"
+index 796d95b..e08692b 100644
+--- "a/D:\\projects\\sleepy-baseline-2026-10-05-pre7\\offline-f2-effect-acceptance.js"
++++ "b/D:\\projects\\sleepy\\scripts\\offline-f2-effect-acceptance.js"
+@@ -853,15 +853,54 @@ function requestBodyEvidence(t, opts) {
+     out.原因 = '请求体采集失败：' + rec.bodyCaptureError;
+     return out;
+   }
+-  /* ★ 必需 messages 证据：条数下限可配（不同场景装配段数不同），
+-     默认要求「有 messages 且非空」。 */
++  /* ★★ messages 证据的**严格**校验（2026-10-05 · 四）：
++     「有一条 messages」不够 —— 必须**每一项**都能核验：
++       · `messages` 是**数组**（不是对象/字符串/null）
++       · **非空**（长度 ≥ min）
++       · 每个条目是**对象**，且 `role` 与 `content` **都存在**
++     为什么这么严：请求体是「模型到底收到了什么」的唯一证据。
++     一条 `role` 缺失、或 `content` 为空的记录，**无法核验** ——
++     它不能证明「现场信息确实送到了」。
++     ⚠️ 允许的例外：多模态的 `content` 可能是**数组**（结构化），
++        那种只要非空就算有效（采集侧已深脱敏，值本身可用）。 */
+   var min = opts.minMessages == null ? 1 : opts.minMessages;
+-  var n = rec.messages ? rec.messages.length : 0;
+-  if (n < min) {
+-    out.缺证 = true; out.形态 = 'messages 证据不足';
+-    out.原因 = '请求体里没有可用的 messages 证据（条数 ' + n + ' < 必需 ' + min + '）';
++  var msgs = rec.messages;
++  if (!Array.isArray(msgs)) {
++    out.缺证 = true; out.形态 = 'messages 非数组';
++    out.原因 = '请求体里的 messages 不是数组（是 ' +
++      (msgs === null ? 'null' : typeof msgs) + '）';
+     return out;
+   }
++  if (msgs.length < min) {
++    out.缺证 = true; out.形态 = 'messages 条数不足';
++    out.原因 = '请求体里没有可用的 messages 证据（条数 ' + msgs.length +
++      ' < 必需 ' + min + '）';
++    return out;
++  }
++  /* 逐条核验 role / content */
++  for (var i = 0; i < msgs.length; i++) {
++    var m = msgs[i];
++    if (!m || typeof m !== 'object' || Array.isArray(m)) {
++      out.缺证 = true; out.形态 = 'messages 条目形状不对';
++      out.原因 = 'messages[' + i + '] 不是对象';
++      return out;
++    }
++    if (!m.role) {
++      out.缺证 = true; out.形态 = 'messages 缺 role';
++      out.原因 = 'messages[' + i + '] 缺 role（无法核验这条证据）';
++      return out;
++    }
++    var c = m.content;
++    var contentOk = (typeof c === 'string' && c.length > 0) ||
++      (Array.isArray(c) && c.length > 0);
++    if (!contentOk) {
++      out.缺证 = true; out.形态 = 'messages 缺 content';
++      out.原因 = 'messages[' + i + '] 的 content 为空或不可用（' +
++        (c === null ? 'null' : typeof c) + '）';
++      return out;
++    }
++  }
++  out.messages条数 = msgs.length;
+   return out;
+ }
+
+####################################################################
+# 二、相关函数（按缩进精确抽取）
+####################################################################
+
+── requestBodyEvidence —— 严格 messages 校验（scripts/offline-f2-effect-acceptance.js:833–905，共73行）──
+  833 | function requestBodyEvidence(t, opts) {
+  834 |   opts = opts || {};
+  835 |   var out = { 应有: false, 缺证: false, 原因: '', 形态: null };
+  836 |   if (!t) return out;
+  837 |   /* 「未发出」明确走未发出分支 —— 这里不接管 */
+  838 |   if (t.未发出) { out.原因 = '未发出（不走缺证判定）'; return out; }
+  839 |   out.应有 = true;
+  840 |   var rec = t.发送瞬间请求体;
+  841 |   if (!rec) {
+  842 |     out.缺证 = true; out.形态 = '记录缺失';
+  843 |     out.原因 = '本轮应有请求体记录，但没有';
+  844 |     return out;
+  845 |   }
+  846 |   if (rec.记录写入失败) {
+  847 |     out.缺证 = true; out.形态 = '记录写入失败';
+  848 |     out.原因 = '请求体记录写入失败：' + rec.记录写入失败;
+  849 |     return out;
+  850 |   }
+  851 |   if (rec.bodyCaptureError) {
+  852 |     out.缺证 = true; out.形态 = '采集失败';
+  853 |     out.原因 = '请求体采集失败：' + rec.bodyCaptureError;
+  854 |     return out;
+  855 |   }
+  856 |   /* ★★ messages 证据的**严格**校验（2026-10-05 · 四）：
+  857 |      「有一条 messages」不够 —— 必须**每一项**都能核验：
+  858 |        · `messages` 是**数组**（不是对象/字符串/null）
+  859 |        · **非空**（长度 ≥ min）
+  860 |        · 每个条目是**对象**，且 `role` 与 `content` **都存在**
+  861 |      为什么这么严：请求体是「模型到底收到了什么」的唯一证据。
+  862 |      一条 `role` 缺失、或 `content` 为空的记录，**无法核验** ——
+  863 |      它不能证明「现场信息确实送到了」。
+  864 |      ⚠️ 允许的例外：多模态的 `content` 可能是**数组**（结构化），
+  865 |         那种只要非空就算有效（采集侧已深脱敏，值本身可用）。 */
+  866 |   var min = opts.minMessages == null ? 1 : opts.minMessages;
+  867 |   var msgs = rec.messages;
+  868 |   if (!Array.isArray(msgs)) {
+  869 |     out.缺证 = true; out.形态 = 'messages 非数组';
+  870 |     out.原因 = '请求体里的 messages 不是数组（是 ' +
+  871 |       (msgs === null ? 'null' : typeof msgs) + '）';
+  872 |     return out;
+  873 |   }
+  874 |   if (msgs.length < min) {
+  875 |     out.缺证 = true; out.形态 = 'messages 条数不足';
+  876 |     out.原因 = '请求体里没有可用的 messages 证据（条数 ' + msgs.length +
+  877 |       ' < 必需 ' + min + '）';
+  878 |     return out;
+  879 |   }
+  880 |   /* 逐条核验 role / content */
+  881 |   for (var i = 0; i < msgs.length; i++) {
+  882 |     var m = msgs[i];
+  883 |     if (!m || typeof m !== 'object' || Array.isArray(m)) {
+  884 |       out.缺证 = true; out.形态 = 'messages 条目形状不对';
+  885 |       out.原因 = 'messages[' + i + '] 不是对象';
+  886 |       return out;
+  887 |     }
+  888 |     if (!m.role) {
+  889 |       out.缺证 = true; out.形态 = 'messages 缺 role';
+  890 |       out.原因 = 'messages[' + i + '] 缺 role（无法核验这条证据）';
+  891 |       return out;
+  892 |     }
+  893 |     var c = m.content;
+  894 |     var contentOk = (typeof c === 'string' && c.length > 0) ||
+  895 |       (Array.isArray(c) && c.length > 0);
+  896 |     if (!contentOk) {
+  897 |       out.缺证 = true; out.形态 = 'messages 缺 content';
+  898 |       out.原因 = 'messages[' + i + '] 的 content 为空或不可用（' +
+  899 |         (c === null ? 'null' : typeof c) + '）';
+  900 |       return out;
+  901 |     }
+  902 |   }
+  903 |   out.messages条数 = msgs.length;
+  904 |   return out;
+  905 | }
+
+── localEntryGuard —— 先替身后绊线（sendbody）（scripts/offline-f2-sendbody-test.js:497–540，共44行）──
+  497 | function localEntryGuard() {
+  498 |   var mods = [
+  499 |     [require('https'), ['request', 'get']],
+  500 |     [require('http'), ['request', 'get']],
+  501 |     [require('net'), ['connect', 'createConnection']]
+  502 |   ];
+  503 |   var pairs = [];
+  504 |   mods.forEach(function (g) {
+  505 |     g[1].forEach(function (m) { pairs.push([g[0], m]); });
+  506 |   });
+  507 |   var orig = pairs.map(function (p) { return p[0][p[1]]; });
+  508 |   var stubs = pairs.map(function (p, i) {
+  509 |     var fn = function () {
+  510 |       fn.calls++;
+  511 |       return { on: function () { return this; }, once: function () { return this; },
+  512 |         removeListener: function () { return this; },
+  513 |         write: function () { return true; }, end: function () { return this; },
+  514 |         destroy: function () { return this; }, abort: function () { return this; } };
+  515 |     };
+  516 |     fn.calls = 0;
+  517 |     p[0][p[1]] = fn;         /* ① 先换本地替身 */
+  518 |     return fn;
+  519 |   });
+  520 |   var tripped = 0;
+  521 |   pairs.forEach(function (p) {
+  522 |     p[0][p[1]] = function () { tripped++; throw new Error('网络已被测试阻断'); };
+  523 |   });                          /* ② 再叠绊线 */
+  524 |   return {
+  525 |     stubs: stubs,
+  526 |     /* 探针：只打本地对象。阻断有效→抛；失效→命中本地替身。 */
+  527 |     probe: function () {
+  528 |       try {
+  529 |         var r = require('https').request('https://example.invalid/never');
+  530 |         if (r && r.destroy) r.destroy();
+  531 |         return { 阻断: false, 命中本地: true };
+  532 |       } catch (e) {
+  533 |         return { 阻断: /网络已被测试阻断/.test(e.message), 命中本地: false };
+  534 |       }
+  535 |     },
+  536 |     /* 引用对比：永不调用 */
+  537 |     refs: function () { return pairs.map(function (p) { return p[0][p[1]]; }); },
+  538 |     restore: function () { pairs.forEach(function (p, i) { p[0][p[1]] = orig[i]; }); }
+  539 |   };
+  540 | }
+
+── installLocalThenBlock + 探针（trace）（scripts/offline-f2-fixture-trace-test.js:572–595，共24行）──
+  572 | function installLocalThenBlock() {
+  573 |   var orig = entryRefs().map(function (p) { return p[0][p[1]]; });
+  574 |   var stubs = entryRefs().map(function (p, i) {
+  575 |     var s = localStub('entry' + i);
+  576 |     p[0][p[1]] = s;
+  577 |     return s;
+  578 |   });
+  579 |   /* 现在才叠绊线：即使它失效，探针也只会打到上面的本地替身 */
+  580 |   var tripped = [];
+  581 |   entryRefs().forEach(function (p) {
+  582 |     p[0][p[1]] = function () {
+  583 |       tripped.push(1);
+  584 |       throw new Error('网络已被测试阻断');
+  585 |     };
+  586 |   });
+  587 |   return {
+  588 |     stubs: stubs,
+  589 |     tripped: tripped,
+  590 |     /* 还原：先撤绊线，再把本地替身换回原始引用 */
+  591 |     restore: function () {
+  592 |       entryRefs().forEach(function (p, i) { p[0][p[1]] = orig[i]; });
+  593 |     }
+  594 |   };
+  595 | }
+
+####################################################################
+# 三、定向测试输出
+####################################################################
+
+── scripts/offline-f2-schedule-test.js（严格校验 + 显式 await + 非零退出码）退出码 0 ──
+§1 前置 · 调的是正式流程的实现
+  ✓ runGroupSchedule 是导出函数
+  ✓ 它接收 spec（含 send/persist 注入点）
+  ✓ hardStopKind 共用
+  ✓ makeSnapshotWriter 共用
+  ✓ ★ 实现内部确实调用注入的 persist（不是测试自带的）
+  ✓ ★ 实现内部确实调用 prevTurnTrusted（依赖检查在正式实现里）
+
+§2 正常三轮 → 发送三次
+  ✓ 发送 3 次
+  ✓ 调度态.确认发送数 = 3
+  ✓ 记录 3 轮
+  ✓ 组已登记 = true
+  ✓ 无停机
+  ✓ ★ 持久化 4 次（3 轮 + 1 次终态）
+  ✓ 持久化次数与调用次数一致
+
+§3 第二轮超时 → 第三轮不发送
+  ✓ ★ 实际只发送 2 次
+  ✓ ★ 确认发送数 = 2
+  ✓ 第三轮输入从未被发送
+  ✓ ★ 失败轮被保留（不是丢弃）
+  ✓ 失败轮保留 stage
+  ✓ 失败轮保留原始请求结果（超时证据）
+  ✓ ★ 第三轮标记未跑
+  ✓ 未跑原因写明「前一轮失败」
+  ✓ ★ 未跑轮没有伪造任何输出/请求结果（不为它编造历史请求）
+  ✓ ★ 终态已记录
+  ✓ 登记写明停机在第 2 轮
+  ✓ 停机原因=网络/超时
+
+§4 每组只登记一次（★ 本轮修掉的真 bug）
+  ✓ 组已登记 = true
+  ✓ 登记内容正确
+  ✓ 正常跑完也只登记一次（登记字段为「正常跑完」）
+
+§5 ★ 持久化完成前不得发送下一轮
+  ✓ ★ 严格「发一轮→落一盘→再发下一轮」，末尾加一次终态
+  ✓ 持久化次数 = 4（3 轮 + 终态）
+
+§6 持久化失败 → 停止后续发送
+  ✓ ★ 第一次持久化失败后不再发送
+  ✓ ★ 写入错误**没有被吞掉**（向上抛）
+  ✓ 错误信息原样传出
+  ✓ （异常路径下不返回正常状态对象）
+  ✓ 第二轮失败 → 第三次不发
+  ✓ 错误原样传出
+
+§7 硬停止（403 / 网络）→ 停止整跑
+  ✓ 403 → 只发第 1 轮
+  ✓ 停机原因=权限不可用
+  ✓ 标记停止整跑
+  ✓ 网络失败 → 只发第 1 轮
+  ✓ ★ 网络失败停止整跑（用户要求）
+  ✓ ★ 中途超时也停整跑，且第 3 轮被补记未跑
+  ✓ 第 3 轮补记为未跑（共 3 条）
+
+§8 真实快照写入（临时目录）
+  ✓ 快照文件已写入
+  ✓ 快照含本轮记录
+  ✓ 标注为运行中快照
+  ✓ 文件名带组号与序号
+  ✓ ★ 停机原因已落盘
+  ✓ 失败轮也在快照里
+  ✓ 两次写入 → 两个文件
+
+§9 请求体缺证 → 按采集异常停止续发
+  ✓ 单轮组[缺记录] 判停机
+  ✓ 单轮组[缺记录] 停机原因=采集异常
+  ✓ 单轮组[缺记录] 停止整跑=true
+  ✓ 单轮组[缺记录] 只发了 1 次（无后续可发）
+  ✓ 单轮组[采集失败] 判停机
+  ✓ 单轮组[采集失败] 停机原因=采集异常
+  ✓ 单轮组[采集失败] 停止整跑=true
+  ✓ 单轮组[采集失败] 只发了 1 次（无后续可发）
+  ✓ 单轮组[messages空] 判停机
+  ✓ 单轮组[messages空] 停机原因=采集异常
+  ✓ 单轮组[messages空] 停止整跑=true
+  ✓ 单轮组[messages空] 只发了 1 次（无后续可发）
+  ✓ 缺证反例[messages非数组] 应判缺证
+  ✓ 缺证反例[messages非数组] hardStopKind=link
+  ✓ 缺证反例[messages为null] 应判缺证
+  ✓ 缺证反例[messages为null] hardStopKind=link
+  ✓ 缺证反例[条目缺role] 应判缺证
+  ✓ 缺证反例[条目缺role] hardStopKind=link
+  ✓ 缺证反例[role为空串] 应判缺证
+  ✓ 缺证反例[role为空串] hardStopKind=link
+  ✓ 缺证反例[content为空串] 应判缺证
+  ✓ 缺证反例[content为空串] hardStopKind=link
+  ✓ 缺证反例[content为null] 应判缺证
+  ✓ 缺证反例[content为null] hardStopKind=link
+  ✓ 缺证反例[条目是字符串] 应判缺证
+  ✓ 缺证反例[条目是字符串] hardStopKind=link
+  ✓ 缺证反例[条目是数组] 应判缺证
+  ✓ 缺证反例[条目是数组] hardStopKind=link
+  ✓ 缺证反例[条目为null] 应判缺证
+  ✓ 缺证反例[条目为null] hardStopKind=link
+  ✓ 缺证反例[多条里第二条坏] 应判缺证
+  ✓ 缺证反例[多条里第二条坏] hardStopKind=link
+  ✓ 正常证据[常规] 不得误判缺证
+  ✓ 正常证据[常规] 不得误停
+  ✓ 正常证据[单条] 不得误判缺证
+  ✓ 正常证据[单条] 不得误停
+  ✓ 正常证据[content结构化数组] 不得误判缺证
+  ✓ 正常证据[content结构化数组] 不得误停
+  ✓ ★ 末轮缺证：三轮都发了（不丢本轮）
+  ✓ 三条记录都在
+  ✓ ★ 末轮缺证仍被抓住（不被漏掉）
+  ✓ ★ 本轮输出没丢
+  ✓ ★ 本轮落地状态保留
+  ✓ ★ 本轮诊断保留（没被改写成失败）
+  ✓ 确认发送数 = 3（未把缺证当未发出）
+  ✓ 第一组因缺证停机
+  ✓ ★ 后续组不启动（缺证 ⇒ 停止整跑）
+  ✓ ★ 第二组发送替身实际调用次数 = 0
+  ✓ ★ 未发出轮次走「未发出」分支（不是采集异常）
+  ✓ 确认发送数 = 0（未发出不算已发）
+  ✓ ★ 缺证判定对「未发出」不启用
+  ✓ 证据齐全：三轮都发
+  ✓ ★ 证据齐全不误停
+  ✓ 阳性对照：有证据 ⇒ 不判缺证
+  ✓ ★ 真实超时仍报 net（不被缺证改写成采集异常）
+  ✓ ★ 真实 403 仍报 perm
+
+────────
+通过 106 / 失败 0
+✅ 真实调度已用**零模型请求**测试锁住（9 条覆盖全过）。
+
+── scripts/offline-f2-fixture-trace-test.js（本地替身 + 生命周期）退出码 0 ──
+§1 沙箱引导（夹具先就位，SETUP 后跑）
+  ✓ 生产脚本加载零失败（不清空记录，直接断言）
+  ✓ SETUP 成功执行（未抛错）且拿到 sid
+  ✓ 导航替身被调用且页码正确
+
+§2 修复后：逐字段三步核对
+
+§2.1 ① 存档直读（store.get("offlineSessions")）
+  ✓ ① 五个字段全部等于夹具预期
+
+§2.2 ② offlineStore.findSession 回读（生产深拷贝路径）
+  ✓ ② 五个字段全部等于夹具预期
+
+§2.3 ③ 运行时 spy：保存接口确实被调用
+  ✓ ③ createSession 被调用 1 次（场景名与 env 走正式创建参数）
+  ✓ ③ updateEnv 被调用 1 次且只带 env 四字段（已验证的保存入口）
+  ✓ ★ 前置消息恰为 4 条，且逐项 role/正文/顺序全部正确（内容断言）
+  ✓ ★ preActions 只保存拼接版一次（不重复进历史）
+  ✓ ★ 整段会话里没有任何逐字重复的消息
+  ✓ ③ appendMessage 被调用 4 次（辅助检查，不替代上面的内容断言）
+  ✓ ★ 负向对照：SETUP 里不再有对孤儿副本的直接赋值
+
+§2.4 ④ assembleOffline 的【当前场景】段 + 请求体 messages
+  ✓ ④ 装配产物里确有【当前场景】段（否则本节结论作废）
+  ✓ ④ 场景段里的场景名 = 夹具预期
+  ✓ ④ 场景段里四个现场值全部 = 夹具预期
+  ✓ ★ 请求体 messages 里【当前场景】段带着全部五个现场值
+  ✓ ★ 请求体里**不含** createSession 的默认值（证明没被覆盖）
+  ✓ 请求体采集无错误（bodyCaptureError 应为 null）
+
+§2.5 沿生产链（requestOnce → 假 fetch）复核
+
+§2.6 断网保护的生命周期（本地替身，零外网）
+  ✓ 能从生产源码读出 createSession 默认值（判据有效）
+  ✓ ✓ 剥注释器：注释/字符串里的写法被剥掉，真代码里的保留
+  ✓ 剥注释器本身有判别力（阳性对照）
+
+§3 负向对照：直接改 findSession 的副本不会保存（根因证据）
+  ✓ store.get 返回深拷贝 → 改它不影响 store
+  ✓ findSession 返回的也是孤儿副本（旧 SETUP 正是这么用的）
+  ✓ 对照：走 mutateSession 路径（updateEnv / createSession form）就能落库
+  ✓ ⚠️ 已知陷阱：updateEnv 传 sceneName 会被**静默忽略**（不报错）
+
+§4 取证落盘
+  ✓ ✓ D:\projects\sleepy\docs\取证-F2现场值持久化验证-2026-10-05.json（5800 字节）
+  ✓ 取证 JSON 落盘
+  ✓ 口径护栏：取证文件不含「模型收到 / 已送达模型」类越界断言
+  ✓ 口径护栏：统一用「客户端提交给 fetch 的请求体」
+  ✓ 口径护栏：明确标注未取真实 init.body
+  ✓ ✓ 生产 body：五锚点齐全 · 拼接版 1 次 · 逐条版 0 次 · 无重复
+  ✓ 生产 requestOnce 落到的 body：四个现场锚点齐全、历史无重复
+  ✓ ✓ 阻断失效也只命中本地替身 —— 本节零外网
+  ✓ 探针本身零外网：即使阻断失效也只命中本地替身
+  ✓ 处理中阻断仍有效：await 期间网络入口仍被挡
+  ✓ ✓ 六个网络入口全部还原为原始引用
+  ✓ 正常完成后恢复：restore 之后函数引用回到原值
+  ✓ 异常退出也恢复：try 内抛错时 finally 仍还原
+  ✓ ✓ 复现确认：非 async 回调的 finally 早于 promise 落地 → 保护失效
+  ✓ ★ 反向：非 async 回调会让 finally 提前释放（复现原缺陷）
+  ✓ ★ 对照：async 回调的 finally 晚于 await 落地（修好的形态）
+
+────────────────────────────────────────────────────────
+夹具现场值持久化验证：41 / 41 通过
+✓ 全绿（零**模型**请求 · 未启动浏览器 · 未改生产代码）
+
+── scripts/offline-f2-sendbody-test.js（公网探针已去除）退出码 0 ──
+§1 SHA-256 实现可信（要求 ⑤：必须是真 SHA-256，不是校验和）
+  ✓ 与 node:crypto 逐例一致（含空串/55/56/63/64/65 边界 + 中文 + emoji）
+  ✓ ★ 阳性对照：故意改一个字节，哈希必须变（防「恒等函数」假绿）
+  ✓ 空串哈希 = node 的已知值（不是空、不是 0）
+
+§2 时序：采集发生在调用 origFetch 之前（要求 ①）
+  ✓ 幂等：装两次不会记两次出站
+
+§3 字段白名单与哈希口径（要求 ②⑤）
+  ✓ 只保留 model/messages/stream/max_tokens/temperature
+  ✓ body 里的其他字段（如 tools/top_p）不进摘要
+  ✓ ★ bodySHA256 = node 对 init.body 原始串的哈希（不是装配快照的）
+  ✓ 哈希在脱敏之前算（脱敏不改变 bodySHA256）
+
+§4 messages 保留 role 与 content（要求 ③⑧）
+  ✓ ★ 逐条与 init.body 里的 messages 一致（要求 ⑧：核心断言）
+  ✓ ★ 不是长度、不是哈希 —— content 是可读原文
+  ✓ 负向：content 若是长度/哈希形态，这里必须抓不到 —— 用真实长文对照
+  ✓ user / assistant / system 三种 role 都原样保留
+  ✓ name / tool_calls 等非 role+content 字段不落（不越界抄协议）
+  ✓ 非字符串 content（多模态数组）保留内容本身，不退化成长度
+
+§5 凭据脱敏（要求 ④）
+  ✓ 顶层 api_key 字段被打掉，且不留明文
+  ✓ Authorization / token 类键名都打掉
+  ✓ ★ content 里混进 sk-… 也要打掉（键名无辜，靠取值形状）
+  ✓ Bearer … 与 JWT 也打掉
+  ✓ 脱敏后仍保留可读性（不整段抹掉），且标了 sha8 指纹
+  ✓ ★ 阳性对照：脱敏器没被写成「什么都不改」
+
+§6 响应侧 finish_reason/usage/reasoning_content 全部保留（要求 ⑥）
+
+§7 采集失败记 bodyCaptureError（要求 ⑦）
+  ✓ JSON.parse 失败 → 记错误，messages 留 null（**不填空数组**）
+  ✓ init.body 不存在 → 记「无请求体」，不编一个空 body
+  ✓ body 是不可同步读取的类型（Blob/FormData）→ 如实报缺失
+  ✓ body 解析成数组（非对象）→ 记类型不符
+  ✓ body 合法但没有 messages → 记缺失，不伪造空 messages
+  ✓ ★ 负向对照：这些「失败」形态都不许看起来像成功
+  ✓ URLSearchParams 体可同步读取（哈希算得出，但如实报非 JSON）
+
+§8 走**生产 requestOnce** 链：五字段进入假 fetch 实收 body（要求 ④）
+
+§5b 红线①：请求记录写入失败 → 不得静默续发
+
+§5b 红线②：请求拒绝/超时 → 仍要留下请求侧记录
+
+§5b 红线③：已有响应时，记录异常不得把成功改成失败
+
+§6b 脱敏：已知凭据精确匹配 / URL / 错误文本 / 结构化 content
+  ✓ ① 已知测试凭据的**精确匹配**（形状正则覆盖不到的那类）
+  ✓ ① 同一凭据出现多次 → 全部命中（账本记次数）
+  ✓ ② URL 里的凭据 query 被脱敏
+  ✓ ② URL 里的已知凭据也走精确匹配
+  ✓ ③ 错误文本里的凭据被脱敏（bodyCaptureError）
+  ✓ ③ fetch 失败原因里的凭据被脱敏（fetchError）
+  ✓ ④ 结构化 content 里的凭据字段名 + 嵌套 URL 都被脱敏
+  ✓ ★ 统一记账：没发生改动时账本是**空数组**（不是布尔、不是 0/null）
+  ✓ ★ 不靠字段名匹配证明脱敏（改动账本按实际发生记录）
+  ✓ ★ 阳性对照：给一个真不含凭据的 body，账本必须空（防「见谁都脱敏」）
+  ✓ ✓ 四个文件 mtime 全部早于本轮开工时刻
+  ✓ 四个生产文件的 mtime 都早于本轮（= 本轮没碰过它们）
+  ✓ ✓ 工作区根目录无 .js 改动（只动 scripts/；docs/ 下是取证产物）
+  ✓ 本轮只新增/修改了 scripts/ 下的源码（按 mtime 判定）
+    ⓘ 基线口径：568	24	page-offline.js | 648	13	prompt-engine.js（2026-10-04 遗留未提交，非本轮）
+  ✓ 如实登记：这两个文件相对 HEAD 有历史未提交改动（不是本轮造成的）
+  ✓ ✓ 出口被阻断；即使阻断失效，探针也只打本地替身
+  ✓ ✓ 还原后 https.request 仍是函数引用（未调用它，不触达网络）
+  ✓ ★ 网络出口确实被阻断，且探针零公网（本地替身 + 绊线）
+  ✓ ★ 接线：记录写入失败 → stopKind 判 link（与 hardStopKind 同一口径）
+  ✓ ✓ 记录写不进去 → 底层 fetch **一次都没调**，请求被 reject
+  ✓ ① __SEND.push 抛错 → fetch reject，且**底层 fetch 没被调用**
+  ✓ ① onRecordError 回调能收到失败原因（观测点存在）
+  ✓ ③ clone() 本身抛错 → 仍返回成功响应
+  ✓ 返回 Promise（不改变生产调用形态）
+  ✓ origFetch 被调用时，__SEND 里已经有这一轮的记录了
+  ✓ ✓ 五字段 + messages 全部来自**生产序列化链**，非测试手拼
+  ✓ ✓ 夹具五个现场锚点经生产 requestOnce 进了 body，apiKey 只在 headers
+  ✓ ③ 响应副本读取失败 → 仍返回**成功响应**
+  ✓ ③ 响应 JSON 坏掉 → 成功响应仍原样返回（只记 parseError）
+  ✓ ② fetch reject（网络失败）→ 请求记录仍在，且带 fetchError
+  ✓ ② 超时（AbortError）→ 请求记录仍在，stopKind 判 net
+  ✓ ★ 生产 requestOnce 真的把五字段写进了假 fetch 收到的 body
+  ✓ ★ 端点归一化也走生产（baseUrl 只有 /v1 也能打到 /chat/completions）
+  ✓ ★ genParams 三层回落生效（cfg 缺 temperature 时取内置默认 0.85）
+  ✓ ★ timeoutSec=120 被保留（不被 60s 下限改写）
+  ✓ ★ 装配产物经生产链进入 body（把 trace 的场景锚点一路带到发送体）
+  ✓ ★ 端到端：生产 requestOnce 超时 → stage=timeout，且旁路留了请求记录
+  ✓ ★ 端到端：响应坏掉时生产仍按自己的口径判，不受旁路影响
+  ✓ ③ 响应记录写入失败 → 成功响应**照常返回**（只标记，不改结果）
+  ✓ 加装请求侧采集后，响应侧字段一个都没丢
+  ✓ ★ 响应记录里挂着同一轮的「发送瞬间」（两侧可对齐）
+  ✓ 响应 JSON 坏掉时：请求侧记录**仍在**（不能连坐丢证据）
+
+────────────────────────────────────────────────────
+客户端提交给 fetch 的请求体 · 零模型请求测试：69 / 69 通过
+✓ 全绿（本测试**不启动浏览器、不发任何网络请求**）
+warning: in the working copy of 'page-offline.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'prompt-engine.js', LF will be replaced by CRLF the next time Git touches it
+
+── scripts/offline-f2-effect-fields-test.js（必要回归）退出码 0 ──
+通过 123 / 失败 0
+✅ P0 归因字段自检全绿：**字段路径可用，缺失如实记 null。**
+
+── scripts/offline-f2-edge-test.js（必要回归）退出码 0 ──
+通过 48 / 失败 0
+
+── scripts/offline-f2-depstop-test.js（必要回归）退出码 0 ──
+  ✓ 通过时不带理由
+通过 36 / 失败 0
+
+── scripts/check.js（必要回归）退出码 0 ──
+  全绿，可以刷新浏览器了
+
+── scripts/smoke.js（必要回归）退出码 0 ──
+  ✓ 所有注册页面的 render() 都不触发 app.js 的错误边界  → {"页面数":93,"全部通过":true}
+全绿：82 个脚本加载正常，核心 API 走查通过
+
+####################################################################
+# 四、生产代码未改动
+####################################################################
+  0bf2a87e34638cbe539e7fbb056391514fadae3e1d438463f534fcedb3da49a3 *prompt-engine.js
+  9c4fc136fd3f2f09e0de3376e94317dc630841343760425aac9dee29991abf02 *page-offline.js
+  1df743af4648b07e9254f216b4592e900432b7a1924c51da615a93cd75f4fbb2 *api.js
+  194d40c4763281a66f5eb7e7c3977d959ebe4ee25eaaa90ffbe3b3d2db0e431b *behavior-text.js

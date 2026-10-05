@@ -1,0 +1,72 @@
+{
+  "记录时间": "2026-10-05T04:57:37.493Z",
+  "结论": "★ 停在发送前 —— 未发出任何模型 HTTP 请求（0 次）",
+  "阻塞原因": "运行环境未提供模型凭据：SLEEPY_API_BASE / SLEEPY_API_KEY / SLEEPY_API_MODEL 三个环境变量均未设置；仓库内无 .env；存档中未留存可用凭据。",
+  "当前实际配置": {
+    "说明": "按要求不默认沿用历史值 —— 以下为**实际读到的当前状态**",
+    "SLEEPY_API_BASE": null,
+    "SLEEPY_API_KEY": null,
+    "SLEEPY_API_MODEL": null,
+    "结论": "三项均未设置 ⇒ **当前没有可用的模型配置**"
+  },
+  "历史配置_仅供对照": {
+    "来源": "docs/样本-private-f2-效果/试跑-P1-新版本单臂-____glm-5.2-2026-10-04T13-41-07.json（2026-10-04）",
+    "模型": "[按量]glm-5.2",
+    "端点": "https://api.rua.chat/v1（该文件里已脱敏存盘）",
+    "温度": 0.85,
+    "maxTokens": 8192,
+    "contextMessages": 40,
+    "警告": "这是**历史**值，不代表当前配置；不得据此认为当前仍是该模型"
+  },
+  "发送前离线核对_全部通过": {
+    "五个现场字段": {
+      "sceneName": "雨夜的旧书店 ✓",
+      "location": "城西旧书店二楼阁楼 ✓",
+      "timeOfDay": "深夜 ✓",
+      "weather": "雨 ✓",
+      "clockTime": "23:40 ✓"
+    },
+    "四条前置历史": "4 条，role/顺序/正文与指定夹具逐项一致，无额外历史 ✓",
+    "B_P_L_N_S2装配": "behaviorText sleepy-behavior-v1-review-01；B/P/L/N/S2 五段整块各命中 1 次，顺序 B→P→L ✓",
+    "脱敏请求体采集": "captureRequestBody 可用，bodyCaptureError=null，requestBodyEvidence.缺证=false ✓",
+    "timeout": "APPROVED.timeoutSec = 120 ✓",
+    "参数": {
+      "temperature": 0.85,
+      "maxTokens": 8192,
+      "contextMessages": 40,
+      "stream": false,
+      "timeoutSec": 120
+    }
+  },
+  "全局请求预算": {
+    "预算": 1,
+    "实际使用": 0,
+    "说明": "未发送 ⇒ 预算未动用。自动开场/重试/回退/后台调用**均未发生**（没有任何请求出去）。"
+  },
+  "全局预算可行性分析_供下次发送前参考": {
+    "结论": "可行，但**必须**在页内 window.fetch 上设闸，不能只靠调度器",
+    "页内fetch可覆盖的出口": [
+      "api.js requestOnce(L184)",
+      "api.js streamOnce(L251)",
+      "api.js fetchModels(L344)",
+      "api.js embed(L493)",
+      "imggen.js L1941/L1983/L2183",
+      "page-settings.js L66",
+      "page-subapi.js L59",
+      "tts.js L1384"
+    ],
+    "不在页内fetch范围的": "sw.js 的 fetch 属 Service Worker 独立全局（只服务静态资源，不发模型请求）",
+    "放大风险": "runChat 会把候选 × retryN（subRetry 默认 2，最多 5）展开成多次调用 —— 单轮可能扇出 2 次以上",
+    "建议": "在既有 installFetchBypass 里加一个全局计数器：命中模型端点的第 2 次及以后直接 reject，并写入预算报告；这样自动开场/重试/回退/后台调用都无处可逃"
+  },
+  "未获取的证据": [
+    "客户端真正提交的 request body",
+    "原始 body 哈希",
+    "响应元数据",
+    "响应原始正文",
+    "解析结果",
+    "诊断关联信息",
+    "终态快照"
+  ],
+  "未改写的历史证据": "docs/样本-private-f2-效果/ 下 12 个样本全部保持 2026-10-04 原样，未补造任何请求正文"
+}

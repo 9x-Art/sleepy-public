@@ -1,0 +1,57 @@
+{
+ "用例": [
+  {
+   "标签": "留空（用内置默认 1024）",
+   "期望": 1024,
+   "实际HTTP_body里的max_tokens": 1024,
+   "body顶层字段": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "stream": false,
+   "调用结果": {
+    "ok": false
+   }
+  },
+  {
+   "标签": "用户设 4096",
+   "期望": 4096,
+   "实际HTTP_body里的max_tokens": 4096,
+   "body顶层字段": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "stream": false,
+   "调用结果": {
+    "ok": false
+   }
+  },
+  {
+   "标签": "用户设 32768（UI 上限）",
+   "期望": 32768,
+   "实际HTTP_body里的max_tokens": 32768,
+   "body顶层字段": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "temperature"
+   ],
+   "stream": false,
+   "调用结果": {
+    "ok": false
+   }
+  }
+ ],
+ "源码核对": {
+  "genParams源码": "function genParams(cfg, ov) {\n    var def = store.get('chatDefaults') || {};\n    ov = ov || {};\n    cfg = cfg || {};\n\n    function pick(key, fallback) {\n      if (ov[key] !== null && ov[key] !== undefined) return ov[key];\n      if (cfg[key] !== null && cfg[key] !== undefined) return cfg[key];\n      if (def[key] !== null && def[key] !== undefined) return def[key];\n      return fallback;\n    }\n\n    /* 超时归一（2026-09-29 用户拍板「归一到 60s」）：存档里 <60 的值一律按\n       60 跑 —— 用户真机遇到「几秒就超时」，查下来是早年存的小值一直生效。\n       下限本来是 5 秒（老存档 timeoutSec: 0 会被算成 1 秒，2026-09-23 修），\n       现在直接抬到 60：UI 就不该再让人填小于 60 的值。 */\n    var tout = pick('timeoutSec', GEN_DEFAULTS.timeoutSec);\n    if (!(tout >= 60)) tout = GEN_DEFAULTS.timeoutSec;\n\n    return {\n      temperature: pick('temperature', GEN_DEFAULTS.temperature),\n      maxTokens: pick('maxTokens', GEN_DEFAULTS.maxTokens),\n      contextMessages: pick('contextMessages', GEN_DEFAULTS.contextMessages),\n      timeoutSec: tout,\n      stream: pick('stream', GEN_DEFAULTS.stream)\n    };\n  }",
+  "有Math.min裁剪": false,
+  "有Math.max裁剪": false
+ }
+}

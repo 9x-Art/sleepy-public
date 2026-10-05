@@ -1,0 +1,97 @@
+{
+ "真实出站": {
+  "init的键": null,
+  "headers的键": null,
+  "body顶层字段": "api.bodyFor 未导出",
+  "messages": {
+   "段数": 12,
+   "角色序列": [
+    "system",
+    "system",
+    "system",
+    "system",
+    "system",
+    "system",
+    "system",
+    "assistant",
+    "user",
+    "user",
+    "user",
+    "user"
+   ],
+   "顶层字段值": null,
+   "思考相关顶层字段": null
+  },
+  "body含U1": null,
+  "body含失败提示": null,
+  "body顶层字段_读源码": [
+   "model",
+   "messages",
+   "stream",
+   "max_tokens",
+   "temperature"
+  ],
+  "思考相关顶层字段_读源码": [],
+  "headers_读源码": [
+   "Content-Type",
+   "Authorization"
+  ],
+  "说明": "requestOnce 在本轮被 stub，因此没有真实 fetch；messages 段是拦 requestOnce 入参拿到的（真正送进 callModel 的内容）。请求体顶层字段与 headers 由 api.js 的 bodyFor / requestHeaders 静态读出（bodyFor 未对外导出，无法在页内调）。"
+ },
+ "装配层": {
+  "assistant段": [
+   "【场景】正常第一轮。"
+  ],
+  "user段": [
+   "正常一轮",
+   "坏 JSON 一轮",
+   "观察轮"
+  ],
+  "含失败提示": false,
+  "含U1": false,
+  "含U2": false,
+  "system段数": 7,
+  "整份字符数": 3780
+ },
+ "会话": {
+  "失败记录数": 3,
+  "降级记录仍在会话里": true,
+  "有rawReturn字段": false
+ },
+ "DOM": {
+  "降级块渲染中": true,
+  "人话提示": "这一轮的回复格式出了点问题，原始返回可展开查看。",
+  "details_open_布尔": false,
+  "details_open_含义": "默认收起",
+  "原始区": {
+   "长度": 91,
+   "首40字": "{\"paras\":[{\"type\":\"prose\",\"text\":\"第一段 UN",
+   "含U1": true,
+   "含U2": true
+  },
+  "正文_排除折叠区": "正常第一轮。你正常一轮这一轮的回复格式出了点问题，原始返回可展开查看。查看原始返回[折叠区·已排除]你坏 JSON 一轮这一轮的回复格式出了点问题，原始返回可展开查看。查看原始返回[折叠区·已排除]你观察轮这一轮的回复格式出了点问题，原始返回可展开查看。查看原始返回[折叠区·已排除]"
+ },
+ "页面报错": [],
+ "思考能力只读核对": {
+  "全库搜索命中": "0 处（page-collection.js 的 'thinking' 是收藏分类文案、page-group-offline.js 的 'gof-thinking' 是 UI 装饰 class，均无关）",
+  "GEN_DEFAULTS": {
+   "temperature": 0.85,
+   "maxTokens": 1024,
+   "contextMessages": 40,
+   "timeoutSec": 60,
+   "stream": true
+  },
+  "请求体顶层字段": [
+   "model",
+   "messages",
+   "stream",
+   "max_tokens",
+   "temperature"
+  ],
+  "headers": [
+   "Content-Type",
+   "Authorization"
+  ],
+  "结论": "代码侧零推理配置：没有 enable_thinking / reasoning_effort / thinking_budget / <think> 提示词，也没有思考相关请求头。⚠️ 没有配置 ≠ 模型一定没有内部推理；有配置也需确认接口实际支持。本次只读核对，未新增任何字段、头或提示词。"
+ }
+}
