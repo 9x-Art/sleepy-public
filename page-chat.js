@@ -2412,6 +2412,7 @@
          加号面板展开、多选条出现，都会让它变高变矮），比去猜「谁改了高度」稳。
          用户自己往上翻看老消息时 stickBottom 会关掉，不会再把他拽回来。 */
       var stickBottom = true;
+      var lastRenderedTs = 0;
       var stickRO = null;
       function atBottom(slack) {
         return msgWrap.scrollTop >=
@@ -2435,52 +2436,82 @@
         try { stickRO.observe(msgWrap); } catch (e) { stickRO = null; }
       }
 
+      var renderedMsgCount = -1, renderedLastId = null, renderedChatId = null;
       function renderMessages(keepScroll) {
         var prev = msgWrap.scrollTop;
-        msgWrap.innerHTML = '';
-        /* 语音条是按 id 注册的，重画之后整批作废（旧节点已经不在文档里） */
-        voiceBars = {};
-
         var c = getChat(chatId);
         if (!c) return;
+        /* 切到别的会话：缓存作废，强制全量重画（否则会把新会话末条
+           误当成「上一条的增量」append 到旧 DOM 上）。 */
+        if (renderedChatId !== chatId) { renderedMsgCount = -1; renderedLastId = null; }
 
-        /* 当前皮肤模式：捡手机要多渲染昵称标，企微/捡手机不显示气泡下时间 */
+        /* 增量快路径：仅末尾新增了一条、且贴底 —— 只 append 那一条，
+           不再把整屏消息重画一遍（长聊每次新消息原来都 O(n) 全量重画）。
+           有 pending 残 nodes 时先清掉（流式结束落库瞬间）。 */
+        if (!keepScroll && renderedMsgCount >= 0 && renderedChatId === chatId &&
+            c.messages.length === renderedMsgCount + 1 &&
+            renderedLastId && c.messages[c.messages.length - 1].id !== renderedLastId) {
+          var nm = c.messages[c.messages.length - 1];
+          if (!pending) {
+            var pend = msgWrap.querySelectorAll('.msg-bubble.is-pending');
+            for (var pi = 0; pi < pend.length; pi++) pend[pi].remove();
+          }
+          try {
+            curMode = (Sleepy.charAppearance
+              ? (Sleepy.charAppearance.resolve(c.characterId).mode || 'classic')
+              : 'classic') || 'classic';
+          } catch (e) { curMode = 'classic'; }
+          renderOneMessage(nm, c);
+          if (pending && !pending.targetId) msgWrap.appendChild(pendingBubbles());
+          pruneGameCache(c);
+          syncBubbleDots();
+          renderedMsgCount = c.messages.length;
+          renderedLastId = nm.id;
+          renderedChatId = chatId;
+          stickBottom = true; toBottom();
+          return;
+        }
+
+        /* 全量重画（结构性变更 / 首屏 / 切会话 / keepScroll） */
+        msgWrap.innerHTML = '';
+        voiceBars = {};
         try {
           curMode = (Sleepy.charAppearance
             ? (Sleepy.charAppearance.resolve(c.characterId).mode || 'classic')
             : 'classic') || 'classic';
         } catch (e) { curMode = 'classic'; }
 
-        var prevTs = 0;
-        c.messages.forEach(function (m) {
-          /* 时间分隔线：和上一条隔了 5 分钟以上就插一条居中的时间 */
-          var ts = m.timestamp || 0;
-          if (!prevTs || ts - prevTs >= 5 * 60 * 1000) {
-            msgWrap.appendChild(h('div', 'msg-time-sep', timeSepLabel(ts)));
-          }
-          if (ts) prevTs = ts;
-
-          /* 撤回（2026-10-06）：原位变一行居中灰字（微信样式），点击可看
-             撤回的内容和原因 —— 撤回不删原文，数据还在。 */
-          if (m.recalledAt) {
-            msgWrap.appendChild(recallLine(m));
-            return;
-          }
-
-          /* 输出协议（预设注入系统）：assistant 正文里的 || 是气泡分隔符，
-             一条存档消息按协议渲染成多条气泡。分段只在最后一段挂 reroll，
-             长按菜单每段都能唤起（操作对象还是整条消息）。 */
-          var segs = bubbleSegs(m);
-          segs.forEach(function (seg, i) {
-            msgWrap.appendChild(bubbleFor(m, c, {
-              text: seg.text, trans: seg.trans, idx: i, total: segs.length
-            }));
-          });
-        });
+        lastRenderedTs = 0;
+        c.messages.forEach(function (m) { renderOneMessage(m, c); });
         if (pending && !pending.targetId) msgWrap.appendChild(pendingBubbles());
 
-        /* 游戏卡缓存 prune：只留当前会话里还活着的 type:'html' 消息，
-           删消息 / 换房后旧节点自动释放，避免跨会话串台或内存泄漏 */
+        pruneGameCache(c);
+        syncBubbleDots();
+        renderedMsgCount = c.messages.length;
+        renderedLastId = c.messages.length ? c.messages[c.messages.length - 1].id : null;
+        renderedChatId = chatId;
+        if (keepScroll) msgWrap.scrollTop = prev;
+        else { stickBottom = true; toBottom(); }   /* 重画＝用户要看新的那条 */
+      }
+
+      /* 单条消息渲染（时间分隔线 + 撤回 + 分段气泡），全量/增量共用一套 */
+      function renderOneMessage(m, c) {
+        var ts = m.timestamp || 0;
+        if (!lastRenderedTs || ts - lastRenderedTs >= 5 * 60 * 1000) {
+          msgWrap.appendChild(h('div', 'msg-time-sep', timeSepLabel(ts)));
+        }
+        if (ts) lastRenderedTs = ts;
+        if (m.recalledAt) { msgWrap.appendChild(recallLine(m)); return; }
+        var segs = bubbleSegs(m);
+        segs.forEach(function (seg, i) {
+          msgWrap.appendChild(bubbleFor(m, c, {
+            text: seg.text, trans: seg.trans, idx: i, total: segs.length
+          }));
+        });
+      }
+
+      /* 游戏卡缓存 prune：只留当前会话里还活着的 type:'html' 消息 */
+      function pruneGameCache(c) {
         gameCardCache.forEach(function (_node, mid) {
           var alive = false;
           for (var mi = 0; mi < c.messages.length; mi++) {
@@ -2488,10 +2519,6 @@
           }
           if (!alive) gameCardCache.delete(mid);
         });
-
-        syncBubbleDots();
-        if (keepScroll) msgWrap.scrollTop = prev;
-        else { stickBottom = true; toBottom(); }   /* 重画＝用户要看新的那条 */
       }
 
       /* 未读心声光点：只挂在**最后一条** char 气泡的头像上（多了会花）。
@@ -2560,6 +2587,112 @@
           });
         }
         return [{ text: m.content || '', trans: null }];
+      }
+
+      /* ===== 受限 markdown 渲染 + 残留协议标签兜底（整体手感 2026-10-06）=====
+         只认：粗体 **x** / 斜体 *x* _x_ / 行内代码 `x` / 代码块 ``` / 引用 > /
+         有序·无序列表 / 安全链接 [t](http(s)://…)。
+         禁止裸 HTML、<script>、内联事件、javascript: —— 文本走 textContent、
+         结构走 createElement，天然消毒；XSS 无从下手。
+         气泡条数/字数不限制（分段仍由模型 || 控制）。 */
+      var REACTION_EMOJIS = ['😊', '❤️', '😂', '😮', '😢', '👍', '🎉', '✨'];
+
+      function myMaskId() {
+        var u = (core && core.activeUserOnIsland && core.activeUserOnIsland()) ||
+                (core && core.activeUser && core.activeUser());
+        return (u && u.id) || 'me';
+      }
+
+      /* 把协议中不应出现的标签剥掉，避免字面显示在气泡里
+         （[译]…[/译] 由 splitBubblesT 抽译文，这里再兜底一遍）。 */
+      function stripProtocolTags(s) {
+        return String(s || '')
+          .replace(/\[(?:html|sticker|whisper|WHISPER|think|reasoning|img|voice|emotion)\b[^\]]*\]/g, '')
+          .replace(/\[\/?译\]/g, '')
+          .replace(/<\/?(?:think|reasoning)>/gi, '');
+      }
+
+      function mdInline(text, node) {
+        var re = /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(_([^_]+)_)|(`([^`]+)`)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g;
+        var last = 0, m, any = false;
+        while ((m = re.exec(text)) !== null) {
+          any = true;
+          if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
+          if (m[2] !== undefined) { var b = h('b', 'md-b'); b.textContent = m[2]; node.appendChild(b); }
+          else if (m[4] !== undefined) { var it = h('i', 'md-i'); it.textContent = m[4]; node.appendChild(it); }
+          else if (m[6] !== undefined) { var it2 = h('i', 'md-i'); it2.textContent = m[6]; node.appendChild(it2); }
+          else if (m[8] !== undefined) { var cd = h('code', 'md-inline'); cd.textContent = m[8]; node.appendChild(cd); }
+          else if (m[10] !== undefined) {
+            var a = h('a', 'md-a'); a.textContent = m[10];
+            a.href = m[11]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+            node.appendChild(a);
+          }
+          last = re.lastIndex;
+        }
+        if (!any) node.textContent = text;
+        else if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
+      }
+
+      function renderRichText(raw, el) {
+        el.innerHTML = '';
+        var text = stripProtocolTags(raw);
+        if (!text) return;
+        var lines = text.split('\n'), para = [], i = 0;
+        function flush() {
+          if (!para.length) return;
+          var p = h('p', 'md-p'); mdInline(para.join('\n'), p); el.appendChild(p); para = [];
+        }
+        while (i < lines.length) {
+          var line = lines[i];
+          if (/^\s*```/.test(line)) {
+            flush(); var code = []; i++;
+            while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
+            i++;
+            var pre = h('pre', 'md-pre'), co = h('code', 'md-code');
+            co.textContent = code.join('\n'); pre.appendChild(co); el.appendChild(pre); continue;
+          }
+          if (/^>\s?/.test(line)) {
+            flush(); var q = [];
+            while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(lines[i].replace(/^>\s?/, '')); i++; }
+            var bq = h('blockquote', 'md-quote'); mdInline(q.join('\n'), bq); el.appendChild(bq); continue;
+          }
+          if (/^[-*]\s+/.test(line)) {
+            flush(); var ul = h('ul', 'md-ul');
+            while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+              var li = h('li', 'md-li'); mdInline(lines[i].replace(/^[-*]\s+/, ''), li); ul.appendChild(li); i++;
+            }
+            el.appendChild(ul); continue;
+          }
+          if (/^\d+\.\s+/.test(line)) {
+            flush(); var ol = h('ol', 'md-ol');
+            while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+              var li2 = h('li', 'md-li'); mdInline(lines[i].replace(/^\d+\.\s+/, ''), li2); ol.appendChild(li2); i++;
+            }
+            el.appendChild(ol); continue;
+          }
+          if (!line.trim()) { flush(); i++; continue; }
+          para.push(line); i++;
+        }
+        flush();
+      }
+
+      /* 长按菜单里点 emoji → 给这条消息贴/取消表情回应（QQ/企微风）。
+         存储 msg.reactions = { emoji: [maskId,…] }，落库走 patchMessage
+         （store.get 深拷贝，不能直接拿对象改字段）。 */
+      function toggleReaction(msg, emoji) {
+        if (!msg || !msg.id) return;
+        var id = myMaskId();
+        var cur = (msg.reactions && msg.reactions[emoji]) || [];
+        var set = (cur.indexOf(id) >= 0)
+          ? cur.filter(function (x) { return x !== id; })
+          : cur.concat([id]);
+        var next = {};
+        for (var k in (msg.reactions || {})) {
+          if (Object.prototype.hasOwnProperty.call(msg.reactions, k)) next[k] = msg.reactions[k];
+        }
+        if (set.length) next[emoji] = set; else delete next[emoji];
+        patchMessage(chatId, msg.id, { reactions: next });
+        renderMessages();
       }
 
       /* ---------------- 译文块（组件：msg-trans） ----------------
@@ -2914,7 +3047,7 @@
             }
           } else {
             shown = seg ? (seg.text || '（空）') : (msg.content || '（空）');
-            textEl.textContent = shown;
+            renderRichText(shown, textEl);
             content.appendChild(textEl);
             /* 译文（组件 msg-trans）：只在 assistant 的气泡上出现，
                而且只在翻译开关开着的时候挂 —— 关掉就是干干净净一句原文。
@@ -2952,6 +3085,28 @@
           meta.appendChild(redrawBtn(msg));
         }
         content.appendChild(meta);
+
+        /* 表情回应药丸（QQ/企微风长按贴表情）：挂在气泡正文下方 */
+        var rk = msg.reactions ? Object.keys(msg.reactions).filter(function (k) {
+          return (msg.reactions[k] || []).length;
+        }) : [];
+        if (rk.length) {
+          var rrow = h('div', 'msg-reactions');
+          var mid0 = myMaskId();
+          rk.forEach(function (k) {
+            var arr = msg.reactions[k] || [];
+            var chip = h('button', 'msg-reaction', k + (arr.length > 1 ? ' ' + arr.length : ''));
+            chip.type = 'button';
+            if (arr.indexOf(mid0) >= 0) chip.classList.add('is-mine');
+            chip.addEventListener('click', function (e) {
+              e.stopPropagation();
+              toggleReaction(msg, k);
+            });
+            rrow.appendChild(chip);
+          });
+          content.appendChild(rrow);
+        }
+
         bubble.appendChild(content);
 
         if (role !== 'system') {
@@ -3689,6 +3844,17 @@
       function openMenu(msg, seg, bubbleEl) {
         var idx = (seg && seg.idx !== undefined) ? seg.idx : null;
         var pop = ui.anchorPopover(bubbleEl, { className: 'msg-pop' });
+
+        /* 顶部 emoji 回应条（QQ/企微风长按贴表情）；点一下贴/取消 */
+        var emojiRow = h('div', 'msg-pop-emoji');
+        REACTION_EMOJIS.forEach(function (em) {
+          var b = h('button', 'msg-pop-emoji-btn', em);
+          b.type = 'button';
+          b.addEventListener('click', function () { pop.close(); toggleReaction(msg, em); });
+          emojiRow.appendChild(b);
+        });
+        pop.el.appendChild(emojiRow);
+
         var list = h('div', 'msg-pop-list');
 
         var items = [
@@ -4175,6 +4341,12 @@
           }
         }
 
+        /* 通知中心：这一轮对方开始「正在输入」（离开页面后顶端会常驻横幅） */
+        if (Sleepy.msgCenter) Sleepy.msgCenter.typing({
+          chatId: chatId,
+          charId: (chatNow && chatNow.characterId) || null,
+          name: charNameOf(chatNow) || '对方'
+        });
         handle = api.runChat(msgs, {
           onDelta: function (delta) {
             if (mySeq !== reqSeq) return;
@@ -4214,6 +4386,16 @@
             var target = pending ? pending.targetId : null;
             pending = null;
             handle = null;
+            /* 通知中心：回复落库。正盯着这个会话就不弹；离开后才回来才弹。 */
+            if (Sleepy.msgCenter) {
+              Sleepy.msgCenter.typingStop({ chatId: chatId });
+              Sleepy.msgCenter.incoming({
+                chatId: chatId,
+                charId: (chatNow && chatNow.characterId) || null,
+                name: charNameOf(chatNow) || '对方',
+                text: String(text || '').replace(/\[[^\]]*\]/g, '').trim()
+              });
+            }
 
             /* 角色也能发表情：先把正文里的 [表情:名字] 抽出来，
                正文里那一段就去掉（不然屏幕上会杵着一个标签）。 */
@@ -4409,6 +4591,7 @@
              发送键会永久卡在禁用状态。api.js 头部的契约注释里写的就是 onFail。 */
           onFail: function (list, err) {
             if (mySeq !== reqSeq) return;
+            if (Sleepy.msgCenter) Sleepy.msgCenter.typingStop({ chatId: chatId });
             /* 多模态熔断：接口看不了图（报错提到 image/vision）就退回文字占位，
                并提示一次 —— 不然每轮都为同一件事报错。会话级，重启恢复。 */
             var detail = String((err && err.detail) || '') + String((err && err.error) || '');
@@ -4441,6 +4624,7 @@
         if (handle) { try { handle.abort(); } catch (e) { /* 忽略 */ } }
         handle = null;
         pending = null;
+        if (Sleepy.msgCenter) Sleepy.msgCenter.typingStop({ chatId: chatId });
 
         if (partial) {
           /* 半截回复里可能已经带着 [表情:…] 标签了 —— 去掉，但**不补发**
@@ -5686,7 +5870,12 @@
         if (stickRO) { try { stickRO.disconnect(); } catch (e) { /* 没有就算了 */ } stickRO = null; }
       };
     },
-    onShow: function (ctx) { if (ctx.reload) ctx.reload(); },
+    onShow: function (ctx) {
+      if (ctx.reload) ctx.reload();
+      /* 通知中心：记下「当前正盯着的会话」，离开后它的横幅 / 弹窗才会显示 */
+      Sleepy.__activeChatId = (ctx.params && ctx.params.chatId) || null;
+      if (Sleepy.msgCenter) Sleepy.msgCenter.recompute();
+    },
     onHide: function (ctx) {
       /* 离开页面时把菜单和心声浮层收掉，免得回来还开着。
          长按菜单现在是挂在 #phone 上的浮层（不在 ctx.el 里），所以要显式收。 */
@@ -5699,6 +5888,9 @@
         if (k) k.classList.remove('is-open');
       }
       Sleepy.heartbeat.closeOverlay(ctx);
+      /* 通知中心：清掉「当前会话」，让别的会话的横幅 / 弹窗可以露出来 */
+      Sleepy.__activeChatId = null;
+      if (Sleepy.msgCenter) Sleepy.msgCenter.recompute();
     }
   });
 

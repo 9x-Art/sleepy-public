@@ -291,7 +291,10 @@
 
   /* ---------------------------- 页面栈 ---------------------------- */
 
-  var PAGE_STEP = 9, PAGE_MAX = 27, HOME_STEP = 8, HOME_MAX = 24;
+  /* 层级位移与压暗。方案B（纯淡入）下不再做横向位移（STEP 归零），
+     进 app 时桌面纹丝不动；后台页只靠 --dim 轻微压暗给层级感，
+     --shift 变量保留但恒为 0。 */
+  var PAGE_STEP = 0, PAGE_MAX = 46, HOME_STEP = 0, HOME_MAX = 38;
 
   function current() { return pageStack.length ? pageStack[pageStack.length - 1] : null; }
 
@@ -305,18 +308,23 @@
         e.el.classList.add('is-active');
         e.el.classList.remove('is-behind');
         e.el.style.removeProperty('--shift');
+        e.el.style.removeProperty('--dim');
       } else {
         e.el.classList.remove('is-active');
         e.el.classList.add('is-behind');
         e.el.style.setProperty('--shift', -Math.min(depth * PAGE_STEP, PAGE_MAX) + '%');
+        /* 越深的页压得越暗，和视差一起把层级拉开；下限 .8 别黑过头。 */
+        e.el.style.setProperty('--dim', Math.max(1 - depth * 0.05, 0.8));
       }
     }
     if (len) {
       home.classList.add('is-behind');
       home.style.setProperty('--shift', -Math.min(len * HOME_STEP, HOME_MAX) + '%');
+      home.style.setProperty('--dim', Math.max(1 - len * 0.05, 0.8));
     } else {
       home.classList.remove('is-behind');
       home.style.removeProperty('--shift');
+      home.style.removeProperty('--dim');
     }
   }
 

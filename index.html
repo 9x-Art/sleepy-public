@@ -71,6 +71,9 @@
 <script src="core.js" defer></script>
 <script src="ui.js" defer></script>
 <script src="app.js" defer></script>
+<!-- 消息通知中心（顶部「正在输入」横幅 + 新消息弹窗）：挂在 #phone 上、
+     独立于页面栈，被 page-chat / page-proactive 调用。必须在它俩之前加载。 -->
+<script src="msgcenter.js" defer></script>
 <script src="api.js" defer></script>
 <!-- MCP（Model Context Protocol）连接层：多服务 + 总开关 + 逐工具开关。
      只依赖 store/core，网络在调用时才发生 —— 排在 api.js 后面即可；

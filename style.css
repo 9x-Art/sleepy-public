@@ -184,6 +184,9 @@
   --ff:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   --ff-serif:Georgia,"Songti SC","SimSun",serif;
   --ease:cubic-bezier(.22,.61,.36,1);
+  /* 页面进出场专用缓动：带一点「先快后稳」的收尾，比通用 --ease 更顺，
+     配合 .34s 的时长，压住大屏不透明页滑动时的生硬感。 */
+  --ease-page:cubic-bezier(.32,.72,0,1);
 }
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -327,14 +330,33 @@ body{
   background:var(--bg);
   overflow-y:auto;
   overflow-x:hidden;
-  transform:translateX(100%);
-  transition:transform .3s var(--ease);
-  will-change:transform;
+  /* 进场走「纯淡入」（方案B）：新页 opacity 0→1 叠上来，零位移、桌面纹丝不动。
+     之前是 translateX(100%)→0 的「从右滑入 + 桌面左推压暗」，用户觉得不好看，已改。
+     后台页仍用轻微 brightness 压暗给层级（见 is-behind），但不做横向位移。
+     ⚠️ transform 必须留 translateX(0)（不能是 none）：.w-lamp.is-focus 的
+     position:fixed 靠它约束在手机屏内，去掉会铺满整个浏览器窗口。 */
+  transform:translateX(0);
+  opacity:0;
+  transition:opacity .26s var(--ease-page),
+             filter .34s var(--ease-page);
+  will-change:opacity;
   z-index:10;
-  --shift:-11%;
+  --shift:-14%;   /* 每层视差位移，relayout 按深度覆盖 */
+  --dim:1;        /* 退到后台时的压暗系数，relayout 覆盖 */
 }
-.page.is-active{transform:translateX(0);}
-.page.is-behind{transform:translateX(var(--shift));}
+/* 栈顶：完全就位、不再压暗；左缘一道软阴影，像被推起、浮在前面的卡片。
+   静止时左缘贴着屏幕边，阴影落到屏外不可见；只有滑动过程中才露出来，
+   当作「卡片在动」的提示，不抢静态布局。活动页刻意不带 filter，免得
+   把它变成滤镜合成层、拖累滚动和页面内的 fixed 子元素。 */
+.page.is-active{
+  opacity:1;
+  box-shadow:-22px 0 46px rgba(38,28,18,.20);
+}
+/* 后台页：零位移，只用轻微 brightness 压暗给层级（方案B，桌面纹丝不动）。 */
+.page.is-behind{
+  opacity:1;
+  filter:brightness(var(--dim));
+}
 .page.is-dragging{transition:none;}
 
 /* 主屏＝桌面（page-desktop）。它是 4 屏横向滑动的网格，
@@ -1267,6 +1289,29 @@ body{
 /* 尾巴默认不画（外观 App 选了「底部/顶部」时由 JS 打开） */
 .msg-user .msg-text::after,
 .msg-assistant .msg-text::after{content:none;}
+
+/* 受限 markdown（整体手感 2026-10-06）：气泡内富文本，安静克制 */
+.msg-text .md-p{margin:2px 0;}
+.msg-text .md-p:first-child{margin-top:0;}
+.msg-text .md-p:last-child{margin-bottom:0;}
+.msg-text .md-pre{margin:4px 0;padding:8px 10px;background:var(--bg-3);border-radius:8px;overflow:auto;max-width:100%;}
+.msg-text .md-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.86em;white-space:pre-wrap;word-break:break-word;}
+.msg-text .md-inline{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em;background:var(--bg-3);padding:1px 4px;border-radius:4px;}
+.msg-text .md-ul,.msg-text .md-ol{margin:2px 0;padding-left:20px;}
+.msg-text .md-li{margin:1px 0;}
+.msg-text .md-quote{margin:2px 0;padding:2px 10px;border-left:3px solid var(--g-accent);color:var(--g-ink-2);}
+.msg-text .md-a{color:var(--g-accent);text-decoration:underline;}
+.msg-text .md-b{font-weight:700;}
+
+/* 表情回应药丸（QQ/企微风长按贴表情） */
+.msg-reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;}
+.msg-reaction{font-size:13px;line-height:1;padding:3px 8px;border:1px solid var(--bg-3);border-radius:999px;background:var(--bg-2);color:var(--g-ink);cursor:pointer;}
+.msg-reaction.is-mine{border-color:var(--g-accent);background:rgba(176,138,94,.14);color:var(--g-accent);}
+
+/* 长按菜单顶部 emoji 回应条 */
+.msg-pop-emoji{display:flex;gap:2px;padding:5px 4px;border-bottom:1px solid var(--bg-3);}
+.msg-pop-emoji-btn{font-size:19px;line-height:1;width:34px;height:34px;border:none;background:transparent;border-radius:9px;cursor:pointer;}
+.msg-pop-emoji-btn:active{background:var(--bg-3);}
 .msg-time{
   font-size:10.5px;color:var(--text-faint);
   margin-top:4px;text-align:right;
@@ -15244,3 +15289,72 @@ button.tan-row:active{background:rgba(176,138,94,.07)}
   color:var(--g-ink-2);border-radius:8px;font-size:11px;padding:3px 10px;cursor:pointer;
 }
 .ws-make-mini.is-danger{color:#A55A50;border-color:rgba(165,90,80,.35);background:none;}
+
+/* ======================= 消息通知中心（msgcenter.js） =======================
+   挂在 #phone 上、独立于页面栈。状态栏之下浮一层：
+     · .mc-banner  —— 离开某会话后，对方「正在输入」常驻横幅
+     · .mc-pop    —— 新气泡到达时的顶部弹窗（可点进对应会话）
+   配色跟全站一致：纯白底 + 主色 --g-accent(#B08A5E)，不引入蓝绿。 */
+#msg-center{
+  position:absolute;top:0;left:0;right:0;
+  z-index:65;                       /* 盖在状态栏(60)之上、页面之上 */
+  pointer-events:none;               /* 容器不挡操作，卡片自己接事件 */
+  padding-top:calc(env(safe-area-inset-top, 0px) + 34px);  /* 落进状态栏下方 */
+  font-family:var(--ff);
+  display:flex;flex-direction:column;align-items:stretch;
+}
+#msg-center .mc-banner,
+#msg-center .mc-pop{pointer-events:auto;}
+#msg-center .mc-popwrap{display:flex;flex-direction:column;}
+
+/* ---- 顶部「正在输入」横幅 ---- */
+.mc-banner{
+  display:flex;align-items:center;gap:9px;
+  margin:6px 12px 2px;padding:8px 12px;
+  background:rgba(255,255,255,.88);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border:0.5px solid var(--g-glass-line);
+  border-radius:14px;
+  box-shadow:0 6px 20px rgba(90,66,30,.14);
+  color:var(--g-ink);font-size:13px;cursor:pointer;
+  animation:mcDrop .26s ease;
+}
+.mc-ava{
+  flex:none;width:24px;height:24px;border-radius:50%;
+  background:var(--g-accent);color:#fff;
+  font-size:12px;font-weight:700;line-height:24px;text-align:center;
+}
+.mc-banner-text{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mc-dots{flex:none;display:inline-flex;align-items:center;}
+.mc-dots i{
+  width:4px;height:4px;border-radius:50%;background:var(--g-accent);
+  display:inline-block;margin:0 1px;animation:mcBlink 1.2s infinite;
+}
+.mc-dots i:nth-child(2){animation-delay:.2s;}
+.mc-dots i:nth-child(3){animation-delay:.4s;}
+
+/* ---- 新消息弹窗 ---- */
+.mc-pop{
+  display:flex;align-items:center;gap:10px;
+  margin:6px 12px 2px;padding:10px 12px;
+  background:rgba(255,255,255,.95);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border:0.5px solid var(--g-glass-line);
+  border-radius:16px;
+  box-shadow:0 8px 24px rgba(90,66,30,.18);
+  cursor:pointer;
+  transform:translateY(-12px);opacity:0;
+  transition:transform .28s ease,opacity .28s ease;
+}
+.mc-pop.is-in{transform:translateY(0);opacity:1;}
+.mc-pop.is-out{transform:translateY(-12px);opacity:0;}
+.mc-pop-mid{flex:1;min-width:0;}
+.mc-pop-name{font-size:13px;font-weight:700;color:var(--g-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mc-pop-text{
+  font-size:12px;color:var(--g-ink-2);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.mc-pop-go{flex:none;font-size:12px;font-weight:700;color:var(--g-accent);}
+
+@keyframes mcDrop{from{transform:translateY(-10px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+@keyframes mcBlink{0%,60%,100%{opacity:.25;}30%{opacity:1;}}

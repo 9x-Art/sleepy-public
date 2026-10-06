@@ -357,7 +357,19 @@
       { role: 'user', content: user.join('\n\n') }
     ];
 
-    function done(r) { evaluating[charId] = false; return r; }
+    function done(r) {
+      evaluating[charId] = false;
+      /* 通知中心：主动消息收尾（send / skip / defer / 报错都走这里） */
+      if (Sleepy.msgCenter) Sleepy.msgCenter.typingStop({ chatId: (g.chat && g.chat.id) });
+      return r;
+    }
+
+    /* 通知中心：角色即将「正在输入」（后台生成，离开页面也会在顶端提示） */
+    if (Sleepy.msgCenter) Sleepy.msgCenter.typing({
+      chatId: (g.chat && g.chat.id),
+      charId: charId,
+      name: (ch && ch.name) || 'TA'
+    });
 
     return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
       if (!res.ok) return done({ ok: false, why: 'api', error: Sleepy.api.describeError(res) });
@@ -435,7 +447,7 @@
         saveState(charId, ps);
         /* 结果写回 ta 提案（第五批）：**发送真的成功了**才记 send */
         noteTaOutcome(g.cands, ids, 'send', msgId);
-        notify(charId, chat.id);
+        notify(charId, chat.id, String(d.message).trim());
         return done({ ok: true, decision: 'send', text: String(d.message).trim() });
       }
 
@@ -482,10 +494,15 @@
   }
 
   /* 落页 + 提醒 */
-  function notify(charId, chatId) {
+  function notify(charId, chatId, text) {
     var ch = core.findChar(charId);
     var name = ch ? ch.name : 'TA';
-    if (Sleepy.toast) Sleepy.toast('「' + name + '」主动发来了消息', 'ok');
+    /* 顶部消息中心接手「弹窗」（带正文预览）；没有中心时退化为底部 toast。 */
+    if (Sleepy.msgCenter) {
+      Sleepy.msgCenter.incoming({ chatId: chatId, charId: charId, name: name, text: text || '' });
+    } else if (Sleepy.toast) {
+      Sleepy.toast('「' + name + '」主动发来了消息', 'ok');
+    }
     /* 当前开着这个对话就原地刷新；开着聊天 App 就交给它下次 onShow */
     var top = Sleepy.nav && Sleepy.nav.top && Sleepy.nav.top();
     if (top === 'chat-detail' && Sleepy.chatDetailRefresh) Sleepy.chatDetailRefresh();

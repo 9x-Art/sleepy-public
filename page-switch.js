@@ -60,11 +60,9 @@
     close.setAttribute('aria-label', '关闭');
     head.appendChild(close);
 
-    var sub = h('p', 'sw-sub', '选定之后，整个 OS 的视觉和数据跟着换');
     var body = h('div', 'sw-body');
 
     panel.appendChild(head);
-    panel.appendChild(sub);
     panel.appendChild(body);
     host.appendChild(mask);
     host.appendChild(panel);
@@ -72,7 +70,7 @@
     mask.addEventListener('click', function () { closeSwitcher(); });
     close.addEventListener('click', function () { closeSwitcher(); });
 
-    switchEls = { mask: mask, panel: panel, body: body, sub: sub };
+    switchEls = { mask: mask, panel: panel, body: body };
     return switchEls;
   }
 
@@ -102,8 +100,6 @@
     /* ---- ① 切换岛屿 ---- */
     var iRow = h('div', 'sw-section');
     iRow.appendChild(h('p', 'sw-section-title', '切换岛屿'));
-    iRow.appendChild(h('p', 'sw-section-sub',
-      '换岛 = 数据和视觉整体换，桌面、聊天、朋友圈都跟着换'));
     if (!rooms.length) {
       iRow.appendChild(h('p', 'sw-empty-text', '还没有岛 · 去浮岛捏一座'));
     }
@@ -130,8 +126,6 @@
        的视角跟着换，但岛没换，桌面差异那些都不动。 */
     var cRow = h('div', 'sw-section');
     cRow.appendChild(h('p', 'sw-section-title', '这座岛里的身份'));
-    cRow.appendChild(h('p', 'sw-section-sub',
-      '只换聊天里的「对面」和「我」这张脸 —— 不换岛，桌面不动'));
     if (!sb) {
       cRow.appendChild(h('p', 'sw-empty-text', '还没降落在任何一座岛上'));
     } else {
@@ -206,10 +200,6 @@
       });
     }
     body.appendChild(cRow);
-
-    body.appendChild(h('p', 'sw-note',
-      '换岛在上面那层：数据和视觉整体换。换身份在下面这层：' +
-      '只决定聊天里「对面是谁、我是谁」，岛和桌面都不动。'));
   }
 
   /* 降落一座岛：activeSandboxId 换过去，数据和视觉整体换。
@@ -748,7 +738,6 @@
     close.setAttribute('aria-label', '关闭');
     head.appendChild(close);
     panel2.appendChild(head);
-    panel2.appendChild(h('p', 'sw-sub', '只列这座岛上的账号 · 选中后聊天和朋友圈跟着换'));
 
     var body = h('div', 'sw-body');
     var wrap = h('div', 'mtb-idents');

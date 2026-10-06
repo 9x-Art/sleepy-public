@@ -107,10 +107,13 @@
 
   /* ---------------------------- 表单 ---------------------------- */
 
+  /* 字段外壳：标签 + （曾有的）下方小字说明。
+     ⚠️ 2026-10-06 起不再渲染 .set-hint：App 计划内置「说明指引 app + NPC」
+     来承载功能解释，页面里这些静态小字说明是多余的、还挤占竖向空间，统一停用。
+     hint 参数先留着（字段调用方仍在传），只是不再画出来 —— 后续清扫可顺手删掉。 */
   function fieldShell(label, hint) {
     var wrap = h('div', 'set-field');
     wrap.appendChild(h('label', 'set-label', label));
-    if (hint) wrap.appendChild(h('p', 'set-hint', hint));
     return wrap;
   }
 
@@ -220,7 +223,7 @@
     var wrap = h('div', 'set-field set-field-row');
     var main = h('div', 'set-field-main');
     main.appendChild(h('label', 'set-label', o.label));
-    if (o.hint) main.appendChild(h('p', 'set-hint', o.hint));
+    /* 同 fieldShell：下方小字说明停用（指引 app + NPC 会接管解释）。 */
     wrap.appendChild(main);
 
     var lab = h('label', 'set-switch');
