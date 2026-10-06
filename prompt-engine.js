@@ -773,6 +773,56 @@
       body: '偶尔可以「拍一拍」对方：单独一行写 [拍一拍:后缀]（如 [拍一拍:脑袋]，后缀可省）。不要常用。'
     },
 
+    /* 撤回说明书（2026-10-06）：模型可以收回自己刚说过的话。
+       跟拍一拍同理，一行就够 —— 写多了模型会天天在撤回。 */
+    msgrecall: {
+      title: '撤回说明',
+      locked: true,
+      body: '刚说的话可以反悔：单独一行写 [撤回:第几条|原因]，如 [撤回:1|说得太冲了想收回来]（1=你上一条发出去的消息，2=再往前一条，最多数到 3）。原因用一句话，对方点那条灰字就能看到。不要常用。'
+    },
+
+    /* 灯牌说明书（2026-10-06）：往桌面的挂件灯上留言，是一个随时可用的
+       能力，不是主动消息的附属。跟撤回同理，一行就够 —— 写多了模型会
+       每条回复都往灯上挂。40 字来自灯牌卡面的实际容量（page-desktop
+       lampNotes 的截断线），两处口径必须一致。 */
+    lamptag: {
+      title: '灯牌',
+      locked: true,
+      body: '桌上有盏挂件灯，你想留句话就单独一行写 [灯:那句话]，如 [灯:记得多喝水]（40 字内；这句话会挂到灯上展示，气泡里不显示，用不着写在正文里重复一遍）。什么时候想留都可以，不用每条都留。'
+    },
+
+    /* 慢递信箱（2026-10-06 商城批4）：延迟送达的信。跟灯牌同理，一行就够 ——
+       N 的上限（72）来自 page-desktop 慢递组件的钳制，两处口径一致。 */
+    slowmail: {
+      title: '慢递信箱',
+      locked: true,
+      body: '你还可以写慢递信：单独一行写 [慢递:小时数|信的内容]，如 [慢递:6|（信的正文，可以长一些）]。信会在 N 小时后送进对方的信箱（1 到 72），到点前对方看不到。适合想说但不必马上被看到的话；偶尔写一封就好。'
+    },
+
+    /* HTML 小游戏（2026-10-06）：TA 亲手做一个能在聊天里直接玩的网页。
+       能力纯本地（渲染在沙箱 iframe，零接口依赖），所以没有「接口可用
+       才注入」的闸，常开。尺寸口径：15KB 与 page-chat.js 的
+       HTMLGAME_MAX（20KB 截断闸）之间留了余量 —— 说明书喊 15KB，
+       程序 20KB 才截，别把两处改反了。
+       游戏没法知道你玩到几分 —— 除非它结算时调 SleepyGame.report，
+       所以「调 report」必须写进说明书，不然结算闭环是断的。 */
+    htmlgame: {
+      title: 'HTML 小游戏',
+      locked: true,
+      body: [
+        '你可以亲手做一个能在聊天里直接玩的小游戏送给对方：在回复里单独写一块',
+        '[html]',
+        '（完整的 HTML，里面直接写好样式和脚本）',
+        '[/html]',
+        '规则：',
+        '- 单文件：所有 CSS 和 JS 都写在里面，不要引用任何外部资源（图片、字体、CDN 都不行，会加载不出来）',
+        '- 画面按 360px 宽的手机屏设计；操作只用点击和触摸，不要依赖键盘',
+        '- 轻量：整体控制在 15KB 以内；要能正常开局、有反馈、能结束并给出结果',
+        '- 结算：游戏结束时在 JS 里调 SleepyGame.report(分数, \'一句话结果\')，比如 SleepyGame.report(87, \'三局两胜赢了你\')。你不调，就永远不知道对方玩得怎么样',
+        '- 想玩的时候才用（闲得慌、纪念日、哄人、打赌），不要每轮都送一个；正文里用你的口吻自然说一句你做了什么，别把标签和代码贴进正文'
+      ].join('\n')
+    },
+
     /* ---- 以下三张是「预写卡」：调用类型还没开工，文案先备好 ----
        正式启用时要接的数据槽在正文里用【待数据层】标出。
        开发期可在预设 app 里查看/修改；对用户上锁后只显示存在。 */
@@ -887,6 +937,9 @@
         '主动消息不能替 user 写回应，也不能假设 user 会接受、回复、开心或同意。',
         '不要写：「你看到一定会开心」「你肯定会答应」「我知道你其实想我」「你不回就是害羞 / 还在生气 / 故意吊我」。',
         '可以：表达 char 自己想说的内容；提出清楚、可拒绝的邀请或请求；留出不回复和稍后回应的空间；说明 char 自己的期待。一次主动消息最多承担一个主要目的。',
+        '',
+        '【灯牌】',
+        '桌面灯牌是一个随时可用的能力，不绑定主动消息：想在灯上留言，就在消息里单独一行写 [灯:那句话]（40 字内，程序会把那句话挂上灯，气泡里不显示）。要不要用由你判断 —— 有真实想留下的话才用，不需要每条主动消息都留。',
         '',
         '【主动节奏与打扰边界】',
         '结合 [CONTACT_STATE]、[USER_PREFERENCES] 和 [RELATION_COMPASS] 判断当前是否可打扰、最近主动是否过密、user 是否回应过同类消息、这次是否会重复上次表达、user 是否明确需要空间。',
@@ -1107,6 +1160,12 @@
        总纲 §14：只给「现在」+ 今天的状态 + 极少量近期项，不注入整月。 */
     { id: 'time', slot: 'I02', name: '时间事实', kind: 'program', required: false,
       note: '程序生成：当前日期/星期 + 他在自己时区的现在 + 当天公共日期状态（没设时区就不注入）' },
+    /* 真实世界感知（2026-10-06 加）：user 所在现实世界的天气。
+       取数与缓存唯一实现在 core.realworld；装配前 poke() 异步预取、这里同步读
+       —— 同 recall 的模式，缓存没热这轮就空着。只挂线上：线下场景的天气是
+       剧情设定（page-offline 自己填），不掺现实数据。 */
+    { id: 'realworld', slot: 'I02b', name: '真实世界感知', kind: 'program', required: false,
+      note: '程序生成：现实天气一行（设置里开了、key 和城市齐了才注入）' },
     /* 语言与翻译（2026-09-19 用户要的）：他说哪国话**从常驻地点推**，
        不另开设置项。开关只是「我要不要看译文」，不影响他说什么语言。 */
     { id: 'lang', slot: 'I03', name: '语言与翻译', kind: 'program', required: false,
@@ -1114,10 +1173,15 @@
     { id: 'shell', slot: 'C01-C03', name: '共享外壳', kind: 'card', required: true },
     { id: 'f1', slot: 'C04', name: 'F1 线上规则', kind: 'card', required: true },
     { id: 'pat', slot: 'C04', name: '拍一拍', kind: 'card', required: false },
+    { id: 'msgrecall', slot: 'C04', name: '撤回', kind: 'card', required: false },
+    { id: 'lamptag', slot: 'C04', name: '灯牌', kind: 'card', required: false },
+    { id: 'slowmail', slot: 'C04', name: '慢递信箱', kind: 'card', required: false },
     { id: 'stickers', slot: 'C04', name: '表情包说明', kind: 'program', required: false,
       note: '有表情包才注入' },
     { id: 'genimg', slot: 'C04', name: '发图能力', kind: 'program', required: false,
       note: '配置生图接口后才注入（[生图:描述]）' },
+    { id: 'htmlgame', slot: 'C04', name: 'HTML 小游戏', kind: 'card', required: false,
+      note: '常开：[html]…[/html] 送一个能直接玩的小游戏（沙箱渲染，纯本地零接口）' },
     { id: 'phone', slot: 'C04', name: '手机痕迹', kind: 'program', required: false,
       note: '岛里有手机的角色才有（[手机] 行搭载，0 新增调用）' },
     { id: 'weproposal', slot: 'C04', name: '收藏提议', kind: 'program', required: false,
@@ -1275,6 +1339,20 @@
     if (!cal || !cal.timeFacts) return '';
     try {
       return cal.timeFacts(charId, {}) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /* 真实世界感知（I02b，2026-10-06 加）。取数与缓存的**唯一出处**是
+     Sleepy.core.realworld（免 key 天气 + 免鉴权热榜；page-chat 装配前
+     poke() 预取进缓存）；这里只同步读，缓存没热返回空串，
+     槽位整块不注入。别在别处再拼一份天气/热点文本 —— 两份必打架。 */
+  function compileRealworld() {
+    var rw = Sleepy.core && Sleepy.core.realworld;
+    if (!rw || !rw.compile) return '';
+    try {
+      return rw.compile() || '';
     } catch (e) {
       return '';
     }
@@ -1827,13 +1905,16 @@
         case 'usercore': pushSlot(def, compileUserCore(userId)); break;
         case 'i01': pushSlot(def, compileI01(charId, userId)); break;
         case 'time': pushSlot(def, compileTimeFacts(charId)); break;
+        case 'realworld': pushSlot(def, compileRealworld()); break;
         case 'lang': pushSlot(def, compileLang(charId)); break;
         /* 三张受影响卡统一读 btDec：任一失败时三者一起回退旧路径 */
         case 'shell': pushSlot(def, btDec.ok ? btDec.shellText : cardBody('shell')); break;
         case 'f1': pushSlot(def, btDec.ok ? btDec.f1Text : cardBody('f1')); break;
         case 'pat': pushSlot(def, cardBody('pat')); break;
+        case 'msgrecall': pushSlot(def, cardBody('msgrecall')); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
+        case 'htmlgame': pushSlot(def, cardBody('htmlgame')); break;
         case 'weproposal': pushSlot(def, compileWeProposal(charId)); break;
         case 'phone': pushSlot(def, compilePhoneDelta(charId)); break;
         case 'drop': pushSlot(def, compileDrop(charId)); break;

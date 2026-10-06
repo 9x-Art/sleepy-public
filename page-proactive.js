@@ -371,6 +371,56 @@
       if (d.decision === 'send' && d.message && String(d.message).trim()) {
         var chat = findChatFor(charId);
         if (!chat) return done({ ok: false, why: 'nochat' });
+        /* 灯牌（2026-10-06 二轮）：留言是 char 的**能力**，不是主动消息的
+           附属 —— 主动消息正文不再自动全文上灯；char 想留灯就在消息里
+           写 [灯:那句话]，这里抽出落库、抽完的干净正文才允许落库。
+           ⚠️ 必须在 addMessage 之前：落库的消息里不允许残留协议标签
+           （同撤回/表情的口径）。查不到名字就署「角色」。 */
+        if (Sleepy.chatUtil && Sleepy.chatUtil.extractLampNotes) {
+          var lampX = Sleepy.chatUtil.extractLampNotes(String(d.message).trim());
+          /* 慢递信同灯牌：标签在落库前抽掉，信进 slowLetters（到点可拆） */
+          var smX = (Sleepy.chatUtil.extractSlowmail && lampX.text)
+            ? Sleepy.chatUtil.extractSlowmail(lampX.text)
+            : { text: lampX.text, hits: [] };
+          if (lampX.hits.length || smX.hits.length) {
+            var lampChar = null;
+            try {
+              var allCh = core.allChars ? core.allChars() : [];
+              for (var ci = 0; ci < allCh.length; ci++) {
+                if (allCh[ci] && allCh[ci].id === charId) { lampChar = allCh[ci]; break; }
+              }
+            } catch (e2) { /* 查不到名字就署「角色」 */ }
+            d.message = smX.text;
+            if (Sleepy.lampNotes) {
+              for (var li = 0; li < lampX.hits.length; li++) {
+                Sleepy.lampNotes.add({
+                  text: lampX.hits[li].text,
+                  by: (lampChar && lampChar.name) || '角色',
+                  ts: Date.now(),
+                  src: 'lamp-tag'
+                });
+              }
+            }
+            if (smX.hits.length && store && store.set) {
+              var sbox = store.get('slowLetters') || [];
+              for (var si = 0; si < smX.hits.length; si++) {
+                var srec = {
+                  id: core.newId('sl'),
+                  charId: charId,
+                  charName: (lampChar && lampChar.name) || '角色',
+                  body: String(smX.hits[si].body || '').slice(0, 600),
+                  hours: smX.hits[si].hours,
+                  deliverAt: Date.now() + smX.hits[si].hours * 3600000,
+                  createdAt: Date.now(),
+                  opened: false
+                };
+                if (core.tagScope) core.tagScope(srec);
+                sbox.push(srec);
+              }
+              store.set('slowLetters', sbox);
+            }
+          }
+        }
         var msgId = core.newId('ms');
         Sleepy.chatStore.addMessage(chat.id, {
           id: msgId,

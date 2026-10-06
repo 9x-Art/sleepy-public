@@ -46,7 +46,25 @@
       var body = ctx.body;
       body.innerHTML = '';
 
-      var list = photos();
+      /* ---- 群岛选人（2026-10-06，用户：「相册要选人 · 按账号隔离」）----
+         群岛（多个角色）进相册先选人：每本相册只属于一个角色，
+         不混 —— 以后 char 发朋友圈从相册拿图才不会拿到别人的。
+         孤岛只有一个角色，不选，直接整本。 */
+      var coreRef = Sleepy.core;
+      var sb = (coreRef && coreRef.activeSandbox) ? coreRef.activeSandbox() : null;
+      var needPick = !!(coreRef && coreRef.needsCharPick && coreRef.needsCharPick(sb));
+      var pickedId = ctx.params.charId || '';
+      var pickedChar = pickedId ? (coreRef && coreRef.findChar ? coreRef.findChar(pickedId) : null) : null;
+      if (needPick && (!pickedId || !pickedChar)) {
+        ctx.setTitle('相册');
+        ctx.setActions([]);
+        body.appendChild(pickScreen(ctx, sb));
+        return;
+      }
+      if (pickedChar) ctx.setTitle('相册 · ' + (pickedChar.name || '?'));
+      else ctx.setTitle('相册');
+
+      var owner = pickedChar ? { charId: pickedChar.id } : null;
 
       /* 顶栏右侧：加号。无论空不空都留着，空态那个大按钮只是更好按。
          注意 setActions 收的是**描述对象数组**，不是 DOM 节点 ——
@@ -55,11 +73,21 @@
       ctx.setActions([{
         label: '加照片',
         svg: ic('<path d="M12 6.5v11M6.5 12h11"/>', 18),
-        onClick: function () { doPick(ctx); }
+        onClick: function () { doPick(ctx, owner); }
       }]);
 
-      if (!list.length) {
-        body.appendChild(emptyState(ctx));
+      var all = photos();
+      /* 本主人的照片；群岛里还要把「没记归属的老照片」单独摆一截，
+         不混进任何人的相册（归属这个字段是 2026-10-06 才开始记的）。 */
+      var list = needPick
+        ? all.filter(function (p) { return p.ownerCharId === pickedId; })
+        : all;
+      var legacy = needPick
+        ? all.filter(function (p) { return !p.ownerCharId; })
+        : [];
+
+      if (!list.length && !(needPick && legacy.length)) {
+        body.appendChild(emptyState(ctx, owner));
         return;
       }
 
@@ -84,6 +112,23 @@
         wrap.appendChild(sec);
       });
 
+      /* 没记归属的老照片：单独一截放在页尾，谁的眼里都看得到，
+         但不冒充是这个人拍的（要动它们去照片墙删，或等以后做「改归属」）。 */
+      if (needPick && legacy.length) {
+        var secOld = h('section', 'gal-day');
+        var headOld = h('div', 'gal-day-head');
+        headOld.appendChild(h('span', 'gal-day-name', '早期 · 没记归属'));
+        headOld.appendChild(h('span', 'gal-day-n', legacy.length + ' 张'));
+        secOld.appendChild(headOld);
+        var gridOld = h('div', 'gal-grid');
+        var groupsOld = groupByDay(legacy);
+        Object.keys(groupsOld).forEach(function (day) {
+          groupsOld[day].forEach(function (p) { gridOld.appendChild(thumb(ctx, p)); });
+        });
+        secOld.appendChild(gridOld);
+        wrap.appendChild(secOld);
+      }
+
       /* 统计 + 占用：让用户对「还剩多少」有个概念。
          占用算**全部存档**的量（diskUsage 是全量），不能只算当前房：
          localStorage 是 5MB 一个池子，只显示本房占用会让人以为还很空，
@@ -92,9 +137,9 @@
          走了 IndexedDB 之后，占用分两截：图片本体在 IDB（磁盘级配额，
          基本不用担心），老的 dataURL 记录还在 localStorage 那个池子里。
          所以进度条按 **localStorage 那一截**算 —— 那才是会顶到上限的部分。 */
-      var legacy = Sleepy.photos ? Sleepy.photos.usedBytes() : 0;
+      var legacyBytes = Sleepy.photos ? Sleepy.photos.usedBytes() : 0;
       var limit = (Sleepy.photos && Sleepy.photos.SOFT_LIMIT) || 1;
-      var pct = Math.min(100, Math.round(legacy / limit * 100));
+      var pct = Math.min(100, Math.round(legacyBytes / limit * 100));
       var bar = h('div', 'gal-foot-bar');
       var fill = h('i', 'gal-foot-fill');
       fill.style.width = pct + '%';
@@ -116,21 +161,35 @@
 
       body.appendChild(wrap);
 
-      /* 上传按钮浮在右下角 */
-      var fab = h('button', 'gal-fab');
-      fab.type = 'button';
-      fab.setAttribute('aria-label', '加照片');
-      fab.innerHTML = ic('<path d="M12 6.5v11M6.5 12h11"/>', 20);
-      fab.addEventListener('click', function () { doPick(ctx); });
-      body.appendChild(fab);
+      /* 右下角的悬浮加号（gal-fab）删掉了（2026-10-06，用户：「这个没用喔」）——
+         顶栏右侧本来就有「加照片」，空态还有整块可点的上传区，三重入口太挤。 */
     }
   });
 
-  /* ---------------------------- 空态 ---------------------------- */
+  /* ---------------------------- 空态 / 选人 ---------------------------- */
+
+  /* 群岛选人页：每个角色一本相册，点进去看谁的。
+     行样式直接借设置页的 group/row —— 同一个语气，零新 CSS。 */
+  function pickScreen(ctx, sb) {
+    var g = ui.group('看谁的相册',
+      '群岛里每个角色一本，互不混用；早期没记归属的照片在每个人页尾单独一截。');
+    var all = photos();
+    ((sb && sb.charIds) || []).forEach(function (id) {
+      var c = (Sleepy.core && Sleepy.core.findChar) ? Sleepy.core.findChar(id) : null;
+      if (!c) return;
+      var n = all.filter(function (p) { return p.ownerCharId === id; }).length;
+      g.card.appendChild(ui.row({
+        label: c.name || '未命名',
+        hint: n + ' 张',
+        onClick: function () { ctx.open('gallery', { charId: id }); }
+      }));
+    });
+    return g.wrap;
+  }
 
   /* 空态做成整块可点的上传区。刻意做得比「一个加号」大很多：
      这是这条流程唯一的入口，用户第一次进来必须一眼看到该点哪儿。 */
-  function emptyState(ctx) {
+  function emptyState(ctx, owner) {
     var box = h('div', 'gal-empty');
 
     var drop = h('button', 'gal-empty-drop');
@@ -138,7 +197,7 @@
     drop.appendChild(iconBadge('image'));
     drop.appendChild(h('p', 'gal-empty-title', '还没有照片'));
     drop.appendChild(h('p', 'gal-empty-hint', '点这里，从相册里选几张'));
-    drop.addEventListener('click', function () { doPick(ctx); });
+    drop.addEventListener('click', function () { doPick(ctx, owner); });
     box.appendChild(drop);
 
     var tips = h('ul', 'gal-empty-tips');
@@ -275,12 +334,14 @@
     return out;
   }
 
-  function doPick(ctx) {
+  function doPick(ctx, owner) {
     if (!Sleepy.photos || !Sleepy.photos.pick) {
       ctx.toast('相册模块没加载出来', 'err');
       return;
     }
-    Sleepy.photos.pick({ title: '加照片' }).then(function (added) {
+    /* owner：群岛选人视图里显式归被选中的那个人；孤岛不传，
+       photos.add 自己按当前活动角色盖章。 */
+    Sleepy.photos.pick({ title: '加照片', owner: owner }).then(function (added) {
       if (!added || !added.length) return;
       ctx.toast('加了 ' + added.length + ' 张', 'ok');
       if (ctx.repaint) ctx.repaint();

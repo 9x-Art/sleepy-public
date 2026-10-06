@@ -364,7 +364,29 @@
                   /* ta 首页三张结构化表（ta-life.js，2026-10-02 第二批）：
                      事项/承诺/关注，tagScope 盖岛章，删房跟着清。 */
                   'taItems', 'taPromises', 'taFollows',
-                  'taNpcDrafts', 'taProposals', 'taEvents'];
+                  'taNpcDrafts', 'taProposals', 'taEvents',
+                  /* 挂件灯留言（page-desktop Sleepy.lampNotes，2026-10-06）：
+                     灯上的话跟岛走，tagScope 盖章 / scoped 读，删房跟着清 */
+                  'lampNotes',
+                  /* 组件商城批4（施工卡-组件商城-v1）：自定义组件模板 +
+                     慢递信箱。都是 user/char 的内容数据，跟岛走，删房跟着清 */
+                  'customWidgets', 'slowLetters'];
+
+    /* ⚠️ 顺序敏感：挂在**会话 id** 上的动态单键必须先清，再清 chats。
+       键名里带的是 chatId（不是 sbId），所以 scoped() 和下面「带 sbId 的键」
+       两条路都抓不到它 —— 只有遍历这间房的会话才拿得到那些 id。
+       htmlGameResult:<chatId> 是 page-chat 的 html 小游戏待转述结算痕迹
+       （page-chat 的 gameResultPeekMsg，一次性的，读走即 set(null)）。
+       等 chats 清完就再也查不到这些 chatId 了，键会永远留在 localStorage 里
+       （set(null) 也占着位，还会进 exportAll 的兜底扫描）。 */
+    if (store.remove) {
+      arr(store.get('chats')).forEach(function (ch) {
+        if (!ch || ch.sandboxId !== id || !ch.id) return;
+        /* remove 对不存在的键是安静的无操作 —— 这里不需要先判存在 */
+        store.remove('htmlGameResult:' + ch.id);
+      });
+    }
+
     scoped.forEach(function (key) {
       var all = arr(store.get(key));
       if (!all.length) return;
@@ -1576,6 +1598,92 @@
 
   function kindLabel(k) { return KIND_LABEL[k] || '大号'; }
 
+  /* ------------------- 外链与感知配置（唯一存储出口） -------------------
+
+     挂两件事，共用一个 store 键：
+     · 真实世界感知：rwOn（开关）/ weatherCity / owmKey（OpenWeatherMap key）；
+     · （历史）搜索源表已撤 —— 实测免鉴权、开 CORS 的通用搜索源为零
+       （公共中转 2026-10-06 全线不可用），char 的搜索能力走 MCP 工具
+       （多个搜索服务/工具天然多选、逐个开关），配置在 MCP 连接页。 */
+  var WEBLINK_KEY = 'weblinkCfg';
+
+  function weblinkCfg() {
+    var c = null;
+    try { c = store.get(WEBLINK_KEY); } catch (e) { c = null; }
+    return (c && typeof c === 'object' && !Array.isArray(c)) ? c : {};
+  }
+
+  function setWeblinkCfg(patch) {
+    var c = weblinkCfg();
+    Object.keys(patch || {}).forEach(function (k) { c[k] = patch[k]; });
+    store.set(WEBLINK_KEY, c);
+    return c;
+  }
+
+  /* ------------------------- 真实世界感知（天气） -------------------------
+
+     char 感知现实天气：OpenWeatherMap 免费层（CORS 全开，2026-10-06 实测
+     Access-Control-Allow-Origin: *），key 免费注册、存 weblinkCfg.owmKey。
+     30 分钟进程内缓存 + store 快照（rwWeatherLast）兜离线。
+     取数是**异步**的而装配是同步的 ⇒ 走 recall 槽同款模式：page-chat 在
+     装配前 poke()（带 4s 超时，绝不卡聊天），缓存热了 rwCompile() 同步读。
+     开关/城市/key 挂 weblinkCfg（rwOn / weatherCity / owmKey），settings 改。 */
+  var RW_WEATHER_TTL = 30 * 60 * 1000;
+  var RW_WEATHER_KEY = 'rwWeatherLast';
+
+  /* 进程内缓存（只在内存，不随消息/存档走） */
+  var rwWeather = { data: null, at: 0 };
+
+  function rwOn() { return weblinkCfg().rwOn === true; }
+
+  function rwFetchWeather(city, key) {
+    return fetch('https://api.openweathermap.org/data/2.5/weather?q=' +
+        encodeURIComponent(city) + '&appid=' + encodeURIComponent(key) +
+        '&units=metric&lang=zh_cn')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || Number(j.cod) !== 200 || !j.main) throw new Error('天气接口失败');
+        return {
+          city: String(j.name || city),
+          desc: (j.weather && j.weather[0] && j.weather[0].description) || '',
+          temp: Math.round(j.main.temp),
+          feels: Math.round(j.main.feels_like),
+          hum: Math.round(j.main.humidity)
+        };
+      });
+  }
+
+  /* 后台预取入口：带 4s 超时兜底 —— 宁可这轮块是空的，也不拖住发消息。 */
+  function rwPoke() {
+    if (!rwOn()) return Promise.resolve();
+    var now = Date.now();
+    if (rwWeather.data && now - rwWeather.at <= RW_WEATHER_TTL) return Promise.resolve();
+    var c = weblinkCfg();
+    var city = String(c.weatherCity || '').trim();
+    var key = String(c.owmKey || '').trim();
+    if (!city || !key) return Promise.resolve();
+    return Promise.race([
+      rwFetchWeather(city, key).then(function (w) {
+        rwWeather.data = w; rwWeather.at = now;
+        store.set(RW_WEATHER_KEY, w);
+      })['catch'](function () { /* 拉不到用旧快照，不报错 */ }),
+      new Promise(function (res) { setTimeout(res, 4000); })
+    ]);
+  }
+
+  /* 装配侧同步读：先内存缓存，空了退 store 里的最近成功快照；
+     开关没开 / 没有数据 ⇒ 空串，槽位整块不注入。 */
+  function rwCompile() {
+    if (!rwOn()) return '';
+    var w = rwWeather.data;
+    try { w = w || store.get(RW_WEATHER_KEY) || null; } catch (e) { w = w || null; }
+    if (!w) return '';
+    var city = String(weblinkCfg().weatherCity || '').trim();
+    return ['【真实世界感知】下面是 user 所在现实世界的真实情况，以这里为准，不要自己编，也不要当台词念出来；用它自然地关心对方就好（下雨提一句带伞之类），对方在认真说正事时别硬插。',
+      '现实天气（' + (w.city || city) + '）：' + w.desc + '，' +
+      w.temp + '°C（体感 ' + w.feels + '°C），湿度 ' + w.hum + '%'].join('\n');
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.core = {
@@ -1633,6 +1741,19 @@
     purgeChar: purgeChar,
     purgeFace: purgeFace,
     kindLabel: kindLabel,
+
+    /* 外链与感知配置 —— 读写唯一出口（realworld 的开关/城市/热榜开关都存这里） */
+    weblink: {
+      cfg: weblinkCfg,
+      set: setWeblinkCfg
+    },
+
+    /* 真实世界感知（现实天气，OpenWeatherMap 免费层）——
+       poke() 装配前预取（page-chat 调），compile() 装配同步读（prompt-engine 调） */
+    realworld: {
+      poke: rwPoke,
+      compile: rwCompile
+    },
 
     userMasks: userMasks,
     findUser: findUser,

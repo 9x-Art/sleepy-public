@@ -534,6 +534,23 @@
           } }
       ]);
 
+      /* ---------- 群聊美化 CSS（群详情「群聊美化」卡编辑，2026-10-05）----------
+         复用 apCustomStyle 这个 <style> 槽位 —— 角色外观（私聊）每次进页
+         也是先摘再按需挂回，两边天然互斥：
+         进私聊 → applyTo 摘掉群 CSS；进群聊 → 这里摘掉私聊 CSS 再挂群的。
+         头判 document 是给无头夹具兜底：没有 DOM 就什么都不注入。 */
+      if (typeof document !== 'undefined' && document.head) {
+        var prevAp = document.getElementById('apCustomStyle');
+        if (prevAp && prevAp.parentNode) prevAp.parentNode.removeChild(prevAp);
+        var btCss = (g.beautifyCss || '').trim();
+        if (btCss) {
+          var btStyle = document.createElement('style');
+          btStyle.id = 'apCustomStyle';
+          btStyle.textContent = '/* 群聊美化 · ' + (g.name || '') + ' */\n' + btCss;
+          document.head.appendChild(btStyle);
+        }
+      }
+
       /* ---------- 消息时间线 ---------- */
       var list = h('div', 'gc-list');
       body.appendChild(list);
@@ -653,7 +670,13 @@
 
           /* 长按头像 = 快速 @（总纲 14.2）；别人行左滑引用下一轮接 */
           attachMentionHold(row.firstChild, meta.name, mine);
-          if (!mine) attachSwipeQuote(row, mid, msg);
+          if (!mine) {
+            attachSwipeQuote(row, mid, msg);
+            /* 长按别人的纯文字 = 留在灯上（署说话人的名）；图片和撤回的不进 */
+            if (!msg.url && !msg.recalledAt && String(msg.content || '').trim()) {
+              attachLampHold(mid.querySelector('.gc-bubble'), msg, meta.name);
+            }
+          }
           else attachRecallHold(mid.querySelector('.gc-bubble'), msg);
         });
 
@@ -773,6 +796,33 @@
                 ['catch'](function () { /* 同上 */ });
             }
             renderMessages();
+          }, 520);
+        });
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) {
+          bubble.addEventListener(ev, function () {
+            if (timer) { clearTimeout(timer); timer = null; }
+          });
+        });
+      }
+
+      /* 长按别人的气泡 = 留在灯上（2026-10-06）。群里的可爱处：
+         谁说的话署谁的名（meta.name 直接跟过来），落款在放大卡片时可见。
+         不弹确认 —— 长按本身就是明确意图，留错了去灯上等风吹不走，
+         走桌面编辑（TODO 组件商城批）。只收纯文字，图片/撤回的不进。 */
+      function attachLampHold(bubble, msg, senderName) {
+        if (!bubble) return;
+        var timer = null;
+        bubble.addEventListener('pointerdown', function () {
+          timer = setTimeout(function () {
+            timer = null;
+            var rec = Sleepy.lampNotes && Sleepy.lampNotes.add({
+              text: String(msg.content || ''),
+              by: senderName || '群友',
+              ts: msg.createdAt || Date.now(),
+              src: 'group'
+            });
+            toast(rec ? '已替 ' + (senderName || 'ta') + ' 留在灯上' : '这句留不上灯',
+              rec ? 'ok' : 'warn');
           }, 520);
         });
         ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) {
@@ -1320,19 +1370,22 @@
         card.appendChild(r);
       });
 
-      /* 多人线下块（入口就位，交互页等新 demo） */
-      var offWrap = h('div', 'set-group');
-      var offCard = h('div', 'set-card gd-offline');
-      var offCopy = h('div', 'gd-offline-copy');
-      offCopy.appendChild(h('b', null, '发起多人线下'));
-      offCopy.appendChild(h('small', null, '从群成员中选择真实到场角色，并安排错峰到场。'));
-      var offBtn = ui.button('选择本次参与者', 'primary', function () {
-        ctx.open('group-offline', { groupId: groupId });
+      /* 群聊美化（2026-10-05）：多人线下在群聊页顶栏已经有入口
+         （ICON_DOOR 那个「多人线下」动作），这张卡不再重复 ——
+         用户：「改成美化的，就还是可以自定义美化 css」。
+         CSS 存群记录的 beautifyCss（updateGroup 白名单），进群聊页时注入。 */
+      var btWrap = h('div', 'set-group');
+      var btCard = h('div', 'set-card gd-beautify');
+      var btCopy = h('div', 'gd-beautify-copy');
+      btCopy.appendChild(h('b', null, '群聊美化'));
+      btCopy.appendChild(h('small', null, '写一段自定义 CSS，只作用于这个群的聊天页。'));
+      var btBtn = ui.button('打开 CSS 编辑', 'primary', function () {
+        ctx.open('group-beautify', { groupId: groupId });
       });
-      offCard.appendChild(offCopy);
-      offCard.appendChild(offBtn);
-      offWrap.appendChild(offCard);
-      body.appendChild(offWrap);
+      btCard.appendChild(btCopy);
+      btCard.appendChild(btBtn);
+      btWrap.appendChild(btCard);
+      body.appendChild(btWrap);
 
       /* 退群 */
       var exitWrap = h('div', 'set-group');
@@ -1732,6 +1785,106 @@
     if (owner && (owner.status || 'active') === 'active') return owner;
     return users[0] || null;
   }
+
+  /* ---- 复制 CSS 变量（群聊美化编辑页用，2026-10-06）----
+     从样式表里 :root / #phone / [data-theme…] 规则收集自定义属性名，
+     再读文档上的计算值 —— 用户写覆盖样式要引用 --g-* 变量，
+     手抄名字太苦，一键给一份「--名: 值;」清单。
+     只挑主题相关的那几个选择器，别把组件私有变量也倒进去。 */
+  function collectCssVars() {
+    if (typeof document === 'undefined') return '';
+    var names = {};
+    Array.prototype.forEach.call(document.styleSheets, function (sheet) {
+      var rules;
+      try { rules = sheet.cssRules; } catch (e) { return; }  /* 跨域样式表读不了，跳过 */
+      Array.prototype.forEach.call(rules || [], function (r) {
+        if (!r || !r.selectorText || !r.style) return;
+        var sel = r.selectorText;
+        if (sel.indexOf(':root') < 0 && sel.indexOf('#phone') < 0 &&
+            sel.indexOf('[data-theme') < 0 && sel.indexOf('[data-icstyle') < 0) return;
+        var m = (r.style.cssText || '').match(/--[\w-]+/g) || [];
+        m.forEach(function (n) { names[n] = true; });
+      });
+    });
+    var host = document.getElementById('phone') || document.documentElement;
+    var cs = global.getComputedStyle ? global.getComputedStyle(host) : null;
+    if (!cs) return '';
+    return Object.keys(names).sort().map(function (n) {
+      var v = String(cs.getPropertyValue(n) || '').trim();
+      return v ? (n + ': ' + v + ';') : '';
+    }).filter(function (line) { return !!line; }).join('\n');
+  }
+
+  /* 剪贴板写入：clipboard API 只在安全上下文可用 ——
+     手机走局域网 http（192.168.x / 172.x）访问开发服务器时没有它，
+     必须留 execCommand 兜底，不然「复制」在真机上永远失败。 */
+  function copyText(text) {
+    return new Promise(function (resolve) {
+      function fallback() {
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          var ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          return ok;
+        } catch (e) { return false; }
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { resolve(true); },
+          function () { resolve(fallback()); });
+        return;
+      }
+      resolve(fallback());
+    });
+  }
+
+  /* ==================== 页面：群聊美化（自定义 CSS，2026-10-05） ====================
+
+     群详情页「群聊美化」卡的编辑页。textarea 改的就是群记录的
+     beautifyCss（updateGroup 白名单字段，见 core-group.js），即时落库；
+     注入发生在 group-chat 的 render 里（复用 apCustomStyle 槽位，
+     和角色外观的私聊 CSS 互斥，不叠加）。 */
+
+  Sleepy.register('group-beautify', {
+    title: '群聊美化',
+    render: function (ctx) {
+      var groupId = ctx.params.groupId;
+      var g = gs().findGroup(groupId);
+      if (!g) { ctx.toast('找不到这个群', 'err'); ctx.back(); return; }
+      var body = ctx.body;
+
+      var wrap = h('div', 'set-group');
+      wrap.appendChild(h('p', 'set-group-title', 'CSS 自定义'));
+      var card = h('div', 'set-card gd-beautify');
+      var area = h('textarea', 'cap-css-area');
+      area.placeholder = '/* 在这里写覆盖样式，作用域为这个群的聊天页 */\n.gc-list { padding-bottom: 30px; }';
+      area.value = g.beautifyCss || '';
+      /* input 即落库：和角色外观的 CSS 编辑同一手感，不另设保存键 */
+      area.addEventListener('input', function () {
+        gs().updateGroup(groupId, { beautifyCss: area.value });
+      });
+      card.appendChild(area);
+      /* 复制变量（2026-10-06 用户）：写覆盖样式要引用 --g-* 那批变量，
+         名字手抄太苦 —— 一键把「--名: 值;」清单复制走，粘到编辑框里挑着用。 */
+      var varBtn = ui.button('复制 CSS 变量', 'ghost', function () {
+        var text = collectCssVars();
+        if (!text) { ctx.toast('没读到变量（样式表还没就绪？）', 'warn'); return; }
+        copyText(text).then(function (ok) {
+          ctx.toast(ok ? '已复制 · 粘到上面就能挑着用' : '浏览器没给剪贴板权限', ok ? 'ok' : 'err');
+        });
+      });
+      varBtn.type = 'button';
+      card.appendChild(varBtn);
+      card.appendChild(h('p', 'cap-hint', '即时保存 · 回到群聊页生效'));
+      wrap.appendChild(card);
+      body.appendChild(wrap);
+    }
+  });
 
   /* ==================== 页面：发起多人线下（三步，Demo 4） ====================
 

@@ -72,14 +72,13 @@
     idcard: ic('<rect x="4" y="5.5" width="16" height="13" rx="2"/><circle cx="9" cy="10.5" r="1.8"/><path d="M13.5 9h3.5M13.5 12h3.5M7 15.5h10"/>'),
     worldbook: ic('<path d="M12 6.6C10.6 5.2 8.6 4.6 5.5 4.6v13.2c3.1 0 5.1.6 6.5 2 1.4-1.4 3.4-2 6.5-2V4.6c-3.1 0-5.1.6-6.5 2z"/><path d="M12 6.6v13.2"/>'),
     /* ta（生活窗口，第 3 屏 p3-book 原世界书格）：一扇拱顶小窗 +
-       一点星光 —— 「看 ta 的生活」的那扇窗。**必须有自己的条目**：
-       下面 RENDER.app 的兜底是 ICONS.chat，不加就会跟聊天撞图标
-       （2026-10-02 真机验收抓到）。 */
-    ta: ic('<path d="M6.2 19.5V9.4a5.8 5.8 0 0 1 11.6 0v10.1"/>' +
-      '<path d="M4.6 19.5h14.8"/>' +
-      '<path d="M12 8.9v10.6"/>' +
-      '<path d="M6.2 13.7h11.6"/>' +
-      '<path d="M8.3 7.4l.5 1.25 1.25.5-1.25.5-.5 1.25-.5-1.25L7.05 9.15l1.25-.5z"/>'),
+       窗里一颗心 —— 「看 ta 的生活」的那扇窗（2026-10-05 重画：
+       旧版十字棂加星星看着像一扇门，用户：「这个图标换个好看点的吧」）。
+       **必须有自己的条目**：下面 RENDER.app 的兜底是 ICONS.chat，
+       不加就会跟聊天撞图标（2026-10-02 真机验收抓到）。 */
+    ta: ic('<path d="M6.6 19.4V9.6a5.4 5.4 0 0 1 10.8 0v9.8"/>' +
+      '<path d="M4.8 19.4h14.4"/>' +
+      '<path d="M12 15.8c-1.7-1-3-2-3-3.4 0-1 .8-1.7 1.7-1.7.6 0 1 .3 1.3.8.3-.5.7-.8 1.3-.8.9 0 1.7.7 1.7 1.7 0 1.4-1.3 2.4-3 3.4z"/>'),
     settings: ic('<circle cx="12" cy="12" r="3.1"/><path d="M12 3.4v2.3M12 18.3v2.3M20.6 12h-2.3M5.7 12H3.4"/><path d="M18.1 5.9l-1.6 1.6M7.5 16.5l-1.6 1.6M18.1 18.1l-1.6-1.6M7.5 7.5L5.9 5.9"/>'),
     heartbeat: ic('<path d="M3.6 12h3.2l2-4.4 2.8 9 2.4-6 1.6 3.2h4.8"/>'),
     gallery: ic('<rect x="3.5" y="5" width="17" height="14" rx="2.4"/><circle cx="9" cy="10" r="1.5"/><path d="M4.6 16.6l4.4-3.9 3.4 3 3-2.5 4 3.4"/>'),
@@ -189,8 +188,15 @@
      加上这格是三重入口。ta 首页只读展示当前角色的生活窗口
      （docs/勘察-ta首页-2026-10-02.md，页面在 page-ta.js，0 模型调用），
      它注册 'ta' 入口，桌面这格才点得开。
-     格子 id 仍沿用 p3-book 不变 —— 那只是格子的名字（同版本 15 那条规矩）。 */
-  var LAYOUT_VERSION = 18;
+     格子 id 仍沿用 p3-book 不变 —— 那只是格子的名字（同版本 15 那条规矩）。
+
+     版本 19（2026-10-05）：第 3 屏的「贴纸 / 钱包 / 组件商城」三个占位 App
+     改成**空壳**（type 'blank'，新渲染器在 RENDER.blank）—— 用户：
+     「这一屏的贴纸、钱包、组件商城的功能都有别的入口，统一改成图标为空，
+     里面的内容为空，不要再跳转到别的页面去」。app 字段保留不删：
+     一是冒烟断言还认桌面上的 app 名单，二是以后想接回来一行就够。
+     We / 日历 / ta / 相册 / 外观这五个是真功能，不动。 */
+  var LAYOUT_VERSION = 19;
 
   function defaultDesktop() {
     return {
@@ -279,8 +285,12 @@
              app 做」），We 首页也接了一个「去看看」跳到收藏 —— 桌面这格让给 We，
              收藏不丢功能。 */
           { i: 'p3-fav', type: 'app', app: 'we', x: 3, y: 3, w: 1, h: 1, label: 'We' },
-          { i: 'p3-stickers', type: 'app', app: 'stickers', x: 4, y: 3, w: 1, h: 1, label: '贴纸' },
-          { i: 'p3-wallet', type: 'app', app: 'wallet', x: 3, y: 4, w: 1, h: 1, label: '钱包' },
+          /* 版本 19（2026-10-05）：这三格改空壳（type 'blank'）——
+             贴纸 / 钱包 / 组件商城都有别的入口，用户要求这一屏
+             「图标为空、内容为空、不跳转」。app 字段留着：冒烟认名单，
+             以后接回来把 type 改回 'app' 就行。 */
+          { i: 'p3-stickers', type: 'blank', app: 'stickers', x: 4, y: 3, w: 1, h: 1, label: '贴纸' },
+          { i: 'p3-wallet', type: 'blank', app: 'wallet', x: 3, y: 4, w: 1, h: 1, label: '钱包' },
           /* 这里原本放的是「日记」，被冒烟断言挡下来了：
              「日记 / 朋友圈那两个我们都在 chat 里面做了，不需要单独的 app」——
              那是很早定下的一条，不能因为要凑格子就把它放回来。
@@ -293,7 +303,7 @@
           { i: 'p3-book', type: 'app', app: 'ta', x: 1, y: 5, w: 1, h: 1, label: 'ta' },
           { i: 'p3-gallery', type: 'app', app: 'gallery', x: 2, y: 5, w: 1, h: 1, label: '相册' },
           { i: 'p3-look', type: 'app', app: 'appearance', x: 3, y: 5, w: 1, h: 1, label: '外观' },
-          { i: 'p3-store', type: 'app', app: 'widgetstore', x: 4, y: 5, w: 1, h: 1, label: '组件商城' }
+          { i: 'p3-store', type: 'blank', app: 'widgetstore', x: 4, y: 5, w: 1, h: 1, label: '组件商城' }
         ]
       ]
     };
@@ -527,26 +537,188 @@
 
   /* 卡片内容：内置那 11 个图案（猫/星星/云朵/皇冠…）先全部去掉 ——
      用户原话「现在的这些画其实会看起来很廉价」，以后由角色往里写。
-     配色也全部换成冷/中性色：内置调色板 `PALETTE` 里 11 个色**全是高饱和粉彩**
-     （#FF9EC2 / #FFD451 这种），卡片会读成实心塑料板；换成 ink/sky/aqua
-     之后才读得出磨砂玻璃。这条是实测出来的最省钱的一次改善。
-     ⚠️ 传几张都没用：36 个挂点是核心的 CFG.rings 写死的（`defs[n % defs.length]`），
-     这里只是让它们循环使用这 4 种空板。 */
+     ★ 配色 2026-10-06 定稿：core 的 PALETTE 已整表换成用户选的 5 个
+     柔和浅色（薄荷汽水/晨雾蓝/西柚苏打/燕麦暖白/雾灰香芋，见
+     vendor/lamp/acrylic-lamp.html），tone 键名兼容不变，这里 5 张空板
+     正好把 5 个色都摊开循环。旧的「换 ink/sky/aqua 压饱和」那条是
+     针对旧高饱和粉彩的救火，色板换掉后已作废。
+     ⚠️ 传几张都没用：36 个挂点是核心的 CFG.rings 写死的（`defs[n % defs.length]`）。
+     2026-10-06 起这 5 张空板是**垫底的补数板** —— 上面的 lampCards() 会把
+     留言卡（store lampNotes）排在它们前面，留言先挑好挂点。 */
   var LAMP_CARDS = [
-    { text: '', art: 'text', tone: 'ink' },
     { text: '', art: 'text', tone: 'sky' },
-    { text: '', art: 'text', tone: 'aqua' },
-    { text: '', art: 'text', tone: 'ink' }
+    { text: '', art: 'text', tone: 'mint' },
+    { text: '', art: 'text', tone: 'coral' },
+    { text: '', art: 'text', tone: 'cream' },
+    { text: '', art: 'text', tone: 'lilac' }
   ];
 
-  /* 灯光。用户要的是「user 自己切」，这里先只落**默认值和存档**，
-     切换入口之后挂到外观或组件商城（API 现成：lamp.setLight(name)）。
-     默认 day 是实测结论 —— 内置四档在浅色底上：
+  /* 灯光。四档切换入口在组件商城的灯设置面板（批2，写 store 'lampLight'，
+     Sleepy.lampCtl.lightSet）。默认 day 是实测结论 —— 内置四档在浅色底上：
        day    浅奶油磨砂，最贴白色 UI        ← 选它
        warm   琥珀金，偏重但成立
        candle 橙得过头
        moon   卡片发脏橄榄褐，最差（它本来就是为深底做的） */
   var LAMP_DEFAULT_LIGHT = 'day';
+
+  /* ---------- 灯上的留言（2026-10-06） ----------
+     数据在 store 'lampNotes'，按岛隔离（写入口 core.tagScope 盖章、
+     读取 core.scoped 过滤、cleanupSandbox 删房跟着清 —— 三处配套都登记了）。
+     三个写入入口都汇聚到 Sleepy.lampNotes.add()：
+       · page-proactive.js  角色主动消息发送成功后自动留一张（src:'proactive'）
+       · page-chat.js       私聊长按菜单「留在灯上」（src:'chat'）
+       · page-group.js      群聊长按别人的气泡直接留（src:'group'，带 char 署名）
+     灯实例是常驻的，add() 落库后直接 setCards 热刷新；
+     灯还没创建也不要紧 —— boot() 建灯时 cards 从 store 现读。
+     ⚠️ 卡上的文字是 canvas 画的，换行/空白先压平、上限 40 字（超出截断加省略号），
+        别把超长消息整段甩给 paintCard（它会硬塞满整张卡）。 */
+  var LAMP_NOTES_KEY = 'lampNotes';
+  var LAMP_NOTES_MAX = 60;
+  var LAMP_NOTE_TONES = ['sky', 'mint', 'coral', 'cream', 'lilac'];
+
+  function lampNoteList() {
+    var all = store.get(LAMP_NOTES_KEY) || [];
+    return core.scoped ? core.scoped(all) : all;
+  }
+
+  /* 留言卡排在前面（先到先挑好挂点），空板垫在后头补数。
+     __note 是给落款浮层用的元数据 —— core 的 setCards 原样存 def，
+     onFocus 回调里能原样拿回来。 */
+  function lampCards() {
+    var cards = [];
+    var notes = lampNoteList();
+    for (var i = 0; i < notes.length; i++) {
+      var n = notes[i];
+      cards.push({
+        text: n.text + '\n——' + (n.by || '我'),
+        art: 'text',
+        tone: n.tone || 'cream',
+        __note: { id: n.id, by: n.by || '我', ts: n.ts }
+      });
+    }
+    for (var j = 0; j < LAMP_CARDS.length; j++) cards.push(LAMP_CARDS[j]);
+    return cards;
+  }
+
+  /* 灯牌字体：优先灯牌专属的 lampFontUrl（商城灯面板里填，family 用
+     'SleepyLampFont'，和外观的 'SleepyCustomFont' 互不抢 @font-face）；
+     没填就回落外观 fontUrl（老行为）。两处 style id 不同，双方互斥。 */
+  function ensureLampFontFace() {
+    var lampUrl = store.get('lampFontUrl') || '';
+    if (lampUrl) {
+      var old = document.getElementById('lk-lamp-font');
+      if (!old) {
+        var st = document.createElement('style');
+        st.id = 'lk-lamp-font';
+        st.textContent = "@font-face{font-family:'SleepyLampFont';src:url('" +
+          String(lampUrl).replace(/'/g, '%27') + "');font-display:swap;}";
+        document.head.appendChild(st);
+      }
+      return 'SleepyLampFont';
+    }
+    var a = store.get('appearance') || {};
+    if (!a.fontUrl) return '';
+    if (!document.getElementById('lk-custom-font')) {
+      var st2 = document.createElement('style');
+      st2.id = 'lk-custom-font';
+      st2.textContent = "@font-face{font-family:'SleepyCustomFont';src:url('" +
+        String(a.fontUrl).replace(/'/g, '%27') + "');font-display:swap;}";
+      document.head.appendChild(st2);
+    }
+    return 'SleepyCustomFont';
+  }
+
+  var lampNotesApi = {
+    add: function (note) {
+      if (!note || !note.text) return null;
+      var text = String(note.text).replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      if (text.length > 40) text = text.slice(0, 39) + '…';
+      var list = store.get(LAMP_NOTES_KEY) || [];
+      var rec = core.tagScope({
+        id: core.newId('ln'),
+        text: text,
+        by: String(note.by || '我').slice(0, 12),
+        tone: LAMP_NOTE_TONES[list.length % LAMP_NOTE_TONES.length],
+        ts: note.ts || Date.now(),
+        src: note.src || 'chat'
+      });
+      list.push(rec);
+      if (list.length > LAMP_NOTES_MAX) list = list.slice(list.length - LAMP_NOTES_MAX);
+      store.set(LAMP_NOTES_KEY, list);
+      if (lampState.inst) lampState.inst.setCards(lampCards());
+      return rec;
+    },
+    /* 留言管理（商城灯面板批2）：按 id 删一张，落库 + 热刷新。 */
+    remove: function (id) {
+      var list = store.get(LAMP_NOTES_KEY) || [];
+      var out = list.filter(function (r) { return r && r.id !== id; });
+      if (out.length === list.length) return list.length;
+      store.set(LAMP_NOTES_KEY, out);
+      if (lampState.inst) lampState.inst.setCards(lampCards());
+      return out.length;
+    },
+    list: lampNoteList
+  };
+  Sleepy.lampNotes = lampNotesApi;
+
+  /* 灯的设置控制面（商城灯面板批2 的唯一写入口）：
+     · lightSet 存档 + 灯活着就热切（publish 里的「重画重读存档」仍兜底）
+     · fontSet 存档 + 重注入 @font-face + 灯活着就 setFont 重画
+       （清空 URL 时摘掉专属 style，回落外观字体/楷体栈） */
+  function lampLightSet(name) {
+    store.set('lampLight', name);
+    if (lampState.inst && lampState.inst.setLight) {
+      lampState.inst.setLight(name);
+      lampState.light = name;
+    }
+  }
+  function lampFontSet(url) {
+    var v = String(url || '').trim();
+    store.set('lampFontUrl', v);
+    var st = document.getElementById('lk-lamp-font');
+    if (st && st.parentNode) st.parentNode.removeChild(st);
+    if (!v) {
+      var fam2 = ensureLampFontFace();
+      if (lampState.inst) lampState.inst.setFont(fam2);
+      return fam2;
+    }
+    var fam = ensureLampFontFace();
+    var apply = function () {
+      if (lampState.inst && document.fonts) {
+        document.fonts.load("16px '" + fam + "'").then(function () {
+          if (lampState.inst) lampState.inst.setFont(fam);
+        })['catch'](function () { /* 字体失败就留在当前栈 */ });
+      }
+    };
+    apply();
+    return fam;
+  }
+  Sleepy.lampCtl = {
+    lightGet: lampLight,
+    lightSet: lampLightSet,
+    fontGet: function () { return store.get('lampFontUrl') || ''; },
+    fontSet: lampFontSet,
+    notes: lampNotesApi
+  };
+
+  /* 放大态的落款浮层。rec.def.__note 是留灯时塞进卡片定义的元数据；
+     空板没有 __note，浮层不出现（灯牌上「谁在什么时候留的话」只属于留言卡）。 */
+  function showLampSign(rec) {
+    var box = lampState.box;
+    if (!box) return;
+    var el = box.querySelector('.w-lamp-sign');
+    if (!el) return;
+    var meta = rec && rec.def && rec.def.__note;
+    if (!meta) { el.classList.remove('is-on'); return; }
+    var d = new Date(meta.ts || Date.now());
+    var hh = ('0' + d.getHours()).slice(-2);
+    var mm = ('0' + d.getMinutes()).slice(-2);
+    el.textContent = '—— ' + meta.by + ' · ' + (d.getMonth() + 1) + '月' +
+      d.getDate() + '日 ' + hh + ':' + mm;
+    el.classList.add('is-on');
+  }
+
 
   var lampState = {
     create: null,     // 动态 import 回来的 createAcrylicLamp
@@ -812,6 +984,18 @@
       return box;
     },
 
+    /* ---------------- 占位空壳（第 3 屏贴纸 / 钱包 / 组件商城） ----------------
+       版本 19（2026-10-05）：用户要求这三格「图标为空、内容为空、
+       不要再跳转到别的页面去」—— 功能都有别的入口，这里只留一个
+       空玻璃壳 + 文字标签占住格子。用 div 不用 button：不可聚焦、
+       不吃点击；编辑态的小叉叉是 renderCell 统一挂的，不受影响。 */
+    blank: function (cell, ctx) {
+      var box = h('div', 'widget w-app w-blank');
+      box.appendChild(h('span', 'w-app-ic'));
+      box.appendChild(h('span', 'w-app-name', cell.label || ''));
+      return box;
+    },
+
     /* ---------------- 帷境入口（主屏第六行那条通栏） ----------------
        2026-09-21：改成跟其他 App 图标同一套玻璃（透明、跟主题）——
        以前写死深蓝 + 两片幕布，用户觉得在白桌面上太突兀、换配色也不跟着变。
@@ -1069,6 +1253,10 @@
 
       var note = h('div', 'w-lamp-note', '点亮中…');
       box.appendChild(note);
+      /* 落款浮层（放大态才显示，样式见 style.css .w-lamp-sign）。
+         内容由 showLampSign 在 onFocus 时填。 */
+      var sign = h('div', 'w-lamp-sign');
+      box.appendChild(sign);
       lampState.box = box;
       lampState.home = null;   // 每次重画都换新节点，旧的位置作废
 
@@ -1084,9 +1272,10 @@
           lampState.light = want;
           el.setLight(want);
         }
-        /* 核心留了两个回调槽，正好用来跟着放大态翻 class + 挪节点 */
-        el.onFocus = applyLampFocus;
-        el.onBlur = applyLampFocus;
+        /* 核心留了两个回调槽：放大态翻 class + 挪节点 + 落款浮层。
+           rec 是被拿到眼前的那张卡的原始定义（留言卡带 __note 元数据）。 */
+        el.onFocus = function (rec) { applyLampFocus(rec); showLampSign(rec); };
+        el.onBlur = function () { applyLampFocus(null); showLampSign(null); };
         applyLampFocus();
       }
 
@@ -1124,15 +1313,26 @@
           /* 坑②：节点没挂在文档上时容器尺寸是 0，核心会回落到整个窗口。
              这时候宁可先不建，等下一次渲染（每次 onShow 都会 repaint）。 */
           if (!box.isConnected || !host.isConnected) return;
-          publish(create(host, {
-            cards: LAMP_CARDS,
+          /* 灯牌字体：外观设置里填了字体 URL 就把 'SleepyCustomFont'
+             插进卡面字体栈；webfont 晚就绪的话，加载完再 setFont 重画一次。 */
+          var lampFont = ensureLampFontFace();
+          var el0 = create(host, {
+            cards: lampCards(),
             frame: 'champagne',
             autoSpin: 0.06,
             dust: true,
+            font: lampFont || undefined,
             /* 手机屏 dpr 动辄 3，画 3 倍像素肉眼看不出、卡顿却很实在。
                核心自己也封到 2，这里再往下压一档。 */
             dpr: window.devicePixelRatio > 1.5 ? 1.5 : 1
-          }));
+          });
+          publish(el0);
+          if (lampFont && document.fonts && document.fonts.load) {
+            document.fonts.load("16px '" + lampFont + "'").then(function () {
+              /* 字体真就绪了才重画；期间灯被销毁/重建就别管旧实例了 */
+              if (lampState.inst === el0) el0.setFont(lampFont);
+            })['catch'](function () { /* 字体加载失败就用楷体栈，不拦灯 */ });
+          }
           /* 灯光在 publish 里统一应用，这里不重复设 */
         })['catch'](function () {
           note.textContent = '这盏灯要点亮需要走 http（本地服务器或线上）';
@@ -1225,6 +1425,287 @@
         paint();
         saveActive({ battery: level });
         if (level >= 100) ctx.toast('电量满了', 'ok');
+      });
+      return box;
+    },
+
+    /* ---------------- 批3 · 简单砖组 + 拍立得（2026-10-06 商城批） ----------------
+       四个商城上架件（不在默认户型，目录在 page-widgetstore 的 EXTRA_DEFS）。
+       共用一条配置约定：per-cell 配置存 store 'widgetCfg'（键 = cell.i），
+       点组件弹表单/选图面板；删除走通用 removeCell，无专属清理
+       （widgetCfg 是全局小键，孤儿条目跟 desktopRemoved 一个量级，无害）。
+       材质全走 --tk-* 玻璃变量 —— 施工卡定稿第 3 条：小方禁止写死底色。 */
+
+    countdown: function (cell, ctx) {
+      var box = h('div', 'widget w-countdown');
+      function daysLeft(target) {
+        var t = new Date(target + 'T00:00:00');
+        if (isNaN(t.getTime())) return null;
+        var now = new Date();
+        var base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return Math.round((t.getTime() - base.getTime()) / 86400000);
+      }
+      function paint() {
+        var cfg = widgetCfgOf(cell.i) || {};
+        box.innerHTML = '';
+        if (!cfg.target) {
+          box.appendChild(h('div', 'w-countdown-empty', '点我设个日子'));
+          return;
+        }
+        var n = daysLeft(cfg.target);
+        var big = n === null ? '—'
+          : (n > 0 ? String(n) : (n === 0 ? '就是今天' : '过了 ' + Math.abs(n) + ' 天'));
+        box.appendChild(h('div', 'w-countdown-num', big));
+        box.appendChild(h('div', 'w-countdown-label', cfg.label || cfg.target));
+      }
+      paint();
+      box.addEventListener('click', function () {
+        var cfg = widgetCfgOf(cell.i) || {};
+        ui.prompt({
+          title: '倒数日',
+          fields: [
+            { key: 'label', label: '这事叫什么', value: cfg.label || '', placeholder: '见面 / 生日…' },
+            { key: 'target', label: '哪一天', value: cfg.target || '', placeholder: '2027-01-01' }
+          ]
+        }).then(function (r) {
+          if (!r) return;
+          var target = String(r.target || '').trim();
+          if (target && isNaN(new Date(target + 'T00:00:00'))) {
+            ctx.toast('日期没认出来，要 2027-01-01 这种', 'warn');
+            return;
+          }
+          widgetCfgSet(cell.i, { label: String(r.label || '').trim().slice(0, 8), target: target });
+          paint();
+        });
+      });
+      return box;
+    },
+
+    weatherbrick: function (cell, ctx) {
+      var box = h('div', 'widget w-weatherbrick');
+      function paint() {
+        box.innerHTML = '';
+        var w = null;
+        try { w = store.get('rwWeatherLast') || null; } catch (e) { w = null; }
+        if (!w || !w.temp) {
+          box.appendChild(h('div', 'w-weatherbrick-empty', '天气'));
+          box.appendChild(h('div', 'w-weatherbrick-hint', '去设置开天气感知'));
+          return;
+        }
+        box.appendChild(h('div', 'w-weatherbrick-temp', w.temp + '°'));
+        box.appendChild(h('div', 'w-weatherbrick-desc', (w.desc || '—') + ' · ' + (w.city || '')));
+      }
+      paint();
+      /* 渲染时顺手 poke —— rwPoke 内部有 30 分钟 TTL，缓存热着不会真打网络；
+         拉到了就重画一次（4s 超时兜底，绝不挂住桌面）。 */
+      if (Sleepy.core && Sleepy.core.realworld && Sleepy.core.realworld.poke) {
+        Sleepy.core.realworld.poke().then(function () { paint(); });
+      }
+      box.addEventListener('click', function () {
+        var w = null;
+        try { w = store.get('rwWeatherLast') || null; } catch (e) {}
+        if (w && w.temp) {
+          ctx.toast((w.city || '') + ' ' + w.desc + ' ' + w.temp + '°C · 体感 ' + w.feels + '°C · 湿度 ' + w.hum + '%');
+        } else {
+          ctx.toast('先去 设置 → 天气感知 打开（要 key 和城市）', 'warn');
+        }
+      });
+      return box;
+    },
+
+    dateclock: function (cell, ctx) {
+      var box = h('div', 'widget w-dateclock');
+      var WD = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+      function paint() {
+        var d = new Date();
+        box.innerHTML = '';
+        box.appendChild(h('div', 'w-dateclock-date', (d.getMonth() + 1) + '月' + d.getDate() + '日'));
+        box.appendChild(h('div', 'w-dateclock-time', bigTime(d)));
+        box.appendChild(h('div', 'w-dateclock-wd', WD[d.getDay()]));
+      }
+      paint();
+      /* 时钟的 interval 必须挂 __cleanup（music 组件踩过的坑：重画一次多一个定时器） */
+      var timer = setInterval(paint, 15000);
+      box.__cleanup = function () { clearInterval(timer); };
+      return box;
+    },
+
+    polaroid: function (cell, ctx) {
+      var box = h('div', 'widget w-polaroid');
+      var MAX_PICK = 4;
+      function selIds() {
+        var cfg = widgetCfgOf(cell.i) || {};
+        return Array.isArray(cfg.photoIds) ? cfg.photoIds : [];
+      }
+      function paint() {
+        box.innerHTML = '';
+        var ids = selIds();
+        if (!ids.length) {
+          box.appendChild(h('div', 'w-polaroid-empty', '点我贴照片'));
+          return;
+        }
+        var all = wallPhotos();
+        var picked = ids.map(function (id) {
+          for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+          return null;
+        }).filter(Boolean).slice(0, MAX_PICK);
+        picked.forEach(function (p, i) {
+          var f = h('div', 'w-polaroid-item ' + (i % 2 ? 'is-tilt-r' : 'is-tilt-l'));
+          var img = h('div', 'w-polaroid-img');
+          f.appendChild(img);
+          f.appendChild(h('em', null, p.caption || shortDate(p.at)));
+          box.appendChild(f);
+          if (Sleepy.photos && Sleepy.photos.srcOf) {
+            Sleepy.photos.srcOf(p).then(function (src) {
+              if (src) img.style.backgroundImage = 'url(' + JSON.stringify(src) + ')';
+            });
+          }
+        });
+      }
+      paint();
+      box.addEventListener('click', function () {
+        var all = wallPhotos();
+        if (!all.length) { ctx.toast('相册还是空的，先去相册加几张', 'warn'); return; }
+        var picked = {};
+        selIds().forEach(function (id) { picked[id] = 1; });
+        var pop = ui.anchorPopover(box, { className: 'ws-polaroid-pop', width: '252px' });
+        pop.el.appendChild(h('div', 'ws-polaroid-title', '点选要贴上墙的照片（最多 ' + MAX_PICK + ' 张）'));
+        var grid = h('div', 'ws-polaroid-grid');
+        all.slice(0, 60).forEach(function (p) {
+          var pc = h('div', 'ws-polaroid-cell' + (picked[p.id] ? ' is-on' : ''));
+          var thumb = h('div', 'ws-polaroid-thumb');
+          pc.appendChild(thumb);
+          pc.appendChild(h('span', null, p.caption || shortDate(p.at)));
+          grid.appendChild(pc);
+          if (Sleepy.photos && Sleepy.photos.srcOf) {
+            Sleepy.photos.srcOf(p).then(function (src) {
+              if (src) thumb.style.backgroundImage = 'url(' + JSON.stringify(src) + ')';
+            });
+          }
+          pc.addEventListener('click', function () {
+            if (picked[p.id]) { delete picked[p.id]; pc.classList.remove('is-on'); return; }
+            if (Object.keys(picked).length >= MAX_PICK) { ctx.toast('最多贴 ' + MAX_PICK + ' 张', 'warn'); return; }
+            picked[p.id] = 1;
+            pc.classList.add('is-on');
+          });
+        });
+        pop.el.appendChild(grid);
+        var done = h('button', 'ws-polaroid-done', '贴上去');
+        done.type = 'button';
+        done.addEventListener('click', function () {
+          widgetCfgSet(cell.i, { photoIds: Object.keys(picked) });
+          pop.close();
+          paint();
+          ctx.toast('贴好了', 'ok');
+        });
+        pop.el.appendChild(done);
+        pop.place();
+      });
+      return box;
+    },
+
+    /* 自定义模板组件（批4）：cell.tplId 指向 customWidgets 里的模板。
+       安全链：模板入库前已消毒，渲染时再消毒一次（双保险）+
+       CSS 钉作用域 + 只做变量替换。 */
+    custom: function (cell, ctx) {
+      var box = h('div', 'widget w-custom cust-' + cell.i);
+      var scope = '.cust-' + cell.i;
+      function paint() {
+        box.innerHTML = '';
+        var tpl = customTplOf(cell.tplId);
+        if (!tpl) {
+          box.appendChild(h('div', 'w-custom-empty', '模板不见了'));
+          return;
+        }
+        var styleEl = h('style');
+        styleEl.textContent = scopeCss(sanitizeTpl(tpl.css), scope);
+        box.appendChild(styleEl);
+        var body = h('div', 'w-custom-body');
+        body.innerHTML = substituteVars(sanitizeTpl(tpl.html), cell.i);
+        box.appendChild(body);
+      }
+      paint();
+      /* {{photo}} 的图是异步的：拉到后缓存并重画一次（每个 cell 只踢一次） */
+      kickCustomPhoto(cell.i, paint);
+      return box;
+    },
+
+    /* 慢递信箱（批4）：char 在回复里写 [慢递:N|信]，到点才能拆。
+       列表按岛隔离（core.scoped）；点已到的信拆开（标记 opened），
+       没到的只给「N 小时后到」，绝不提前剧透内容。 */
+    slowmail: function (cell, ctx) {
+      var box = h('div', 'widget w-slowmail');
+      function letters() {
+        var list = [];
+        try { list = core.scoped(store.get('slowLetters') || []); } catch (e) {}
+        return list;
+      }
+      function paint() {
+        box.innerHTML = '';
+        var list = letters().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+        var now = Date.now();
+        var arrived = list.filter(function (l) { return (l.deliverAt || 0) <= now; });
+        var unread = arrived.filter(function (l) { return !l.opened; }).length;
+        var pending = list.length - arrived.length;
+        box.appendChild(h('div', 'w-slowmail-emoji', '✉'));
+        if (unread) {
+          box.appendChild(h('div', 'w-slowmail-big', unread + ' 封可拆'));
+        } else if (pending) {
+          var next = list.filter(function (l) { return (l.deliverAt || 0) > now; })
+            .sort(function (a, b) { return (a.deliverAt || 0) - (b.deliverAt || 0); })[0];
+          var hrs = Math.max(1, Math.ceil((next.deliverAt - now) / 3600000));
+          box.appendChild(h('div', 'w-slowmail-big', '一封在途'));
+          box.appendChild(h('div', 'w-slowmail-sub', '约 ' + hrs + ' 小时后到'));
+        } else {
+          box.appendChild(h('div', 'w-slowmail-big', '信箱是空的'));
+          box.appendChild(h('div', 'w-slowmail-sub', 'ta 写了慢递信就会出现在这'));
+        }
+      }
+      function hoursLeft(l) {
+        return Math.ceil(((l.deliverAt || 0) - Date.now()) / 3600000);
+      }
+      paint();
+      box.addEventListener('click', function () {
+        var list = letters().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+        if (!list.length) {
+          ctx.toast('还没有信 —— ta 在回复里写 [慢递:小时|内容] 就会有一封', 'warn');
+          return;
+        }
+        var pop = ui.anchorPopover(box, { className: 'ws-slowmail-pop', width: '252px' });
+        pop.el.appendChild(h('div', 'ws-slowmail-title', '信箱'));
+        list.forEach(function (l) {
+          var arrived = (l.deliverAt || 0) <= Date.now();
+          var line = h('div', 'ws-slowmail-line' + (arrived ? '' : ' is-pending'));
+          line.appendChild(h('span', 'ws-slowmail-line-main',
+            arrived
+              ? ((l.opened ? '已拆 · ' : '可拆 · ') + (l.charName || 'ta') + '的信 · ' + shortDate(l.createdAt))
+              : ('在途 · ' + hoursLeft(l) + ' 小时后到')));
+          line.appendChild(h('span', 'ws-slowmail-line-sub', (l.charName || 'ta') + ' · ' + (l.hours || 1) + 'h 慢递'));
+          if (arrived) {
+            line.addEventListener('click', function () {
+              pop.close();
+              ui.prompt({
+                title: (l.charName || 'ta') + '的信',
+                note: '慢递 ' + (l.hours || 1) + ' 小时 · ' + shortDate(l.createdAt) + ' 写下',
+                fields: [
+                  { key: 'body', value: l.body || '', multiline: true, rows: 6 }
+                ],
+                wide: true,
+                ok: '收好了'
+              }).then(function () {
+                if (!l.opened) {
+                  l.opened = true;
+                  var all = store.get('slowLetters') || [];
+                  for (var i = 0; i < all.length; i++) if (all[i] && all[i].id === l.id) all[i].opened = true;
+                  store.set('slowLetters', all);
+                }
+                paint();
+              });
+            });
+          }
+          pop.el.appendChild(line);
+        });
+        pop.place();
       });
       return box;
     },
@@ -1805,10 +2286,119 @@
     return box;
   }
 
+  /* per-cell 组件配置（批3 简单砖/拍立得）：键 = cell.i。
+     全局小键（不带岛章）：cell.id 只在当前岛的覆盖层里有意义，
+     换岛后孤儿条目无害且极小 —— 跟 desktopRemoved 一个量级，不做清理。 */
+  function widgetCfgOf(cellId) {
+    var m = store.get('widgetCfg') || {};
+    return m[cellId] || null;
+  }
+  function widgetCfgSet(cellId, patch) {
+    var m = store.get('widgetCfg') || {};
+    m[cellId] = Object.assign({}, m[cellId] || {}, patch);
+    store.set('widgetCfg', m);
+  }
+
+  /* ---------- 自定义组件（批4，施工卡-组件商城-v1） ----------
+     user 写 HTML/CSS 模板 + {{变量}}。安全边界：**只做变量替换、不执行脚本**
+     —— sanitizeTpl 剥 <script>/on*= 事件属性/javascript:；CSS 由 scopeCss
+     钉在组件自己的作用域里（.cust-<cellId> 前缀），漏不出去污染全站。 */
+  function sanitizeTpl(html) {
+    return String(html || '')
+      .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+      .replace(/<\/?script[^>]*>/gi, '')
+      .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+      .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+      .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+      .replace(/javascript\s*:/gi, '');
+  }
+  function scopeCss(css, scope) {
+    return String(css || '').replace(/(^|\})\s*([^{}@]+)\{/g, function (m, brace, sel) {
+      var parts = sel.split(',').map(function (s) {
+        s = s.trim();
+        return s ? scope + ' ' + s : s;
+      });
+      return brace + ' ' + parts.join(',') + ' {';
+    });
+  }
+  /* 变量白名单（施工卡批4）：同步取值，取不到回空串（显示留白不报错）。
+     {{photo}} 是异步图（相册 IDB）—— 走 customPhotoCache：先给上次缓存的
+     地址，kickCustomPhoto 拉到新图后再重画一次（每个 cell 一次，不闪）。 */
+  var customPhotoCache = {};
+  function widgetVars(cellId) {
+    var d = new Date();
+    var WD = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    var v = {
+      time: bigTime(d),
+      date: (d.getMonth() + 1) + '月' + d.getDate() + '日',
+      weekday: WD[d.getDay()],
+      weather: '', weatherCity: '',
+      photo: customPhotoCache[cellId] || '',
+      lampNote: '', charName: '', todoCount: '0'
+    };
+    try {
+      var w = store.get('rwWeatherLast');
+      if (w && w.temp) { v.weather = w.temp + '° ' + (w.desc || ''); v.weatherCity = w.city || ''; }
+    } catch (e) { /* 没有天气就留白 */ }
+    var notes = lampNoteList();
+    if (notes.length) v.lampNote = notes[notes.length - 1].text;
+    var me = core.activeCharOnIsland ? core.activeCharOnIsland() : null;
+    if (me && me.name) v.charName = me.name;
+    try {
+      var todos = getTodos() || [];
+      var undone = 0;
+      for (var i = 0; i < todos.length; i++) if (!todos[i].done) undone++;
+      v.todoCount = String(undone);
+    } catch (e) { /* 待办读不到就 0 */ }
+    return v;
+  }
+  function substituteVars(html, cellId) {
+    var v = widgetVars(cellId);
+    return String(html || '').replace(/\{\{\s*([a-zA-Z]+)(?::([^}]*))?\s*\}\}/g, function (_, key, arg) {
+      if (key === 'countdown' && arg) {
+        var t = new Date(String(arg).trim() + 'T00:00:00');
+        if (isNaN(t.getTime())) return '';
+        var now = new Date();
+        var base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var n = Math.round((t.getTime() - base.getTime()) / 86400000);
+        return n > 0 ? n + ' 天' : (n === 0 ? '今天' : '过了 ' + Math.abs(n) + ' 天');
+      }
+      if (key === 'photo') kickCustomPhoto(cellId);
+      return v.hasOwnProperty(key) ? v[key] : '';
+    });
+  }
+  function kickCustomPhoto(cellId, onReady) {
+    if (customPhotoCache[cellId]) return;
+    var all = wallPhotos();
+    if (!all.length || !Sleepy.photos || !Sleepy.photos.srcOf) return;
+    var p = all[Math.floor(Math.random() * all.length)];
+    Sleepy.photos.srcOf(p).then(function (src) {
+      if (!src) return;
+      customPhotoCache[cellId] = src;
+      if (onReady) onReady();
+    });
+  }
+  function customTplOf(tplId) {
+    var list = [];
+    try { list = core.scoped(store.get('customWidgets') || []); } catch (e) {}
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === tplId) return list[i];
+    }
+    return null;
+  }
+
   function wallPhotos() {
     var list = store.get('photos');
     if (!Array.isArray(list)) return [];
-    return core.scoped(list);
+    /* 照片墙跟着当前角色走（2026-10-06 相册按账号隔离）：本角色的 +
+       没记归属的老照片，别的角色的一张不露 —— 这是 TA 的桌面。
+       群岛刚落还没选人时 activeCharOnIsland() 是 null，只给老照片，
+       绝不拿上一个岛的 charId 顶数（见 core.js 那条指针卫兵的注释）。 */
+    var me = core.activeCharOnIsland ? core.activeCharOnIsland() : null;
+    var myId = me ? me.id : '';
+    return core.scoped(list).filter(function (p) {
+      return !p.ownerCharId || p.ownerCharId === myId;
+    });
   }
 
   function shortDate(at) {
@@ -2123,10 +2713,19 @@
 
   /* 把落点吸附成格子坐标，并保证不越界。
      越界不报错、直接夹住 —— 拖到屏幕外一格是很容易发生的操作，
-     报错弹窗比「不动」更烦人。 */
-  function snapTo(grid, ctx, left, top, w, h) {
+     报错弹窗比「不动」更烦人。
+
+     ⚠️ 吸附按**节点中心点**算，不按左上角（2026-10-06 用户：把 app 放到
+     第 2 屏「预设」那一行下面，结果说放不下）。按左上角算时，手指把组件
+     拖到最后一行，左上角还卡在倒数第二行（那是被占的格）→ 幽灵一直红、
+     松手报「那儿放不下」。按中心算后，中心进了哪格就是哪格，
+     最后一行 / 最边一格都够得着 —— iOS 桌面也是这个算法。 */
+  function snapTo(grid, ctx, cx, cy, w, h) {
     var step = cellStep(grid, ctx);
     var o = gridOrigin(grid, ctx);
+    var cellW = step - GRID_GAP;             /* 纯格子边长（step 含 gap） */
+    var left = cx - (w * cellW + (w - 1) * GRID_GAP) / 2;
+    var top = cy - (h * cellW + (h - 1) * GRID_GAP) / 2;
     var gx = Math.round((left - o.x) / step) + 1;
     var gy = Math.round((top - o.y) / step) + 1;
     gx = Math.max(1, Math.min(COLS - w + 1, gx));
@@ -2196,12 +2795,13 @@
     function onDown(e) {
       if (e.button !== undefined && e.button !== 0) return;   /* 只认左键 */
       var p = pos(e);
-      down = { x: p.x, y: p.y, t: Date.now(), moved: false, node: node };
+      /* pid：pointerId，长按起拖和跨屏换节点之后要靠它把指针捕获补回来 */
+      down = { x: p.x, y: p.y, t: Date.now(), moved: false, node: node, pid: e.pointerId };
 
       if (editing) {
         /* 编辑态里立刻起拖，不等待 */
         e.preventDefault();
-        startCellDrag(node, cell, pi, ctx, p);
+        startCellDrag(node, cell, pi, ctx, p, e.pointerId);
         return;
       }
 
@@ -2218,7 +2818,14 @@
         if (!down || down.moved) return;
         node.__longPressed = true;
         enterEdit(ctx);
-        startCellDrag(node, cell, pi, ctx, { x: down.x, y: down.y });
+        /* 长按起拖时指针还悬在组件上，但一旦动起来就可能滑出组件边界 ——
+           这条路起拖时 editing 还是 false，上面的 pointerdown 没设过捕获；
+           不补的话 pointermove 会改道别的元素，拖到半路就「断线」，
+           组件僵在半空（用户 2026-10-06：进入编辑态后 app 很难移动）。 */
+        if (node.setPointerCapture && down.pid != null) {
+          try { node.setPointerCapture(down.pid); } catch (err) { /* 指针可能已抬起 */ }
+        }
+        startCellDrag(node, cell, pi, ctx, { x: down.x, y: down.y }, down.pid);
       }, EDIT_MS);
     }
 
@@ -2242,6 +2849,22 @@
       }
       down = null;
     }
+
+    function onCancel() {
+      /* pointercancel / touchcancel = 浏览器把手势抢走了（开始滚屏之类），
+         不是用户松手。按「松手」处理会把组件落到半路的格子上，
+         看起来像自己乱跳；这里直接弹回原位。 */
+      if (editTimer) { clearTimeout(editTimer); editTimer = null; }
+      if (dragState) cancelCellDrag();
+      down = null;
+    }
+
+    /* 拖动进行中必须拦掉 touchmove 的默认行为，否则浏览器会把这次手势
+       判成滚屏，滚起来之后拖拽就被 pointercancel 掐断了。
+       只在真的在拖时拦 —— 平时按住组件滑屏翻页不受影响。 */
+    node.addEventListener('touchmove', function (e) {
+      if (dragState) e.preventDefault();
+    }, { passive: false });
 
     /* 长按进编辑态之后，同一次按键抬手会补一个 click。
        角色卡那样「点一下切号」的组件会被这一下误触发，所以要吞掉。 */
@@ -2270,12 +2893,12 @@
       });
       node.addEventListener('pointermove', onMove);
       node.addEventListener('pointerup', onUp);
-      node.addEventListener('pointercancel', onUp);
+      node.addEventListener('pointercancel', onCancel);
     } else {
       node.addEventListener('touchstart', onDown, { passive: false });
       node.addEventListener('touchmove', onMove, { passive: false });
       node.addEventListener('touchend', onUp);
-      node.addEventListener('touchcancel', onUp);
+      node.addEventListener('touchcancel', onCancel);
       node.addEventListener('mousedown', onDown);
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
@@ -2302,7 +2925,7 @@
     return { scroller: scroller, screens: screens, grids: grids };
   }
 
-  function startCellDrag(node, cell, pi, ctx, p) {
+  function startCellDrag(node, cell, pi, ctx, p, pid) {
     var grid = node.parentNode;
     var ghost = h('div', 'dt-ghost');
     ghost.style.gridArea = node.style.gridArea;
@@ -2321,11 +2944,14 @@
       ctx: ctx,
       srcPi: pi,
       scaf: scaf,
+      pointerId: pid,
       /* 「蹭边缘翻屏」的一次性开关。翻过去之后指针还停在边缘区里，
          如果不管它，下一帧 relX 依然超界 → 又翻一屏 → 一路翻到最后一屏，
          用户根本落不到中间那几屏。所以翻完就卸武装，
-         必须先把指针挪回中间区才重新武装（一次边缘 = 一屏）。 */
-      edgeArmed: true,
+         必须先把指针挪回中间区才重新武装（一次边缘 = 一屏）。
+         **起手时不武装**：最左/最右一列的组件，手指天生就落在边缘区里，
+         初始就武装的话一动就误翻屏（用户：组件难挪、会自己飞走）。 */
+      edgeArmed: false,
       off: { x: p.x, y: p.y },
       origin: { x: cell.x, y: cell.y }
     };
@@ -2347,6 +2973,12 @@
     st.grid.classList.add('is-drop-target');
     st.grid.appendChild(st.ghost);      /* appendChild = 移动，不用先摘 */
     st.grid.appendChild(st.node);
+    /* appendChild 会把节点从旧父节点摘下来再插回去 —— 浏览器随之
+       **释放指针捕获**，后面的 pointermove 全部改道别的元素，
+       跨屏拖到一半必然断线。换完屏立刻把捕获补回来。 */
+    if (st.pointerId != null && st.node.setPointerCapture) {
+      try { st.node.setPointerCapture(st.pointerId); } catch (err) { /* 指针可能已抬起 */ }
+    }
 
     var w = st.scaf.scroller.clientWidth || 0;
     st.scaf.scroller.scrollLeft = pi * w;
@@ -2378,9 +3010,11 @@
     }
 
     /* 幽灵显示「当前会落在哪」，用户不用自己猜对齐。
-       注意把 **当前这一屏的 grid** 传进去 —— 用 ctx 反查会拿到第 0 屏的网格。 */
+       注意把 **当前这一屏的 grid** 传进去 —— 用 ctx 反查会拿到第 0 屏的网格。
+       吸附点取**节点中心**（scale 1.06 不影响中心），原因见 snapTo 的注释。 */
     var r = st.node.getBoundingClientRect();
-    var spot = snapTo(st.grid, st.ctx, r.left, r.top, st.cell.w, st.cell.h);
+    var spot = snapTo(st.grid, st.ctx,
+      r.left + r.width / 2, r.top + r.height / 2, st.cell.w, st.cell.h);
     var d = getDesktop();
     var ok = canPlace(d.pages, st.pi, st.cell, spot.x, spot.y);
     st.ghost.style.gridArea = spot.y + ' / ' + spot.x + ' / ' +
@@ -2476,9 +3110,10 @@
 
       d.pages.forEach(function (cells, pi) {
         /* 第 0 屏（负一屏）单独挂一个类：那一屏只有一个「照片墙」大组件，
-           它按行算出来的高度比这一屏可用高度矮一截，于是整屏是
-           「上面挤满、下面空一片」（用户 2026-09-22 的原话）。
-           样式里只给这一屏把网格**垂直居中**（见 .dt-screen.is-neg1）。 */
+           高屏上网格比整屏矮，要往下挪（用户 2026-09-22 报「下面空一片」，
+           10-06 报「整体下移」，当晚又报「别沉底，差不多从第二行开始」）。
+           最终版：flex + 固定留一行（见 .dt-screen.is-neg1，别用
+           align-content —— 对内容自适应的网格是无操作，教训在 style.css）。 */
         var screen = h('div', 'dt-screen' + (pi === 0 ? ' is-neg1' : ''));
         var grid = h('div', 'dt-grid');
 
@@ -2704,7 +3339,17 @@
     enterEdit: enterEdit,
     exitEdit: exitEdit,
     canPlace: canPlace,
-    overlap: overlap
+    overlap: overlap,
+    /* 商城页「移除」也走这一笔账 —— 不导出它的话商城只能自己抄一份
+       记录格式，格式一改两处就悄悄岔了（2026-10-06 橱窗批）。 */
+    rememberRemoved: rememberRemoved,
+    /* 自定义组件的消毒/作用域/变量替换 —— 唯一实现在本文件，
+       商城编辑器（实时预览/保存）只调用不抄写（批4）。 */
+    customTpl: {
+      sanitize: sanitizeTpl,
+      scope: scopeCss,
+      substitute: substituteVars
+    }
   };
 
   /* 首页是基底页，不走页面栈，它的 render 必须有人主动调一次

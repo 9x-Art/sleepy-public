@@ -21,7 +21,7 @@
  *   lamp.dispose();            // 组件卸载时收干净
  *
  * 本文件是从 acrylic-lamp.html 的「可复用核心」段自动抽出的。
- * 请改源文件再重新导出，不要在这里直接改 —— 下次导出会被覆盖。
+ * 请改源文件再重新导出（node tools/build-core.cjs），不要在这里直接改 —— 下次导出会被覆盖。
  * ---------------------------------------------------------------------------
  */
 import * as THREE from 'three';
@@ -77,22 +77,48 @@ const CARD_UNIT = { w: 256, h: 384 };
 const CARD_TEX_HI = 2;
 
 /* ---------- 配色：卡片贴纸的色板。饱和一点，不然会被灯光冲成一片白 ---------- */
+/* ★ 2026-10-06 用户定稿的 5 色柔和浅色板（透亮方向）：
+     薄荷汽水 #DCF5E8 / 晨雾蓝 #DEECFC / 西柚苏打 #FFE3DE /
+     燕麦暖白 #FFF6E6 / 雾灰香芋 #E8E6F1
+   这批 fill 本身就是高明度低饱和（L≈94%），不再是旧的高饱和粉彩
+   （#FF9EC2 那批会读成实心塑料板）。ink/accent 按各底色配好保证可读。 */
+const TONE_MINT    = { fill: '#DCF5E8', ink: '#33785B', accent: '#A3E6C6' }; // 薄荷汽水
+const TONE_SKY     = { fill: '#DEECFC', ink: '#3F6BA5', accent: '#AFCDF6' }; // 晨雾蓝
+const TONE_CORAL   = { fill: '#FFE3DE', ink: '#A55A50', accent: '#FFBBB1' }; // 西柚苏打
+const TONE_CREAM   = { fill: '#FFF6E6', ink: '#8A744A', accent: '#F2E1BC' }; // 燕麦暖白
+const TONE_LILAC   = { fill: '#E8E6F1', ink: '#4C4763', accent: '#BCB6D2' }; // 雾灰香芋
+
 const PALETTE = {
-  pink:   { fill: '#FF9EC2', ink: '#8C1B44', accent: '#FF6E9E' },
-  butter: { fill: '#FFD451', ink: '#7F5203', accent: '#FFB41E' },
-  mint:   { fill: '#7FDBAB', ink: '#0F5C41', accent: '#3FC784' },
-  sky:    { fill: '#8CBCFB', ink: '#12458E', accent: '#5599F5' },
-  lilac:  { fill: '#B49EFF', ink: '#431F94', accent: '#8A66FF' },
-  peach:  { fill: '#FFAC72', ink: '#93440A', accent: '#FF8636' },
-  aqua:   { fill: '#74D3E6', ink: '#0A6376', accent: '#38BFD8' },
-  cream:  { fill: '#FFD98A', ink: '#7A5716', accent: '#F0BA4E' },
-  coral:  { fill: '#FF8F82', ink: '#9E2317', accent: '#FF6351' },
-  lime:   { fill: '#AEDE62', ink: '#38680F', accent: '#86CB32' },
-  ink:    { fill: '#BDB8D4', ink: '#1F1D33', accent: '#726D90' },
+  /* 为了兼容既有调用面（tone 名是对外 API），11 个键全部保留、各自映射到
+     上面 5 个色调对象 —— 想加新颜色就补一个 TONE_xxx + 把键改指过去，
+     别在调用方绕。 */
+  pink:   TONE_CORAL,
+  butter: TONE_CREAM,
+  mint:   TONE_MINT,
+  sky:    TONE_SKY,
+  lilac:  TONE_LILAC,
+  peach:  TONE_CORAL,
+  aqua:   TONE_SKY,
+  cream:  TONE_CREAM,
+  coral:  TONE_CORAL,
+  lime:   TONE_MINT,
+  ink:    TONE_LILAC,
 };
 
 /* ---------- 手写体字体栈：全部走系统字体，不下载任何字体文件 ---------- */
 const HAND_FONT = '"Kaiti SC","STKaiti","KaiTi","楷体","AR PL UKai CN","Segoe Script","Comic Sans MS",cursive';
+
+/* ★ 2026-10-06 灯牌自定义字体：宿主页面可能已经用 FontFace 加载了
+   webfont（本项目走外观设置的 fontUrl → 'SleepyCustomFont'）。
+   create 选项传 font: 'SleepyCustomFont'（或 api.setFont(名字)）就会把它
+   插到字体栈最前面 —— 名字里的引号会被剥掉防注入；不传就是原楷体栈。
+   ⚠️ 换字体只影响**之后画的**卡片：字体晚于创建就绪的话，宿主要再调一次
+   setCards(当前卡片) 触发重画。 */
+let CARD_FONT_USER = '';
+function cardFontStack() {
+  const safe = CARD_FONT_USER.replace(/["']/g, '').trim();
+  return (safe ? '"' + safe + '",' : '') + HAND_FONT;
+}
 
 /* ---------- Canvas 小工具 ---------- */
 function roundRect(ctx, x, y, w, h, r) {
@@ -107,7 +133,7 @@ function roundRect(ctx, x, y, w, h, r) {
 
 /* 先量再画，才能把一行字精确居中 */
 function measureLine(ctx, line, size) {
-  ctx.font = size + 'px ' + HAND_FONT;
+  ctx.font = size + 'px ' + cardFontStack();
   let w = 0;
   for (const ch of line) w += ctx.measureText(ch).width * 0.99;
   return w;
@@ -115,7 +141,7 @@ function measureLine(ctx, line, size) {
 
 /* 一个字一个字地落笔，每个字带一点点随机歪斜 —— 手写的味道全在这 */
 function drawHandLine(ctx, line, cx, cy, size, color, rnd, tilt) {
-  ctx.font = size + 'px ' + HAND_FONT;
+  ctx.font = size + 'px ' + cardFontStack();
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
   /* 描一圈极细的同色边 = 把手写体悄悄加粗约 4%。
@@ -639,7 +665,10 @@ function paintCard(card, seed, img, hi) {
     edgeBand.addColorStop(1.000, 'rgba(178,200,226,0.70)');
     ctx.fillStyle = edgeBand;
   } else {
-    ctx.fillStyle = 'rgba(22,17,28,0.50)';
+    /* ★ 2026-10-06 空卡灯牌化：这层暗底原本给"有画面的卡"压外圈落差，
+       空卡时代它就是卡的外圈读感，提到冷中灰 —— 保留"切得出来"的
+       轮廓深度，但不再压成灰黑框。 */
+    ctx.fillStyle = 'rgba(88,92,110,0.45)';
   }
   ctx.fill();
 
@@ -702,11 +731,16 @@ function paintCard(card, seed, img, hi) {
     acr.addColorStop(0.44, tint(tone.fill, 0.62, 0.22));
     acr.addColorStop(1.00, 'rgba(150,176,204,0.27)');
   } else {
-    /* 留白要"奶白"，不能"脏"。k 是往白里冲的量：冲到 0.93 仍然看得出
-       每张卡各自的色相，但不会在暗背景上糊成一块浑浊的灰绿、灰粉。 */
-    acr.addColorStop(0.00, 'rgba(255,255,255,0.30)');
-    acr.addColorStop(0.40, tint(tone.fill, 0.93, 0.22));
-    acr.addColorStop(1.00, tint(tone.fill, 0.80, 0.25));
+    /* 留白要"奶白"，不能"脏"。k 是往白里冲的量。
+       ★ 2026-10-06 两轮定稿（色板换浅色 + 空卡当灯牌）：
+       ① 新色板 fill 本身 L≈94%，照旧冲 0.93 的白会被洗成纯白；
+       ② 空卡整张都是留白 —— 旧设计里留白垫在暗底上给"有画面的卡"压落差，
+         空卡没画面，灰底直接变成整张卡的读感（实测截图：整盏灯灰蒙蒙）。
+       所以：k 收到 0.45 / 0.30 保住色相，alpha 抬到 0.62 / 0.66 遮住暗房间，
+       首档白也提到 0.42。 */
+    acr.addColorStop(0.00, 'rgba(255,255,255,0.42)');
+    acr.addColorStop(0.40, tint(tone.fill, 0.45, 0.62));
+    acr.addColorStop(1.00, tint(tone.fill, 0.30, 0.66));
   }
   ctx.fillStyle = acr;
   ctx.fill();
@@ -832,9 +866,11 @@ function paintCard(card, seed, img, hi) {
     body.addColorStop(0.52, tone.fill);
     body.addColorStop(1.00, shade(tone.fill, -0.14));
   } else {
-    body.addColorStop(0.00, tint(tone.fill, 0.12, 0.95));
+    /* ★ 2026-10-06 浅色灯牌：顶部的白冲多一点（顶部亮）、
+       底部的压暗收轻（-0.13 会把浅色板 bottom 拽成灰绿）。 */
+    body.addColorStop(0.00, tint(tone.fill, 0.28, 0.95));
     body.addColorStop(0.52, tint(tone.fill, 0.00, 0.93));
-    body.addColorStop(1.00, tint(tone.fill, -0.13, 0.90));
+    body.addColorStop(1.00, tint(tone.fill, -0.06, 0.92));
   }
   ctx.fillStyle = body;
   ctx.fill();
@@ -1164,6 +1200,7 @@ function createAcrylicLamp(container, options) {
   );
   const host = container || document.body;
   const preset = FRAME_PRESETS[opt.frame] || FRAME_PRESETS.gunmetal;
+  if (opt.font) CARD_FONT_USER = String(opt.font);   // 灯牌字体（见 cardFontStack 注释）
 
   /* ---------- 渲染器 ---------- */
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -1702,9 +1739,15 @@ function createAcrylicLamp(container, options) {
           sheenColor: new THREE.Color(0xffe3c0),
           envMapIntensity: 1.15,     // 反射够用就行；拉太高整张卡会被环境洗白
           specularIntensity: 0.72,
-          emissive: new THREE.Color(0xffd7a0),
+          emissive: new THREE.Color(0xfff3e8),
           emissiveMap: tex,
-          emissiveIntensity: 0.19,   // 磨砂比抛光更能把内部的光漫出来，所以比原来高一点
+          /* ★ 2026-10-06 空卡灯牌化：0.19 是给"有画面的卡"配的 —— 画面自身
+             有色彩浓度，内透只需点到为止。空卡整张都是浅色留白，ACES 会把
+             浅色压灰（实测截图），灯牌的"光从里面漫出来"必须靠这档补：
+             0.19 → 0.42，卡片自己成为光源的一部分。
+             发光色也从暖橙 0xffd7a0 转中性微暖 0xfff3e8 —— 实测第二轮：
+             暖橙在这个强度会把五张浅色卡全染成奶油色，色相全被吃掉。 */
+          emissiveIntensity: 0.42,
         });
         const matBack = mat.clone();
         matBack.side = THREE.BackSide;
@@ -2568,6 +2611,17 @@ function createAcrylicLamp(container, options) {
         measureAssembly();   // 卡片换过之后重新量一次，构图跟着走
         resize();
       }
+      return api;
+    },
+
+    /** 换灯牌字体（传字体 family 名）。换完自动重画一遍卡片 ——
+        前提是那个字体已经 document.fonts 就绪，否则画出来还是回退字体。 */
+    setFont(family) {
+      CARD_FONT_USER = String(family || '');
+      preparedRec = null;
+      buildCards();
+      measureAssembly();
+      resize();
       return api;
     },
 

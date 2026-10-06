@@ -170,7 +170,9 @@
   /* 改群资料 / 设置。patch 只接受白名单字段 ——
      settings 整体替换会导致并发写互相覆盖，所以分开收。 */
   /* lastUserId：user 在这个群里最后一次用的发言账号（＋面板切身份后记住） */
-  var GROUP_FIELDS = ['name', 'avatarMode', 'avatar', 'avatarMedia', 'ownerAccountId', 'lastUserId'];
+  /* beautifyCss：群聊美化（2026-10-05）—— 用户自定义 CSS，进群聊页时注入。
+     跟着群记录走，导出 / 换岛备份天然带上；走白名单防止并发写互相覆盖。 */
+  var GROUP_FIELDS = ['name', 'avatarMode', 'avatar', 'avatarMedia', 'ownerAccountId', 'lastUserId', 'beautifyCss'];
   var SETTINGS_FIELDS = ['opening', 'rhythm', 'privateFollow', 'naturalTopic',
     'crossChannel', 'mute'];
 

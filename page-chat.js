@@ -362,6 +362,674 @@
     return '我';
   }
 
+  /* ==================== 转发（仿微信，待办 2026-10-06 #2） ====================
+
+     微信的两条路都做：
+       · 单条：长按气泡 → 转发 → 选聊天 → 直接发（不带来源的裸气泡）
+       · 多选：多选条 → 转发 → 逐条转发（裸气泡）/ 合并转发（带昵称的
+         「XX的聊天记录」卡片，点开能看原对话）
+     逐条/单条发出的消息 role 一律是 user —— 转发是「我说给 TA 听」，
+     不是替原说话者传话；模型也按「你说过这些」接。
+
+     不支持转发的（语音 —— 微信也不让转语音；转账/拍一拍/查岗等卡片）
+     会跳过并提示条数。照片/表情转过去是**图库里的独立副本**（重新 put
+     一份 blob），不共用 mediaId —— 不然删原消息时 dropMessages 的
+     「无引用才删本体」只查本对话，会把别的对话还在用的图删掉。 */
+
+  /* 选中集合（[{id, idx}]）→ 有序转发项。正文只从 bubbleText 一条路取。 */
+  function collectForwardItems(chatId, pairs) {
+    var c = getChat(chatId);
+    if (!c) return [];
+    var byMsg = {};
+    pairs.forEach(function (p) {
+      if (!p || !p.id) return;
+      byMsg[p.id] = byMsg[p.id] || [];
+      if (byMsg[p.id].indexOf(p.idx) < 0) byMsg[p.id].push(p.idx);
+    });
+    var out = [];
+    (c.messages || []).forEach(function (m) {
+      if (m.role !== 'user' && m.role !== 'assistant') return;
+      if (!byMsg[m.id]) return;
+      var uname = (m.role === 'user') ? userNameOf(c) : charNameOf(c);
+      var idxs = byMsg[m.id].slice().sort(function (a, b) { return a - b; });
+      idxs.forEach(function (idx) {
+        /* 收到的合并卡可以原样再转（微信也这样）：整卡带走，标题不动 */
+        if (m.type === 'fwd-merged') {
+          out.push({ kind: 'merge-card', name: uname, role: m.role,
+            title: m.title || '聊天记录', items: Array.isArray(m.items) ? m.items : [],
+            t: m.timestamp || 0 });
+          return;
+        }
+        /* 链接卡同样整卡带走（元数据跟着走，不重新抓） */
+        if (m.type === 'link-card') {
+          out.push({ kind: 'link-card', name: uname, role: m.role,
+            link: m.link || { url: m.content, platform: '' },
+            t: m.timestamp || 0 });
+          return;
+        }
+        if (m.type === 'photo') {
+          out.push({ kind: 'photo', name: uname, role: m.role,
+            mediaId: m.mediaId || null, fname: m.name || '图片',
+            w: m.w || 0, h: m.h || 0, size: m.size || 0, mime: m.mime || '',
+            t: m.timestamp || 0 });
+          return;
+        }
+        if (m.type === 'sticker') {
+          out.push({ kind: 'sticker', name: uname, role: m.role,
+            mediaId: m.mediaId || null, url: m.url || '',
+            fname: m.name || '表情', t: m.timestamp || 0 });
+          return;
+        }
+        /* 其余卡片类（转账/查岗/拍一拍/帷境…）和语音一律不转（微信也不转语音） */
+        if (m.type || m.voice) { out.push({ kind: 'skip', why: m.type || 'voice' }); return; }
+        out.push({ kind: 'text', name: uname, role: m.role,
+          text: bubbleText(m, idx), t: m.timestamp || 0 });
+      });
+    });
+    return out;
+  }
+
+  /* 转发项的摘要文本：合并记录里的预览行、给模型看的行都用它 */
+  function fwdItemText(it) {
+    if (!it) return '';
+    if (it.kind === 'photo') return '[图片]';
+    if (it.kind === 'sticker') return '[表情]' + (it.fname ? ' ' + it.fname : '');
+    if (it.kind === 'merge-card') return '[聊天记录] ' + (it.title || '');
+    if (it.kind === 'link-card') {
+      return '[' + platformLabel(it.link && it.link.platform) + '链接] ' +
+        ((it.link && it.link.title) || (it.link && it.link.url) || '');
+    }
+    return String(it.text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  /* 把一组转发项发给一个目标对话。返回 Promise（全部落库后 resolve）。 */
+  function sendForwardTo(targetId, items, mode) {
+    var t = getChat(targetId);
+    if (!t) return Promise.resolve(false);
+
+    function finish(msgs) {
+      msgs.forEach(function (m) {
+        addMessage(targetId, m);
+        /* 纯文字（没有 type 字段的）才进记忆索引；卡片类只进历史 */
+        if (!m.type && m.content) commitMemory(targetId, 'user', m.content);
+      });
+      return true;
+    }
+
+    if (mode === 'merge') {
+      /* 合并转发：一条「聊天记录」卡片。标题照微信 = 转发者的名字。
+         单独转一张收到的合并卡时（merge-card）保留原标题 —— 卡是「别人
+         整理好的记录」，再转也是那张卡。 */
+      return Promise.resolve(finish([{
+        id: newId(),
+        role: 'user',
+        type: 'fwd-merged',
+        title: items.length === 1 && items[0].kind === 'merge-card'
+          ? (items[0].title || '聊天记录')
+          : (userNameOf(t) + '的聊天记录'),
+        items: (items.length === 1 && items[0].kind === 'merge-card')
+          ? (items[0].items || [])
+          : items.map(function (it) {
+              return { name: it.name || '', role: it.role || 'user',
+                       text: fwdItemText(it), t: it.t || 0 };
+            }),
+        timestamp: Date.now()
+      }]));
+    }
+
+    /* 逐条：按原顺序发裸气泡。照片/表情先复制出独立副本再落消息。 */
+    var seq = [];
+    var p = Promise.resolve();
+    items.forEach(function (it) {
+      p = p.then(function () {
+        /* 链接卡整卡带走，不重新抓元数据 —— 卡是「当时看到的样子」 */
+        if (it.kind === 'link-card') {
+          return Promise.resolve().then(function () { seq.push({ kind: 'link-card', link: it.link || {} }); });
+        }
+        if (it.kind === 'photo') {
+          if (it.mediaId && Sleepy.media && Sleepy.media.get) {
+            return Sleepy.media.get(it.mediaId).then(function (rec) {
+              if (!rec || !rec.blob) return { kind: 'ghost', text: '[图片]' };
+              return Sleepy.media.put(rec.blob, {
+                name: rec.name || it.fname, kind: 'photo',
+                w: it.w || 0, h: it.h || 0
+              }).then(function (mid) {
+                return { kind: 'photo', mediaId: mid, fname: it.fname,
+                  w: it.w || 0, h: it.h || 0, size: rec.size || 0, mime: rec.type || '' };
+              });
+            }, function () { return { kind: 'ghost', text: '[图片]' }; });
+          }
+          return Promise.resolve({ kind: 'ghost', text: '[图片]' });
+        }
+        if (it.kind === 'sticker') {
+          if (it.mediaId && Sleepy.media && Sleepy.media.get) {
+            return Sleepy.media.get(it.mediaId).then(function (rec) {
+              if (!rec || !rec.blob) return { kind: 'sticker', url: it.url || '', fname: it.fname };
+              return Sleepy.media.put(rec.blob, {
+                name: rec.name || it.fname, kind: 'sticker'
+              }).then(function (mid) {
+                return { kind: 'sticker', mediaId: mid, fname: it.fname };
+              });
+            }, function () { return { kind: 'sticker', url: it.url || '', fname: it.fname }; });
+          }
+          return Promise.resolve({ kind: 'sticker', url: it.url || '', fname: it.fname });
+        }
+        return Promise.resolve({ kind: 'text', text: String(it.text || '') });
+      }).then(function (r) { seq.push(r); });
+    });
+
+    return p.then(function () {
+      var base = Date.now();
+      var msgs = seq.map(function (r, i) {
+        if (r.kind === 'link-card') {
+          return { id: newId(), role: 'user', type: 'link-card',
+            content: r.link.url || '', link: r.link,
+            timestamp: base + i };
+        }
+        if (r.kind === 'photo') {
+          return { id: newId(), role: 'user', type: 'photo',
+            mediaId: r.mediaId, name: r.fname, w: r.w, h: r.h,
+            size: r.size || 0, mime: r.mime || '',
+            content: '[照片] ' + (r.fname || ''),
+            timestamp: base + i };
+        }
+        if (r.kind === 'sticker') {
+          var sm = { id: newId(), role: 'user', type: 'sticker',
+            name: r.fname || '表情',
+            content: '[表情] ' + (r.fname || ''),
+            timestamp: base + i };
+          if (r.mediaId) sm.mediaId = r.mediaId; else sm.url = r.url || '';
+          return sm;
+        }
+        if (r.kind === 'ghost') {
+          /* 图库里的本体已经没了：占位一条文字，顺序不乱 */
+          return { id: newId(), role: 'user', content: r.text, timestamp: base + i };
+        }
+        return { id: newId(), role: 'user', content: r.text, timestamp: base + i };
+      });
+      return finish(msgs);
+    });
+  }
+
+  /* ---------------- 转发目标选择（全屏，仿微信「选择聊天」） ----------------
+
+     造型照微信：顶栏 取消 / 选择聊天 / 多选，下面搜索框 + 最近聊天列表。
+     单选模式点一行 = 底部弹「发送给：XX」确认；多选模式勾若干行，
+     底栏「发送(n)」。选中回调拿到的是目标对话 id 数组。 */
+  function pickForwardTargets(ctx, onPicked) {
+    var host = document.getElementById('phone') || document.body;
+    var mask = h('div', 'msg-menu-mask');
+    var panel = h('div', 'fwd-picker');
+    var closed = false;
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      mask.classList.remove('is-open');
+      panel.classList.remove('is-open');
+      setTimeout(function () {
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
+      }, 240);
+    }
+
+    var multi = false;
+    var picked = {};      /* chatId -> true */
+    var chats = withPinnedFirst(viewChats()).filter(function (c) { return !c.groupId; });
+
+    var btnBack = h('button', 'fwd-head-btn', '取消');
+    var headTitle = h('span', 'fwd-head-title', '选择聊天');
+    var btnMulti = h('button', 'fwd-head-btn', '多选');
+    btnBack.type = 'button'; btnMulti.type = 'button';
+    var head = h('div', 'fwd-head');
+    head.appendChild(btnBack); head.appendChild(headTitle); head.appendChild(btnMulti);
+
+    var search = h('input', 'fwd-search');
+    search.type = 'text';
+    search.placeholder = '搜索';
+    search.setAttribute('autocapitalize', 'off');
+
+    var list = h('div', 'fwd-list');
+    var foot = h('div', 'fwd-foot');
+    foot.style.display = 'none';
+
+    function rowOf(chat) {
+      var chAv = chat.characterId ? findCharacter(chat.characterId) : null;
+      var dispName = chatDisplayName(chat);
+      var row = h('div', 'fwd-row');
+      var ava = h('span', 'chat-item-ava', Sleepy.core.initialOf(dispName || '?'));
+      Sleepy.core.setAvatarBg(ava, chAv);
+      row.appendChild(ava);
+      row.appendChild(h('span', 'fwd-row-name', dispName));
+      var check = h('span', 'fwd-check');
+      check.style.visibility = multi ? 'visible' : 'hidden';
+      if (picked[chat.id]) check.classList.add('is-on');
+      row.appendChild(check);
+      row.addEventListener('click', function () {
+        if (multi) {
+          if (picked[chat.id]) { delete picked[chat.id]; check.classList.remove('is-on'); }
+          else { picked[chat.id] = true; check.classList.add('is-on'); }
+          paintFoot();
+          return;
+        }
+        /* 单选：底部弹确认（照微信「发送给：」那条） */
+        confirmSend(chat);
+      });
+      return row;
+    }
+
+    function paintList() {
+      var kw = String(search.value || '').trim().toLowerCase();
+      list.innerHTML = '';
+      var shown = chats.filter(function (c) {
+        if (!kw) return true;
+        return String(chatDisplayName(c)).toLowerCase().indexOf(kw) >= 0;
+      });
+      if (!shown.length) {
+        list.appendChild(h('div', 'fwd-empty', '没有匹配的聊天'));
+        return;
+      }
+      shown.forEach(function (c) { list.appendChild(rowOf(c)); });
+    }
+
+    var sendBtn;
+    function paintFoot() {
+      var n = Object.keys(picked).length;
+      foot.innerHTML = '';
+      if (!multi) { foot.style.display = 'none'; return; }
+      foot.style.display = 'flex';
+      foot.appendChild(h('span', 'fwd-foot-info', n ? '已选 ' + n + ' 个聊天' : '点聊天勾选，一起发'));
+      sendBtn = h('button', 'fwd-send' + (n ? '' : ' is-off'), '发送' + (n ? '(' + n + ')' : ''));
+      sendBtn.type = 'button';
+      sendBtn.addEventListener('click', function () {
+        var ids = Object.keys(picked);
+        if (!ids.length) return;
+        close();
+        onPicked(ids);
+      });
+      foot.appendChild(sendBtn);
+    }
+
+    /* 底部确认条（微信「发送给：XX + 取消/发送」） */
+    function confirmSend(chat) {
+      var sheet = h('div', 'msg-menu fwd-confirm');
+      sheet.appendChild(h('div', 'fwd-confirm-label', '发送给：'));
+      var who = h('div', 'fwd-confirm-who');
+      var chAv = chat.characterId ? findCharacter(chat.characterId) : null;
+      var dispName = chatDisplayName(chat);
+      var ava = h('span', 'chat-item-ava', Sleepy.core.initialOf(dispName || '?'));
+      Sleepy.core.setAvatarBg(ava, chAv);
+      who.appendChild(ava);
+      who.appendChild(h('span', 'fwd-row-name', dispName));
+      sheet.appendChild(who);
+      var acts = h('div', 'fwd-confirm-acts');
+      var c1 = h('button', 'msg-menu-item', '取消');
+      c1.type = 'button';
+      c1.addEventListener('click', function () {
+        if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+      });
+      var c2 = h('button', 'msg-menu-item is-primary', '发送');
+      c2.type = 'button';
+      c2.addEventListener('click', function () {
+        close();
+        onPicked([chat.id]);
+      });
+      acts.appendChild(c1); acts.appendChild(c2);
+      sheet.appendChild(acts);
+      panel.appendChild(sheet);
+    }
+
+    btnBack.addEventListener('click', close);
+    btnMulti.addEventListener('click', function () {
+      multi = !multi;
+      picked = {};
+      btnMulti.textContent = multi ? '单选' : '多选';
+      paintList();
+      paintFoot();
+    });
+    search.addEventListener('input', paintList);
+
+    panel.appendChild(head);
+    panel.appendChild(search);
+    panel.appendChild(list);
+    panel.appendChild(foot);
+    mask.addEventListener('click', close);
+    host.appendChild(mask);
+    host.appendChild(panel);
+    setTimeout(function () {
+      mask.classList.add('is-open');
+      panel.classList.add('is-open');
+    }, 20);
+  }
+
+  /* ==================== 链接识别（微博 / 抖音 / 小红书） ====================
+
+     待办 3 的第一步：整条消息就是一个平台链接时，不发文字气泡，
+     改发一张「链接卡」（仿微信分享卡）。
+
+     元数据怎么补（2026-10-06 定稿）：
+     ① 微博分享文案（带正文的那种）→ 本地正则剥 正文/作者，零后端零 key；
+     ② 裸链接 → apizero 解析接口（浏览器直连，CORS 全开已实测；
+        匿名 5 次/天/IP，设置 → 视频解析填 key 提额）；
+     ③ apizero 挂了 → 微博退 m 站 JSON、抖音退 <title> 抠取（多半也拦，
+        代码留着，接口哪天开了就亮）；
+     ④ 全失败 → 「只有链接」的占位卡。**不阻塞发消息、不报错** ——
+        链接本身没坏，点开照样能看。
+     评论抓取 v1 不做；小红书要登录态，单独讨论。 */
+
+  var LINK_PLATFORMS = { weibo: '微博', douyin: '抖音', xhs: '小红书' };
+
+  function platformLabel(p) { return LINK_PLATFORMS[p] || '链接'; }
+
+  /* 整条消息必须**就是**一个链接才转卡片；文字里夹链接的照发文字
+     （微信也只在「分享」时出卡，打字带链接不出卡）。 */
+  function detectLink(text) {
+    var t = String(text || '').trim();
+    if (!/^https?:\/\/\S+$/i.test(t)) return null;
+    var host = '';
+    try { host = new URL(t).hostname.toLowerCase(); } catch (e) { return null; }
+    var out = { url: t, platform: '', id: '' };
+    if (/(^|\.)weibo\.(com|cn)$/.test(host)) {
+      out.platform = 'weibo';
+      /* 取路径最后一段当 id —— weibo.com/<uid>/<bid> 两段都是长数字，
+         不能用「第一个长数字」去匹配，那是 uid 不是帖子 id */
+      var parts = t.split('?')[0].split('/').filter(Boolean);
+      out.id = parts.length ? parts[parts.length - 1] : '';
+    } else if (host === 't.cn') {
+      /* 短链：末段是短码不是帖子 id，m 站接口要不了；
+         原帖 id 要跟跳转才知道，v1 不跟，id 留空。 */
+      out.platform = 'weibo';
+    } else if (/(^|\.)douyin\.com$/.test(host) || /(^|\.)iesdouyin\.com$/.test(host)) {
+      out.platform = 'douyin';
+      var mv = t.match(/video\/(\d+)/);
+      if (mv) out.id = mv[1];
+    } else if (/(^|\.)xiaohongshu\.com$/.test(host) || /(^|\.)xhslink\.com$/.test(host)) {
+      out.platform = 'xhs';
+    } else {
+      return null;
+    }
+    return out;
+  }
+
+  /* 依次试：直连 → 各公共中转。任何一个成功就返回响应文本。 */
+  function fetchTextViaRelay(url, timeoutMs) {
+    var prefixes = [''].concat([
+      'https://api.allorigins.win/raw?url=',
+      'https://corsproxy.io/?url='
+    ]);
+    var i = 0;
+    function attempt() {
+      var target = prefixes[i] ? prefixes[i] + encodeURIComponent(url) : url;
+      var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, timeoutMs || 9000);
+      return fetch(target, ctrl ? { signal: ctrl.signal } : undefined)
+        .then(function (r) {
+          clearTimeout(timer);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        })
+        .then(function (raw) {
+          /* 中转可能把错误页原样转回来：空响应按失败处理，继续换下一家 */
+          if (!raw || !raw.length) throw new Error('empty');
+          return raw;
+        })
+        .catch(function (err) {
+          clearTimeout(timer);
+          i++;
+          if (i < prefixes.length) return attempt();
+          throw err;
+        });
+    }
+    return attempt();
+  }
+
+  /* 微博正文：m 站的 JSON（{ok:1, data:{text,user,pic_urls,reposts_count…}}） */
+  function resolveWeibo(link, onPatch) {
+    var api = 'https://m.weibo.cn/statuses/show?id=' + encodeURIComponent(link.id || '');
+    fetchTextViaRelay(api).then(function (raw) {
+      var j = JSON.parse(raw);
+      if (!j || !j.ok || !j.data) throw new Error('bad json');
+      var d = j.data;
+      var txt = String(d.text || '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      var pics = [];
+      (Array.isArray(d.pic_urls) ? d.pic_urls : []).forEach(function (p) {
+        var u = (typeof p === 'string') ? p : ((p && p.url) || '');
+        if (u) pics.push(u);
+      });
+      var n = function (v) { return Number(v) || 0; };
+      onPatch({
+        title: txt.slice(0, 80) || '微博',
+        text: txt.slice(0, 200),
+        user: (d.user && d.user.screen_name) || '',
+        img: pics[0] || '',
+        stats: n(d.reposts_count) + ' 转发 · ' + n(d.comments_count) +
+               ' 评论 · ' + n(d.attitudes_count) + ' 赞'
+      });
+    })['catch'](function () { /* 拉不到保持占位卡，链接本身没坏 */ });
+  }
+
+  /* 抖音 / 小红书：v1 只试着从分享页 HTML 抠 <title> ——
+     抖音的短链要跟一串跳转、小红书要登录态，都留到单独讨论那批。
+     （抖音现在有更好的路：resolveLink 里先试 apizero，这里兜底。） */
+  function resolveGeneric(link, onPatch) {
+    fetchTextViaRelay(link.url).then(function (raw) {
+      var mt = raw.match(/<title[^>]*>([^<]{1,120})/i);
+      if (mt && mt[1]) onPatch({ title: mt[1].trim() });
+    })['catch'](function () { /* 同上 */ });
+  }
+
+  /* ==================== 链接卡解析（视频 / 帖子富卡） ====================
+
+     主路：极数本源（apizero.cn）的 video-parse 接口 —— 抖音 / B站 / 快手 /
+     微博 / YouTube 等一揽子，出标题 / 作者 / 封面 / 转评赞。
+     浏览器**直连**（CORS 全开，2026-10-06 实测反射任意 Origin），
+     不用中转不用本地服务；匿名 5 次/天/IP，设置 → 链接解析里填自己的
+     key 可提额，也可填自定义接口（优先用）。失败静默降级 ——
+     占位卡照样能点开原页。 */
+  var VIDEO_PARSE_API = 'https://v1.apizero.cn/api/video-parse';
+
+  function videoParseKey() {
+    try {
+      var st = Sleepy.store;
+      return String((st && st.get('vpKey')) || '').trim();
+    } catch (e) { return ''; }
+  }
+
+  /* 解析结果缓存（24h，最多 60 条）：同一条链接反复发/反复看聊天，
+     不该一遍遍吃掉当天的免费额度 —— 缓存命中直接回填，零请求。 */
+  function vpCacheRead(url) {
+    try {
+      var c = Sleepy.store.get('vpCache') || {};
+      var e = c[url];
+      if (e && e.patch && (Date.now() - e.ts) < 24 * 3600 * 1000) return e.patch;
+    } catch (e2) { /* 缓存坏了当没有 */ }
+    return null;
+  }
+
+  function vpCacheWrite(url, patch) {
+    try {
+      var c = Sleepy.store.get('vpCache') || {};
+      c[url] = { ts: Date.now(), patch: patch };
+      var keys = Object.keys(c);
+      if (keys.length > 60) {
+        keys.sort(function (a, b) { return (c[a].ts || 0) - (c[b].ts || 0); });
+        keys.slice(0, keys.length - 60).forEach(function (k) { delete c[k]; });
+      }
+      Sleepy.store.set('vpCache', c);
+    } catch (e) { /* 写不进就算了 */ }
+  }
+
+  /* 自定义解析接口（设置 → 链接解析里填）：URL 模板，{url} / %url% / %s
+     占位；不带占位符就默认拼 ?url=。填了就**优先用自定义**，挂了退 apizero。
+     返回结构各家不同 ⇒ 宽松扫 JSON 按字段名抠数据，抠不到算失败。 */
+  function vpCustomApi() {
+    try {
+      return String((Sleepy.store && Sleepy.store.get('vpCustomApi')) || '').trim();
+    } catch (e) { return ''; }
+  }
+
+  function vpCustomRequestUrl(tpl, url) {
+    var enc = encodeURIComponent(url);
+    var u = tpl.replace(/\{url\}|%url%|%s/g, enc);
+    if (u === tpl) u = tpl + (tpl.indexOf('?') >= 0 ? '&' : '?') + 'url=' + enc;
+    return u;
+  }
+
+  /* 限深递归找第一个命中的字段值（数组也下钻）。 */
+  function vpDeepFind(obj, names, depth) {
+    if (!obj || typeof obj !== 'object' || depth > 4) return undefined;
+    for (var i = 0; i < names.length; i++) {
+      var v = obj[names[i]];
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    for (var k in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] && typeof obj[k] === 'object') {
+        var hit = vpDeepFind(obj[k], names, depth + 1);
+        if (hit !== undefined) return hit;
+      }
+    }
+    return undefined;
+  }
+
+  function resolveViaApi(link, onPatch, onFail) {
+    var cached = vpCacheRead(link.url);
+    if (cached) { onPatch(cached); return; }
+
+    /* 依次试：自定义接口（填了才排上）→ apizero。 */
+    var tries = [];
+    var custom = vpCustomApi();
+    if (custom) tries.push({ url: vpCustomRequestUrl(custom, link.url), custom: true });
+    var qs = '?url=' + encodeURIComponent(link.url) + '&flat=1';
+    var key = videoParseKey();
+    if (key) qs += '&key=' + encodeURIComponent(key);
+    tries.push({ url: VIDEO_PARSE_API + qs, custom: false });
+
+    var i = 0;
+    function attempt() {
+      if (i >= tries.length) { if (onFail) onFail(); return; }
+      var t = tries[i++];
+      var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 15000);
+      fetch(t.url, ctrl ? { signal: ctrl.signal } : undefined)
+        .then(function (r) { return r.text(); })
+        .then(function (raw) {
+          clearTimeout(timer);
+          var j = null;
+          try { j = JSON.parse(raw); } catch (e) { throw new Error('not json'); }
+          return t.custom ? patchFromCustom(j) : patchFromApizero(j);
+        })
+        .then(function (patch) {
+          vpCacheWrite(link.url, patch);
+          onPatch(patch);
+        })
+        ['catch'](function () {
+          clearTimeout(timer);
+          attempt();
+        });
+    }
+    attempt();
+  }
+
+  /* apizero 的结构是定的：{code:0, data:{title,desc,cover_url,stats,…}} */
+  function patchFromApizero(j) {
+    if (!j || Number(j.code) !== 0 || !j.data) throw new Error('parse fail');
+    var d = j.data;
+    if (d.data && !d.title) d = d.data;   /* 兼容 flat=0 的两层 data */
+    var stats = d.stats || {};
+    var source = d.source || {};
+    var n = function (v) { return Number(v) || 0; };
+    var pics = [];
+    (Array.isArray(d.imagelist) ? d.imagelist : []).forEach(function (u) {
+      if (typeof u === 'string' && u) pics.push(u);
+    });
+    var bits = [];
+    if (n(stats.play_count)) bits.push(n(stats.play_count) + ' 播放');
+    if (n(stats.like_count)) bits.push(n(stats.like_count) + ' 赞');
+    if (n(stats.comment_count)) bits.push(n(stats.comment_count) + ' 评论');
+    if (n(stats.share_count)) bits.push(n(stats.share_count) + ' 转发');
+    else if (n(stats.collect_count)) bits.push(n(stats.collect_count) + ' 收藏');
+    var title = String(d.title || '').trim().slice(0, 80);
+    var img = String(d.cover_url || '').trim() || pics[0] || '';
+    /* 全空的结果不叫成功，别拿它把占位卡的「平台名」洗掉 */
+    if (!title && !img && !bits.length && !d.desc) throw new Error('empty');
+    return {
+      title: title,
+      text: String(d.desc || '').slice(0, 200),
+      user: String(stats.author_name || source.author_name || ''),
+      img: img,
+      stats: bits.join(' · ')
+    };
+  }
+
+  /* 自定义接口：结构未知，宽松扫。 */
+  function patchFromCustom(j) {
+    if (!j || typeof j !== 'object') throw new Error('not json');
+    var title = String(vpDeepFind(j, ['title', '标题', 'name'], 0) || '').trim().slice(0, 80);
+    var text = String(vpDeepFind(j, ['desc', 'description', '摘要', 'content', 'intro'], 0) || '').slice(0, 200);
+    var img = String(vpDeepFind(j, ['cover', 'cover_url', 'img', 'pic', 'image', 'thumbnail'], 0) || '').trim();
+    var user = String(vpDeepFind(j, ['author', 'author_name', 'user', 'uploader', 'nickname'], 0) || '').trim();
+    var cnt = function (names) {
+      var v = Number(vpDeepFind(j, names, 0));
+      return (isFinite(v) && v > 0) ? Math.round(v) : 0;
+    };
+    var bits = [];
+    if (cnt(['play_count', 'play', 'plays'])) bits.push(cnt(['play_count', 'play', 'plays']) + ' 播放');
+    if (cnt(['like_count', 'likes', 'digg_count', 'attitudes_count'])) bits.push(cnt(['like_count', 'likes', 'digg_count', 'attitudes_count']) + ' 赞');
+    if (cnt(['comment_count', 'comments', 'comment'])) bits.push(cnt(['comment_count', 'comments', 'comment']) + ' 评论');
+    if (cnt(['share_count', 'shares', 'reposts_count'])) bits.push(cnt(['share_count', 'shares', 'reposts_count']) + ' 转发');
+    else if (cnt(['collect_count', 'collects', 'collect'])) bits.push(cnt(['collect_count', 'collects', 'collect']) + ' 收藏');
+    if (!title && !img && !bits.length && !text) throw new Error('empty');
+    return { title: title, text: text, user: user, img: img, stats: bits.join(' · ') };
+  }
+
+  /* ==================== 微博分享文案（零后端那条路） ====================
+
+     微博 App「分享」出来的文案**自带博文正文**：
+     「正文内容 O网页链接」「@作者：正文 https://weibo.com/xxx」「正文 L微博的微博视频」。
+     手机上「复制链接」常常只剩裸链接 —— 那种走 detectLink / apizero；
+     这里接的是**带正文的整段文案**：就地剥出 正文 / 作者 / 链接 建卡，
+     零后端零 key 零配额。剥不出正文和作者的（比如纯「O网页链接」）不硬建。
+     评论区拿不到；配图不进卡 —— 想让 TA 看图就截图发聊天走多模态。 */
+  function detectWeiboShare(text) {
+    var t = String(text || '').trim();
+    if (!t) return null;
+    if (!/O网页链接|L微博的|微博视频|网页链接/.test(t)) return null;
+    var um = t.match(/https?:\/\/[^\s，,。；;、）)】」"]+/i);
+    var url = um ? um[0] : '';
+    var am = t.match(/^\s*@([^\s:：@]{1,30})[:：]/);
+    var body = t
+      .replace(/https?:\/\/\S+/gi, '')
+      .replace(/O网页链接|L微博的|微博视频|网页链接/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (!body && !am) return null;   /* 剥不出来，别硬建卡 */
+    return { platform: 'weibo', url: url, id: '', shareText: body.slice(0, 500),
+             author: am ? am[1] : '' };
+  }
+
+  function resolveLink(link, onPatch) {
+    if (link.platform === 'weibo' && link.id) {
+      /* 裸链接带帖子 id：先试 apizero（微博帖也支持），挂了退回 m 站
+         JSON（多半被访客系统拦，但代码留着 —— 接口哪天开了就亮），
+         再挂了保持占位卡。 */
+      resolveViaApi(link, onPatch, function () { resolveWeibo(link, onPatch); });
+    } else if (link.platform === 'douyin') {
+      /* 抖音：apizero 主路（短链它能自己跟），挂了退 <title> 抠取 */
+      resolveViaApi(link, onPatch, function () { resolveGeneric(link, onPatch); });
+    } else if (link.platform === 'weibo') {
+      /* 分享文案卡 / t.cn 短链：没有帖子 id。分享文案卡的正文作者
+         建卡时就写进 link 了，这里只是试着补封面和数据；t.cn 让
+         apizero 试，它接得住是赚到，接不住保持原样。 */
+      resolveViaApi(link, onPatch);
+    } else {
+      resolveGeneric(link, onPatch);
+    }
+  }
+
   function newId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
@@ -448,6 +1116,26 @@
           if (r && r['catch']) r['catch'](function () { /* 清不掉不影响删除本身 */ });
         } catch (e) { /* 同上 */ }
       });
+      /* 照片消息（2026-10-06，用户）：删除要**从数据库里真删** ——
+         相册里同 mediaId 的记录一并清掉（「不用再出现在相册里」）；
+         这轮对话里没有别的消息还引用同一张图时，把图库里的本体也删了。
+         生成图当初会顺手收进相册（genAndDeliver），不这样删的话
+         消息没了、相册里还躺着一张。 */
+      c0.messages.forEach(function (m) {
+        if (ids.indexOf(m.id) < 0 || m.type !== 'photo' || !m.mediaId) return;
+        try {
+          if (Sleepy.photos && Sleepy.photos.removeByMedia) {
+            Sleepy.photos.removeByMedia(m.mediaId);
+          }
+          var otherRef = c0.messages.some(function (x) {
+            return ids.indexOf(x.id) < 0 && x.mediaId === m.mediaId;
+          });
+          if (!otherRef) {
+            var r2 = Sleepy.media.remove(m.mediaId);
+            if (r2 && r2['catch']) r2['catch'](function () { /* 删不掉不影响删除本身 */ });
+          }
+        } catch (e) { /* 同上 */ }
+      });
     }
     mutate(chatId, function (c) {
       c.messages = c.messages.filter(function (m) { return ids.indexOf(m.id) < 0; });
@@ -478,6 +1166,35 @@
       Sleepy.memoryVec.forget({ charId: c0.characterId, ids: [id] })
         ['catch'](function () { /* 同上 */ });
     }
+  }
+
+  /* 角色撤回的执行（2026-10-06）：[撤回:N|原因] 的 N 按**已发出的纯文字
+     消息**从新往旧数（1 = 上一条）。撤回不删原文（口径同群聊 core-group.js）：
+     打 recalledAt + recallReason，渲染层原位画灰字，点击可看原文和原因。
+     excludeId = 本轮刚落库的这条回复 —— 它还「没发出去」，不算进候选，
+     不然 N=1 会数到正在说的这句话（说明书里写的「上一条」就骗人了）。
+     数过头了就静默跳过 —— 模型数错了不该炸整个回复。
+     每个 hit 都重新 getChat：store.get 是深拷贝，拿着旧快照选候选，
+     前一个 hit 刚打上的戳就看不见了（会重复撤到同一条）。 */
+  function applyCharRecalls(chatId, hits, excludeId) {
+    var done = [];
+    (hits || []).forEach(function (hit) {
+      var c = getChat(chatId);
+      if (!c) return;
+      var cands = (c.messages || []).filter(function (m) {
+        return m.id !== excludeId &&
+               m.role === 'assistant' && !m.type && !m.recalledAt &&
+               String(m.content || '').trim();
+      });
+      var m = cands[cands.length - Math.max(1, hit.n | 0)];
+      if (!m) return;
+      patchMessage(chatId, m.id, {
+        recalledAt: Date.now(),
+        recallReason: String(hit.reason || '')
+      });
+      done.push(m.id);
+    });
+    return done;
   }
 
   /* ============================ 小工具 ============================ */
@@ -543,6 +1260,36 @@
     return { text: text, descs: descs };
   }
 
+  /* TA 发 HTML 小游戏（2026-10-06）：回复里写一块 [html]…[/html]，
+     标签内是完整 HTML（内联 CSS/JS，说明书在 prompt-engine 的 htmlgame 卡）。
+     程序剥标签 → 落成 type:'html' 消息 → 沙箱 iframe 渲染（htmlGameCard）。
+     · **多行标签**：HTML 里全是换行和方括号，不能用 [html:…] 单行格式
+       （同 [译]…[/译] 的多行先例）；大小写都认，防模型随手写 [HTML]。
+     · 一次回复最多收 1 块防刷（游戏不是表情包，多出来的直接剥掉不落库）。
+     · 尺寸闸 HTMLGAME_MAX：超长**截断保留下半**不整个丢弃 —— 浏览器对
+       半截 HTML 很宽容，截断的游戏多半还能玩；整丢则模型白写一轮。
+       截断位打标记，卡片上明示「内容超长被截断」。
+     · 没闭合的 [html]（有头没尾）不算命中，原文保留不动 —— 半截输出
+       多半是流式中断，剥掉反而丢字。 */
+  var HTMLGAME_MAX = 20 * 1024;
+  function extractHtmlGames(raw) {
+    var hit = null;
+    var count = 0;
+    var text = String(raw == null ? '' : raw)
+      .replace(/\[html\]\s*([\s\S]*?)\s*\[\/html\]/gi, function (_, body) {
+        count++;
+        if (!hit) hit = String(body || '');
+        return '';
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (hit == null) return { text: text, hit: null };
+    var truncated = hit.length > HTMLGAME_MAX;
+    if (truncated) hit = hit.slice(0, HTMLGAME_MAX);
+    return { text: text, hit: hit, truncated: truncated, dropped: Math.max(0, count - 1) };
+  }
+
   /* 收藏提议（We 收藏馆 P2）：回复里写 [收藏提议:事件id|分类|理由]。
      抽取 / 校验 / 去重 / 来源核验 / 落库全部收口在 Sleepy.weProposals
      （唯一出口 page-we-proposal.js）—— 这里只负责剥标签，正文里
@@ -552,6 +1299,60 @@
       return Sleepy.weProposals.extractTag(raw);
     }
     return { text: String(raw == null ? '' : raw), hit: null };
+  }
+
+  /* ---------------------------- 角色撤回（2026-10-06） ----------------------------
+
+     模型在回复里单独一行写 [撤回:第几条|原因]，就是「把我说过的话收回」。
+     第几条按**他已发出的纯文字消息**从新往旧数（1 = 上一条）—— 正在打的
+     这条还没落库，谈不上「收回」。全角半角冒号、竖线都认，原因可省。
+     纯函数，冒烟里单测；执行在 applyCharRecalls（要动存档，不在这里）。 */
+  function extractRecalls(raw) {
+    var hits = [];
+    var text = String(raw == null ? '' : raw)
+      .replace(/\[撤回[：:]\s*(\d+)(?:\s*[|｜]\s*([^\]\n]*))?\]/g, function (_, n, why) {
+        hits.push({ n: Math.max(1, parseInt(n, 10) || 1), reason: String(why || '').trim() });
+        return '';
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return { text: text, hits: hits };
+  }
+
+  /* 灯牌留言（2026-10-06）：[灯:那句话] / [灯牌:那句话] —— char 随时可以
+     往桌面的挂件灯上留一句话（能力卡 lamptag，不绑主动消息）。
+     抽取是纯函数（冒烟单测，口径同 extractRecalls：全角半角都认、
+     抽完的正文不带标签）；落库走 Sleepy.lampNotes.add（唯一出口
+     page-desktop），落库时机在回复管线里。 */
+  function extractLampNotes(raw) {
+    var hits = [];
+    var text = String(raw == null ? '' : raw)
+      .replace(/\[灯[牌]?[：:]\s*([^\]\n]{1,80})\]/g, function (_, t) {
+        hits.push({ text: String(t).trim() });
+        return '';
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return { text: text, hits: hits };
+  }
+
+  /* 慢递信箱（批4）：[慢递:小时数|信的内容] —— char 写一封延迟送达的信。
+     小时数钳在 1~72（prompt 卡同口径）；抽取纯函数（冒烟单测）；
+     落库走 commitSlowmail（slowLetters 表，到点前 user 看不到内容）。 */
+  function extractSlowmail(raw) {
+    var hits = [];
+    var text = String(raw == null ? '' : raw)
+      .replace(/\[慢递[：:]\s*(\d{1,3})\s*[|｜]\s*([^\]\n]+)\]/g, function (_, n, body) {
+        var h = Math.max(1, Math.min(72, parseInt(n, 10) || 1));
+        hits.push({ hours: h, body: String(body).trim() });
+        return '';
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return { text: text, hits: hits };
   }
 
   /* 提议落库 + 落一张 we-proposal 卡片消息（卡片渲染见页面内 weProposalCard）。
@@ -574,6 +1375,99 @@
       sourceId: r.proposal.sourceId,
       content: '',
       timestamp: Date.now()
+    });
+  }
+
+  /* ---------------- HTML 小游戏（2026-10-06） ----------------
+
+     TA 送一个可玩的网页小游戏：落库 type:'html'（html 字段存源码），
+     渲染在沙箱 iframe 里（htmlGameCard，见下方 render 段）。
+     三段式，各管各的：
+       · 落库  commitHtmlGame     —— 回复后处理调用（唯一入口）
+       · 结算  gameResultNote     —— 沙箱 postMessage 进来，存待转述痕迹
+       · 注入  gameResultPeekMsg  —— 下一轮 buildMessages 垫进上下文（一次性）
+     痕迹存 store（键带 chatId）：切岛/切号由 tagScope 盖章隔离，
+     跟 slowLetters 同一套纪律。 */
+
+  function commitHtmlGame(chatId, body, truncated) {
+    if (!body || !chatId) return null;
+    var chat = getChat(chatId);
+    if (!chat) return null;
+    var t = (String(body).match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1];
+    return addMessage(chatId, {
+      id: newId(),
+      role: 'assistant',
+      type: 'html',
+      content: (t || '').trim().slice(0, 40) || 'TA 做的小玩意',
+      html: String(body),
+      truncated: !!truncated,
+      timestamp: Date.now()
+    });
+  }
+
+  /* 结算痕迹：key 按会话，latest-wins（游戏可以多局连报，TA 看最新一局）。
+     同内容重复上报不覆盖（防止同一局的 report 反复触发重绘）。 */
+  function noteGameResult(chatId, msgId, score, text) {
+    if (!chatId) return false;
+    var prev = store.get('htmlGameResult:' + chatId);
+    if (prev && prev.msgId === msgId && prev.score === score &&
+        (prev.text || '') === (text || '')) return false;
+    store.set('htmlGameResult:' + chatId, {
+      msgId: msgId || null,
+      title: '',
+      score: (typeof score === 'number' && isFinite(score)) ? score : null,
+      text: String(text || '').slice(0, 120),
+      ts: Date.now()
+    });
+    return true;
+  }
+
+  /* 下一轮把结算垫进上下文（一次性：读出即摘）。写侧盖了岛章的话按
+     root 读（口径同 diaryPeekMsg）；没章就是纯 chatId 键。 */
+  function gameResultPeekMsg(chatId) {
+    if (!chatId) return null;
+    var key = 'htmlGameResult:' + chatId;
+    var rec = store.get(key);
+    if (!rec) return null;
+    store.set(key, null);
+    var lines = ['[小游戏结算] 你之前发给对方的小游戏，对方刚玩完一局。'];
+    if (rec.score != null) lines.push('得分：' + rec.score + '。');
+    if (rec.text) lines.push('结果描述：「' + rec.text + '」。');
+    if (rec.score == null && !rec.text) return null;
+    lines.push('可以自然地接话（调侃、关心、约再来一局），不要复述这段文字。');
+    return { role: 'system', content: lines.join('\n') };
+  }
+
+  /* 沙箱结算总线：htmlGameCard 每次渲染把自己的 contentWindow 登记进来，
+     message 事件只认登记过的窗口（别人页里开的其他 iframe 报不上来）。
+     模块级全局只挂一次监听（页面脚本只执行一遍，不会重复绑）。 */
+  var gameFrameWins = [];
+  var gameFrameMeta = new Map();
+  function registerGameFrame(win) {
+    if (!win) return;
+    if (gameFrameWins.indexOf(win) === -1) gameFrameWins.push(win);
+    /* 登记表只增不扫会随重绘缓慢膨胀，顺手清一遍已死的引用：
+       窗口已关（closed）或摸不动了（iframe 已摘，跨源访问直接抛）都算死 */
+    for (var i = gameFrameWins.length - 1; i >= 0; i--) {
+      var dead = true;
+      try { dead = !!gameFrameWins[i].closed; } catch (e) { dead = true; }
+      if (dead) {
+        gameFrameWins.splice(i, 1);
+      }
+    }
+    Array.from(gameFrameMeta.keys()).forEach(function (win) {
+      var dead = true;
+      try { dead = !!win.closed; } catch (e) { dead = true; }
+      if (dead) gameFrameMeta.delete(win);
+    });
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('message', function (ev) {
+      if (!ev.data || ev.data.__sleepyHtmlResult !== 1) return;
+      if (gameFrameWins.indexOf(ev.source) === -1) return;
+      var meta = gameFrameMeta.get(ev.source);
+      if (!meta) return;
+      noteGameResult(meta.chatId, meta.msgId, ev.data.score, ev.data.text);
     });
   }
 
@@ -683,6 +1577,36 @@
       return '[你想把「' + (m.title || '一件东西') + '」收进你们的收藏馆，' +
         '对方还没有回应]';
     }
+    /* 合并转发的聊天记录卡：给模型看摘要（前 6 条，每条截 60 字），
+       并说清「这是转发的别人的对话」—— 不然 TA 会把里面的话当成
+       你对 TA 说的。 */
+    if (m.type === 'fwd-merged') {
+      var fits = Array.isArray(m.items) ? m.items : [];
+      var flines = [];
+      fits.slice(0, 6).forEach(function (it) {
+        flines.push((it.name || '') + '：' + String(it.text || '').slice(0, 60));
+      });
+      if (fits.length > 6) flines.push('…（共 ' + fits.length + ' 条）');
+      return '[我转发了一份聊天记录「' + (m.title || '聊天记录') + '」：\n' +
+        flines.join('\n') + '\n这是我转来给你看的别人聊过的内容，不是我对你说的话]';
+    }
+    /* 链接卡：报平台 + 标题 + 链接本体（TA 手上有 API 的话能自己点开看）。
+       分享文案卡可能没有 url（没复制到链接），那就只报标题和内容。 */
+    if (m.type === 'link-card') {
+      var lk = m.link || {};
+      var ltxt = '[我分享了一个' + platformLabel(lk.platform) + '链接：' +
+        (lk.title || '') + (lk.url ? '（' + lk.url + '）' : '') + ']';
+      if (lk.user) ltxt += '，作者是 @' + lk.user;
+      if (lk.text) ltxt += '，内容是：「' + String(lk.text).slice(0, 160) + '」';
+      return ltxt;
+    }
+    /* HTML 小游戏：只报「做过、送出去了」。游戏内容本身不进上下文
+       （那是一坨 HTML 源码，喂进去纯烧 token）；TA 要知道结果，
+       走 gameResultPeekMsg 的结算痕迹，不在这里替模型剧透。 */
+    if (m.type === 'html') {
+      return '[我做了一个能在聊天里直接玩的小游戏《' + (m.content || '') +
+        '》发给了对方，等 TA 玩]';
+    }
     return m.content || '';
   }
 
@@ -770,6 +1694,13 @@
     if (msg.type === 'wj-share') return '[作品]《' + (msg.title || '未命名') + '》';
     if (msg.type === 'wj-invite') return '[同席邀请]《' + (msg.title || '未命名') + '》';
     if (msg.type === 'we-proposal') return '[收藏提议]' + (msg.title ? ' ' + msg.title : '');
+    if (msg.type === 'fwd-merged') return '[聊天记录]';
+    if (msg.type === 'html') return '[小游戏]' + (msg.content ? ' ' + msg.content : '');
+    if (msg.type === 'link-card') {
+      var lp = msg.link || {};
+      return '[' + platformLabel(lp.platform) + '链接] ' +
+        (lp.title || lp.url || msg.content || '');
+    }
     var raw = String(msg.content || '');
     var pe = Sleepy.promptEngine;
     if (pe && pe.splitBubblesT) {
@@ -1529,6 +2460,13 @@
           }
           if (ts) prevTs = ts;
 
+          /* 撤回（2026-10-06）：原位变一行居中灰字（微信样式），点击可看
+             撤回的内容和原因 —— 撤回不删原文，数据还在。 */
+          if (m.recalledAt) {
+            msgWrap.appendChild(recallLine(m));
+            return;
+          }
+
           /* 输出协议（预设注入系统）：assistant 正文里的 || 是气泡分隔符，
              一条存档消息按协议渲染成多条气泡。分段只在最后一段挂 reroll，
              长按菜单每段都能唤起（操作对象还是整条消息）。 */
@@ -1540,6 +2478,16 @@
           });
         });
         if (pending && !pending.targetId) msgWrap.appendChild(pendingBubbles());
+
+        /* 游戏卡缓存 prune：只留当前会话里还活着的 type:'html' 消息，
+           删消息 / 换房后旧节点自动释放，避免跨会话串台或内存泄漏 */
+        gameCardCache.forEach(function (_node, mid) {
+          var alive = false;
+          for (var mi = 0; mi < c.messages.length; mi++) {
+            if (c.messages[mi].id === mid && c.messages[mi].type === 'html') { alive = true; break; }
+          }
+          if (!alive) gameCardCache.delete(mid);
+        });
 
         syncBubbleDots();
         if (keepScroll) msgWrap.scrollTop = prev;
@@ -1555,6 +2503,33 @@
         for (var i = 0; i < wraps.length; i++) {
           wraps[i].classList[has && i === wraps.length - 1 ? 'add' : 'remove']('has-unread');
         }
+      }
+
+      /* 撤回灰字条（2026-10-06）。文案分两个方向：我撤回的 / TA 撤回的。
+         点击弹浮层：撤回的内容 + 原因（原因只有角色撤回才写）。
+         不挂长按菜单 —— 撤回条不是话，跟拍一拍一个待遇。 */
+      function recallLine(m) {
+        var ch = findCharacter(curCharId());
+        var label = m.role === 'user'
+          ? '你撤回了一条消息'
+          : '「' + (ch ? ch.name : '对方') + '」撤回了一条消息';
+        var line = h('div', 'msg-recall', label);
+        line.addEventListener('click', function () {
+          if (selecting) return;            /* 多选模式里灰字条不参与选择 */
+          if (wasLongPressed(line)) return;
+          var pop = ui.anchorPopover(line, { className: 'msg-pop' });
+          var box = h('div', 'msg-recall-pop');
+          box.appendChild(h('p', 'msg-recall-pop-label', '撤回的内容'));
+          box.appendChild(h('p', 'msg-recall-pop-text',
+            (bubbleText(m) || '（一条消息）').replace(/\s*\|\|\s*/g, '\n')));
+          if (m.recallReason) {
+            box.appendChild(h('p', 'msg-recall-pop-label', '撤回原因'));
+            box.appendChild(h('p', 'msg-recall-pop-text', m.recallReason));
+          }
+          pop.el.appendChild(box);
+          pop.place();
+        });
+        return line;
       }
 
       /* 分隔线的时间文案：今天只有时刻，昨天带「昨天」，再往前带日期 */
@@ -1835,6 +2810,7 @@
           var lens = h('div', 'msg-checkin-row');
           lens.setAttribute('data-id', msg.id);
           var lensKey = selKey(msg.id, 0);
+          lens.setAttribute('data-key', lensKey);
           if (selecting && selected[lensKey]) lens.classList.add('is-selected');
           lens.appendChild(checkinCard(msg));
           bindLongPress(lens, function () { openMenu(msg, null, lens); });
@@ -1861,6 +2837,9 @@
         var herePending = !!(pending && pending.targetId === msg.id);
         if (herePending) bubble.classList.add('is-pending');
         var myKey = selKey(msg.id, seg ? seg.idx : 0);
+        /* 多选勾的定位锚：翻勾直接按 data-key 找到这个气泡翻类，
+           不整流重画（见 toggleSelect 那段说明） */
+        bubble.setAttribute('data-key', myKey);
         if (selecting && selected[myKey]) {
           /* 选中态**一个气泡一份**：勾就挂在这个气泡自己身上（用户 2026-09-23
              报的是「点第二个气泡就退出多选」—— 以前按整条算，勾也只标在
@@ -1914,6 +2893,12 @@
           content.appendChild(wjCard(msg));
         } else if (msg.type === 'we-proposal') {
           content.appendChild(weProposalCard(msg));
+        } else if (msg.type === 'fwd-merged') {
+          content.appendChild(fwdCard(msg));
+        } else if (msg.type === 'html') {
+          content.appendChild(htmlGameCard(msg, chatId));
+        } else if (msg.type === 'link-card') {
+          content.appendChild(linkCard(msg));
         } else {
           var textEl = h('div', 'msg-text');
           var shown;
@@ -1987,6 +2972,103 @@
         return bubble;
       }
 
+      /* ---------------- HTML 小游戏卡（沙箱 iframe） ----------------
+
+         安全模型（这条别动）：sandbox="allow-scripts" **不给**
+         allow-same-origin —— 游戏拿不到 localStorage / cookie /
+         父页 DOM，会话数据摸不着；再叠一层 CSP 把出网全堵死
+         （default-src 'none'，只放行内联脚本/样式和 data:/blob: 图）。
+         也就是说 TA 写的游戏只能玩，不能看也不能说。
+
+         结算：包装时注入一段固定 bridge（把 SleepyGame.report 暴露给
+         游戏），report 走 postMessage 出沙箱；父页只认 registerGameFrame
+         登记过的窗口 —— 别的页面乱发 postMessage 报不上来。
+
+         全屏是**重开一个新 iframe**（同一个 srcdoc）：iframe 挪窝必重载，
+         干脆明 Restart；小游戏丢一局进度不心疼。 */
+      function wrapGameDoc(msg) {
+        var bridge = '(function(){function r(s,t){try{parent.postMessage(' +
+          '{__sleepyHtmlResult:1,score:(typeof s==="number"&&isFinite(s))?s:null,' +
+          'text:String(t==null?"":t).slice(0,120)},"*")}catch(e){}}' +
+          'window.SleepyGame={report:r};})();';
+        return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+          '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<meta http-equiv="Content-Security-Policy" content="' +
+          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+          "img-src data: blob:; media-src data: blob:; font-src data:;\"></head>" +
+          '<body>' + (msg.html || '') +
+          '<script>' + bridge + '</script></body></html>';
+      }
+      function mountGameFrame(container, msg, chatId, cls) {
+        var frame = document.createElement('iframe');
+        if (cls) frame.className = cls;
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.setAttribute('title', msg.content || 'TA 的小游戏');
+        frame.srcdoc = wrapGameDoc(msg);
+        container.appendChild(frame);
+        registerGameFrame(frame.contentWindow);
+        gameFrameMeta.set(frame.contentWindow, { chatId: chatId, msgId: msg.id });
+        return frame;
+      }
+      /* 重绘复用：游戏卡按 msgId 缓存同一节点。renderMessages 每次
+         msgWrap.innerHTML='' 只是把节点摘下来，同对象重新 appendChild 回去
+         不会重载 iframe（跨文档移动 / 摘下再插回都保住 browsing context），
+         所以玩到一半来新消息也不会从头来。换房 / 删消息时由 renderMessages
+         末尾的 prune 清掉失效条目，避免跨会话串台或内存泄漏。 */
+      var gameCardCache = new Map();
+      function htmlGameCard(msg, chatId) {
+        var cached = gameCardCache.get(msg.id);
+        if (cached) return cached;          /* 复用旧节点，游戏状态连续 */
+        var card = h('div', 'msg-htmlgame');
+        var head = h('div', 'msg-htmlgame-head');
+        head.appendChild(h('span', 'msg-htmlgame-title', msg.content || 'TA 做的小玩意'));
+        var full = h('button', 'msg-htmlgame-fs', '全屏');
+        full.type = 'button';
+        full.addEventListener('click', function (e) {
+          e.stopPropagation();
+          openGameViewer(msg, chatId);
+        });
+        head.appendChild(full);
+        card.appendChild(head);
+        mountGameFrame(card, msg, chatId, 'msg-htmlgame-frame');
+        if (msg.truncated) {
+          card.appendChild(h('div', 'msg-htmlgame-note', '内容超长被截断，可能显示不全'));
+        }
+        /* 点卡片空白不触发气泡的引用/多选 —— 游戏里有按钮，别抢事件 */
+        card.addEventListener('click', function (e) { e.stopPropagation(); });
+        gameCardCache.set(msg.id, card);
+        return card;
+      }
+      function openGameViewer(msg, chatId) {
+        var host = document.getElementById('phone') || document.body;
+        var mask = h('div', 'gamev-mask');
+        var closed = false;
+        function close() {
+          if (closed) return;
+          closed = true;
+          mask.classList.remove('is-open');
+          setTimeout(function () {
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+          }, 200);
+        }
+        var head = h('div', 'gamev-head');
+        head.appendChild(h('span', 'gamev-title', msg.content || 'TA 做的小玩意'));
+        var x = h('button', 'gamev-close', '关闭');
+        x.type = 'button';
+        x.addEventListener('click', close);
+        head.appendChild(x);
+        mask.appendChild(head);
+        var body = h('div', 'gamev-body');
+        mountGameFrame(body, msg, chatId, 'gamev-frame');
+        mask.appendChild(body);
+        host.appendChild(mask);
+        requestAnimationFrame(function () { mask.classList.add('is-open'); });
+        document.addEventListener('keydown', function onKey(e) {
+          if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+        });
+        return mask;
+      }
+
       /* 转账气泡。橙金色，跟照片/文件那种灰卡片区分开 ——
          钱是这一屏里最该被一眼认出来的东西。
          点一下能看完整备注（备注最多 30 字，卡片里放不下就截断）。 */
@@ -2006,6 +3088,116 @@
           '¥' + (Number(msg.amount) || 0).toFixed(2)));
         main.appendChild(h('span', 'msg-transfer-sub', msg.note || '转账'));
         card.appendChild(main);
+        return card;
+      }
+
+      /* 合并转发的「聊天记录」卡（仿微信）：标题 + 前几条摘要 + 「聊天记录」脚注。
+         点开能看完整原对话（openFwdViewer）。多选模式下点它 = 勾选，
+         平时点它 = 看记录 —— 所以把判断交给 selecting。 */
+      function fwdCard(msg) {
+        var card = h('div', 'msg-fwd');
+        card.appendChild(h('div', 'msg-fwd-title', msg.title || '聊天记录'));
+        var its = Array.isArray(msg.items) ? msg.items : [];
+        its.slice(0, 3).forEach(function (it) {
+          card.appendChild(h('div', 'msg-fwd-line',
+            (it.name ? it.name + '：' : '') + String(it.text || '').slice(0, 40)));
+        });
+        if (its.length > 3) card.appendChild(h('div', 'msg-fwd-line is-more', '…'));
+        card.appendChild(h('div', 'msg-fwd-foot', '聊天记录'));
+        card.addEventListener('click', function (e) {
+          if (selecting) return;          /* 多选中：让气泡自己的勾选逻辑接管 */
+          e.stopPropagation();
+          openFwdViewer(msg);
+        });
+        return card;
+      }
+
+      /* 聊天记录查看器：全屏浮层，按原说话人左右分侧（user 在右）。 */
+      function openFwdViewer(msg) {
+        var host = document.getElementById('phone') || document.body;
+        var mask = h('div', 'fwd-view-mask');
+        var panel = h('div', 'fwd-view');
+        var closed = false;
+        function close() {
+          if (closed) return;
+          closed = true;
+          mask.classList.remove('is-open');
+          panel.classList.remove('is-open');
+          setTimeout(function () {
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+            if (panel.parentNode) panel.parentNode.removeChild(panel);
+          }, 200);
+        }
+
+        var head = h('div', 'fwd-view-head');
+        head.appendChild(h('span', 'fwd-view-title', msg.title || '聊天记录'));
+        var x = h('button', 'fwd-view-close', '关闭');
+        x.type = 'button';
+        x.addEventListener('click', close);
+        head.appendChild(x);
+
+        var body = h('div', 'fwd-view-body');
+        var meName = userNameOf(getChat(chatId));
+        var prevT = 0;
+        (Array.isArray(msg.items) ? msg.items : []).forEach(function (it) {
+          var t = it.t || 0;
+          if (!prevT || t - prevT >= 5 * 60 * 1000) {
+            body.appendChild(h('div', 'msg-time-sep', timeSepLabel(t)));
+          }
+          if (t) prevT = t;
+          var row = h('div', 'fwd-view-row' + (it.role === 'user' ? ' is-me' : ''));
+          row.appendChild(h('span', 'fwd-view-name', it.name || (it.role === 'user' ? meName : '')));
+          row.appendChild(h('div', 'fwd-view-bubble', String(it.text || '') || '（空）'));
+          body.appendChild(row);
+        });
+
+        panel.appendChild(head);
+        panel.appendChild(body);
+        mask.addEventListener('click', close);
+        host.appendChild(mask);
+        host.appendChild(panel);
+        setTimeout(function () { mask.classList.add('is-open'); panel.classList.add('is-open'); }, 20);
+      }
+
+      /* 链接卡（仿微信分享卡）：标题两行 + 右侧小缩略图 + 底部来源行。
+         元数据没拉到之前是占位（标题=平台名）。点卡片开原链接。
+         缩略图必须 referrerpolicy=no-referrer —— 新浪图床有防盗链，
+         带 referer 一律 403。 */
+      function linkCard(msg) {
+        var lk = msg.link || {};
+        var card = h('div', 'msg-link is-' + (lk.platform || 'generic'));
+        var row = h('div', 'msg-link-row');
+        var main = h('div', 'msg-link-main');
+        main.appendChild(h('div', 'msg-link-title',
+          lk.title || platformLabel(lk.platform) + '链接'));
+        if (lk.user) main.appendChild(h('div', 'msg-link-sub', '@' + lk.user));
+        if (lk.stats) main.appendChild(h('div', 'msg-link-meta', lk.stats));
+        row.appendChild(main);
+        if (lk.img) {
+          var im = h('img', 'msg-link-thumb');
+          im.referrerPolicy = 'no-referrer';
+          im.alt = '';
+          im.addEventListener('error', function () {
+            if (im.parentNode) im.parentNode.removeChild(im);
+          });
+          im.src = lk.img;
+          row.appendChild(im);
+        }
+        card.appendChild(row);
+        card.appendChild(h('div', 'msg-link-src', platformLabel(lk.platform)));
+        card.addEventListener('click', function (e) {
+          if (selecting) return;
+          if (wasLongPressed(card)) return;
+          e.stopPropagation();
+          /* 分享文案卡可能没有 url（纯「O网页链接」没复制到）——
+             这时 content 是整段文案不是链接，别把它塞给 window.open */
+          var openTarget = lk.url || '';
+          if (!openTarget && /^https?:\/\/\S+$/i.test(String(msg.content || '').trim())) {
+            openTarget = String(msg.content).trim();
+          }
+          if (!openTarget) return;
+          try { window.open(openTarget, '_blank'); } catch (err) { /* 弹窗被拦就拦吧 */ }
+        });
         return card;
       }
 
@@ -2304,7 +3496,12 @@
         else selected[key] = true;
         if (!selectedIds().length) { exitSelect(); return; }
         renderSelection();
-        renderMessages(true);
+        /* 勾直接翻在现有 DOM 上，**别整流重画** —— 重画会把照片/表情的
+           <img> 整个重新挂载，高度在 scrollTop 恢复之后才长回来，
+           眼前这段就上下跳（用户 2026-10-06：多选时点气泡还是会上移/下移）。
+           勾是 absolute 定位的 ::after，不占布局，翻类零位移。 */
+        var el = msgWrap.querySelector('[data-key="' + key + '"]');
+        if (el) el.classList.toggle('is-selected', !!selected[key]);
       }
 
       /* 按气泡删。文案 / 译文 / 语音 / 索引的收口都在 store 那两个函数里
@@ -2367,6 +3564,10 @@
         /* 数的是**气泡**（选什么删什么，选中的每一条都挂着勾，数得出对应关系） */
         selBar.appendChild(h('span', 'msg-select-info', '已选 ' + selectedIds().length + ' 条'));
 
+        var fwd = h('button', 'msg-select-act', '转发');
+        fwd.type = 'button';
+        fwd.addEventListener('click', function () { forwardSelected(); });
+
         var del = h('button', 'msg-select-act is-danger', '删除');
         del.type = 'button';
         del.addEventListener('click', async function () {
@@ -2387,6 +3588,7 @@
         cancel.type = 'button';
         cancel.addEventListener('click', exitSelect);
 
+        selBar.appendChild(fwd);
         selBar.appendChild(del);
         selBar.appendChild(cancel);
 
@@ -2394,6 +3596,88 @@
            ⚠️ 这句必须放在**所有**会改 selBar 高度的事情之后（现在是末尾，
            条子里只有一行字，改文案不改高度，但以后加了第二行就靠这句兜住）。 */
         if (msgWrap.clientHeight !== h0) msgWrap.scrollTop += (h0 - msgWrap.clientHeight);
+      }
+
+      /* ==================== 转发（入口在长按菜单和多选条） ==================== */
+
+      /* 多选条 → 转发：先按气泡收集，跳过不支持的，再弹「逐条 / 合并」动作表 */
+      function forwardSelected() {
+        var items = collectForwardItems(chatId, selectedIds().map(parseSelKey));
+        var ok = items.filter(function (it) { return it.kind !== 'skip'; });
+        if (!ok.length) {
+          ctx.toast('选中的消息都不支持转发', 'warn');
+          return;
+        }
+        if (ok.length < items.length) {
+          ctx.toast('有 ' + (items.length - ok.length) + ' 条不支持转发，已跳过', 'warn');
+        }
+        forwardSheet(ok);
+      }
+
+      /* 逐条 / 合并 的动作表（照微信那个底部三行） */
+      function forwardSheet(items) {
+        var host = document.getElementById('phone') || document.body;
+        var mask = h('div', 'msg-menu-mask');
+        var sheet = h('div', 'msg-menu');
+        var closed = false;
+        function close() {
+          if (closed) return;
+          closed = true;
+          mask.classList.remove('is-open');
+          sheet.classList.remove('is-open');
+          setTimeout(function () {
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+            if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+          }, 240);
+        }
+        function item(name, run) {
+          var b = h('button', 'msg-menu-item', name);
+          b.type = 'button';
+          b.addEventListener('click', function () { close(); run(); });
+          sheet.appendChild(b);
+        }
+        item('逐条转发', function () { forwardFlow(items, 'single'); });
+        item('合并转发', function () { forwardFlow(items, 'merge'); });
+
+        var cancel = h('button', 'msg-menu-cancel', '取消');
+        cancel.type = 'button';
+        cancel.addEventListener('click', close);
+        sheet.appendChild(cancel);
+        mask.addEventListener('click', close);
+        host.appendChild(mask);
+        host.appendChild(sheet);
+        setTimeout(function () { mask.classList.add('is-open'); sheet.classList.add('is-open'); }, 20);
+      }
+
+      /* 长按菜单 → 转发：单条直发（不弹逐条/合并，照微信） */
+      function forwardOne(msg, idx) {
+        var items = collectForwardItems(chatId, [{ id: msg.id, idx: idx || 0 }]);
+        var ok = items.filter(function (it) { return it.kind !== 'skip'; });
+        if (!ok.length) {
+          ctx.toast(items.length && items[0].why === 'voice'
+            ? '语音消息转不了（微信也是）'
+            : '这种消息还不支持转发', 'warn');
+          return;
+        }
+        forwardFlow(ok, 'single');
+      }
+
+      /* 选目标 → 逐个发。发完落一次 toast；发给了当前对话就重画。 */
+      function forwardFlow(items, mode) {
+        pickForwardTargets(ctx, function (ids) {
+          if (!ids || !ids.length) return;
+          var chain = Promise.resolve();
+          ids.forEach(function (tid) {
+            chain = chain.then(function () { return sendForwardTo(tid, items, mode); });
+          });
+          chain.then(function () {
+            if (selecting) exitSelect();
+            ctx.toast('已转发给 ' + ids.length + ' 个对话', 'ok');
+            if (ids.indexOf(chatId) >= 0) renderMessages();
+          }, function () {
+            ctx.toast('没转出去，再试一次', 'err');
+          });
+        });
       }
 
       /* ======================== 长按菜单 ========================
@@ -2410,6 +3694,7 @@
         var items = [
           { label: '引用', run: function () { startQuote(msg, idx); } },
           { label: '复制', run: function () { copyMsg(msg, idx); } },
+          { label: '转发', run: function () { forwardOne(msg, idx); } },
           { label: '收藏', run: function () { favorite(msg, idx); } },
           { label: '编辑', run: function () { editMsg(msg, idx); } },
           /* 多选 / 删除都带上**这个气泡**：一条回复拆成几段时，
@@ -2417,11 +3702,24 @@
           { label: '多选', run: function () { enterSelect(msg.id, idx); } },
           { label: '删除', kind: 'danger', run: function () { removeMsg(msg, idx); } }
         ];
+        /* 撤回（2026-10-06）：只给自己发的**纯文字**消息 —— 表情/转账/
+           拍一拍是动作记录，撤回没有意义；照片涉及相册清理，也不开。
+           塞在「删除」前面（删都没删，先给个反悔的机会）。 */
+        if (msg.role === 'user' && !msg.type && !msg.recalledAt) {
+          items.splice(items.length - 1, 0,
+            { label: '撤回', run: function () { recallMine(msg); } });
+        }
+        /* 「留在灯上」（2026-10-06）：纯文字消息，双方向都可以。
+           插在「编辑」前面 —— 它是"把这句话送去别处"，跟引用/转发是一路的。 */
+        if (!msg.type && !msg.recalledAt && String(msg.content || '').trim()) {
+          items.splice(4, 0,
+            { label: '留在灯上', run: function () { leaveOnLamp(msg); } });
+        }
         /* 「朗读」（2.15）：只在角色的话、纯文字、且角色开着「长按给朗读」时出现。
            已经在长按的那一条上读了就写成「重读」—— 同一句话偶尔想再听一遍。 */
         if (Sleepy.tts && msg.role === 'assistant' && !msg.type &&
             Sleepy.tts.voiceConfigOf(curCharId()).manualRead) {
-          items.splice(4, 0, {
+          items.splice(5, 0, {
             label: msg.voice ? '重读' : '朗读',
             run: function () { readAloud(msg, seg); }
           });
@@ -2545,6 +3843,58 @@
         ctx.toast('已更新', 'ok');
       }
 
+      /* 「留在灯上」（2026-10-06）：把这句话抄近道送上桌面的挂件灯。
+         谁说的话署谁的名 —— user 是「我」，assistant 是角色名。
+         表情/转账/拍一拍是动作记录，照片要连相册，都算不上「一句话」，不进。
+         时间戳用消息自己的（落款显示的是「这句话被说出来的时刻」，
+         不是「被挂上去的时刻」）。 */
+      function leaveOnLamp(msg) {
+        var chat = getChat(chatId);
+        var by = msg.role === 'user' ? userNameOf(chat) : charNameOf(chat);
+        var rec = Sleepy.lampNotes && Sleepy.lampNotes.add({
+          text: String(msg.content || ''),
+          by: by,
+          ts: msg.timestamp || Date.now(),
+          src: 'chat'
+        });
+        ctx.toast(rec ? '已留在灯上' : '这句留不上灯', rec ? 'ok' : 'warn');
+      }
+
+      /* user 撤回自己的消息（长按菜单，2026-10-06）。微信式：原位变灰字。
+         概率掷骰决定 TA 有没有看到内容（滑条在角色设置，默认 40%）：
+         看到 → 下轮上下文带原文；没看到 → TA 只知道你撤回了一条（不知道内容）。
+         掷骰结果记在消息上（recallSeen），落定之后不再重掷。
+         界面**不剧透**掷骰结果 —— TA 下轮的反应自然会见分晓（同查岗的口径：
+         suspense 留给你自己品）。 */
+      function recallMine(msg) {
+        ui.confirm({
+          title: '撤回这条消息？',
+          note: 'TA 有一定概率看到内容。',
+          ok: '撤回',
+          danger: true
+        }).then(function (yes) {
+          if (!yes) return;
+          var rate = 0.4;
+          var cid = curCharId();
+          try {
+            if (Sleepy.chatSettings && cid) {
+              rate = Number(Sleepy.chatSettings.charSettings(cid).get('recallNotice', 0.4));
+            }
+          } catch (e) { /* 读不到就用默认 40% */ }
+          if (!(rate >= 0)) rate = 0;
+          if (rate > 1) rate = 1;
+          var seen = Math.random() < rate;
+          patchMessage(chatId, msg.id, { recalledAt: Date.now(), recallSeen: seen });
+          /* 索引跟着失效（口径同群聊）：撤回的意义就是「当没说过」——
+             就算 TA 当时瞟到了，向量检索也不再把它当可引用的原文。 */
+          if (cid && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+            Sleepy.memoryVec.forget({ charId: cid, ids: [msg.id] })
+              ['catch'](function () { /* 索引清理失败不影响撤回本身 */ });
+          }
+          renderMessages();
+        });
+      }
+
       function copyMsg(msg, idx) {
         var text = bubbleText(msg, idx);
         if (!text) return;
@@ -2593,6 +3943,19 @@
           /* 没被察觉的查岗：TA 什么都不知道，连「有这么条消息」都不能看见 */
           if (m.type === 'checkin' && !m.noticed) return;
 
+          /* 撤回（2026-10-06）：
+             - user 撤回的：TA **永远知道你撤回了一条**（动作藏不住，
+               灰字就杵在那），但内容只有掷骰命中（recallSeen）才进上下文；
+             - TA 撤回的：话是 TA 说的，TA 自己记得 —— 原文照常进上下文，
+               只是屏幕上变灰字（不在这里动，走下面的常规分支）。 */
+          if (m.recalledAt && m.role === 'user') {
+            var rcLine = m.recallSeen
+              ? ((m.content || '') + '\n（随后撤回了这条）')
+              : '（撤回了一条消息，你没看到内容）';
+            if (rcLine) out.push({ role: 'user', content: rcLine });
+            return;
+          }
+
           var text = m.type ? attachText(m) : (m.content || '');
           if (!text) return;
           if (m.quote) {
@@ -2635,6 +3998,9 @@
           /* 日记事件垫在历史后面 —— 它是刚发生的事，比历史都新 */
           var peek = diaryPeekMsg(c.characterId);
           if (peek) built.messages.push(peek);
+          /* 小游戏结算（同一次性垫法）：对方玩完 TA 送的游戏，下一轮让 TA 知道 */
+          var gamePeek = gameResultPeekMsg(chatId);
+          if (gamePeek) built.messages.push(gamePeek);
           if (opts.note) {
             built.messages.push({
               role: 'user',
@@ -2673,6 +4039,9 @@
           var gspec = Sleepy.imggen.replySpec();
           if (gspec) out.unshift({ role: 'system', content: gspec });
         }
+        /* 小游戏结算：引擎关掉时也照垫（同引擎路径 gameResultPeekMsg） */
+        var gamePeekOld = gameResultPeekMsg(chatId);
+        if (gamePeekOld) out.push(gamePeekOld);
 
         /* 心声跟主回复一起出：往最前面塞一条系统指令，要求模型把
            「没说出口的心里话」用 <心声>…</心声> 包在正文末尾。
@@ -2681,6 +4050,20 @@
         /* 拍一拍说明书：一行就够 —— 动作是调味的，写多了模型会刷 */
         out.unshift({ role: 'system', content:
           '偶尔可以「拍一拍」对方：单独一行写 [拍一拍:后缀]（如 [拍一拍:脑袋]，后缀可省）。不要常用。' });
+
+        /* 撤回说明书：同引擎路径的 msgrecall 卡，文案保持一致（口径同上） */
+        out.unshift({ role: 'system', content:
+          '刚说的话可以反悔：单独一行写 [撤回:第几条|原因]，如 [撤回:1|说得太冲了想收回来]（1=你上一条发出去的消息，2=再往前一条，最多数到 3）。原因用一句话，对方点那条灰字就能看到。不要常用。' });
+
+        /* 灯牌说明书：同引擎路径的 lamptag 卡，文案保持一致（口径同上）。
+           这是一个随时可用的能力，不是主动消息的附属 —— 40 字是灯牌卡面
+           的实际容量，超了程序侧会截断（page-desktop lampNotes）。 */
+        out.unshift({ role: 'system', content:
+          '桌上有盏挂件灯，你想留句话就单独一行写 [灯:那句话]，如 [灯:记得多喝水]（40 字内；这句话会挂到灯上展示，气泡里不显示，用不着写在正文里重复一遍）。什么时候想留都可以，不用每条都留。' });
+
+        /* 慢递信箱说明书：同引擎路径的 slowmail 卡，文案保持一致（口径同上）。 */
+        out.unshift({ role: 'system', content:
+          '你还可以写慢递信：单独一行写 [慢递:小时数|信的内容]，如 [慢递:6|（信的正文，可以长一些）]。信会在 N 小时后送进对方的信箱（1 到 72），到点前对方看不到。适合想说但不必马上被看到的话；偶尔写一封就好。' });
 
         var cfg = store.get('chatDefaults') || {};
         if (cfg.heartbeatAuto !== false && out.length) {
@@ -2705,21 +4088,25 @@
         return out;
       }
 
-      /* L4 召回先跑一步：装配（buildMessages）是同步的，所以召回结果只能先
-         落进 memoryVec 的缓存里再装配。prefetch 自带超时 ——
-         宁可这轮不召回，也不能把聊天卡住。 */
+      /* 装配前的异步预取（装配是同步的，结果只能先落缓存）：
+         ① L4 召回 —— memoryVec.prefetch，自带超时；
+         ② 真实世界感知 —— core.realworld.poke，把天气/热榜拉进缓存
+            （4s 兜底超时），compileRealworld 装配时同步读。
+         两件并行，宁可这轮空着也不把聊天卡住。 */
       function requestReply(opts) {
         opts = opts || {};
         if (pending) { ctx.toast('还在等回复', 'warn'); return; }
 
         var c0 = getChat(chatId);
+        var jobs = [];
         var mv = Sleepy.memoryVec;
         if (mv && mv.prefetch && c0 && c0.characterId) {
-          mv.prefetch(c0.characterId, c0.userId, recallQuery(c0), { sinceAt: recallFloor(c0) })
-            .then(function () { runReply(opts); });
-          return;
+          jobs.push(mv.prefetch(c0.characterId, c0.userId, recallQuery(c0), { sinceAt: recallFloor(c0) }));
         }
-        runReply(opts);
+        var rw = (Sleepy.core && Sleepy.core.realworld) ? Sleepy.core.realworld : null;
+        if (rw && rw.poke) jobs.push(rw.poke());
+        if (jobs.length) Promise.all(jobs).then(function () { runReply(opts); });
+        else runReply(opts);
       }
 
       /* 最近两条（可能含刚发的这条）+ 当前输入 —— v5 §9.1 的查询构造，
@@ -2771,6 +4158,22 @@
         var ovNow = overridesOf(getChat(chatId));
         var useStream = (ovNow.stream != null) ? ovNow.stream
                       : (store.get('chatDefaults.stream') !== false);
+
+        /* MCP 工具（2026-10-06）：对话开了「MCP 工具」且设置里有开着的
+           工具时，把 OpenAI tools 清单和执行器塞进 ov，交给 api.runChat ——
+           工具循环在那边（强制非流式，见 requestToolLoop 的注释）。
+           没配工具的对话 ov 一个多余字段都不带，请求体跟以前一模一样。 */
+        var chatNow = getChat(chatId);
+        if (chatNow && chatNow.mcpTools && Sleepy.mcp && Sleepy.mcp.enabledToolSpecs) {
+          var mcpTools = Sleepy.mcp.enabledToolSpecs();
+          if (mcpTools.length) {
+            ovNow.tools = mcpTools;
+            ovNow.toolCall = function (name, args) {
+              return Sleepy.mcp.callToolByName(name, args);
+            };
+            useStream = false;
+          }
+        }
 
         handle = api.runChat(msgs, {
           onDelta: function (delta) {
@@ -2825,6 +4228,24 @@
             var gi = extractGenimgs(finalText);
             finalText = gi.text;
 
+            /* [html]…[/html] 同样抽掉 —— TA 想送一个小游戏。落成 type:'html'
+               的正式消息（沙箱渲染，见 commitHtmlGame / htmlGameCard）。
+               心声里出现的话只剥不收：游戏是「送给对方玩」的，塞进
+               「没说出口的心里话」语义不通，多半是模型写串了位置。 */
+            var hg = extractHtmlGames(finalText);
+            finalText = hg.text;
+            if (split.whisper) {
+              var hgx = extractHtmlGames(split.whisper);
+              if (hgx.hit && !hg.hit) hg.hit = null; /* 不从心声收 */
+              split.whisper = hgx.text;
+            }
+
+            /* [撤回:N|原因] 同样抽掉 —— TA 想收回说过的话。抽完先别急着执行：
+               执行要等下面落库动作都排完了（撤的是历史消息，跟落库顺序无关，
+               但空正文判断要把「只撤回没说话」算进来）。 */
+            var rc = extractRecalls(finalText);
+            finalText = rc.text;
+
             /* 收藏提议标签同样抽掉（[收藏提议:id|kind|理由]，We 收藏馆 P2）——
                落成 weProposals 待确认 + 一张卡片消息，正文/心声里不出现标签 */
             var wp = extractProposal(finalText);
@@ -2846,8 +4267,49 @@
             var pdApplied = trace.applied;
             var granted = trace.granted;
 
+            /* 灯牌留言同样抽掉（[灯:那句话]）—— 落库即上灯，署 char 的名。
+               时间戳用现在：这是「TA 此刻留的话」，跟撤回那种引历史不同。 */
+            var ln = extractLampNotes(finalText);
+            finalText = ln.text;
+            if (ln.hits.length && Sleepy.lampNotes) {
+              var lampChat = getChat(chatId);
+              for (var li = 0; li < ln.hits.length; li++) {
+                Sleepy.lampNotes.add({
+                  text: ln.hits[li].text,
+                  by: charNameOf(lampChat),
+                  ts: Date.now(),
+                  src: 'lamp-tag'
+                });
+              }
+            }
+
+            /* 慢递信同样抽掉（[慢递:N|内容]）—— 落 slowLetters，到点可拆。
+               写信时间就是现在；deliverAt 到点前组件只显示「N 小时后到」。 */
+            var sm = extractSlowmail(finalText);
+            finalText = sm.text;
+            if (sm.hits.length) {
+              var smChat = getChat(chatId);
+              var smChar = core.findChar ? core.findChar(curCharId()) : null;
+              var box = store.get('slowLetters') || [];
+              for (var si = 0; si < sm.hits.length; si++) {
+                var srec = core.tagScope({
+                  id: newId('sl'),
+                  charId: curCharId() || '',
+                  charName: (smChar && smChar.name) || charNameOf(smChat),
+                  body: sm.hits[si].body.slice(0, 600),
+                  hours: sm.hits[si].hours,
+                  deliverAt: Date.now() + sm.hits[si].hours * 3600000,
+                  createdAt: Date.now(),
+                  opened: false
+                });
+                box.push(srec);
+              }
+              store.set('slowLetters', box);
+            }
+
             if (!finalText && !st.names.length && !pt.patted && !gi.descs.length &&
-                !wp.hit && !pdApplied) {
+                !wp.hit && !pdApplied && !rc.hits.length && !ln.hits.length &&
+                !sm.hits.length && !hg.hit) {
               ctx.toast('这次没出声，要不再试一次？', 'warn');
               renderMessages();
               updateSendUI();
@@ -2904,8 +4366,15 @@
             /* 表情排在正文后面（它多半是「说完话顺手甩一张」） */
             st.names.forEach(function (nm) { charSendSticker(nm); });
             if (pt.patted) charSendPat(pt.suffix);
+            /* 撤回排在动作类最前面执行：它改的是历史消息，不落新气泡。
+               放这（而不是抽标签处）是因为候选要从**已落库**的消息里数，
+               等上面 patchMessage/addMessage 都做完再动，口径才稳定。
+               本轮回复自己（replyMsgId/target）不算「上一条」。 */
+            if (rc.hits.length) applyCharRecalls(chatId, rc.hits, replyMsgId || target);
             /* TA 发的图排在表情后面，一次最多 2 张防刷 */
             gi.descs.slice(0, 2).forEach(function (desc) { charSendPhoto(desc); });
+            /* HTML 小游戏排在图后面（同是「作品」类附件，一次一条） */
+            if (hg.hit) commitHtmlGame(chatId, hg.hit, hg.truncated);
             /* 收藏提议排在图后面（We 收藏馆 P2）：创建 proposal（校验/去重/
                来源核验都在 weProposals 里，失败静默）+ 落一张待确认卡片。
                originMessageId 挂这条回复 —— reroll 复用同一 msg.id，天然防重。 */
@@ -3061,6 +4530,48 @@
            这样才可能「分气泡连发几条」—— 见下面正文那段末尾的说明。 */
         if (!content) {
           requestReply({ proactive: true });
+          return;
+        }
+
+        /* 链接识别（微博/抖音/小红书）：整条消息就是个平台链接 →
+           发链接卡（仿微信分享），元数据异步补，补到之前是占位卡。
+           微博分享文案（带正文的整段）也走卡 —— 正文作者建卡时就有。 */
+        var link = detectLink(content);
+        if (!link) {
+          var sh = detectWeiboShare(content);
+          if (sh) {
+            if (sh.shareText) { sh.title = sh.shareText.slice(0, 80); sh.text = sh.shareText; }
+            if (sh.author) sh.user = sh.author;
+            link = sh;
+          }
+        }
+        if (link) {
+          var lmsg = {
+            id: newId(),
+            role: 'user',
+            type: 'link-card',
+            content: content,
+            link: link,
+            timestamp: Date.now()
+          };
+          addMessage(chatId, lmsg);
+          textarea.value = '';
+          autoGrow();
+          clearQuote();
+          renderMessages();
+          resolveLink(link, function (patch) {
+            var cur = getChat(chatId);
+            var found = null;
+            if (cur) (cur.messages || []).forEach(function (m) { if (m.id === lmsg.id) found = m; });
+            if (!found) return;            /* 消息已被删 */
+            var lk = {};
+            Object.keys(found.link || {}).forEach(function (k) { lk[k] = found.link[k]; });
+            Object.keys(patch).forEach(function (k) { lk[k] = patch[k]; });
+            patchMessage(chatId, lmsg.id, { link: lk });
+            /* 页面实例是复用的：这段 DOM 可能已经不在文档里（切了别的对话），
+               重画前先看 isConnected，别往幽灵节点上画 */
+            if (msgWrap.isConnected) renderMessages(true);
+          });
           return;
         }
 
@@ -3496,14 +5007,16 @@
           }
           /* 新生成的图顺手收进相册 —— 以前只写了 media（图库），相册里翻不到，
              想再找那张图只能回聊天记录里翻（用户 2026-09-23 报的）。
-             重画（replaceId）不算新图，上面已经 return 掉了。 */
+             重画（replaceId）不算新图，上面已经 return 掉了。
+             2026-10-06 相册按账号隔离：归属显式记成这场对话的角色，
+             别靠「当前活动角色」猜 —— 群岛里切过号就会归错人。 */
           if (Sleepy.photos && Sleepy.photos.add && r.mediaId) {
             try {
               Sleepy.photos.add([{
                 mediaId: r.mediaId,
                 caption: opts.caption || '',
                 name: opts.name || opts.caption || '照片'
-              }]);
+              }], { charId: (getChat(chatId) || {}).characterId || '' });
             } catch (e) { /* 相册记不上不该拦这张图发出去 */ }
           }
           if (opts.as === 'assistant') {
@@ -4304,6 +5817,14 @@
   Sleepy.chatUtil = {
     extractStickers: extractStickers,
     extractPats: extractPats,
+    extractRecalls: extractRecalls,
+    extractLampNotes: extractLampNotes,
+    extractSlowmail: extractSlowmail,
+    extractHtmlGames: extractHtmlGames,
+    noteGameResult: noteGameResult,
+    gameResultPeekMsg: gameResultPeekMsg,
+    HTMLGAME_MAX: HTMLGAME_MAX,
+    applyCharRecalls: applyCharRecalls,
     withPinnedFirst: withPinnedFirst
   };
 

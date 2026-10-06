@@ -72,6 +72,10 @@
 <script src="ui.js" defer></script>
 <script src="app.js" defer></script>
 <script src="api.js" defer></script>
+<!-- MCP（Model Context Protocol）连接层：多服务 + 总开关 + 逐工具开关。
+     只依赖 store/core，网络在调用时才发生 —— 排在 api.js 后面即可；
+     page-settings（配置页）和 page-chat（工具循环的 ov.toolCall）都要读它 -->
+<script src="mcp.js" defer></script>
 <!-- 二进制仓库（IndexedDB）：照片 / 附件 / 表情包的图片本体都存这儿，
      localStorage 里只留一个 mediaId。必须排在 photos.js 前面。 -->
 <script src="media.js" defer></script>

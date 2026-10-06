@@ -216,6 +216,37 @@
     /* 已成立 NPC 事件：提案接受后写入；knowledge/impact 各自绑定依据 */
     taEvents: [],
 
+    /* 挂件灯留言（2026-10-06，page-desktop.js 的 Sleepy.lampNotes）：
+       桌面 3D 灯上的卡。角色主动留（page-proactive 发送成功后）、
+       user 长按私聊/群聊消息留。按岛隔离（tagScope 盖章 + core.scoped 读），
+       cleanupSandbox 的 scoped 名单要带着它。上限 60 条，超出丢最旧。
+       { id, sandboxId, text, by(署名), tone, ts, src:'proactive'|'chat'|'group' } */
+    lampNotes: [],
+
+    /* 灯的两个设置（2026-10-06 商城批2 起真正有写入方，页面在组件商城
+       的灯设置面板）：lampLight 四档 warm/moon/day/candle；
+       lampFontUrl 是**灯牌专属**字体直链（独立于外观的 fontUrl，
+       填了就用 'SleepyLampFont' 覆盖外观字体对灯牌的影响） */
+    lampLight: 'day',
+    lampFontUrl: '',
+
+    /* 桌面组件的 per-cell 配置（批3 简单砖/拍立得，page-desktop.js）：
+       键 = cell.i，值随组件（countdown 的 target/label、polaroid 的
+       photoIds…）。全局小键，孤儿条目无害不清理（见 page-desktop 注释） */
+    widgetCfg: {},
+
+    /* 自定义组件模板（批4，施工卡-组件商城-v1）：按岛隔离（tagScope/scoped，
+       cleanupSandbox scoped 名单要带着）。user 在商城「自制」里写
+       HTML/CSS 模板 + 选用变量；形状大小自由（w/h 不锁）。
+       入库前必须过 sanitizeTpl（剥 <script>/on*=/javascript:，见 page-desktop）。
+       { id, sandboxId, name, w, h, html, css, createdAt } */
+    customWidgets: [],
+
+    /* 慢递信箱（批4）：char 在回复里写 [慢递:小时数|信的内容]（1~72h），
+       到点前 user 看不到内容。按岛隔离（tagScope/scoped + 删房清）。
+       { id, sandboxId, charId, charName, body, hours, deliverAt, createdAt, opened } */
+    slowLetters: [],
+
     /* 最小动作协议（2026-10-03 第二轮施工单第三批，action.js）：
        一次动作 = 一条记录。本轮只有 calendar.create_event 一种。
        { id, sandboxId, kind, target, params, requestKey, source,

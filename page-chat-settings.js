@@ -223,6 +223,11 @@
     var mine = (root && all.byChar && all.byChar[root]) || {};
     return {
       get proactive() { return mine.proactive !== false; },
+      /* 通用读：没设过就回落默认值（撤回察觉概率滑条用，按角色记） */
+      get: function (k, d) {
+        var v = mine[k];
+        return (v === undefined || v === null) ? d : v;
+      },
       set: function (k, v) {
         all.byChar = all.byChar || {};
         all.byChar[root] = all.byChar[root] || {};
@@ -664,6 +669,22 @@
         label: '线上聊天预设', note: '注入内容在「预设」App 里管理',
         onClick: function () { ctx.open('presets'); }
       }));
+      /* MCP 工具（2026-10-06，用户）：对话级能力开关 ——
+         开了之后，设置 → MCP 连接里「服务开着 + 工具也勾着」的那些
+         会挂进这个对话（工具调用循环在 api.runChat，走非流式）。
+         状态存对话记录自己的 mcpTools 字段，动别的对话不受影响。 */
+      var mcpCount = (Sleepy.mcp) ? Sleepy.mcp.enabledToolSpecs().length : 0;
+      secChat.appendChild(demoRow({
+        label: 'MCP 工具',
+        note: chat.mcpTools
+          ? '开 · 现有 ' + mcpCount + ' 个工具可用（回复走非流式）'
+          : (mcpCount ? '关 · 设置里现有 ' + mcpCount + ' 个工具可选' : '关 · 先去 设置 → MCP 连接 配服务'),
+        switched: !!chat.mcpTools,
+        onSwitch: function (v) {
+          cs().mutate(chatId, function (c2) { c2.mcpTools = !!v; });
+          if (v && !mcpCount) ctx.toast('设置里还没有开着的工具，先去 设置 → MCP 连接', 'warn');
+        }
+      }));
       /* 「用户身份」这一行 2026-09-22 **整行删掉**（用户：「角色设置里
          『用户身份』功能去掉」）。它本来就是没绑 onClick 的灰行占位，
          而身份系统真正的入口在「浮岛」和「我」两处 —— 摆在这儿只是噪音。 */
@@ -672,6 +693,29 @@
         switched: csRow.proactive,
         onSwitch: function (v) { csRow.set('proactive', v); }
       }));
+      /* 撤回被察觉概率（2026-10-06）：user 撤回消息时，TA 看到内容的概率。
+         按角色记（charSettings，root 维度），默认 40% —— 跟查岗的察觉率同口径。
+         demoRow 画不了滑条，这一行自己搭（div，别用 button 套 input）。 */
+      var recallRate = Math.round(Number(csRow.get('recallNotice', 0.4)) * 100);
+      if (!(recallRate >= 0 && recallRate <= 100)) recallRate = 40;
+      var sliderRow = h('div', 'set-row cs-row');
+      var sMain = h('span', 'set-row-main');
+      sMain.appendChild(h('span', 'set-row-label', '撤回被 TA 看到'));
+      sMain.appendChild(h('span', 'set-row-hint', '你撤回消息时，TA 有这个概率看到内容'));
+      sliderRow.appendChild(sMain);
+      var sRight = h('span', 'set-row-right cs-slider');
+      var rng = h('input');
+      rng.type = 'range'; rng.min = '0'; rng.max = '100'; rng.step = '5';
+      rng.value = String(recallRate);
+      var sVal = h('span', 'cs-slider-val', recallRate + '%');
+      rng.addEventListener('input', function () {
+        sVal.textContent = rng.value + '%';
+        csRow.set('recallNotice', Number(rng.value) / 100);
+      });
+      sRight.appendChild(rng);
+      sRight.appendChild(sVal);
+      sliderRow.appendChild(sRight);
+      secChat.appendChild(sliderRow);
       /* 主动消息引擎（第二梯队 4）：节奏设置 + 手动评估入口 */
       var st = Sleepy.proactiveEngine ? Sleepy.proactiveEngine.settings()
         : { quietStart: '23:00', quietEnd: '08:00', maxPerDay: 2, cooldownMin: 120, deferMin: 90 };

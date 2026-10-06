@@ -181,6 +181,38 @@ function withTalifeSlot(cap, kind) {
   return out;
 }
 
+/* ============================================================
+   2026-10-06 批：批准的槽位插入（**写死**，不读生产）
+   ------------------------------------------------------------
+   本批在 ONLINE_SLOTS 的 time 之后新增 realworld（真实世界感知）槽。
+   只挂线上（线下场景的天气是剧情设定，page-offline 自己填）。
+   元信息写死 = 批准值：夹具岛没开感知 → 生产该槽必须 on:false + tokens:0，
+   生产改名/挪位/误注入都会让重建期望与重捕实际对不上 → 红。
+   锚点按 id 找 time 槽（不用固定下标）—— 在 talife 插入之后数组已经
+   变长，固定下标会漂。
+   ============================================================ */
+var REALWORLD_SLOT = { id: 'realworld', slot: 'I02b', on: false, tokens: 0,
+  hidden: false, required: false };
+
+function withRealworldSlot(cap) {
+  var out = JSON.parse(JSON.stringify(cap));
+  var at = -1;
+  (out.slots || []).forEach(function (x, i) { if (at < 0 && x.id === 'time') at = i; });
+  assert(at >= 0, 'online 基线里找不到 time 槽（锚点漂了？）');
+  assert(out.slots[at + 1] && out.slots[at + 1].id === 'lang',
+    'time 槽后面应是 lang（锚点漂了？）：' + JSON.stringify(out.slots[at + 1]));
+  out.slots = out.slots.slice();
+  out.slots.splice(at + 1, 0, JSON.parse(JSON.stringify(REALWORLD_SLOT)));
+  return out;
+}
+
+/* 本批（2026-10-06）起线上期望统一走这里：K03e 的 talife + 本批的 realworld */
+function withApprovedSlots(cap, kind) {
+  var out = withTalifeSlot(cap, kind);
+  if (kind === 'online') out = withRealworldSlot(out);
+  return out;
+}
+
 /* 复刻生产 estimate()：cjk*1.6 + other*0.3，四舍五入 */
 function estimateText(text) {
   var t = String(text || '');
@@ -360,7 +392,7 @@ t('除 shell / f1 / c05 三条外，其余 messages 逐字节未变', function (
 t('slots 表结构未变，只有 shell/f1/c05 的 tokens 变（含 K03e 批准槽位插入）', function () {
   /* 2026-10-05 K03e 批：taimpact 之后插入 talife（K03e）—— 批准的结构变化。
      期望侧用 withTalifeSlot 显式插入（元信息写死），黄金基线文件不动。 */
-  var olds = withTalifeSlot(V1_ONLINE, 'online').slots, news = NEW.slots;
+  var olds = withApprovedSlots(V1_ONLINE, 'online').slots, news = NEW.slots;
   eq(news.length, olds.length, 'slots 条数：');
   var diffs = [];
   for (var i = 0; i < olds.length; i++) {
@@ -793,7 +825,7 @@ function slotIndexById(slots, id) {
 
 /* 重建该用例的期望记录：只改批准的三处正文 + 三个 tokens + 三个自检字段 */
 function rebuildOnline(key) {
-  var exp = withTalifeSlot(V1_CAPS[key], 'online');   /* K03e 批准槽位插入 */
+  var exp = withApprovedSlots(V1_CAPS[key], 'online');   /* K03e + 2026-10-06 批准槽位插入 */
   var pos = onlinePositions(key);
   var want = { shell: btShellText(), f1: btF1Text(), c05: c05OnlineTextFromSource() };
   exp.messages[pos.shell].content = want.shell;
@@ -816,7 +848,7 @@ function rebuildOnline(key) {
 
 /* 「与 v1 基线的差异」应恰为这 9 条 */
 function expectedDiffSet(key) {
-  var pos = onlinePositions(key), base = withTalifeSlot(V1_CAPS[key], 'online');
+  var pos = onlinePositions(key), base = withApprovedSlots(V1_CAPS[key], 'online');
   return [
     'messages[' + pos.shell + '].content',
     'messages[' + pos.f1 + '].content',
@@ -833,7 +865,7 @@ function expectedDiffSet(key) {
 function strictOnlineCase(key) {
   t('[' + key + '] 与 v1 的差异恰为批准的 9 条 + K03e 批准槽位插入（其余一律不变）', function () {
     assert(CAPS[key], key + ' 没捕到');
-    eq(diffPaths(withTalifeSlot(V1_CAPS[key], 'online'), CAPS[key]).sort(), expectedDiffSet(key),
+    eq(diffPaths(withApprovedSlots(V1_CAPS[key], 'online'), CAPS[key]).sort(), expectedDiffSet(key),
       key + ' 与 v1 的差异：');
   });
   t('[' + key + '] 「基线 + 三处批准替换」重建后期望 === 实际（整条）', function () {

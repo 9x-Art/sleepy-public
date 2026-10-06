@@ -61,10 +61,15 @@
      的话仍然照写），抹掉之后用一句人话占位，别留空括号。 */
   var OWN_URL = /https?:\/\/[^\s"'<>()]*\b(?:[a-z0-9-]*\.)?sleepy(?:[-a-z0-9]*)?\.(?:pages\.dev|cn|com|app|net|dev|xyz)\b[^\s"'<>()]*/gi;
   var OWN_URL_BARE = /\b[a-z0-9-]*\.?sleepy[uU]?-?\d+\.pages\.dev\b/gi;
+  /* 本机调试地址：用户在自己设备上多半打不开，写在报错里也是白点。
+     注释里那句「或者本机调试地址」之前只拦了品牌域名，localhost 漏了 —— 补上。 */
+  var LOCAL_URL = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:[^\s"'<>()]*)/gi;
 
   function scrubOwnUrl(s) {
     var t = String(s == null ? '' : s);
-    return t.replace(OWN_URL, '（本机地址已省略）').replace(OWN_URL_BARE, '（本机地址已省略）');
+    return t.replace(OWN_URL, '（本机地址已省略）')
+            .replace(OWN_URL_BARE, '（本机地址已省略）')
+            .replace(LOCAL_URL, '（本机地址已省略）');
   }
 
   /* 报错卡：标题 + 可复制的正文 + 一个「复制」按钮。
@@ -76,34 +81,54 @@
   function buildToastCard() {
     toastEl.innerHTML = '';
     toastEl.classList.add('is-card');
+    resetCardRefs();
+
+    /* 头部一行：左 = 明确的原因（标题），右 = × 关闭按钮。
+       原因不再写死「出错了」——由 toast() 把真实原因填进 .toast-title。 */
     var head = document.createElement('div');
     head.className = 'toast-head';
-    head.textContent = '出错了';
+    var title = document.createElement('span');
+    title.className = 'toast-title';
+    var code = document.createElement('span');
+    code.className = 'toast-code';
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.setAttribute('aria-label', '关闭');
+    close.textContent = '×';
+    head.appendChild(title);
+    head.appendChild(code);
+    head.appendChild(close);
+
     var body = document.createElement('div');
     body.className = 'toast-body';
+
+    /* 底部：复制按钮。复制的是「[代码] 原因 + 技术细节」整段，
+       用户直接粘回来就能定位（这就是「可复制的报错代码」）。 */
     var acts = document.createElement('div');
     acts.className = 'toast-acts';
     var copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'toast-copy';
-    copy.textContent = '复制';
-    var close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'toast-close';
-    close.textContent = '知道了';
+    copy.textContent = '复制报错';
     acts.appendChild(copy);
-    acts.appendChild(close);
+
     toastEl.appendChild(head);
     toastEl.appendChild(body);
     toastEl.appendChild(acts);
+    toastEl.__title = title;
+    toastEl.__code = code;
     toastEl.__body = body;
+    toastEl.__copy = copy;
+    toastEl.__close = close;
+    toastEl.__report = '';
 
     copy.addEventListener('click', function (e) {
       e.stopPropagation();
-      var text = body.textContent || '';
+      var text = toastEl.__report || (title.textContent + '\n' + body.textContent);
       var done = function () {
         copy.textContent = '已复制';
-        setTimeout(function () { copy.textContent = '复制'; }, 1400);
+        setTimeout(function () { copy.textContent = '复制报错'; }, 1400);
       };
       if (global.navigator && global.navigator.clipboard && global.navigator.clipboard.writeText) {
         global.navigator.clipboard.writeText(text).then(done, fallbackCopy);
@@ -129,6 +154,46 @@
     });
   }
 
+  /* 切回非卡提示时，把卡内部的引用一并清空，避免残留旧节点的 handler。 */
+  function resetCardRefs() {
+    toastEl.__title = null;
+    toastEl.__code = null;
+    toastEl.__body = null;
+    toastEl.__copy = null;
+    toastEl.__close = null;
+    toastEl.__report = '';
+  }
+
+  /* 报错码：稳定、短、能贴回来定位。优先用调用方给的 code，
+     其次用请求阶段（config/http/timeout/network/parse）映射，
+     再其次按人话关键词猜，最后兜底成 APP-XXXX（内容哈希，仍稳定可复现）。 */
+  function firstLine(s) {
+    var t = String(s == null ? '' : s);
+    var i = t.indexOf('\n');
+    return (i >= 0 ? t.slice(0, i) : t).trim() || t.trim();
+  }
+  function hash4(s) {
+    var h = 0, t = String(s || '');
+    for (var i = 0; i < t.length; i++) { h = (h * 31 + t.charCodeAt(i)) >>> 0; }
+    return ('000' + (h % 10000).toString(36)).slice(-4).toUpperCase();
+  }
+  function errCodeOf(opts, text) {
+    if (opts && opts.code) return String(opts.code).toUpperCase();
+    var stage = opts && opts.stage;
+    if (stage === 'config') return 'CFG';
+    if (stage === 'http') return 'HTTP' + (opts.status != null ? '-' + opts.status : '');
+    if (stage === 'timeout') return 'TIMEOUT';
+    if (stage === 'network') return 'NET';
+    if (stage === 'parse') return 'PARSE';
+    var t = String(text || '').toLowerCase();
+    if (t.indexOf('超时') >= 0) return 'TIMEOUT';
+    if (t.indexOf('连不上') >= 0 || t.indexOf('网络') >= 0) return 'NET';
+    if (t.indexOf('配置') >= 0 || t.indexOf('key') >= 0 || t.indexOf('密钥') >= 0) return 'CFG';
+    if (t.indexOf('json') >= 0) return 'PARSE';
+    if (t.indexOf('http') >= 0) return 'HTTP';
+    return 'APP-' + hash4(text);
+  }
+
   function hideToast() {
     if (!toastEl) return;
     toastEl.className = '';
@@ -144,31 +209,44 @@
       phone.appendChild(toastEl);
     }
     opts = opts || {};
+    var errMode = (kind === 'err');
     /* 报错一律过一遍网址闸（普通文案不动） */
-    var text = (kind === 'err') ? scrubOwnUrl(msg) : String(msg == null ? '' : msg);
-    var detail = (kind === 'err' && opts.detail) ? scrubOwnUrl(opts.detail) : '';
+    var text = errMode ? scrubOwnUrl(msg) : String(msg == null ? '' : msg);
+    var detail = (errMode && opts.detail) ? scrubOwnUrl(opts.detail) : '';
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
 
-    if (kind === 'err' && (detail || opts.copy)) {
+    /* 所有报错都走这张卡：明确的原因 + 错误码 + 可复制的技术细节 + × 关闭。
+       不再有「自己会消失的小胶囊」—— 那条正是用户说的「丑且原因不清」。 */
+    if (errMode) {
       if (!toastEl.__body) buildToastCard();
-      toastEl.__body.textContent = text + (detail ? '\n' + detail : '');
+      var code = errCodeOf(opts, text);
+      var title = (opts && opts.title) ? String(opts.title) : firstLine(text);
+      if (!title) title = '出错了';
+      toastEl.__title.textContent = title;
+      toastEl.__code.textContent = code;
+      toastEl.__body.textContent = detail || text;   /* 没细节时，原因本身也可复制 */
+      toastEl.__report = '[' + code + '] ' + title + (detail ? '\n' + detail : '');
       toastEl.className = 'show err is-card';
-      /* 报错卡不自己消失 —— 用户得有时间读完、复制 */
+      /* 报错卡不自己消失 —— 用户读完、复制、点 × 才关 */
       return;
     }
 
-    if (toastEl.__body) { toastEl.innerHTML = ''; toastEl.__body = null; }
+    if (toastEl.__body) { toastEl.innerHTML = ''; resetCardRefs(); }
     toastEl.classList.remove('is-card');
     toastEl.textContent = text;
     toastEl.className = 'show' + (kind ? ' ' + kind : '');
-    /* 报错比普通提示多留一会儿 */
-    toastTimer = setTimeout(function () { toastEl.className = ''; }, kind === 'err' ? 4200 : 2400);
+    /* 只有普通提示（ok / warn）会自动消失；报错不会走到这里 */
+    toastTimer = setTimeout(function () { toastEl.className = ''; }, kind === 'warn' ? 3000 : 2200);
   }
 
-  /* 报错的两段式口子：`apiFail(msg, res)` —— 第一行是人话，
-     第二行是服务商原文（可复制）。describeError 的返回值就是原文那一行。 */
-  function apiFail(human, detail) {
-    toast(human || '出错了', 'err', { detail: detail || '', copy: true });
+  /* 报错的两段式口子：`apiFail(human, detail, opts)` —— 第一行是人话，
+     第二行是服务商原文（可复制）。describeError 的返回值就是原文那一行。
+     opts 可带 code / stage / status，用来生成报错卡上的错误码。 */
+  function apiFail(human, detail, opts) {
+    var o = opts || {};
+    if (detail && !o.detail) o.detail = detail;
+    if (!o.copy) o.copy = true;
+    toast(human || '出错了', 'err', o);
   }
 
   /* ------------------------- 状态栏 / 问候 ------------------------- */

@@ -55,6 +55,22 @@
 
   function save(list) { return store.set('photos', list); }
 
+  /* ---- 归属（2026-10-06，用户：「相册要选人 · 按账号隔离」）----
+     群岛里有好几个角色，相册混在一起的话，以后 char 发朋友圈
+     可能会翻到别人的图。所以每条照片记一笔 ownerCharId：
+     · 默认 = 当前岛上的活动角色（core.activeCharOnIsland —— 指针卫兵，
+       没选人/不在本岛名册就是 ''，绝不拿上一个岛的 charId 顶数）；
+     · 调用方可显式指定（聊天里生成的图归那个聊天的角色，
+       相册在群岛选人页里加的归被选中的那个人）。
+     老记录没有这个字段 —— 各视图把它们当「未归属」单独摆，
+     不混进任何人的相册，也不悄悄猜一个主人。 */
+  function currentOwnerCharId() {
+    try {
+      var c = (core && core.activeCharOnIsland) ? core.activeCharOnIsland() : null;
+      return c ? c.id : '';
+    } catch (e) { return ''; }
+  }
+
   function sizeOf(list) {
     var n = 0;
     (list || []).forEach(function (p) { n += (p && p.url ? p.url.length : 0); });
@@ -95,15 +111,17 @@
     return Promise.resolve(p.url || '');
   }
 
-  function add(items) {
+  function add(items, owner) {
     var list = allFull();            /* 写入方：全量 */
+    var ownerCharId = (owner && owner.charId) || currentOwnerCharId();
     (items || []).forEach(function (it) {
       /* 有一条就算数：老记录带 url，新记录带 mediaId */
       if (!it || (!it.url && !it.mediaId)) return;
       var rec = {
         id: core.newId('ph'),
         caption: it.caption || '',
-        at: it.at || Date.now()
+        at: it.at || Date.now(),
+        ownerCharId: ownerCharId || ''
       };
       if (it.mediaId) {
         rec.mediaId = it.mediaId;
@@ -136,6 +154,20 @@
     if (hit && hit.mediaId && Sleepy.media) {
       Sleepy.media.remove(hit.mediaId).catch(function () { /* 删不掉就算了，不影响记录已删 */ });
     }
+  }
+
+  /* 按 mediaId 把相册记录一次清干净（2026-10-06，聊天里删照片消息用）：
+     同一张图的记录理论上只有一条，但按 mediaId 全表滤一遍最稳 ——
+     历史数据里可能有重复收进的。返回删掉的条数。
+     ⚠️ 这里**不删 blob**：聊天里那条消息还引用着它，等调用方确认
+     没有别的引用了再由它删（见 page-chat 的 dropMessages）。 */
+  function removeByMedia(mediaId) {
+    if (!mediaId) return 0;
+    var list = allFull();
+    var keep = list.filter(function (p) { return p && p.mediaId !== mediaId; });
+    var n = list.length - keep.length;
+    if (n) save(keep);
+    return n;
   }
 
   function update(id, patch) {
@@ -289,7 +321,7 @@
               }
             }
 
-            var list = add(ok);
+            var list = add(ok, opts.owner);   /* owner 相册选人页会显式传 */
             if (failed && Sleepy.toast) {
               Sleepy.toast('有 ' + failed + ' 张没读成功', 'warn');
             }
@@ -318,6 +350,8 @@
     srcOf: srcOf,
     add: add,
     remove: remove,
+    removeByMedia: removeByMedia,
+    currentOwnerCharId: currentOwnerCharId,
     update: update,
     pick: pick,
     readImageScaled: readImageScaled,

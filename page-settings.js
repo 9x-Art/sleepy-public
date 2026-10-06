@@ -239,15 +239,38 @@
         onClick: function () { ctx.open('settings-imggen'); }
       });
       gCap.card.appendChild(rowImg);
-      gCap.card.appendChild(row({ label: '天气 / 搜索 / WebDAV', hint: '2.17' }));
+      /* 天气感知 / 链接解析（2026-10-06 接上，不再是灰占位） */
+      var vpKey = '';
+      try { vpKey = String(store.get('vpKey') || ''); } catch (e) { /* 没有就算了 */ }
+      gCap.card.appendChild(row({
+        label: '天气感知',
+        hint: '让 TA 感知现实天气 · 搜索走 MCP',
+        onClick: function () { ctx.open('settings-weblink'); }
+      }));
+      gCap.card.appendChild(row({
+        label: '链接解析',
+        hint: '链接卡的富数据 · 免费额度',
+        badge: vpKey ? '已填 Key' : '匿名额度',
+        badgeKind: vpKey ? 'ok' : 'dim',
+        onClick: function () { ctx.open('settings-videoparse'); }
+      }));
       body.appendChild(gCap.wrap);
 
       /* 世界书（B 模块）是首页 App，不挂设置 —— 它跟名片夹一样，
          是「用户自己往里加东西」的地方，设置里只放引擎怎么连。 */
 
-      var g2 = group('外观与文字');
-      g2.card.appendChild(row({ label: '主题与字号', hint: '夜灯 / 浅色 + 字号' }));
-      body.appendChild(g2.wrap);
+      /* 「主题与字号」这行删掉了（2026-10-05，用户）：外观 App 里全能设，
+         设置页不再放第二份 —— 原位置给了 MCP（2026-10-06 接上真页面）。 */
+      var gMcp = group('MCP');
+      var rowMcp = row({
+        label: 'MCP 连接',
+        hint: '自己接 MCP 服务 · 工具调用',
+        badge: Sleepy.mcp ? Sleepy.mcp.summary() : '未接',
+        badgeKind: (Sleepy.mcp && Sleepy.mcp.summary() !== '未配置') ? 'ok' : 'dim',
+        onClick: function () { ctx.open('settings-mcp'); }
+      });
+      gMcp.card.appendChild(rowMcp);
+      body.appendChild(gMcp.wrap);
 
       /* 角色相关的入口（原来的「人设预设库」）不在这里 ——
          它本来就是「新增角色」，已经搬到首页的名片夹。 */
@@ -307,6 +330,11 @@
           var c = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(k) : null;
           setRowBadge(capRows[k], c ? (c.model || '已配置') : '未配置', c ? 'ok' : 'dim');
         });
+        /* MCP 行（2026-10-06）：从配置页回来时 badge 跟着变 */
+        if (Sleepy.mcp && rowMcp) {
+          var ms2 = Sleepy.mcp.summary();
+          setRowBadge(rowMcp, ms2, ms2 === '未配置' ? 'dim' : 'ok');
+        }
         setRowValue(rowData, usageText());
         /* 语音那行同理：从语音设置页回来，开关 / 连接状态得跟着变 */
         if (Sleepy.tts && rowTts) {
@@ -677,6 +705,291 @@
         return;
       }
       renderMainApiForm(ctx, preset, false);
+    }
+  });
+
+  /* ==================== 页面：MCP 服务列表（2026-10-06） ==================== */
+
+  Sleepy.register('settings-mcp', {
+    title: 'MCP 连接',
+    render: function (ctx) {
+      var body = ctx.body;
+      var g = group('MCP 服务',
+        '每个服务有总开关，点进去还能逐个工具开关。哪些工具进对话，由每个对话自己的「MCP 工具」开关决定。');
+
+      function refresh() {
+        g.card.innerHTML = '';
+        var list = Sleepy.mcp ? Sleepy.mcp.list() : [];
+        if (!list.length) {
+          g.card.appendChild(row({ label: '还没有服务，点下面添加', plain: true }));
+        }
+        list.forEach(function (c) {
+          var on = 0;
+          (c.tools || []).forEach(function (t) {
+            if ((c.toolOn || {})[t.name] === true) on++;
+          });
+          g.card.appendChild(row({
+            label: c.name || '未命名服务',
+            hint: (c.transport === 'sse' ? 'SSE' : 'HTTP') + ' · 开着 ' + on + ' 个工具' +
+              (c.lastError ? ' · 上次出错' : ''),
+            badge: c.enabled ? '开' : '关',
+            badgeKind: c.enabled ? 'ok' : 'dim',
+            onClick: function () { ctx.open('settings-mcp-edit', { id: c.id }); }
+          }));
+        });
+        g.card.appendChild(row({
+          label: '添加服务',
+          onClick: function () { ctx.open('settings-mcp-edit', {}); }
+        }));
+      }
+      refresh();
+      body.appendChild(g.wrap);
+
+      body.appendChild(h('p', 'set-foot',
+        '网页只能连 SSE / streamable HTTP 型的 MCP 服务（本地 stdio 的等以后 APK 版）；' +
+        '服务需要允许跨域（CORS）。所有 Token 只存这台设备。'));
+
+      ctx.rebuild = refresh;
+    },
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
+  });
+
+  /* ==================== 页面：MCP 服务编辑（新增 / 编辑共用） ==================== */
+
+  Sleepy.register('settings-mcp-edit', {
+    title: 'MCP 服务',
+    render: function (ctx) {
+      var id = ctx.params.id || '';
+      var isNew = !id;
+      var cfg = isNew
+        ? { id: '', name: '', url: '', token: '', transport: 'http', enabled: true, tools: [], toolOn: {} }
+        : (Sleepy.mcp ? Sleepy.mcp.cfgOf(id) : null);
+      if (!isNew && !cfg) {
+        ctx.toast('找不到这条配置', 'err');
+        ctx.back();
+        return;
+      }
+      if (isNew) ctx.setTitle('添加 MCP 服务');
+
+      var body = ctx.body;
+      var f = {};
+
+      /* ---- 服务 ---- */
+      var g1 = group('服务');
+      f.name = textField({ label: '名称', hint: '自己认得就行', value: cfg.name || '' });
+      g1.card.appendChild(f.name.el);
+      f.url = textField({
+        label: '服务地址',
+        hint: 'HTTP 型填 MCP 端点；SSE 型填 SSE 端点',
+        value: cfg.url || ''
+      });
+      g1.card.appendChild(f.url.el);
+      f.token = textField({
+        label: 'Token（可选）',
+        hint: '要鉴权的服务填 Bearer Token，随请求带上',
+        value: cfg.token || ''
+      });
+      g1.card.appendChild(f.token.el);
+      f.sse = switchField({
+        label: '用旧版 SSE 连接',
+        hint: '关 = streamable HTTP（新版，默认）；开 = 旧版 HTTP+SSE。连不上就换一挡试试',
+        value: cfg.transport === 'sse'
+      });
+      g1.card.appendChild(f.sse.el);
+      body.appendChild(g1.wrap);
+
+      /* ---- 开关 ---- */
+      var g2 = group('开关');
+      f.enabled = switchField({
+        label: '启用这个服务',
+        hint: '总开关 —— 关了，它的工具在任何对话里都不出现',
+        value: cfg.enabled !== false
+      });
+      g2.card.appendChild(f.enabled.el);
+      body.appendChild(g2.wrap);
+
+      /* ---- 工具清单（只有编辑已保存的服务才有） ---- */
+      var g3 = group('工具', '逐个开。只有这里开着的工具，才会挂进开了「MCP 工具」的对话里。');
+      var toolsCard = g3.card;
+      var toolsHint = null;
+      function paintTools() {
+        toolsCard.innerHTML = '';
+        var cur = (!isNew && Sleepy.mcp) ? Sleepy.mcp.cfgOf(cfg.id) : null;
+        var tools = (cur && cur.tools) || [];
+        if (isNew) {
+          toolsCard.appendChild(row({ label: '先保存，再「刷新工具」', plain: true }));
+          return;
+        }
+        if (!tools.length) {
+          toolsCard.appendChild(row({
+            label: cur && cur.lastError ? ('上次没拉到：' + cur.lastError) : '还没拉过工具清单',
+            plain: true
+          }));
+        }
+        tools.forEach(function (t) {
+          var sw = switchField({
+            label: t.name,
+            hint: (t.description || '').slice(0, 80) || '（这个工具没有说明）',
+            value: (cur.toolOn || {})[t.name] === true
+          });
+          sw.input.addEventListener('change', function () {
+            Sleepy.mcp.toggleTool(cfg.id, t.name, sw.get());
+          });
+          toolsCard.appendChild(sw.el);
+        });
+        /* 同步行注：拉到了几个、上次什么时候 */
+        if (toolsHint) {
+          toolsHint.textContent = tools.length
+            ? '共 ' + tools.length + ' 个工具 · 上次刷新 ' +
+              (cur.lastSync ? new Date(cur.lastSync).toLocaleTimeString() : '—')
+            : '';
+        }
+      }
+      toolsHint = h('p', 'cap-hint', '');
+      paintTools();
+      body.appendChild(g3.wrap);
+
+      /* ---- 测试 / 保存 ---- */
+      var g4 = group('连接');
+      var testBox = h('div', 'test-result is-idle');
+      testBox.appendChild(h('p', 'test-title', '还没连过'));
+      g4.card.appendChild(testBox);
+      var btnRow = h('div', 'btn-row');
+      var refreshBtn = button('保存并刷新工具', 'ghost', function () { doSave(true); });
+      var saveBtn = button('保存', 'primary', function () { doSave(false); });
+      btnRow.appendChild(refreshBtn);
+      btnRow.appendChild(saveBtn);
+      if (!isNew) {
+        btnRow.appendChild(button('删除', 'danger', function () {
+          ui.confirm({
+            title: '删掉「' + (cfg.name || '这个服务') + '」？',
+            text: '它的工具开关也会一起没。',
+            ok: '删掉'
+          }).then(function (yes) {
+            if (!yes) return;
+            Sleepy.mcp.remove(cfg.id);
+            ctx.toast('删掉了', 'ok');
+            ctx.back();
+          });
+        }));
+      }
+      g4.card.appendChild(btnRow);
+      body.appendChild(g4.wrap);
+
+      ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(false); } }]);
+
+      function doSave(alsoRefresh) {
+        var r = Sleepy.mcp.upsert({
+          id: cfg.id || undefined,
+          name: f.name.get ? f.name.get() : f.name.input.value,
+          url: f.url.get ? f.url.get() : f.url.input.value,
+          token: f.token.get ? f.token.get() : f.token.input.value,
+          transport: f.sse.get() ? 'sse' : 'http',
+          enabled: f.enabled.get()
+        });
+        if (!r.ok) { ctx.toast(r.error || '没存上', 'err'); return; }
+        cfg.id = r.cfg.id;
+        if (!alsoRefresh) {
+          ctx.toast('已保存', 'ok');
+          paintTools();
+          return;
+        }
+        testBox.querySelector('.test-title').textContent = '正在连接…';
+        Sleepy.mcp.refreshTools(cfg.id).then(function (rr) {
+          if (rr.ok) {
+            testBox.querySelector('.test-title').textContent =
+              '连上了 · 拉到 ' + (rr.tools ? rr.tools.length : 0) + ' 个工具';
+            ctx.toast('工具清单已更新', 'ok');
+          } else {
+            testBox.querySelector('.test-title').textContent = '没连上：' + (rr.error || '未知错误');
+            ctx.toast('连接失败：' + (rr.error || '未知错误'), 'err');
+          }
+          paintTools();
+        });
+      }
+    }
+  });
+
+  /* ==================== 页面：天气感知 ====================
+
+     2026-10-06 三次定稿：**只做天气感知**（热点已按用户裁决撤掉，也不注入），
+     数据源 OpenWeatherMap 免费层（key 免费注册）；char 的搜索能力走 MCP 工具
+     （实测免鉴权、开 CORS 的通用搜索接口为零）。WebDAV 不接。 */
+  Sleepy.register('settings-weblink', {
+    title: '天气感知',
+    render: function (ctx) {
+      var body = ctx.body;
+      var wl = Sleepy.core.weblink;
+      var cfg = wl.cfg();
+
+      var g = group('现实天气感知');
+      var fRw = switchField({
+        label: '注入天气',
+        hint: 'TA 在线上聊天能感知你那边的现实天气',
+        value: cfg.rwOn === true
+      });
+      g.card.appendChild(fRw.el);
+      var fCity = textField({
+        label: '城市',
+        hint: '如 上海 / Shanghai'
+      });
+      fCity.input.value = cfg.weatherCity || '';
+      g.card.appendChild(fCity.el);
+      var fKey = textField({
+        label: 'OpenWeatherMap Key',
+        hint: '免费注册（免费层够用）'
+      });
+      fKey.input.value = String(cfg.owmKey || '');
+      g.card.appendChild(fKey.el);
+      var btnRow = h('div', 'btn-row');
+      btnRow.appendChild(button('注册页', 'ghost', function () {
+        try { window.open('https://openweathermap.org/api', '_blank'); } catch (e) { /* 拦就拦 */ }
+      }));
+      btnRow.appendChild(button('保存', 'primary', function () {
+        wl.set({ rwOn: fRw.get(), weatherCity: fCity.get(), owmKey: fKey.get() });
+        ctx.toast('存好了', 'ok');
+        ctx.back();
+      }));
+      g.card.appendChild(btnRow);
+      body.appendChild(g.wrap);
+    }
+  });
+
+  /* ==================== 页面：链接解析 ====================
+
+     聊天里平台链接卡（微博/抖音/B站等，不只视频）的富数据从
+     极数本源（apizero.cn）的 video-parse 接口来：浏览器直连（CORS 全开），
+     匿名 5 次/天/IP，填自己的 key 提额。 */
+  Sleepy.register('settings-videoparse', {
+    title: '链接解析',
+    render: function (ctx) {
+      var body = ctx.body;
+      var g = group();
+      var f = textField({
+        label: 'API Key（可选）',
+        hint: '不填每天 5 次，填自己的提额'
+      });
+      f.input.value = String(store.get('vpKey') || '');
+      g.card.appendChild(f.el);
+      var fCustom = textField({
+        label: '自定义接口（可选）',
+        hint: '填了优先用它；URL 模板，{url} 是占位'
+      });
+      fCustom.input.value = String(store.get('vpCustomApi') || '');
+      g.card.appendChild(fCustom.el);
+      var btnRow = h('div', 'btn-row');
+      btnRow.appendChild(button('注册页', 'ghost', function () {
+        try { window.open('https://apizero.cn', '_blank'); } catch (e) { /* 拦就拦 */ }
+      }));
+      btnRow.appendChild(button('保存', 'primary', function () {
+        store.set('vpKey', f.get());
+        store.set('vpCustomApi', fCustom.get());
+        store.set('vpCache', {});   /* 换了源，旧缓存作废 */
+        ctx.toast('存好了', 'ok');
+        ctx.back();
+      }));
+      g.card.appendChild(btnRow);
+      body.appendChild(g.wrap);
     }
   });
 

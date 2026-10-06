@@ -1100,6 +1100,39 @@ t('拆岛清扫补漏：charRel:<sbId> 整键清 + charAppearance.byChar 悬空�
   return { charRel整键清: true, 悬空引用清: true, 统计: true };
 });
 
+/* html 小游戏的待转述结算痕迹（htmlGameResult:<chatId>）是按**会话 id** 拼的
+   动态单键：scoped() 名单和「带 sbId 的键」两条路都抓不到它 —— 只有遍历
+   这间房的 chats 才拿得到那些 chatId。所以清理必须发生在清 chats **之前**，
+   顺序写反就永远清不掉（键会带着 set(null) 的占位留在 localStorage 里）。
+   断言落在 localStorage 键本身，不看 store.get —— 未登记的键 get 出来
+   一律是 null，压根分不出「已删」和「空占位」（会假绿）。 */
+t('拆岛清幽灵：htmlGameResult:<chatId> 结算痕迹跟着会话一起走，不误伤别岛', () => {
+  const sb = S.core.createSandbox('archipelago');
+  const other = S.core.createSandbox('archipelago');
+  S.core.setActiveSandbox(sb.id);
+  const mine = S.chatStore.createChat('本岛会话', null);
+  S.core.setActiveSandbox(other.id);
+  const theirs = S.chatStore.createChat('别岛会话', null);
+  S.core.setActiveSandbox(sb.id);
+
+  const K = (c) => 'sleepy.v1.htmlGameResult:' + c.id;
+  S.store.set('htmlGameResult:' + mine.id, { msgId: 'g1', score: 88, text: '赢了', ts: 1 });
+  S.store.set('htmlGameResult:' + theirs.id, { msgId: 'g2', score: 10, text: '输了', ts: 2 });
+  if (localStorageStub.getItem(K(mine)) === null) throw new Error('夹具没种上（前提不成立）');
+
+  const r = S.core._purgeSync.sandbox(sb.id);
+  if (!r.ok) throw new Error(r.message);
+  if (localStorageStub.getItem(K(mine)) !== null) {
+    throw new Error('本岛会话的结算痕迹没跟着删房清掉（幽灵数据）');
+  }
+  /* 别岛的不能被误伤 */
+  const keep = S.store.get('htmlGameResult:' + theirs.id);
+  if (!keep || keep.score !== 10) throw new Error('误伤了别岛会话的结算痕迹');
+
+  S.core._purgeSync.sandbox(other.id);
+  return { 本岛清掉: true, 别岛没误伤: true };
+});
+
 /* 导出格式 v2：皮套/NPC 头能解析回来；导入层级还原；NPC 统一归岛。 */
 t('导出 v2：皮套/NPC 头解析 + 导入层级还原 + NPC 归岛', () => {
   const isle = S.core.createSandbox('isle', '回路岛').id;
@@ -1679,6 +1712,341 @@ t('拍一拍：[拍一拍] / [拍一拍:后缀] 都认，正文抽干净', () =>
   };
 });
 
+/* 角色撤回（2026-10-06）：[撤回:N|原因] 标签解析 + 存档执行。
+   解析是纯函数；执行走 applyCharRecalls（打戳不删原文，口径同群聊）。 */
+t('抽 [撤回:N|原因] 标签：冒号竖线全半角都认，原因可省，多个也认', () => {
+  const a = S.chatUtil.extractRecalls('刚才口误了\n[撤回:1|说得太冲了]');
+  const b = S.chatUtil.extractRecalls('[撤回：2｜不想让你看到]');
+  const c = S.chatUtil.extractRecalls('[撤回:1]');
+  const d = S.chatUtil.extractRecalls('[撤回:1|理由一] 和 [撤回:2|理由二]');
+  const e = S.chatUtil.extractRecalls('普通回复，没有标签');
+  if (a.text !== '刚才口误了') throw new Error('正文没抽干净：' + a.text);
+  if (!(a.hits.length === 1 && a.hits[0].n === 1 && a.hits[0].reason === '说得太冲了')) {
+    throw new Error('半角解析错：' + JSON.stringify(a.hits));
+  }
+  if (!(b.hits.length === 1 && b.hits[0].n === 2 && b.hits[0].reason === '不想让你看到')) {
+    throw new Error('全角解析错：' + JSON.stringify(b.hits));
+  }
+  if (!(c.hits.length === 1 && c.hits[0].reason === '')) throw new Error('省原因应得空串');
+  if (d.hits.length !== 2) throw new Error('一行两个应都抽到');
+  if (e.hits.length !== 0 || e.text !== '普通回复，没有标签') throw new Error('没标签不该动正文');
+  return '解析四处全对';
+});
+
+t('抽 [灯:那句话] 标签：灯/灯牌都认，全角半角都认，多个也认，没标签不动正文', () => {
+  const a = S.chatUtil.extractLampNotes('今天有点累\n[灯:早点休息]');
+  const b = S.chatUtil.extractLampNotes('[灯牌：记得多喝水]');
+  const c = S.chatUtil.extractLampNotes('[灯:晚安] [灯:好梦]');
+  const d = S.chatUtil.extractLampNotes('普通回复，没有标签');
+  const e = S.chatUtil.extractLampNotes('[灯:   ]');
+  if (a.text !== '今天有点累') throw new Error('正文没抽干净：' + a.text);
+  if (!(a.hits.length === 1 && a.hits[0].text === '早点休息')) {
+    throw new Error('半角解析错：' + JSON.stringify(a.hits));
+  }
+  if (!(b.hits.length === 1 && b.hits[0].text === '记得多喝水')) {
+    throw new Error('灯牌全角解析错：' + JSON.stringify(b.hits));
+  }
+  if (c.hits.length !== 2) throw new Error('一行两个应都抽到');
+  if (d.hits.length !== 0 || d.text !== '普通回复，没有标签') throw new Error('没标签不该动正文');
+  /* 空内容标签也抽走（不留垃圾在正文里），但不产生可落库的留言 */
+  if (!(e.hits.length === 1 && e.hits[0].text === '')) throw new Error('空标签应抽出空串');
+  return '灯牌抽取四处全对';
+});
+
+t('抽 [慢递:N|内容] 标签：小时数钳 1~72，全角半角都认，没标签不动正文', () => {
+  const a = S.chatUtil.extractSlowmail('有件事想慢慢说\n[慢递:6|今天在路口看见一只很凶的橘猫]');
+  const b = S.chatUtil.extractSlowmail('[慢递：0｜提前了也按 1 算]');
+  const c = S.chatUtil.extractSlowmail('[慢递:999|超上限按 72 算]');
+  const d = S.chatUtil.extractSlowmail('普通回复，没有信');
+  if (a.text !== '有件事想慢慢说') throw new Error('正文没抽干净：' + a.text);
+  if (!(a.hits.length === 1 && a.hits[0].hours === 6 && a.hits[0].body.indexOf('橘猫') >= 0)) {
+    throw new Error('半角解析错：' + JSON.stringify(a.hits));
+  }
+  if (b.hits[0].hours !== 1) throw new Error('下限钳制失效');
+  if (c.hits[0].hours !== 72) throw new Error('上限钳制失效');
+  if (d.hits.length !== 0 || d.text !== '普通回复，没有信') throw new Error('没标签不该动正文');
+  return '慢递解析全对';
+});
+
+/* HTML 小游戏（2026-10-06）：[html]…[/html] 是六个抽取函数里**唯一多行**、
+   唯一带尺寸闸、唯一「一次只收一块」的，所以单测最不能省。
+   最想钉住的回归位：HTML 里的 `||`（JS 逻辑或）看起来会被 splitBubblesT
+   当成气泡分隔符切碎 —— 实测不会（那边 split 完用 ' || ' 重新 join 回去了），
+   这条断言就是防止将来有人改 split 逻辑时把它弄坏。 */
+t('抽 [html]…[/html] 小游戏块：多行/大小写都认，一次只收 1 块，没闭合不收', () => {
+  const multi = '给你做了个猜数字！\n[html]\n<div id="a">hi</div>\n' +
+    '<script>var n=1||2;if(n<3){n++}</script>\n[/html]';
+  const a = S.chatUtil.extractHtmlGames(multi);
+  if (a.text !== '给你做了个猜数字！') throw new Error('正文没抽干净：' + JSON.stringify(a.text));
+  if (!a.hit || a.hit.indexOf('<div id="a">hi</div>') < 0) {
+    throw new Error('多行 HTML 没收全：' + JSON.stringify(a.hit));
+  }
+  if (a.hit.indexOf('1||2') < 0) throw new Error('HTML 里的 || 被切碎（回归）：' + JSON.stringify(a.hit));
+  if (a.truncated) throw new Error('没超闸不该标截断');
+  if (a.dropped !== 0) throw new Error('只有一块不该记丢弃');
+
+  const b = S.chatUtil.extractHtmlGames('[HTML]<b>x</b>[/HTML]');
+  if (b.hit !== '<b>x</b>') throw new Error('大写标签没认：' + JSON.stringify(b.hit));
+
+  /* 一次只收第一块，多出来的剥掉但不落库（防刷）；中间的正文要留住 */
+  const c = S.chatUtil.extractHtmlGames('[html]A[/html] 中间的话 [html]B[/html]');
+  if (c.hit !== 'A') throw new Error('多块应只收第一块：' + JSON.stringify(c.hit));
+  if (c.dropped !== 1) throw new Error('多出来的块应记 dropped：' + c.dropped);
+  if (c.text !== '中间的话') throw new Error('两块之间的正文该留：' + JSON.stringify(c.text));
+
+  /* 没闭合（有头没尾）：不算命中、原文保留 —— 半截输出多是流式中断，剥掉反而丢字 */
+  const d = S.chatUtil.extractHtmlGames('说了半截 [html]<b>x</b>');
+  if (d.hit !== null) throw new Error('未闭合不该命中');
+  if (d.text.indexOf('[html]') < 0) throw new Error('未闭合应原文保留');
+
+  const e = S.chatUtil.extractHtmlGames('普通一句话，没有游戏');
+  if (e.hit !== null || e.text !== '普通一句话，没有游戏') throw new Error('没标签不该动正文');
+
+  /* 尺寸闸：超长**截断保留下半**（浏览器对半截 HTML 很宽容），并打 truncated */
+  const MAX = S.chatUtil.HTMLGAME_MAX;
+  const f = S.chatUtil.extractHtmlGames('[html]' + 'x'.repeat(MAX + 500) + '[/html]');
+  if (!f.truncated) throw new Error('超闸应标截断');
+  if (f.hit.length !== MAX) throw new Error('截断长度该等于闸值：' + f.hit.length);
+  return '小游戏抽取七处全对';
+});
+
+/* 结算痕迹（noteGameResult / gameResultPeekMsg）：走的是「同一局重复上报必须
+   幂等」——游戏每次重绘、每次 report 都可能重复触发，不幂等就会反复覆盖痕迹、
+   反复垫进上下文。peek 必须一次性（读出即摘），否则每轮都重复垫同一局结算。 */
+t('小游戏结算痕迹：同局重复上报不覆盖、换局才更新、peek 读出即摘', () => {
+  const chatId = 'smoke_htmlgame_chat';
+  const key = 'htmlGameResult:' + chatId;
+  S.store.set(key, null);
+
+  if (!S.chatUtil.noteGameResult(chatId, 'm1', 87, '三局两胜赢了你')) {
+    throw new Error('首次上报应落库');
+  }
+  if (S.chatUtil.noteGameResult(chatId, 'm1', 87, '三局两胜赢了你')) {
+    throw new Error('同一局重复上报不该覆盖（否则每次重绘都重垫上下文）');
+  }
+  const rec = S.store.get(key);
+  if (!rec || rec.score !== 87) throw new Error('痕迹没存上：' + JSON.stringify(rec));
+
+  if (!S.chatUtil.noteGameResult(chatId, 'm2', 30, '输了')) {
+    throw new Error('换了一局应更新（latest-wins）');
+  }
+  const peek = S.chatUtil.gameResultPeekMsg(chatId);
+  if (!peek || peek.role !== 'system') {
+    throw new Error('peek 该给一条 system 垫话：' + JSON.stringify(peek));
+  }
+  if (peek.content.indexOf('30') < 0) throw new Error('peek 没带最新得分：' + peek.content);
+  if (peek.content.indexOf('输了') < 0) throw new Error('peek 没带结果描述');
+  if (S.chatUtil.gameResultPeekMsg(chatId) !== null) {
+    throw new Error('peek 必须一次性：第二次该是 null');
+  }
+  if (S.store.get(key) !== null) throw new Error('peek 后痕迹该摘干净');
+  return '结算幂等 + 一次性摘除都对';
+});
+
+/* 静态护栏：小游戏是**模型写 HTML 直接塞进 iframe 跑**，整个项目里唯一一条
+   「执行外来代码」的路。安全模型必须钉死在源码上，改一处就红。
+   ⚠️ 判据一律**剥注释后再判** —— 修法说明里必然写出 allow-same-origin /
+   default-src 这些名字，不剥注释会把自己判成违规（栽过四次）。 */
+t('小游戏静态护栏：沙箱不给 same-origin、CSP 堵出网、桥只认登记窗口、卡注册进引擎', () => {
+  const bare = (f) => require('fs').readFileSync(f, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const src = bare('page-chat.js');
+  const pe = bare('prompt-engine.js');
+  const css = require('fs').readFileSync('style.css', 'utf8');
+
+  if (src.indexOf("setAttribute('sandbox', 'allow-scripts')") < 0) {
+    throw new Error('iframe 沙箱属性不见了（游戏会拿到父页数据）');
+  }
+  if (src.indexOf('allow-same-origin') >= 0) {
+    throw new Error('沙箱绝不能给 allow-same-origin —— 给了就能摸到父页 localStorage');
+  }
+  if (src.indexOf("default-src 'none'") < 0) {
+    throw new Error('CSP 没堵出网（default-src none）');
+  }
+  if (src.indexOf('SleepyGame') < 0) throw new Error('没给游戏暴露 report 桥，结算闭环断');
+  if (src.indexOf('registerGameFrame') < 0 || src.indexOf('gameFrameWins.indexOf') < 0) {
+    throw new Error('没登记窗口就收 postMessage —— 别的页面也能报结算');
+  }
+  if (pe.indexOf("'htmlgame'") < 0) throw new Error('小游戏说明书卡没注册进引擎');
+  if (css.indexOf('.msg-htmlgame{') < 0) throw new Error('游戏卡没样式');
+  if (css.indexOf('.gamev-mask{') < 0) throw new Error('全屏游玩层没样式');
+
+  /* 重绘复用（缺口①）：renderMessages 每次 msgWrap.innerHTML='' 把游戏卡摘下来，
+     htmlGameCard 必须按 msgId 复用同一个节点（同对象 appendChild 回去不重载 iframe，
+     游戏进度连续），并在 renderMessages 末尾 prune 失效条目。 */
+  if (src.indexOf('gameCardCache') < 0) throw new Error('游戏卡缓存没了 —— 重绘会重建 iframe、游戏从头来');
+  var gi = src.indexOf("gameCardCache.get(msg.id)");
+  var bi = src.indexOf("h('div', 'msg-htmlgame')");
+  if (gi < 0) throw new Error('htmlGameCard 没有按 msgId 复用旧节点');
+  if (bi < 0) throw new Error('htmlGameCard 还在建新节点（无法判断复用顺序）');
+  if (!(gi < bi)) throw new Error('htmlGameCard 先建新节点后查缓存 —— 复用没生效，游戏每次重绘必重置');
+  if (src.indexOf('gameCardCache.set(msg.id, card)') < 0) throw new Error('htmlGameCard 没把节点存进缓存');
+  if (src.indexOf('gameCardCache.forEach') < 0 || src.indexOf('gameCardCache.delete(mid)') < 0) {
+    throw new Error('renderMessages 没 prune 游戏卡缓存 —— 删消息/换房会泄漏或串台');
+  }
+  return '沙箱/桥/卡/样式/重绘复用十处全在';
+});
+
+/* ---- 报错美化（2026-10-06）：统一报错卡，对齐用户四点要求 ----
+   ① 明确的原因 ② 可复制的报错代码 ③ 不暴露未来链接 ④ 不直接关闭、点 × 关闭。
+   DOM 桩能遍历 childNodes / className，足够做结构断言；计时器用 win.setTimeout
+   临时替换计数，做「报错不自动关闭」的行为断言（不是空转的静态护栏）。 */
+function errToastEl() {
+  const phone = S.el.phone;
+  const kids = (phone && phone.childNodes) || [];
+  for (let i = 0; i < kids.length; i++) {
+    if (kids[i] && kids[i].id === 'toast') return kids[i];
+  }
+  return null;
+}
+function errFindByClass(el, cls) {
+  if (!el || !el.childNodes) return null;
+  const list = el.childNodes;
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c && typeof c.className === 'string' && c.className.split(/\s+/).indexOf(cls) >= 0) return c;
+    const deep = errFindByClass(c, cls);
+    if (deep) return deep;
+  }
+  return null;
+}
+
+t('报错网址闸：抹本机/品牌地址，不拦第三方', () => {
+  const s = S.scrubOwnUrl;
+  const a = s('连不上 https://127.0.0.1:8080/debug 和 http://localhost:3000/x');
+  if (a.indexOf('127.0.0.1') >= 0) throw new Error('没抹 127.0.0.1 本机地址');
+  if (a.indexOf('localhost') >= 0) throw new Error('没抹 localhost 本机地址');
+  const b = s('看 https://sleepy.app/abc 与 https://sleepy-9a2b.pages.dev/y');
+  if (b.indexOf('sleepy.app') >= 0) throw new Error('没抹品牌域名 sleepy.app');
+  if (b.indexOf('pages.dev') >= 0) throw new Error('没抹品牌 pages.dev 调试域');
+  const c = s('问 https://api.openai.com/v1/chat 或 https://github.com/x');
+  if (c.indexOf('api.openai.com') < 0) throw new Error('误伤第三方 api.openai.com');
+  if (c.indexOf('github.com') < 0) throw new Error('误伤第三方 github.com');
+  return '本机/品牌地址抹掉、第三方保留';
+});
+
+t('报错卡（带细节）：标题=原因、带错误码、可复制、× 关闭', () => {
+  S.toast('网络连不上', 'err', { detail: 'ECONNREFUSED host unreachable' });
+  const el = errToastEl();
+  if (!el) throw new Error('报错卡没挂到 phone 上');
+  const title = errFindByClass(el, 'toast-title');
+  const code = errFindByClass(el, 'toast-code');
+  const body = errFindByClass(el, 'toast-body');
+  const close = errFindByClass(el, 'toast-close');
+  const copy = errFindByClass(el, 'toast-copy');
+  if (!title) throw new Error('报错卡没有标题（明确原因）');
+  if (title.textContent !== '网络连不上') throw new Error('标题不是明确原因，而是：' + title.textContent);
+  if (!code) throw new Error('报错卡没有错误码 chip');
+  if (!/^[A-Z0-9-]+$/.test(code.textContent || '')) throw new Error('错误码不合规：' + code.textContent);
+  if (!body || body.textContent.indexOf('ECONNREFUSED') < 0) throw new Error('可复制正文里没有技术细节');
+  if (!close) throw new Error('报错卡没有关闭按钮');
+  if (close.textContent !== '×') throw new Error('关闭按钮不是 ×，而是：' + close.textContent);
+  if (!copy) throw new Error('报错卡没有复制按钮');
+  if (!el.__report || el.__report.indexOf('[' + code.textContent + ']') < 0
+      || el.__report.indexOf('网络连不上') < 0 || el.__report.indexOf('ECONNREFUSED') < 0) {
+    throw new Error('复制内容没带上「代码+原因+细节」：' + el.__report);
+  }
+  return '标题=原因/' + code.textContent + '/可复制/× 关闭 四样都在';
+});
+
+t('普通报错（无细节）也走卡、原因清晰、× 关闭，不退化成丑胶囊', () => {
+  S.toast('找不到这个对话', 'err');
+  const el = errToastEl();
+  if (!el) throw new Error('普通报错没挂到 phone 上');
+  const title = errFindByClass(el, 'toast-title');
+  const close = errFindByClass(el, 'toast-close');
+  if (!title || title.textContent !== '找不到这个对话') throw new Error('普通报错标题不对：' + (title && title.textContent));
+  if (!close || close.textContent !== '×') throw new Error('普通报错没有 × 关闭');
+  return '无细节报错也升级成卡';
+});
+
+t('报错不自动关闭：调 err toast 不排程任何 hide 计时器', () => {
+  const real = win.setTimeout;
+  const calls = [];
+  win.setTimeout = (fn) => { calls.push(fn); return 0; };
+  try {
+    S.toast('测试不自动关', 'err', { detail: 'detail' });
+  } finally {
+    win.setTimeout = real;
+  }
+  if (calls.length !== 0) throw new Error('报错竟然排程了 ' + calls.length + ' 个计时器（会自己消失）');
+  return '报错零计时器（不自动关闭）';
+});
+
+t('普通提示仍自动关闭：ok/warn 照常排程 hide 计时器（没把非报错也卡死）', () => {
+  const real = win.setTimeout;
+  const calls = [];
+  win.setTimeout = (fn) => { calls.push(fn); return 0; };
+  try {
+    S.toast('已保存', 'ok');
+  } finally {
+    win.setTimeout = real;
+  }
+  if (calls.length < 1) throw new Error('ok 提示没排程自动关闭计时器（回归了）');
+  return 'ok 提示照常自动关闭';
+});
+
+t('自定义组件消毒：script/事件属性/javascript: 全剥，正常内容保留', () => {
+  const s = S.desktop.customTpl.sanitize;
+  const dirty = '<div onclick="steal()">hi</div><script>alert(1)</script><a href="javascript:x()">y</a>';
+  const out = s(dirty);
+  if (out.indexOf('script') >= 0) throw new Error('script 没剥干净：' + out);
+  if (out.indexOf('onclick') >= 0) throw new Error('onclick 没剥干净：' + out);
+  if (out.indexOf('javascript') >= 0) throw new Error('javascript: 没剥干净：' + out);
+  if (out.indexOf('hi') < 0 || out.indexOf('y') < 0) throw new Error('正常内容被误伤：' + out);
+  /* 作用域钉扎：选择器全部带上组件前缀 */
+  const scoped = S.desktop.customTpl.scope('.card{color:red}\nspan{font-size:10px}', '.cust-x');
+  if (scoped.indexOf('.cust-x .card') < 0 || scoped.indexOf('.cust-x span') < 0) {
+    throw new Error('CSS 没钉进作用域：' + scoped);
+  }
+  return '消毒 + 作用域全对';
+});
+
+t('applyCharRecalls：数「已发出的纯文字」，打戳不删原文；撤过的不回炉，数过头跳过', () => {
+  const chat = S.chatStore.createChat('撤回测试', null);
+  S.chatStore.addMessage(chat.id, { id: 'rc_a1', role: 'assistant', content: '第一句话', timestamp: 1 });
+  S.chatStore.addMessage(chat.id, { id: 'rc_a2', role: 'assistant', type: 'sticker', content: '[表情]', timestamp: 2 });
+  S.chatStore.addMessage(chat.id, { id: 'rc_a3', role: 'assistant', content: '第三句话', timestamp: 3 });
+  S.chatStore.addMessage(chat.id, { id: 'rc_u1', role: 'user', content: 'user 的', timestamp: 4 });
+
+  const done1 = S.chatUtil.applyCharRecalls(chat.id, [{ n: 1, reason: '说错了' }]);
+  if (done1.length !== 1 || done1[0] !== 'rc_a3') {
+    throw new Error('N=1 应命中最新纯文字 rc_a3（表情/user 不进候选）：' + JSON.stringify(done1));
+  }
+  const m3 = S.chatStore.getChat(chat.id).messages.filter((x) => x.id === 'rc_a3')[0];
+  if (!m3.recalledAt) throw new Error('没打戳');
+  if (m3.content !== '第三句话') throw new Error('原文不该删');
+  if (m3.recallReason !== '说错了') throw new Error('原因没存上');
+
+  /* 撤过的不再进候选：再撤 N=1 应命中 rc_a1 */
+  const done2 = S.chatUtil.applyCharRecalls(chat.id, [{ n: 1, reason: '' }]);
+  if (done2.length !== 1 || done2[0] !== 'rc_a1') {
+    throw new Error('撤过的应被排除，N=1 应命中 rc_a1：' + JSON.stringify(done2));
+  }
+  /* 数过头：静默跳过，不炸 */
+  const done3 = S.chatUtil.applyCharRecalls(chat.id, [{ n: 5, reason: '数过头了' }]);
+  if (done3.length !== 0) throw new Error('数过头应跳过');
+  /* excludeId：本轮刚落库的回复不算「上一条」 */
+  S.chatStore.addMessage(chat.id, { id: 'rc_now', role: 'assistant', content: '本轮刚说的', timestamp: 5 });
+  const done4 = S.chatUtil.applyCharRecalls(chat.id, [{ n: 1, reason: 'x' }], 'rc_now');
+  if (done4.length !== 0) throw new Error('excludeId 应把本轮回复排除（剩下的都撤过了）');
+  return { 第一撤: done1[0], 第二撤: done2[0], 数过头: '跳过', 本轮排除: '是' };
+});
+
+t('撤回接线都在：菜单入口 / 概率掷骰 / 灰字渲染 / 上下文装配 / 协议卡注册', () => {
+  const src = require('fs').readFileSync('page-chat.js', 'utf8');
+  const pe = require('fs').readFileSync('prompt-engine.js', 'utf8');
+  const css = require('fs').readFileSync('style.css', 'utf8');
+  const setSrc = require('fs').readFileSync('page-chat-settings.js', 'utf8');
+  if (src.indexOf('recallMine') < 0) throw new Error('长按菜单没有撤回入口');
+  if (src.indexOf('recallSeen') < 0) throw new Error('user 撤回没掷骰');
+  if (src.indexOf('msg-recall') < 0 || css.indexOf('.msg-recall{') < 0) throw new Error('灰字条没渲染/没样式');
+  if (src.indexOf('随后撤回了这条') < 0) throw new Error('上下文装配没处理 user 撤回');
+  if (pe.indexOf("'msgrecall'") < 0) throw new Error('撤回说明书卡没注册进引擎');
+  if (setSrc.indexOf('recallNotice') < 0) throw new Error('设置页没挂概率滑条');
+  return '六处接线全在';
+});
+
 /* 会话置顶（2026-09-22 用户五.6）：置顶的搬到最前，其余**原顺序**不动。
    这条纯函数刻意不按时间重排 —— 非置顶项之间一个都不许动，
    不然「收一条消息整个列表自己跳」这个副作用会跟着进来。 */
@@ -1975,6 +2343,108 @@ t('photos.pick / readImageScaled 是 Promise 版接口', () => {
   return { pick: true, readImageScaled: true, 软上限: S.photos.SOFT_LIMIT };
 });
 
+/* 2026-10-06（用户）：「长按删除照片之后直接从数据库里删掉就行，
+   也不用再出现在相册里」—— 聊天删照片消息时按 mediaId 清相册记录。 */
+t('photos.removeByMedia() 按 mediaId 清记录；dropMessages 已接线', () => {
+  S.store.set('photos', []);
+  const list = S.photos.add([
+    { mediaId: 'm-1' }, { mediaId: 'm-1' }, { url: '老图没有 mediaId' }, { mediaId: 'm-2' }
+  ]);
+  if (list.length !== 4) throw new Error('夹具没落上');
+  const n = S.photos.removeByMedia('m-1');
+  if (n !== 2) throw new Error('重复收进的记录应一次清干净，实删 ' + n);
+  const after = S.photos.all();
+  if (after.length !== 2) throw new Error('清完应剩 2 条，实 ' + after.length);
+  if (after.some((p) => p.mediaId === 'm-1')) throw new Error('m-1 还在');
+  S.photos.removeByMedia(''); /* 空参数不许误删 */
+  if (S.photos.all().length !== 2) throw new Error('空 mediaId 被误删了记录');
+
+  const chatSrc = require('fs').readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  if (chatSrc.indexOf('removeByMedia') < 0 || chatSrc.indexOf("type !== 'photo'") < 0) {
+    throw new Error('dropMessages 没接照片清理 —— 消息删了相册里还会躺着');
+  }
+  return { 删了: n, 剩: after.length };
+});
+
+/* ---- 相册按账号隔离（2026-10-06 用户：「相册要选人 · 按账号隔离」）---- */
+t('photos.add 归属章：显式 owner 优先，默认按活动角色，字段必须总在', () => {
+  S.store.set('photos', []);
+  const list = S.photos.add([{ url: 'x1' }], { charId: 'chA' });
+  if (list[0].ownerCharId !== 'chA') throw new Error('显式 owner 没落上');
+  const auto = S.photos.add([{ url: 'x2' }]);
+  /* 夹具里没有活动角色 → 空串（未归属）；真机上默认盖 core.activeCharOnIsland */
+  if (typeof auto[0].ownerCharId !== 'string') throw new Error('新记录必须带 ownerCharId（没有主就是空串）');
+  S.store.set('photos', []);
+  return { 归属: 'ok' };
+});
+
+console.log('\n--- mcp：服务配置 / 工具开关 / 接线 ---');
+t('mcp 导出面齐 + upsert/toggleTool/enabledToolSpecs 配置逻辑', () => {
+  const need = ['list', 'cfgOf', 'upsert', 'remove', 'setEnabled', 'toggleTool',
+    'refreshTools', 'callToolByName', 'enabledToolSpecs', 'summary'];
+  need.forEach((k) => {
+    if (typeof S.mcp[k] !== 'function') throw new Error('mcp.' + k + ' 缺失');
+  });
+  S.store.set('mcpServers', []);
+  const r1 = S.mcp.upsert({ name: '搜索', url: 'https://mcp.example/rpc', transport: 'http', enabled: true });
+  if (!r1.ok) throw new Error(r1.error);
+  const r2 = S.mcp.upsert({ name: '坏配置', url: '' });
+  if (r2.ok) throw new Error('空 url 不该存上');
+  /* 清单没刷新前不出任何工具；模拟拉到的清单直接打表落库（refreshTools 要真网络） */
+  if (S.mcp.enabledToolSpecs().length !== 0) throw new Error('没拉清单不该出工具');
+  const l = S.store.get('mcpServers');
+  l[0].tools = [{ name: 'web_search', description: '搜网页',
+    schema: { type: 'object', properties: { q: { type: 'string' } } } }];
+  S.store.set('mcpServers', l);
+  if (S.mcp.enabledToolSpecs().length !== 0) throw new Error('新工具不该默认开（用户要逐工具开关）');
+  S.mcp.toggleTool(r1.cfg.id, 'web_search', true);
+  const specs = S.mcp.enabledToolSpecs();
+  if (specs.length !== 1 || specs[0].function.name !== 'web_search') throw new Error('勾上的工具该进清单');
+  if (specs[0].type !== 'function' || !specs[0].function.parameters.properties.q) {
+    throw new Error('OpenAI tools 形状不对（type/schema 没带上）');
+  }
+  /* 总开关 / 工具开关都能单独关掉 */
+  S.mcp.setEnabled(r1.cfg.id, false);
+  if (S.mcp.enabledToolSpecs().length !== 0) throw new Error('服务关了工具还在');
+  S.mcp.setEnabled(r1.cfg.id, true);
+  if (S.mcp.enabledToolSpecs().length !== 1) throw new Error('服务重开工具该回来');
+  S.mcp.toggleTool(r1.cfg.id, 'web_search', false);
+  if (S.mcp.enabledToolSpecs().length !== 0) throw new Error('工具关了还在');
+  if (S.mcp.summary() === '未配置') throw new Error('有配置时 summary 不该是未配置');
+  S.mcp.remove(r1.cfg.id);
+  if (S.mcp.list().length !== 0) throw new Error('没删掉');
+  if (S.mcp.summary() !== '未配置') throw new Error('空清单 summary 应为未配置');
+  return { 配置逻辑: 'ok' };
+});
+t('MCP 接线静态护栏：api 工具循环 + 对话开关 + 相册选人 + 加载顺序', () => {
+  const apiSrc = fs.readFileSync(path.join(ROOT, 'api.js'), 'utf8');
+  if (apiSrc.indexOf('requestToolLoop') < 0 || apiSrc.indexOf('body.tools = ov.tools') < 0) {
+    throw new Error('api.js 工具循环没接上');
+  }
+  const chatSrc = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  if (chatSrc.indexOf('enabledToolSpecs') < 0 || chatSrc.indexOf('callToolByName') < 0) {
+    throw new Error('page-chat 没把 MCP 工具挂进 ov');
+  }
+  const csSrc = fs.readFileSync(path.join(ROOT, 'page-chat-settings.js'), 'utf8');
+  if (csSrc.indexOf('MCP 工具') < 0 || csSrc.indexOf('mcpTools') < 0) {
+    throw new Error('对话设置缺 MCP 开关');
+  }
+  const setSrc = fs.readFileSync(path.join(ROOT, 'page-settings.js'), 'utf8');
+  if (setSrc.indexOf("register('settings-mcp'") < 0 || setSrc.indexOf('toggleTool') < 0) {
+    throw new Error('设置页缺 MCP 配置页 / 逐工具开关');
+  }
+  const galSrc = fs.readFileSync(path.join(ROOT, 'page-gallery.js'), 'utf8');
+  if (galSrc.indexOf('needsCharPick') < 0 || galSrc.indexOf('pickScreen') < 0) {
+    throw new Error('相册缺群岛选人');
+  }
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const i1 = html.indexOf('src="mcp.js"');
+  if (!(i1 > 0 && i1 < html.indexOf('src="page-settings.js"'))) {
+    throw new Error('mcp.js 加载顺序不对（要在 page-settings / page-chat 前）');
+  }
+  return { 接线: '齐' };
+});
+
 console.log('\n--- desktop:布局不重叠 ---');
 /* CSS Grid 会让后插入的格子**静默盖在**先插入的上面，
    不报错、不缺图，只是「有个东西不见了」——
@@ -2093,10 +2563,10 @@ t('LAYOUT_VERSION 没有重复声明（写了改动日志却忘了删旧块）',
    施工单 §四 1-6 由上面的桌面断言 + 本块第一条覆盖；
    7（切岛不残留）与 8（打开零写入零模型）在本块第二条，缺什么补什么。 */
 console.log('\n--- ta 首页（生活窗口 v1）---');
-t('第三屏重复格已换成 ta：版本 18、只换一格、坐标沿用、主屏世界书仍在', () => {
+t('第三屏重复格已换成 ta：版本 19、只换一格、坐标沿用、主屏世界书仍在', () => {
   const d = S.desktop.defaultDesktop();
-  if (S.desktop.LAYOUT_VERSION !== 18) {
-    throw new Error('LAYOUT_VERSION 应为 18，实际 ' + S.desktop.LAYOUT_VERSION);
+  if (S.desktop.LAYOUT_VERSION !== 19) {
+    throw new Error('LAYOUT_VERSION 应为 19，实际 ' + S.desktop.LAYOUT_VERSION);
   }
   /* 施工单：只允许替换一个格子，且必须保留原格子 id 和坐标 */
   const taCells = d.pages[3].filter((c) => c.app === 'ta');
@@ -3843,6 +4313,25 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
   return { 桌面上的App: apps, 户型版本: S.desktop.LAYOUT_VERSION };
 });
 
+/* 版本 19（2026-10-05，用户）：「这一屏的贴纸、钱包、组件商城的功能
+   都有别的入口，统一改成图标为空，里面的内容为空，不要再跳转到别的页面去」
+   —— 三格改 type 'blank'（空玻璃壳，无图标无跳转），主屏组件商城入口不动。 */
+t('第 3 屏贴纸/钱包/组件商城已改空壳：type blank、留 label、主屏入口不动', () => {
+  const d = S.desktop.defaultDesktop();
+  const ids = ['p3-stickers', 'p3-wallet', 'p3-store'];
+  const cells = d.pages[3].filter((c) => ids.indexOf(c.i) >= 0);
+  if (cells.length !== 3) throw new Error('空壳格应有 3 个，实际 ' + cells.length);
+  cells.forEach((c) => {
+    if (c.type !== 'blank') throw new Error(c.i + ' 应为 blank，实际 ' + c.type);
+    if (!c.label) throw new Error(c.i + ' 丢了 label（编辑模式里认不出格子）');
+  });
+  const p1 = d.pages[1].find((c) => c.i === 'p1-store');
+  if (!p1 || p1.type !== 'app' || p1.app !== 'widgetstore') {
+    throw new Error('主屏的组件商城入口不能跟着动');
+  }
+  return { 空壳: cells.map((c) => c.label) };
+});
+
 t('外观：三套主题的变量覆盖都写了，字号/动效都接得上', () => {
   const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
   const ids = S.appearance.THEMES.map((x) => x.id);
@@ -3954,6 +4443,39 @@ t('组件商城装回：原位优先（x/y/pi），被占了才退回找空位',
   S.store.set('desktop', null);
   S.store.set('desktopRemoved', []);
   return { 原位: [sx, sy, sp], 回退找空位: true };
+});
+
+t('组件商城批3链路：上架新件→应用→计数→移除→rememberRemoved 记账→原位装回', () => {
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', []);
+  /* 目录里必须有批3 四件（EXTRA_DEFS 上架） */
+  const cat = S.widgetStore.catalog().map((c) => c.type);
+  for (const t3 of ['countdown', 'weatherbrick', 'dateclock', 'polaroid']) {
+    if (cat.indexOf(t3) < 0) throw new Error('批3 组件没上架：' + t3);
+  }
+  const def = { type: 'countdown', app: '', label: '倒数日方', w: 2, h: 1 };
+  const key = 'countdown||倒数日方';
+  /* ① 应用到桌面：真的多一格 + countOf 认它 */
+  const res = S.widgetStore.addWidget(def);
+  if (!res.ok) throw new Error('没装上：' + res.message);
+  if (S.widgetStore.countOf(key) !== 1) throw new Error('countOf 应为 1');
+  /* ② 删除：removeWidget 拆掉 + rememberRemoved 记同一笔账（x/y/pi 全带） */
+  const rm = S.widgetStore.removeWidget({ key: key, type: def.type, app: '', label: def.label });
+  if (!rm.ok) throw new Error('移除失败：' + rm.message);
+  if (S.widgetStore.countOf(key) !== 0) throw new Error('移除后还在桌上');
+  const recs = S.store.get('desktopRemoved') || [];
+  const rec = recs.filter((r) => r.type === 'countdown' && r.label === '倒数日方').pop();
+  if (!rec) throw new Error('移除没记账（desktopRemoved 没有这条）');
+  if (typeof rec.pi !== 'number' || typeof rec.x !== 'number' || typeof rec.y !== 'number') {
+    throw new Error('记账缺 x/y/pi，原位装回会退化：' + JSON.stringify(rec));
+  }
+  /* ③ 装回：走「你删过的」同一条 restoreWidget 路径，原位回来 */
+  const back = S.widgetStore.restoreWidget(rec);
+  if (!back.ok || !back.home) throw new Error('没回到原位：' + JSON.stringify(back));
+  if (S.widgetStore.countOf(key) !== 1) throw new Error('装回后 countOf 应为 1');
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', []);
+  return { 上架: 4, 应用: true, 移除记账: true, 原位装回: [rec.x, rec.y, rec.pi] };
 });
 
 console.log('\n--- page:朋友圈（微信式发布 + 四档可见 + 赞的反应）---');
@@ -6475,6 +6997,27 @@ t('updateGroup：settings 白名单合并，不是整体替换', () => {
   if (r.group.settings.opening !== 'user') throw new Error('settings 整体替换会冲掉别的键');
   if (r.group.settings.rhythm !== 'active') throw new Error('rhythm 没改到');
   return { 名: r.group.name, 节奏: r.group.settings.rhythm };
+});
+
+/* ---- 群聊美化（2026-10-05）：beautifyCss 白名单落库 + 页面接线 ---- */
+t('群聊美化：beautifyCss 走 updateGroup 落库，编辑页注册、群聊页注入', () => {
+  const r = S.groupStore.updateGroup(gGrp, { beautifyCss: '.gc-list{padding-bottom:30px;}' });
+  if (!r.ok) throw new Error(r.message);
+  const back = S.groupStore.findGroup(gGrp);
+  if (back.beautifyCss !== '.gc-list{padding-bottom:30px;}') {
+    throw new Error('beautifyCss 没落库 —— GROUP_FIELDS 白名单没放行？');
+  }
+  /* 清掉，别把测试 CSS 留给后面的用例 */
+  S.groupStore.updateGroup(gGrp, { beautifyCss: '' });
+  if (S.groupStore.findGroup(gGrp).beautifyCss !== '') throw new Error('清空没落库');
+
+  const src = require('fs').readFileSync(path.join(ROOT, 'page-group.js'), 'utf8');
+  if (src.indexOf("register('group-beautify'") < 0) throw new Error('编辑页没注册');
+  if (src.indexOf("open('group-beautify'") < 0) throw new Error('群详情卡没接编辑页入口');
+  /* 注入必须复用 apCustomStyle 槽位（和角色外观互斥），且旧卡必须真被换掉 */
+  if (src.indexOf("getElementById('apCustomStyle')") < 0) throw new Error('群聊页没走 apCustomStyle 槽位');
+  if (src.indexOf('gd-offline') >= 0) throw new Error('群详情里旧的多人线下卡还在');
+  return '落库 + 接线都在';
 });
 
 t('群按房隔离：换房看不见 + removeSandbox 连带清三张表', () => {
@@ -13640,14 +14183,18 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* ---------- SW 缓存版本：独立基准，不是「读当前值再与当前值比」 ----------
    ⚠️ 反面教材（必须避免）：从 sw.js 读出 CASH 再断言它等于自己 ——
      那样永远为真，版本号忘了跳也测不出来。
-   ★ 这里的基准是**手写的常量**：本批改了运行时脚本 page-summary.js
-     （总结卡三字段丢失链），按项目约定必须同步 CACHE +1。基准写死 'sleepy-v167'，
-     跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
+   ★ 这里的基准是**手写的常量**：本批（2026-10-06 第四批 + 留言批）改了运行时脚本
+     vendor/acrylic-lamp-core.js（色板+亮度+font 选项，源在 vendor/lamp/）/
+     page-desktop.js / page-chat.js / page-group.js / page-proactive.js /
+     store.js / core.js / style.css / sw.js，按项目约定必须同步 CACHE +1。
+     基准写死 'sleepy-v181'，跳错版本（没跳 / 跳过头 / 跳成别的号）都会红。
+   ⚠️ 登记：v178（私聊撤回）批改了 page-chat.js 等但漏了回写本基准
+     （基准停在 v177，被本批发现）—— 属漏动作，不是本批改动。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
      「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v168';
+const EXPECTED_SW_CACHE = 'sleepy-v189';
 
-t('SW 缓存版本：与独立基准一致（本批改过 page-summary.js，必须跳位）', () => {
+t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   const m = sw.match(/var CACHE = '([^']+)'/);
   if (!m) throw new Error('sw.js 里找不到 var CACHE = \'…\'');
@@ -13657,10 +14204,96 @@ t('SW 缓存版本：与独立基准一致（本批改过 page-summary.js，必�
   }
   /* 附带护栏：跳位必须在文件头留下本批的跳版本说明，
      否则下一个人会怀疑「这个号是不是手滑改的」。 */
-  if (sw.indexOf('v167（2026-10-05）') < 0) {
-    throw new Error('CACHE 已跳到 v167，但文件头缺少 v167 的变更说明');
+  if (sw.indexOf('v187（2026-10-06）') < 0) {
+    throw new Error('CACHE 已跳到 v187，但文件头缺少 v187 的变更说明');
   }
   return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
+});
+
+t('链接卡解析三路接线：分享文案本地剥 / apizero 直连 / 旧路兜底（2026-10-06 批）', () => {
+  const chat = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  /* ① 分享文案路：本地正则剥正文，零后端 —— 必须是 detectLink 之外的独立入口 */
+  for (const k of ['function detectWeiboShare(', 'O网页链接|L微博的|微博视频', 'shareText']) {
+    if (chat.indexOf(k) < 0) throw new Error('分享文案路缺关键结构：' + k);
+  }
+  /* ② apizero 路：直连接口（key 从 store 读，不硬编码在解析调用点） */
+  for (const k of ['https://v1.apizero.cn/api/video-parse', 'function resolveViaApi(', "st.get('vpKey')"]) {
+    if (chat.indexOf(k) < 0) throw new Error('apizero 路缺关键结构：' + k);
+  }
+  /* ③ 解析链分配：带 id 的微博 = apizero 失败退 m 站；抖音 = apizero 失败退 title 抠取 */
+  if (chat.indexOf("resolveViaApi(link, onPatch, function () { resolveWeibo(link, onPatch); })") < 0) {
+    throw new Error('微博裸链接没有挂 apizero→m站 的降级链');
+  }
+  if (chat.indexOf("resolveViaApi(link, onPatch, function () { resolveGeneric(link, onPatch); })") < 0) {
+    throw new Error('抖音没有挂 apizero→title抠取 的降级链');
+  }
+  /* ④ 发送路径接了两条识别：纯链接 + 分享文案 */
+  if (chat.indexOf('var link = detectLink(content);') < 0 ||
+      chat.indexOf('detectWeiboShare(content)') < 0) {
+    throw new Error('doSend 没有同时接纯链接与分享文案两条识别');
+  }
+  /* ⑤ 搜一搜必须已拆除（方向修正 2026-10-06：搜索是 char 的能力不是 user 入口） */
+  for (const k of ["name: '搜一搜'", 'openSearchSheet', 'search-jump-input']) {
+    if (chat.indexOf(k) >= 0) throw new Error('搜一搜没拆干净：' + k);
+  }
+  const cssAll = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  if (cssAll.indexOf('search-jump-input') >= 0) throw new Error('style.css 残留 .search-jump-input');
+  /* ⑥ core.realworld：只做天气（OpenWeatherMap），热点已按用户裁决撤干净 */
+  const core = fs.readFileSync(path.join(ROOT, 'core.js'), 'utf8');
+  for (const k of ['function rwCompile(', 'function rwPoke(', 'api.openweathermap.org',
+    'realworld: {']) {
+    if (core.indexOf(k) < 0) throw new Error('core.realworld 缺关键结构：' + k);
+  }
+  for (const k of ['open-meteo', 'orz.ai', 'rwFetchHot', 'RW_HOT', 'hotOn', 'RW_WMO',
+    'searchJump', 'SEARCH_SOURCES']) {
+    if (core.indexOf(k) >= 0) throw new Error('core 里残留已撤销的结构：' + k);
+  }
+  /* ⑦ prompt-engine：realworld 槽注册 + 同步读入口（唯一出处 core.realworld） */
+  const pe = fs.readFileSync(path.join(ROOT, 'prompt-engine.js'), 'utf8');
+  for (const k of ["id: 'realworld', slot: 'I02b'", 'function compileRealworld(',
+    "case 'realworld': pushSlot(def, compileRealworld()); break;"]) {
+    if (pe.indexOf(k) < 0) throw new Error('prompt-engine 缺 realworld 槽结构：' + k);
+  }
+  if (pe.match(/rwCompile|rwPoke|openweathermap|open-meteo|orz\.ai/g)) {
+    throw new Error('prompt-engine 里出现了取数细节（取数唯一实现在 core.realworld）');
+  }
+  /* ⑧b 自定义解析接口：模板占位 + 优先于 apizero 的链 */
+  for (const k of ['function vpCustomApi(', 'function vpCustomRequestUrl(', 'function patchFromCustom(']) {
+    if (chat.indexOf(k) < 0) throw new Error('自定义解析缺关键结构：' + k);
+  }
+  /* ⑧ 发送前预取链挂了 poke */
+  if (chat.indexOf('rw.poke()') < 0) throw new Error('requestReply 没接 realworld.poke');
+  /* ⑨ 设置页两个子页注册了，key/城市/保存/注册跳转都在，不再有成段解释 */
+  const set = fs.readFileSync(path.join(ROOT, 'page-settings.js'), 'utf8');
+  for (const k of ["Sleepy.register('settings-weblink'", "Sleepy.register('settings-videoparse'",
+    'owmKey', 'vpCustomApi', 'https://apizero.cn', 'https://openweathermap.org/api']) {
+    if (set.indexOf(k) < 0) throw new Error('设置页缺关键结构：' + k);
+  }
+  if (set.indexOf("label: '天气感知'") < 0 ||
+      !/label: '天气感知'[\s\S]{0,200}onClick/.test(set)) {
+    throw new Error('「天气感知」行没挂 onClick（还是灰的）');
+  }
+  for (const k of ['热点背景', '开启感知', 'open-meteo', 'orz.ai']) {
+    if (set.indexOf(k) >= 0) throw new Error('设置页残留已撤销结构：' + k);
+  }
+  return { 微博: '文案本地剥→apizero→m站', 抖音: 'apizero→title抠取',
+           感知: '仅天气(OWM)→realworld 槽', 搜索: '走 MCP 工具', 设置页: '2 个子页' };
+});
+
+t('运行时文件反向断言：移植来的实现不许带来源项目字眼', () => {
+  /* 用户红线：移植微博/视频解析思路时，我们的库里不能出现来源项目名。
+     ⚠️ 扫描对象只有**顶层运行时文件**——本文件（scripts/）里的判据字符串
+     不在扫描范围内，不会扫到自己；docs/ 与 _retired/ 是资料与退役区，不扫。 */
+  const FORBIDDEN = 'SullyOS';
+  const top = fs.readdirSync(ROOT).filter((f) =>
+    /\.(js|html|css|json)$/i.test(f) && fs.statSync(path.join(ROOT, f)).isFile());
+  const hits = [];
+  for (const f of top) {
+    const txt = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    if (txt.indexOf(FORBIDDEN) >= 0) hits.push(f);
+  }
+  if (hits.length) throw new Error('运行时文件出现来源项目字眼：' + hits.join(', '));
+  return { 扫描: top.length + ' 个顶层运行时文件', 结果: '零命中' };
 });
 
 t('线下诊断导出面：没有写入/重置入口（正常运行环境只读）', () => {

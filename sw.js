@@ -457,7 +457,82 @@
    ============================================================ */
 'use strict';
 
-var CACHE = 'sleepy-v168';
+/* v169（2026-10-05）：**桌面第 3 屏空壳 + 群聊美化 + 设置页 MCP 位**——
+   · page-desktop：版本 19 —— 第 3 屏贴纸/钱包/组件商城改 type 'blank'
+     （空玻璃壳，无图标无跳转，功能都有别的入口）；ta 图标重画（拱窗 + 心）。
+   · style.css：负一屏网格 align-content center→end（用户「整体下移一些，
+     下面太空」）；.w-blank / .gd-beautify 新样式。
+   · page-group + core-group：群详情「发起多人线下」卡改「群聊美化」
+     （beautifyCss 白名单字段 + group-beautify 编辑页 + group-chat 注入，
+     复用 apCustomStyle 槽位和角色外观互斥）。
+   · page-settings：删「外观与文字/主题与字号」（外观里已有），原位放 MCP 行占位。
+   → 必须跳版本：page-desktop.js / page-group.js / page-settings.js /
+     core-group.js / style.css 都变了。 */
+/* v170（2026-10-06）：**负一屏真沉底 + 相册整理 + 删照片连库清**——
+   · style.css：负一屏下移的真正修法 —— .dt-grid 高度是内容自适应，
+     align-content 全是无操作（两次栽坑教训写在注释里）；改 .dt-screen.is-neg1
+     为 flex column + .dt-grid margin-top:auto（内容装不下自动回退不裁切）。
+   · page-gallery + style.css：删右下角 .gal-fab 悬浮加号（顶栏已有入口）。
+   · photos + page-chat：聊天里删照片消息（长按/多选 → dropMessages）时，
+     相册记录按 mediaId 一并清（photos.removeByMedia），无其他引用连 IDB 本体删。
+   · page-group：群聊美化编辑页加「复制 CSS 变量」按钮（execCommand 兜底，
+     局域网 http 无 clipboard API）。
+   → 必须跳版本：style.css / page-gallery.js / photos.js / page-chat.js /
+     page-group.js / page-desktop.js（注释）都变了。 */
+/* v171（2026-10-06）：**相册按账号隔离 + MCP 全量（连接层/设置/对话开关/工具循环）**——
+   · photos：add 加 ownerCharId 归属章（显式 owner 优先，默认 activeCharOnIsland）；
+     page-gallery 群岛先选人、按人过滤，「没记归属」的老照片单独一截；
+     page-desktop 照片墙跟着当前角色走；page-chat 生成图归属对话角色。
+   · mcp.js（新模块）：SSE / streamable HTTP 双 transport，initialize 握手 +
+     tools/list + tools/call；多服务、总开关、逐工具开关（新工具默认关）。
+   · page-settings：MCP 连接页（列表/表单/刷新工具/逐工具开关/删除）；
+     page-chat-settings：对话级「MCP 工具」开关（chat.mcpTools）；
+     page-chat：发消息时挂 ov.tools + ov.toolCall；
+     api.js：bodyFor 带 tools/tool_choice，requestToolLoop（≤6 轮，role:tool 回填，
+     带工具强制非流式）。
+   → 必须跳版本：mcp.js（新）/ photos.js / page-gallery.js / page-desktop.js /
+     page-chat.js / page-chat-settings.js / page-settings.js / api.js / index.html 都变了。 */
+/* v172（2026-10-06）：**负一屏微调回「从第二行开始」**——
+   沉底版（v170）用户看了报「太靠下了」；margin-top:auto 改成
+   固定留一行（--dt-cell + --dt-gap），照片墙从第二行开始摆。
+   → 必须跳版本：style.css / page-desktop.js（注释）变了。 */
+/* v173（2026-10-06）：**链接卡解析接活 + 搜一搜 + 天气与搜索**——
+   page-chat：链接卡元数据改三路（微博分享文案本地剥正文 / apizero 解析
+   接口直连 / 旧路兜底），加号面板新增「搜一搜」跳转式搜索；
+   core：weblink 配置层（源表唯一实现）；page-settings：天气与搜索 /
+   视频解析两个子页接上；style.css：.search-jump-input。
+   → 必须跳版本：page-chat.js / core.js / page-settings.js / style.css 都变了。 */
+/* v174（2026-10-06）：**方向修正——搜索/天气是让 char 感知，不是给 user 用**——
+   core：realworld 感知模块（Open-Meteo 免 key 天气 + news.orz.ai 免鉴权热榜，
+   poke 预取 / compile 同步读），weblink 收缩成纯配置读写（源表撤销：
+   实测免鉴权开 CORS 的通用搜索源为零，char 搜索能力走 MCP 工具）；
+   prompt-engine：ONLINE_SLOTS 新增 realworld 槽（I02b，time 之后）；
+   page-chat：删搜一搜（plus 项/跳转面板），requestReply 预取链加 poke，
+   链接卡解析加 24h 缓存；page-settings：感知开关/城市/热榜子开关，
+   style.css 删 .search-jump-input。
+   → 必须跳版本：core.js / prompt-engine.js / page-chat.js / page-settings.js /
+     style.css 都变了。 */
+/* v175（2026-10-06）：**感知只留天气，换 OpenWeatherMap**——
+   core：realworld 撤掉热榜路（用户裁决：热点思路不是我们的，也不注入），
+   天气改 api.openweathermap.org（CORS 全开实测；key 存 weblinkCfg.owmKey）；
+   page-settings：设置页精简（删成段解释），保存按钮收进卡片 btn-row，
+   视频/天气两页加「注册页」跳转。
+   → 必须跳版本：core.js / prompt-engine.js（注记）/ page-settings.js 都变了。 */
+/* v176（2026-10-06）：**改名**——设置页「天气与搜索」→「天气感知」（里面早就没有搜索了），「视频解析」→「链接解析」（微博/抖音/B站链接卡不只视频）。→ 必须跳版本：page-settings.js 变了。 */
+/* v177（2026-10-06）：**链接解析加自定义接口**——设置页可填自定义解析 URL 模板（{url} 占位，优先于 apizero），page-chat 解析链改「自定义→apizero→兜底」，保存时清解析缓存。→ 必须跳版本：page-chat.js / page-settings.js 变了。 */
+/* v178（2026-10-06）：**私聊撤回**——①角色可撤回：模型输出 [撤回:N|原因] 协议标签（prompt-engine msgrecall 卡），程序打 recalledAt 不删原文；②user 可撤回：长按自己纯文字气泡 → 概率掷骰（角色设置页滑条，默认 40%）决定 TA 看不看得到内容，灰字条点击看原文/原因。→ 必须跳版本：page-chat.js / page-chat-settings.js / prompt-engine.js / style.css 都变了。 */
+/* v179（2026-10-06）：**挂件灯色板换柔和浅色**——core 的 PALETTE 整表换成用户定稿 5 色（薄荷汽水/晨雾蓝/西柚苏打/燕麦暖白/雾灰香芋，tone 键名兼容），paintCard 磨砂层往白冲的量 0.93/0.80→0.72/0.58（新 fill 本身 L≈94%，再冲就洗成纯白）；源文件正式入库 vendor/lamp/（改源→node vendor/lamp/tools/build-core.cjs→覆盖 vendor core）。→ 必须跳版本：vendor/acrylic-lamp-core.js / page-desktop.js 都变了。 */
+/* v180（2026-10-06）：**挂件灯亮度二轮（用户实测太暗）**——空卡当灯牌用，整张卡都是留白：①卡面留白暗底 rgba(22,17,28,.5)→rgba(88,92,110,.45)、板面渐变 alpha 0.24/0.28→0.62/0.66（往白冲 0.93→0.45/0.30，保色相又遮暗房间）；②印刷层底部压暗 -0.13→-0.06；③材质自发光 0.19→0.42、发光色暖橙 0xffd7a0→中性微暖 0xfff3e8（实测暖橙会把浅色卡全染成奶油色）。用无头浏览器截图自验两轮后再交付。→ 必须跳版本：vendor/acrylic-lamp-core.js 变了。 */
+/* v181（2026-10-06）：**挂件灯留言批**——①store 登记 lampNotes（按岛隔离，core cleanupSandbox scoped 名单同步）；②page-desktop Sleepy.lampNotes.add（压平+40字上限+60条滚动），留言卡排空板前，onFocus 落款浮层 .w-lamp-sign（谁/何时），灯牌字体接外观 fontUrl（core 新增 font 选项+setFont）；③入口：私聊长按菜单「留在灯上」、群聊长按他人纯文字气泡直接留（署说话人名）、主动消息发送成功自动留灯。→ 必须跳版本：vendor/acrylic-lamp-core.js / page-desktop.js / page-chat.js / page-group.js / page-proactive.js / store.js / core.js / style.css 都变了。 */
+/* v182（2026-10-06）：**灯牌 40 字规则进 proactive 卡**——主动消息 prompt 新增【灯牌】块：send 正文会被原样抄送灯牌（40 字小卡，超出截断不通知），请把正文控制在 40 字内。→ 必须跳版本：prompt-engine.js 变了。 */
+/* v183（2026-10-06）：**灯牌改成 char 的常驻能力（不绑主动消息）**——引擎新增 lamptag 卡（C04）：[灯:那句话] 随时留灯、气泡不显示标签；page-chat 抽取管线 extractLampNotes（chatUtil 导出，冒烟单测）+ buildMessages 同文案 unshift；page-proactive 撤掉「主动消息全文自动上灯」，改为发送前抽 [灯:] 标签落库（标签必须在 addMessage 之前抽掉）。→ 必须跳版本：prompt-engine.js / page-chat.js / page-proactive.js / scripts/smoke.js 都变了。 */
+/* v184（2026-10-06）：**组件商城橱窗批（施工卡批1）**——page-widgetstore 目录从列表行升级为橱窗预览卡（CSS 手绘 mini mock + hover 微浮起，@media(hover:hover) 防触屏粘滞）；卡上直连「加到桌面/在桌上×N/移除/再摆一件」，移除走 page-desktop 新导出的 rememberRemoved（同一笔账，「你删过的」原位装回不变）；App 入口拆独立分组只加不删。→ 必须跳版本：page-widgetstore.js / page-desktop.js / style.css 都变了。 */
+/* v185（2026-10-06）：**灯设置面板（商城批2）**——store 登记 lampLight/lampFontUrl（此前 lampLight 只读无写入方）；page-desktop 新导出 Sleepy.lampCtl（lightGet/lightSet 热切灯色、fontGet/fontSet 灯牌专属字体 'SleepyLampFont' 独立 @font-face、notes.remove 单张删留言热刷新）；lampFontUrl 优先、回落外观 fontUrl（老行为不变）；widgetstore 灯卡加「设置」弹面板（灯光四档/字体直链/留言管理）。→ 必须跳版本：page-desktop.js / page-widgetstore.js / store.js / style.css 都变了。 */
+/* v186（2026-10-06）：**简单砖组+拍立得（商城批3）**——page-desktop 新增 4 个 RENDER 类型：countdown（2×1，per-cell 配置存 store widgetCfg，ui.prompt 多字段设目标日）、weatherbrick（读 rwWeatherLast 快照 + 渲染时 poke 自带 30min TTL）、dateclock（15s tick，__cleanup 防定时器泄漏）、polaroid（2×2，手选相册照片最多 4 张，anchorPopover 选图器，srcOf 异步取图）；widgetstore EXTRA_DEFS 上架四件 + mini mock；smoke 新增「上架→应用→计数→移除记账→原位装回」全链路断言。→ 必须跳版本：page-desktop.js / page-widgetstore.js / store.js / style.css / scripts/smoke.js 都变了。 */
+/* v187（2026-10-06）：**自定义组件+慢递信箱（商城批4）**——①自定义：store customWidgets（按岛隔离+删房清），page-desktop sanitizeTpl/scopeCss/substituteVars（变量白名单 time/date/weekday/weather/photo/lampNote/charName/todoCount/countdown:目标日；photo 走内存缓存异步取图），RENDER.custom（入库+渲染双次消毒、CSS 钉 .cust-<cellId> 作用域）；widgetstore 自制分组 + widgetmake 编辑器页（左模板右实时预览，size 1×1~4×6 自由）；②慢递：ability 卡 slowmail（[慢递:小时|内容]，1~72h），page-chat extractSlowmail+管线落 slowLetters、proactive 同口径（addMessage 前抽）、buildMessages unshift 说明书，RENDER.slowmail（未到点只显示在途时长绝不剧透）。smoke 新增慢递解析+消毒/作用域单测。→ 必须跳版本：store.js / core.js / prompt-engine.js / page-chat.js / page-proactive.js / page-desktop.js / page-widgetstore.js / style.css / scripts/smoke.js 都变了。 */
+/* v189（2026-10-06）：**报错美化**——app.js 统一报错卡：①所有 toast(...,'err') 都走卡（含原来自行消失的丑胶囊）；②标题=明确原因（不再写死「出错了」），带稳定错误码 chip（NET/TIMEOUT/HTTP-404/CFG/PARSE/APP-XXXX，复制内容=[代码]原因+技术细节）；③scrubOwnUrl 补 127.0.0.1/localhost 本机调试地址（原只拦品牌域）；④报错卡永不自动关闭、右上角 × 关闭，普通 ok/warn 仍自动消失；加 --g-error/--g-error-dim 变量（亮色+夜灯珊瑚），重做 .is-card 玻璃卡视觉（标题色/错误码/圆形 ×/复制按钮）。→ 必须跳版本：app.js / style.css / scripts/smoke.js 都变了。 */
+/* v188（2026-10-06）：**HTML 小游戏（char 发可玩网页）**——①prompt-engine 新增 htmlgame 卡（[html]…[/html] 多行块，说明书教模型写内联 CSS/JS 的整页小游戏）；page-chat extractHtmlGames 剥标签→commitHtmlGame 落 type:'html'（html 字段存源码），沙箱 iframe（htmlGameCard，sandbox=allow-scripts 不给 same-origin + CSP default-src none 堵出网 + SleepyGame.report 桥只认 registerGameFrame 登记窗口）；②结算：report 走 postMessage→noteGameResult 落 htmlGameResult:<chatId>（同局重复上报不覆盖、换局才更新），gameResultPeekMsg 下一轮把结算垫进上下文（读出即摘）；③删房清 htmlGameResult:<chatId> 幽灵键（同 charRel 动态键口径）；④重绘复用（缺口①）：htmlGameCard 按 msgId 缓存同一节点，renderMessages 每次 innerHTML='' 摘下、同对象 appendChild 回去不重载 iframe，玩到一半来新消息也不从头来，末尾 prune 失效条目。→ 必须跳版本：prompt-engine.js / page-chat.js / core.js / style.css / scripts/smoke.js 都变了。 */
+var CACHE = 'sleepy-v189';
 var CORE = [
   './',
   './index.html',

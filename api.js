@@ -118,13 +118,20 @@
 
   function bodyFor(cfg, messages, stream, ov) {
     var p = genParams(cfg, ov);
-    return JSON.stringify({
+    var body = {
       model: cfg.model,
       messages: messages,
       stream: !!stream,
       max_tokens: p.maxTokens,
       temperature: p.temperature
-    });
+    };
+    /* MCP 工具（2026-10-06）：OpenAI tools 格式，ov.tools 非空才带 ——
+       没开工具的对话一个多余字段都不发（有的中转见了 tools 会挑刺）。 */
+    if (ov && Array.isArray(ov.tools) && ov.tools.length) {
+      body.tools = ov.tools;
+      body.tool_choice = 'auto';
+    }
+    return JSON.stringify(body);
   }
 
   /* ------------------------- 失败原因翻译 ------------------------- */
@@ -383,6 +390,69 @@
      而不是让接口字段白写在那里当死开关。
      handlers: { onTry, onDelta, onDone(cand, text, info), onFail(list, lastErr) }
      返回 handle（流式时有 abort） */
+  /* ------------------------- MCP 工具调用循环 -------------------------
+     ov.tools 非空时走这里（强制非流式 —— 工具调用要走完整的
+     choice.message.tool_calls，流式的增量拼不出这个结构）：
+     请求 → 模型要调工具就经 ov.toolCall(name, args) 执行 →
+     结果按 role:'tool' 追加 → 再问，最多 TOOL_ROUNDS 轮。
+     HTTP/网络失败返回 {ok:false}，交给 runChat 原有的换候选重试；
+     工具执行失败不算请求失败 —— 结果以文字回给模型，让它自己兜。
+     ov.toolCall 由页面层注入（page-chat 给的是 Sleepy.mcp.callToolByName），
+     api.js 不直接依赖 mcp.js —— 层次别倒。 */
+  var TOOL_ROUNDS = 6;
+
+  function toolResultText(r) {
+    if (r == null) return '';
+    if (typeof r === 'string') return r;
+    /* MCP 的标准返回是 {content:[{type:'text',text:…},…]} */
+    if (Array.isArray(r.content)) {
+      return r.content.map(function (c) {
+        return (c && c.type === 'text') ? String(c.text || '') : '';
+      }).filter(Boolean).join('\n');
+    }
+    try { return JSON.stringify(r); } catch (e) { return String(r); }
+  }
+
+  function requestToolLoop(cand, messages, ov) {
+    var msgs = messages.slice();
+    var rounds = 0;
+    function step() {
+      rounds++;
+      return requestOnce(cand, msgs, ov).then(function (res) {
+        if (!res.ok) return { ok: false, res: res };
+        var msg = (res.data && res.data.choices && res.data.choices[0] &&
+          res.data.choices[0].message) || null;
+        var calls = (msg && msg.tool_calls) || null;
+        if (!calls || !calls.length || rounds > TOOL_ROUNDS) {
+          return { ok: true, res: res, content: res.content || '' };
+        }
+        /* 模型这条 tool_calls 消息要先原样进上下文（OpenAI 格式要求），
+           tool 结果的 tool_call_id 才有东西可对。 */
+        msgs.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
+        var execs = calls.map(function (call) {
+          var fname = (call.function && call.function.name) || '';
+          var args = {};
+          try { args = JSON.parse((call.function && call.function.arguments) || '{}'); }
+          catch (e) { /* 坏参数就传空 —— 让工具侧报错回给模型 */ }
+          var p = (ov && typeof ov.toolCall === 'function')
+            ? ov.toolCall(fname, args)
+            : Promise.resolve({ ok: false, error: '没有可用的工具执行器' });
+          return Promise.resolve(p).then(function (r) {
+            return { role: 'tool', tool_call_id: call.id || '', content: toolResultText(r) };
+          }, function (e) {
+            return { role: 'tool', tool_call_id: call.id || '',
+              content: '工具执行失败: ' + ((e && e.message) || e) };
+          });
+        });
+        return Promise.all(execs).then(function (results) {
+          results.forEach(function (t) { msgs.push(t); });
+          return step();
+        });
+      });
+    }
+    return step();
+  }
+
   function runChat(messages, handlers, useStream, ov) {
     /* 重试次数（设置 → 副 API → 每组重试次数）：每个候选连续尝试 N 次
        再轮到下一个。1~5，存档坏了/没填兜底 2。 */
@@ -416,7 +486,9 @@
         return null;
       }
       var cand = c[idx++];
-      var streamThis = !!useStream && cand.cfg.stream !== false;
+      /* 带工具的请求强制非流式（见 requestToolLoop 的注释） */
+      var streamThis = !!useStream && cand.cfg.stream !== false &&
+        !(ov && Array.isArray(ov.tools) && ov.tools.length);
       if (handlers.onTry) handlers.onTry(cand, idx, c.length);
 
       if (streamThis) {
@@ -437,11 +509,16 @@
           }
         }, ov);
       } else {
-        requestOnce(cand, messages, ov).then(function (res) {
-          if (res.ok) {
-            if (handlers.onDone) handlers.onDone(cand, res.content, res);
+        var loopP = (ov && Array.isArray(ov.tools) && ov.tools.length)
+          ? requestToolLoop(cand, messages, ov)
+          : requestOnce(cand, messages, ov).then(function (res) {
+              return res.ok ? { ok: true, res: res, content: res.content || '' } : { ok: false, res: res };
+            });
+        loopP.then(function (out) {
+          if (out.ok) {
+            if (handlers.onDone) handlers.onDone(cand, out.content, out.res);
           } else {
-            lastErr = res;
+            lastErr = out.res;
             tryNext();
           }
         });
