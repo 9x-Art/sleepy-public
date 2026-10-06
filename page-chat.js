@@ -117,6 +117,68 @@
      这种情况换成「我说完了」。 */
   var PROACTIVE_HINT_REPLY = '（我说完了，你说吧。）';
 
+  /* ==================== 情绪印章（2026-10-06） ====================
+     点「我」的头像 → 选一枚隐喻小印章（小花花/小乌云/小枕头…）→
+     落进输入框 → 发出去时角色会读到「XX 给自己盖了一枚…的小印章，
+     似乎是有点…的情绪」的感知文案。
+
+     印章用**隐喻**而不是表情脸：小花花=开心、小乌云=低落、小枕头=困困、
+     小火苗=生气…更像真的「盖了个章」，也更有角色扮演的味道。
+     stampSvg 画的是封蜡/印章风：双环 + 隐喻图标，accent 焦糖色，轻微旋转。 */
+  var MOOD_STAMPS = [
+    { id: 'happy',   icon: 'flower', name: '小花花', feel: '开心' },
+    { id: 'sad',     icon: 'cloud',  name: '小乌云', feel: '低落' },
+    { id: 'sleepy',  icon: 'pillow', name: '小枕头', feel: '困困' },
+    { id: 'angry',   icon: 'flame',  name: '小火苗', feel: '生气' },
+    { id: 'wronged', icon: 'drop',   name: '小水珠', feel: '委屈' },
+    { id: 'excited', icon: 'star',   name: '小星星', feel: '兴奋' },
+    { id: 'calm',    icon: 'moon',   name: '小月亮', feel: '平静' },
+    { id: 'miss',    icon: 'heart',  name: '小爱心', feel: '想你' }
+  ];
+
+  /* 隐喻图标（48 格，居中，currentColor 取色）。 */
+  var MOOD_ICONS = {
+    flower: '<g fill="currentColor">' +
+      '<circle cx="24" cy="13" r="3"/><circle cx="15.5" cy="18" r="3"/>' +
+      '<circle cx="32.5" cy="18" r="3"/><circle cx="18.5" cy="27" r="3"/>' +
+      '<circle cx="29.5" cy="27" r="3"/>' +
+      '<circle cx="24" cy="22" r="3.4" fill="currentColor" opacity=".55"/></g>',
+    cloud: '<path fill="currentColor" d="M16 31a8 8 0 0 1 .8-15.9 10 10 0 0 1 19 3 7 7 0 0 1-1.8 12.9z"/>',
+    pillow: '<g fill="currentColor"><rect x="13" y="17" width="22" height="15" rx="6"/>' +
+      '<circle cx="13" cy="17" r="2.3"/><circle cx="35" cy="17" r="2.3"/>' +
+      '<circle cx="13" cy="32" r="2.3"/><circle cx="35" cy="32" r="2.3"/></g>',
+    flame: '<path fill="currentColor" d="M24 11c3.4 5 6.4 7.4 6.4 13a6.4 6.4 0 0 1-12.8 0c0-3 1.5-5 3-7 .6 2 2 3 3.4 4 .3-3-.3-6 .4-10z"/>',
+    drop: '<path fill="currentColor" d="M24 11c4.4 6 7 9 7 13a7 7 0 0 1-14 0c0-4 2.6-7 7-13z"/>',
+    star: '<path fill="currentColor" d="M24 11l4.3 8.7 9.6 1.4-7 6.8 1.7 9.5L24 33l-8.6 4.4 1.7-9.5-7-6.8 9.6-1.4z"/>',
+    moon: '<path fill="currentColor" d="M31 13a11 11 0 1 0 0 22 9 9 0 0 1 0-22z"/>',
+    heart: '<path fill="currentColor" d="M24 34C13 27 11 21 15 17c3-3.2 8-1 9 3.5C25 16 30 13.8 33 17c4 4 2 10-9 17z"/>'
+  };
+
+  function stampSvg(iconId, size) {
+    size = size || 48;
+    var inner = MOOD_ICONS[iconId] || MOOD_ICONS.flower;
+    return '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '" aria-hidden="true">' +
+      '<circle cx="24" cy="24" r="22" fill="none" stroke="currentColor" stroke-width="2"/>' +
+      '<circle cx="24" cy="24" r="18.5" fill="none" stroke="currentColor" stroke-width="1" opacity=".5"/>' +
+      inner +
+      '</svg>';
+  }
+
+  function stampById(id) {
+    for (var i = 0; i < MOOD_STAMPS.length; i++) {
+      if (MOOD_STAMPS[i].id === id) return MOOD_STAMPS[i];
+    }
+    return null;
+  }
+
+  /* 本地日期（YYYY-MM-DD），用于「当天印章、跨天自动取消」 */
+  function todayStr() {
+    var d = new Date();
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
   /* 空发送到底该用哪一句，看这轮对话里**最后一条有效消息是谁发的** */
   function proactiveHintFor(chat) {
     var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
@@ -351,7 +413,7 @@
   }
 
   /* 「你是谁」：当前这件 User 马甲的名字。
-     掉马戏码全靠这两个名字的错位 —— 面具轮盘一换，它跟着变。 */
+     掉马戏码全靠这两个名字的错位 —— 切号 / 换马甲一换，它跟着变。 */
   function userNameOf(chat) {
     var core = Sleepy.core;
     if (core) {
@@ -2375,10 +2437,114 @@
       inputWrap.appendChild(textarea);
       inputWrap.appendChild(emoBtn);
 
+      /* 情绪印章：框内右侧一枚小图标钮（跟表情钮同款位置模式，有章才显示），
+         点它开印章浮层 —— 再点同章就取消 */
+      var moodBtn = h('button', 'mood-btn');
+      moodBtn.type = 'button';
+      moodBtn.title = '情绪印章';
+      moodBtn.setAttribute('aria-label', '情绪印章');
+      moodBtn.style.display = 'none';
+      moodBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openMoodPicker(moodBtn);
+      });
+      inputWrap.appendChild(moodBtn);
+
       inputArea.appendChild(plusBtn);
       inputArea.appendChild(inputWrap);
       inputArea.appendChild(sendBtn);
       foot.appendChild(inputArea);
+
+      /* ---- 情绪印章：点「我」的头像选一枚，章以小图标待在输入框**里面** ----
+          （用户 2026-10-06 定稿：不是 chip 条、也不是消息气泡上盖章）
+          pendingMoodStamp 是**当天**的章，渲染 / 发送都读它。 */
+      var pendingMoodStamp = null;
+
+      /* 跨天自动取消 + 从 session 恢复当天印章：
+         印章状态持久化在 chat.moodStamp = { id, date, announcedId }，
+         date 不是今天就当没盖过（第二天自动消失）。 */
+      function syncMoodStamp() {
+        var c = getChat(chatId);
+        var st = c && c.moodStamp;
+        if (st && st.date === todayStr()) {
+          pendingMoodStamp = { id: st.id, date: st.date, announcedId: st.announcedId || null };
+        } else {
+          pendingMoodStamp = null;
+          if (st) { mutate(chatId, function (cc) { cc.moodStamp = null; }); }
+        }
+        renderMoodChip();
+      }
+
+      /* 写印章状态：更新闭包变量 → 落盘 session → 刷新 chip。 */
+      function setMoodStamp(obj) {
+        pendingMoodStamp = obj;
+        mutate(chatId, function (c) {
+          c.moodStamp = obj ? { id: obj.id, date: obj.date, announcedId: obj.announcedId || null } : null;
+        });
+        renderMoodChip();
+      }
+
+      syncMoodStamp();
+
+      function renderMoodChip() {
+        var s = pendingMoodStamp ? stampById(pendingMoodStamp.id) : null;
+        if (!s) {
+          moodBtn.style.display = 'none';
+          moodBtn.innerHTML = '';
+          textarea.classList.remove('has-mood');
+          return;
+        }
+        moodBtn.style.display = '';
+        moodBtn.innerHTML = stampSvg(s.icon, 22);
+        moodBtn.title = s.name + '（' + s.feel + '），点开可换 / 再点同章取消';
+        textarea.classList.add('has-mood');   /* 右侧多让出印章那 30px */
+      }
+
+      /* 点头像弹出的印章选择浮层（ui.anchorPopover 贴着头像弹，点外面/ESC 自动收） */
+      function openMoodPicker(anchorEl) {
+        ui.closePopover();
+        var pop = ui.anchorPopover(anchorEl, { className: 'mood-pop', width: '264px' });
+        pop.el.appendChild(h('div', 'mood-pop-head', '给自己盖一枚印章'));
+        var grid = h('div', 'mood-pop-grid');
+        MOOD_STAMPS.forEach(function (s) {
+          var item = h('button', 'mood-pop-item');
+          item.type = 'button';
+          item.title = '盖个「' + s.name + '」（' + s.feel + '）';
+          if (pendingMoodStamp && pendingMoodStamp.id === s.id) item.classList.add('is-active');
+          var ic = h('span', 'mood-pop-ic');
+          ic.innerHTML = stampSvg(s.icon, 34);
+          item.appendChild(ic);
+          item.appendChild(h('span', 'mood-pop-label', s.name));
+          item.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (pendingMoodStamp && pendingMoodStamp.id === s.id) {
+              setMoodStamp(null);                                   /* 再点同章 → 取消 */
+            } else {
+              var keep = pendingMoodStamp ? pendingMoodStamp.announcedId : null;
+              setMoodStamp({ id: s.id, date: todayStr(), announcedId: keep });  /* 新盖 / 切换 */
+            }
+            ui.closePopover();
+            try { textarea.focus(); } catch (e2) { /* 无头环境忽略 */ }
+          });
+          grid.appendChild(item);
+        });
+        pop.el.appendChild(grid);
+        pop.place();
+      }
+
+      /* 纯盖章（没打字）的消息气泡：一枚印章 + 章名。
+         带文字的盖章消息走普通文字气泡（正文用 text，不带感知前缀）。 */
+      function moodStampBubble(msg) {
+        var wrap = h('div', 'mood-bubble');
+        var s = stampById(msg.mood);
+        var badge = h('span', 'mood-bubble-stamp');
+        badge.innerHTML = stampSvg((s && s.icon) || 'flower', 30);
+        if (s) badge.title = s.name + '（' + s.feel + '）';
+        wrap.appendChild(badge);
+        wrap.appendChild(h('span', 'mood-bubble-label', (s && s.name) || '印章'));
+        return wrap;
+      }
+
       body.appendChild(foot);
 
       /* 长按菜单现在是一个**贴着被长按气泡的浮层**（ui.anchorPopover），
@@ -3032,6 +3198,9 @@
           content.appendChild(htmlGameCard(msg, chatId));
         } else if (msg.type === 'link-card') {
           content.appendChild(linkCard(msg));
+        } else if (msg.mood && !((msg.text || '').trim())) {
+          /* 纯盖章（没打字）：气泡就是这枚印章本身 */
+          content.appendChild(moodStampBubble(msg));
         } else {
           var textEl = h('div', 'msg-text');
           var shown;
@@ -3046,7 +3215,10 @@
               content.appendChild(textEl);
             }
           } else {
-            shown = seg ? (seg.text || '（空）') : (msg.content || '（空）');
+            /* 盖章消息的正文用 text（干净原话）—— content 里带感知文案前缀，
+               那是给角色读的，不直接摆到气泡上 */
+            shown = seg ? (seg.text || '（空）')
+              : (msg.mood ? (msg.text || '（空）') : (msg.content || '（空）'));
             renderRichText(shown, textEl);
             content.appendChild(textEl);
             /* 译文（组件 msg-trans）：只在 assistant 的气泡上出现，
@@ -4712,9 +4884,60 @@
            空着点 = 让角色开口说话（不是发一个空气泡）；
            有字点 = 只把这条发出去，**不**触发回复。
            这样才可能「分气泡连发几条」—— 见下面正文那段末尾的说明。 */
-        if (!content) {
+        if (!content && !pendingMoodStamp) {
           requestReply({ proactive: true });
           return;
+        }
+
+        /* 情绪印章：盖了章就发一枚带感知文案的消息。
+           哪怕没打字也发（不走上面的 proactive），让角色读到
+           「XX 给自己盖了一枚…的小印章，似乎是有点…的情绪」。 */
+        if (pendingMoodStamp) {
+          var ms = pendingMoodStamp;
+          /* 防御：理论上 syncMoodStamp 已清掉跨天残留，这里再兜一道 */
+          if (ms.date !== todayStr()) {
+            setMoodStamp(null);
+          } else {
+            var sd = stampById(ms.id);
+            if (!sd) {
+              setMoodStamp(null);
+            } else {
+              var uname = userNameOf(getChat(chatId));
+              /* 当天**第一次**盖这枚章 → 完整感知文案；之后（已盖过）简化，
+                 不再每轮都念叨一大段，但角色仍知道你当前状态。 */
+              var firstTime = !ms.announcedId || ms.announcedId !== ms.id;
+              var note = firstTime
+                ? '（' + uname + ' 给自己盖了一枚「' + sd.name + '」的小印章，' +
+                  '似乎是有点' + sd.feel + '的情绪／感受）'
+                : '（' + uname + ' 仍盖着「' + sd.name + '」）';
+              var mmsg = {
+                id: newId(),
+                role: 'user',
+                content: note + (content ? '\n' + content : ''),
+                mood: sd.id,
+                stampName: sd.name,
+                feel: sd.feel,
+                text: content,
+                timestamp: Date.now()
+              };
+              if (quote) {
+                mmsg.quote = {
+                  role: quote.role, content: quote.content,
+                  msgId: quote.msgId || null,
+                  bubbleIndex: (quote.bubbleIndex === undefined ? null : quote.bubbleIndex)
+                };
+              }
+              addMessage(chatId, mmsg);
+              commitMemory(chatId, 'user', content || ('[我给自己盖了一枚「' + sd.name + '」印章]'));
+              textarea.value = '';
+              autoGrow();
+              clearQuote();
+              /* 保持当天章，仅把 announcedId 标记为已完整告知，后续发送简化 */
+              setMoodStamp({ id: ms.id, date: todayStr(), announcedId: ms.id });
+              renderMessages();
+              return;
+            }
+          }
         }
 
         /* 链接识别（微博/抖音/小红书）：整条消息就是个平台链接 →
@@ -5638,6 +5861,12 @@
           av.textContent = n.charAt(0).toUpperCase();
         }
         av.alt = '我';
+        av.title = '点一下，给自己盖个情绪印章';
+        av.style.cursor = 'pointer';
+        av.addEventListener('click', function (e) {
+          e.stopPropagation();     /* 别触发气泡本身的长按/点击 */
+          openMoodPicker(av);
+        });
         return av;
       }
 
@@ -5853,14 +6082,9 @@
         Sleepy.heartbeat.syncDots(chatId);
         autoGrow();                  /* 这时候才真的挂进文档，高度算得准 */
         renderMessages();
+        syncMoodStamp();             /* 跨天自动取消：重进聊天时校验当天印章 */
         armStick();                  /* onHide 摘过，回来看的时候得重新武装 */
         if (Sleepy.charAppearance) Sleepy.charAppearance.applyTo(ctx, chatId);
-      };
-
-      /* 换面具之后要重画：左侧头像、气泡里的「我」、以及上下文里的身份。
-         面具轮盘在 page-switch.js 里，它换完会回调这里。 */
-      Sleepy.chatDetailRefresh = function () {
-        if (ctx.reload) ctx.reload();
       };
 
       /* 离开这一页时把盯消息区高度的探针摘掉：不摘的话每进一次聊天就留下

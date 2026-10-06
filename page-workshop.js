@@ -60,7 +60,7 @@
       name: clip(o.name, 12) || TEMPLATE_TYPES[type].name,
       type: type,
       desc: clip(o.desc, 60),
-      color: /^#[0-9a-fA-F]{3,8}$/.test(o.color || '') ? o.color : '#B08A5E',
+      color: /^#[0-9a-fA-F]{3,8}$/.test(o.color || '') ? o.color : '#7CA8D6',
       builtin: false,
       at: Date.now()
     };
@@ -99,7 +99,7 @@
       id: 'wi_' + newId(),
       phoneId: phoneId, charId: charId,
       templateId: templateId, templateName: t.name, templateType: t.type,
-      color: t.color || '#B08A5E',
+      color: t.color || '#7CA8D6',
       charPerm: 'record',        /* char 使用权限：只记真实发生的事（v1 默认） */
       at: Date.now()
     }, sbId);

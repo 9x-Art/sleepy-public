@@ -32,25 +32,24 @@
     taobao:   ic('<path d="M5.2 8.6h13.6l-1 9.9a1.7 1.7 0 0 1-1.7 1.5H7.9a1.7 1.7 0 0 1-1.7-1.5z"/><path d="M9.2 8.6V6.9a2.8 2.8 0 0 1 5.6 0v1.7"/>'),
     health:   ic('<path d="M3.6 12h3.2l2-4.4 2.8 9 2.4-6 1.6 3.2h4.8"/>'),
     notes:    ic('<rect x="5" y="4" width="14.5" height="16" rx="2"/><path d="M9 4v16"/><path d="M12.5 8.5H16M12.5 12h3.5"/>'),
-    browser:  ic('<circle cx="12" cy="12" r="8.4"/><path d="M14.8 9.2l-1.6 4-4 1.6 1.6-4z"/>'),
-    gallery:  ic('<rect x="3.5" y="5" width="17" height="14" rx="2.4"/><circle cx="9" cy="10" r="1.5"/><path d="M4.6 16.6l4.4-3.9 3.4 3 3-2.5 4 3.4"/>')
+    browser:  ic('<circle cx="12" cy="12" r="8.4"/><path d="M14.8 9.2l-1.6 4-4 1.6 1.6-4z"/>')
   };
-  /* 这台手机里有哪些官方 App —— **日历已经不在了**
-     （2026-09-19：日历改成桌面第 3 屏的独立 App）。
+  /* 这台手机里有哪些官方 App —— **日历和相册都已经不在了**
+     （日历 2026-09-19 改成桌面第 3 屏的独立 App；相册 2026-10-06 下线，
+      它一直只是「有壳没内容」的空态，没有专属页面也没有专属数据表）。
      渲染桌面与写 appOrder 都认这一张表，所以老存档里残留的 'calendar'
-     会被 on-desk 过滤掉，不用去改存档。 */
-  var PHONE_APPS = ['messages', 'taobao', 'health', 'notes', 'browser', 'gallery'];
+     / 'gallery' 会被 on-desk 过滤掉，不用去改存档。 */
+  var PHONE_APPS = ['messages', 'taobao', 'health', 'notes', 'browser'];
   var APP_LABEL = {
     messages: '消息', taobao: '淘宝', health: '健康打卡', notes: '备忘录',
-    browser: '浏览器', gallery: '相册'
+    browser: '浏览器'
   };
   /* 各 App 的自然空态文案 —— 数据为空就如实说，不造数据填页面 */
   var APP_EMPTY = {
     taobao: '他最近没有留下购物的痕迹。',
     health: '最近几天没有打卡记录。',
     notes: '他还没有写过备忘。',
-    browser: '没有留下搜索或浏览的记录。',
-    gallery: '相册里还没有照片。'
+    browser: '没有留下搜索或浏览的记录。'
   };
 
   var RISK_WORDS = ['风平浪静', '他离开了有一会儿', '有些不安', '脚步声靠近', '千钧一发'];
@@ -1790,8 +1789,7 @@
           notes: '你正停在「备忘录」里。',
           browser: '你正停在「浏览器」里。',
           health: '你正停在「健康打卡」里。',
-          desktop: '他回来的时候，手机就在你手里。',
-          gallery: '你正在翻他的相册。'
+          desktop: '他回来的时候，手机就在你手里。'
         }[caughtInfo.where] || '他回来的时候，手机就在你手里。';
 
         root.appendChild(h('div', 'ph-caught-card'));

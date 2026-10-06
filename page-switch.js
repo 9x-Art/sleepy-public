@@ -1,8 +1,8 @@
 /* ============================================================
-   page-switch.js — 系统级切号 + 面具轮盘 + 记忆认知层
+   page-switch.js — 系统级切号 + 记忆认知层
    依赖：store.js、core.js、ui.js、app.js
 
-   三块东西，都跟《终极架构总纲》第 3 节「核心交互链路」对得上：
+   两块东西，都跟《终极架构总纲》第 3 节「核心交互链路」对得上：
 
    ---- 一、系统级切号（时空切换器）----
    总纲原文：「不限定为特定图标，而是系统级的一个『切换菜单/入口』。
@@ -10,14 +10,14 @@
    所以它不是一个 App，是一个能从任何地方呼起的浮层。
    入口有三条：桌面角色卡、长按桌面空白、我→切号。
 
-   ---- 二、宇宙内切皮套（面具交互）----
-   总纲原文：「在聊天界面的输入框左侧，长按当前的 User 头像，
-   呼出【面具轮盘】，滑动秒切马甲，实现同一对话内的双重身份横跳。」
-   所以它挂在**输入框左侧**，不是顶栏。两处都实现了，但左侧那个
-   是总纲指定的位置，也是主入口。
-
-   ---- 三、记忆认知层 ----
+   ---- 二、记忆认知层 ----
    把 core.memoryViewFor 的结果编译成给模型看的系统提示词。
+
+   ---- 已下线（2026-10-06）----
+   原「二、宇宙内切皮套（面具轮盘）」整块移除。总纲写的那个位置
+   （输入框左侧长按头像）在 page-chat.js 里早已没有调用点，只剩死代码，
+   这次一并清掉。切换身份仍有两条活路：切号器（openSwitcher）与
+   「我」页的马甲中枢（mountMeTab）。
    这一层是「防粉红大象」的落点：不知情时不是把记忆删掉，
    而是明确告诉模型那些记忆属于另一个人。
    ============================================================ */
@@ -265,129 +265,6 @@
     if (!switchEls) return;
     switchEls.mask.classList.remove('is-open');
     switchEls.panel.classList.remove('is-open');
-  }
-
-  /* ================= 二、面具轮盘（宇宙内切皮套） ================= */
-
-  /* 挂在聊天输入框左侧的 User 头像上。长按呼出，滑动秒切。
-     总纲写的是「滑动秒切」—— 但真正的滑动选择在手机上很难做准
-     （手指挡着看不见选中的是哪个），所以这里做成：
-     长按呼出 → 点击即切。滑动切换作为可选的加分项没做，
-     因为「点一下就切」比「滑到正确的那一格再松手」更快也更准。 */
-  function openWheel(ctx, chatId) {
-    var chat = getChatSafe(chatId);
-    var charId = chat ? chat.characterId : store.get('activeCharId');
-    var root = core.rootOf(charId);
-    if (!root) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
-
-    /* 可切的身份：这个角色宇宙里，所有绑了马甲的皮套 + 大号 */
-    var options = [];
-    var bound = root.boundUserId;
-    options.push({ charId: root.id, userId: bound || null, name: root.name, label: '大号' });
-    core.subChars(root.id).forEach(function (s) {
-      options.push({ charId: s.id, userId: s.boundUserId || null, name: s.name, label: '小号' });
-    });
-
-    var withMask = options.filter(function (o) { return o.userId; });
-    if (withMask.length < 2) {
-      ctx.toast('这个角色还没有多个绑好马甲的小号', 'warn');
-      return;
-    }
-
-    buildWheel(ctx, chat, withMask);
-  }
-
-  /* 读取方：只看当前房里的对话（别的存档的对话不在这个视野内）。
-     注意同文件的 switchMask() 是**写入方**，它必须拿全量再整表落盘 ——
-     两处不能互换。 */
-  function getChatSafe(chatId) {
-    var chats = store.get('chats');
-    if (!Array.isArray(chats)) return null;
-    var list = (core && core.scoped) ? core.scoped(chats) : chats;
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].id === chatId) return list[i];
-    }
-    return null;
-  }
-
-  function buildWheel(ctx, chat, options) {
-    var host = document.getElementById('phone') || document.body;
-
-    var mask = h('div', 'wh-mask');
-    var panel = h('div', 'wh-panel');
-
-    panel.appendChild(h('p', 'wh-title', '面具'));
-    panel.appendChild(h('p', 'wh-sub', '选一张脸，继续说这句话'));
-
-    var list = h('div', 'wh-list');
-    var curUserId = chat.userId || store.get('activeUserId');
-
-    options.forEach(function (o) {
-      var item = h('button', 'wh-item' + (o.userId === curUserId ? ' is-on' : ''));
-      item.type = 'button';
-      item.appendChild(h('span', 'wh-av', core.initialOf(o.name)));
-      var b = h('span', 'wh-body');
-      b.appendChild(h('span', 'wh-name', o.name));
-      b.appendChild(h('span', 'wh-desc', o.label +
-        (o.userId ? ' · 对应马甲 ' + (core.findUser(o.userId) || {}).name : '')));
-      item.appendChild(b);
-      if (o.userId === curUserId) item.appendChild(h('span', 'wh-cur', '戴着'));
-
-      item.addEventListener('click', function () {
-        switchMask(ctx, chat, o);
-        closeWheel();
-      });
-      list.appendChild(item);
-    });
-
-    panel.appendChild(list);
-
-    var cancel = button('取消', 'ghost', function () { closeWheel(); });
-    panel.appendChild(cancel);
-
-    host.appendChild(mask);
-    host.appendChild(panel);
-    setTimeout(function () {
-      mask.classList.add('is-open');
-      panel.classList.add('is-open');
-    }, 10);
-
-    mask.addEventListener('click', closeWheel);
-
-    function closeWheel() {
-      mask.classList.remove('is-open');
-      panel.classList.remove('is-open');
-      setTimeout(function () {
-        if (mask.parentNode) mask.parentNode.removeChild(mask);
-        if (panel.parentNode) panel.parentNode.removeChild(panel);
-      }, 260);
-    }
-  }
-
-  /* 秒切马甲。同一个对话里换身份要继续说下去，
-     所以必须往消息流里插一条「换了张脸」的系统事件 ——
-     否则模型下一轮不知道自己面对的是谁。 */
-  function switchMask(ctx, chat, o) {
-    var chats = store.get('chats');
-    for (var i = 0; i < chats.length; i++) {
-      if (chats[i].id !== chat.id) continue;
-      chats[i].userId = o.userId;
-      /* 皮套换了，charId 也一起换 —— 这才是「同一对话内的双重身份横跳」 */
-      chats[i].characterId = o.charId;
-      if (!Array.isArray(chats[i].messages)) chats[i].messages = [];
-      chats[i].messages.push({
-        id: core.newId('ms'),
-        role: 'system',
-        content: '（你换了一副面具，现在以「' + o.name + '」的身份继续这段对话。）',
-        timestamp: Date.now()
-      });
-      chats[i].updatedAt = Date.now();
-      break;
-    }
-    store.set('chats', chats);
-    core.switchTo(undefined, o.userId);
-    ctx.toast('已换成「' + o.name + '」', 'ok');
-    if (Sleepy.chatDetailRefresh) Sleepy.chatDetailRefresh();
   }
 
   /* ================= 三、记忆认知层（Prompt 编译） ================= */
@@ -797,7 +674,9 @@
   Sleepy.switcher = {
     open: openSwitcher,
     close: closeSwitcher,
-    wheel: openWheel,
+    /* 注：原 wheel（面具轮盘 = 宇宙内就地切皮套）已于 2026-10-06 下线。
+       它的入口在 page-chat.js 里早已不存在，只剩死代码。切换身份仍然
+       有两条活路：切号器（open）与「我」页的马甲中枢（mountMeTab）。 */
     compileSystemContext: compileSystemContext,
     compileIslandKB: compileIslandKB,
     compileMemory: compileMemory,

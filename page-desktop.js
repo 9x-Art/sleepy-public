@@ -93,6 +93,14 @@
       '<path d="M12 7.6l1.42 2.88 3.18.46-2.3 2.24.54 3.16L12 14.85l-2.84 1.49.54-3.16-2.3-2.24 3.18-.46z"/>'),
     wallet: ic('<rect x="3.6" y="6.4" width="16.8" height="11.6" rx="2.4"/>' +
       '<path d="M16.4 10.6h4v3.2h-4a1.6 1.6 0 0 1 0-3.2z"/>'),
+    /* 小岛指南（第 3 屏 x3,y4，版本 20 从「钱包」空壳改来的真入口）：
+       一本翻开的书 + 里面一颗罗盘针 —— 「这本指南带你逛小岛」。
+       形状跟上面那批线稿图标一致（24 格 / currentColor / 线宽 1.6）。 */
+    guide: ic('<path d="M4.4 5.2c1.9-.9 3.7-.9 5.6 0v13.6c-1.9-.9-3.7-.9-5.6 0z"/>' +
+      '<path d="M19.6 5.2c-1.9-.9-3.7-.9-5.6 0v13.6c1.9-.9 3.7-.9 5.6 0z"/>' +
+      '<path d="M10 18.8h4"/>' +
+      '<circle cx="12" cy="9.6" r="1.9"/>' +
+      '<path d="M12 7.7v3.8M10.6 9.1l1.4 1.5 1.4-1.5"/>'),
     /* 预设：叠着的两张卡（预设注入系统的配置 app，第 2 屏） */
     presets: ic('<rect x="4.5" y="3.5" width="12" height="15" rx="1.8"/>' +
       '<path d="M8.5 7.5h4M8.5 10.5h4"/>' +
@@ -107,8 +115,7 @@
     calendar: ic('<rect x="3.6" y="5.4" width="16.8" height="14.2" rx="2.2"/>' +
       '<path d="M3.6 10.2h16.8"/>' +
       '<path d="M8.6 3.4v3.6M15.4 3.4v3.6"/>' +
-      '<path d="M7.4 13.4h2.2M12.4 13.4h4.2M7.4 16.4h2.2M12.4 16.4h2.4"/>'),
-    clock: ic('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3 1.8"/>', 32),    mood: ic('<circle cx="12" cy="12" r="8.6"/><path d="M8.8 14.2a4.2 4.2 0 0 0 6.4 0"/><path d="M9.2 9.6h.01M14.8 9.6h.01"/>', 32)
+      '<path d="M7.4 13.4h2.2M12.4 13.4h4.2M7.4 16.4h2.2M12.4 16.4h2.4"/>')
   };
 
   /* ---------------------------- 默认布局 ---------------------------- */
@@ -195,8 +202,19 @@
      「这一屏的贴纸、钱包、组件商城的功能都有别的入口，统一改成图标为空，
      里面的内容为空，不要再跳转到别的页面去」。app 字段保留不删：
      一是冒烟断言还认桌面上的 app 名单，二是以后想接回来一行就够。
-     We / 日历 / ta / 相册 / 外观这五个是真功能，不动。 */
-  var LAYOUT_VERSION = 19;
+     We / 日历 / ta / 相册 / 外观这五个是真功能，不动。
+
+     版本 20（2026-10-06）：第 3 屏 (x3,y4) 那格从「钱包」空壳改成
+     **「小岛指南」真入口**（type 'app' / app 'guide' / 格子 id p3-guide）。
+     用户点名：「第 3 屏留有空的 app，有占位没内容，可以直接用」——
+     钱包那格从版本 19 起就只剩一个空玻璃壳（无图标、无内容、不跳转），
+     正好拿来接《使用说明手册》（page-guide.js，按板块汇总全部功能）。
+     「贴纸 / 组件商城」两格维持空壳不动。
+
+     版本 21（2026-10-07）：第 3 屏 (x3,y5) 那格「外观」也改成**空壳**
+     —— 它在主屏 p1-look 已经有一份，这屏这份是重复入口（用户要求）。
+     LAYOUT_VERSION +1 强制迁移到新户型。 */
+  var LAYOUT_VERSION = 21;
 
   function defaultDesktop() {
     return {
@@ -290,7 +308,12 @@
              「图标为空、内容为空、不跳转」。app 字段留着：冒烟认名单，
              以后接回来把 type 改回 'app' 就行。 */
           { i: 'p3-stickers', type: 'blank', app: 'stickers', x: 4, y: 3, w: 1, h: 1, label: '贴纸' },
-          { i: 'p3-wallet', type: 'blank', app: 'wallet', x: 3, y: 4, w: 1, h: 1, label: '钱包' },
+          /* 版本 20（2026-10-06）：这一格从「钱包」空壳改成**小岛指南**真入口。
+             用户点名「第 3 屏留有空的 app，有占位没内容，可以直接用」——
+             钱包那格本来就没内容也没跳转（版本 19 起就是空壳），正好接上。
+             app:'guide' 指向 page-guide.js 注册的《使用说明手册》。
+             格子 id 改 p3-guide：语义变了，沿用 wallet 会让冒烟/存档对不上。 */
+          { i: 'p3-guide', type: 'app', app: 'guide', x: 3, y: 4, w: 1, h: 1, label: '小岛指南' },
           /* 这里原本放的是「日记」，被冒烟断言挡下来了：
              「日记 / 朋友圈那两个我们都在 chat 里面做了，不需要单独的 app」——
              那是很早定下的一条，不能因为要凑格子就把它放回来。
@@ -302,7 +325,14 @@
              ⚠️ 格子 id 仍沿用 p3-book 不变 —— 改了老存档里的坐标就对不上。 */
           { i: 'p3-book', type: 'app', app: 'ta', x: 1, y: 5, w: 1, h: 1, label: 'ta' },
           { i: 'p3-gallery', type: 'app', app: 'gallery', x: 2, y: 5, w: 1, h: 1, label: '相册' },
-          { i: 'p3-look', type: 'app', app: 'appearance', x: 3, y: 5, w: 1, h: 1, label: '外观' },
+          /* 版本 21（2026-10-07）：这格改成**空壳**。
+             外观在主屏 p1-look 已经有一份，第 3 屏这份是重复的第二个入口
+             （用户：「外观在第三屏也有一个，也把它改成空的占位」）。
+             做法同版本 19 那批（贴纸 / 组件商城）：type 改 'blank'，
+             图标空、内容空、不跳转；**app 字段保留** —— 冒烟认这份名单，
+             以后想接回来把 type 改回 'app' 一行就够。
+             格子 id 沿用 p3-look 不变。 */
+          { i: 'p3-look', type: 'blank', app: 'appearance', x: 3, y: 5, w: 1, h: 1, label: '外观' },
           { i: 'p3-store', type: 'blank', app: 'widgetstore', x: 4, y: 5, w: 1, h: 1, label: '组件商城' }
         ]
       ]
@@ -1034,19 +1064,6 @@
       return box;
     },
 
-    mood: function (cell, ctx) {
-      var box = h('div', 'widget w-mood');
-      var s = skin();
-      box.appendChild(h('div', 'w-label', 'MOOD'));
-      var icEl = h('div', 'w-mood-ic');
-      icEl.innerHTML = ICONS.mood;
-      box.appendChild(icEl);
-      box.appendChild(h('div', 'w-mood-text', s.mood));
-      box.addEventListener('click', function () { cycleMood(ctx); });
-      box.title = '点一下换心情';
-      return box;
-    },
-
     /* ---------------- 首页日期头（主屏最上面那块） ----------------
        2026-09-17 第四轮。用户给的参考版式：一行小字抬头、一个很大的
        日期数字、一行日期，右侧一根绳子挂下来一个小玻璃坠子。
@@ -1378,57 +1395,6 @@
       return box;
     },
 
-    clock: function (cell, ctx) {
-      var box = h('div', 'widget w-clock');
-      var t = h('div', 'w-clock-time', '--:--');
-      var d = h('div', 'w-clock-date');
-      var d1 = h('span', '', '');
-      var d2 = h('span', '', '');
-      d.appendChild(d1);
-      d.appendChild(d2);
-      box.appendChild(t);
-      box.appendChild(d);
-      function tick() {
-        var now = new Date();
-        function p(n) { return n < 10 ? '0' + n : '' + n; }
-        t.textContent = p(now.getHours()) + ':' + p(now.getMinutes());
-        d1.textContent = p(now.getDate()) + ' / ' + p(now.getMonth() + 1) + '月';
-        d2.textContent = '星期' + '日一二三四五六'.charAt(now.getDay());
-      }
-      tick();
-      var timer = setInterval(tick, 15000);
-      box.__cleanup = function () { clearInterval(timer); };
-      return box;
-    },
-
-    battery: function (cell, ctx) {
-      var box = h('div', 'widget w-battery');
-      var head = h('div', 'w-bat-head');
-      head.appendChild(h('span', '', '思念电量'));
-      var hint = h('span', 'w-bat-hint', '摸摸头');
-      head.appendChild(hint);
-      var track = h('div', 'w-bat-track');
-      var fill = h('div', 'w-bat-fill');
-      track.appendChild(fill);
-
-      var level = skin().battery;
-      function paint() {
-        fill.style.width = level + '%';
-        hint.textContent = level >= 100 ? '已满！' : '摸摸头';
-      }
-      paint();
-
-      box.appendChild(head);
-      box.appendChild(track);
-      box.addEventListener('click', function () {
-        level = Math.min(level + 20, 100);
-        paint();
-        saveActive({ battery: level });
-        if (level >= 100) ctx.toast('电量满了', 'ok');
-      });
-      return box;
-    },
-
     /* ---------------- 批3 · 简单砖组 + 拍立得（2026-10-06 商城批） ----------------
        四个商城上架件（不在默认户型，目录在 page-widgetstore 的 EXTRA_DEFS）。
        共用一条配置约定：per-cell 配置存 store 'widgetCfg'（键 = cell.i），
@@ -1710,62 +1676,6 @@
       return box;
     },
 
-    worldclock: function (cell, ctx) {
-      var box = h('div', 'widget w-worldclock');
-      var s = skin();
-      var mine = h('div', 'w-wc-block');
-      var his = h('div', 'w-wc-block');
-      function clock(label, offset) {
-        var wrap = h('div', 'w-wc-inner');
-        var t = h('div', 'w-wc-time', '--:--');
-        wrap.appendChild(t);
-        wrap.appendChild(h('div', 'w-wc-city', label));
-        return { el: wrap, t: t, offset: offset };
-      }
-      var c1 = clock('你（' + (s.user ? s.user.city || '这里' : '这里') + '）', 0);
-      /* 「他那边」不再写死 +7（demo 遗留）—— 按运行时时区唯一出口解析：
-         char 显式时区 > 设备系统时区（calendar.runtimeTzOf）；拿不到就两边同钟。 */
-      var hisTz = '';
-      try {
-        var cal = Sleepy.calendar;
-        if (cal && cal.runtimeTzOf && s.char && s.char.id) hisTz = cal.runtimeTzOf(s.char.id).tz;
-      } catch (e) { hisTz = ''; }
-      var c2 = clock((s.char ? s.name : '对方') + '（' + ((s.char && s.char.city) || '那边') + '）', 0);
-      c2.__tz = hisTz;
-      mine.appendChild(c1.el);
-      his.appendChild(c2.el);
-
-      function tick() {
-        [c1, c2].forEach(function (c) {
-          function p(n) { return n < 10 ? '0' + n : '' + n; }
-          if (c.__tz && Sleepy.calendar && Sleepy.calendar.tzNow) {
-            /* 显式/解析出的时区：直接按它显示（含夏令时，走 Intl） */
-            var t = Sleepy.calendar.tzNow(c.__tz);
-            if (t && t.time) { c.t.textContent = t.time; return; }
-          }
-          var now = new Date(Date.now() + c.offset * 3600000);
-          c.t.textContent = p(now.getHours()) + ':' + p(now.getMinutes());
-        });
-      }
-      tick();
-      var timer = setInterval(tick, 15000);
-      box.__cleanup = function () { clearInterval(timer); };
-
-      box.appendChild(mine);
-      box.appendChild(h('div', 'w-wc-divider'));
-      box.appendChild(his);
-      return box;
-    },
-
-    player: function (cell, ctx) {
-      var box = h('div', 'widget w-player');
-      var icEl = h('div', 'w-player-ic');
-      icEl.innerHTML = ICONS.clock;
-      box.appendChild(icEl);
-      box.appendChild(h('div', 'w-player-text', '正在播放'));
-      return box;
-    },
-
     /* ---------------- 音乐卡（第 3 屏主件） ----------------
        用户给的参考是一张横版播放卡：左边一块方形封面，右边歌名 / 歌手 /
        「正在播放」，下面一排「上一首 · 播放 · 下一首」、一条进度条、
@@ -1862,42 +1772,6 @@
       }, 1000);
       box.__cleanup = function () { clearInterval(timer); };
 
-      return box;
-    },
-
-    calendar: function (cell, ctx) {
-      var box = h('div', 'widget w-calendar');
-      var now = new Date();
-
-      var left = h('div', 'w-cal-left');
-      left.appendChild(h('div', 'w-cal-lunar', lunarText(now)));
-      left.appendChild(h('div', 'w-cal-big', bigTime(now)));
-
-      var dayRow = h('div', 'w-cal-dayrow');
-      dayRow.appendChild(h('div', 'w-cal-day', String(now.getDate())));
-      var ym = h('div', 'w-cal-ym');
-      ym.appendChild(h('span', '', now.getFullYear() + '年' + (now.getMonth() + 1) + '月'));
-      ym.appendChild(h('span', 'is-accent', '星期' + '日一二三四五六'.charAt(now.getDay())));
-      dayRow.appendChild(ym);
-      left.appendChild(dayRow);
-
-      var right = h('div', 'w-cal-grid');
-      var heads = ['日', '一', '二', '三', '四', '五', '六'];
-      heads.forEach(function (x) {
-        right.appendChild(h('div', 'w-cal-head', x));
-      });
-      var y = now.getFullYear(), m = now.getMonth();
-      var first = new Date(y, m, 1).getDay();
-      var days = new Date(y, m + 1, 0).getDate();
-      for (var i = 0; i < first; i++) right.appendChild(h('div', '', ''));
-      for (var d = 1; d <= days; d++) {
-        var el = h('div', '', String(d));
-        if (d === now.getDate()) el.className = 'w-cal-today';
-        right.appendChild(el);
-      }
-
-      box.appendChild(left);
-      box.appendChild(right);
       return box;
     },
 
@@ -2427,13 +2301,6 @@
     return p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
-  /* 农历只做到「大致准」：这里没有完整的历法表，硬算会出错，
-     所以显示节气区间 + 提示。真正要准得引一份农历数据，属于软装。 */
-  function lunarText(d) {
-    var m = d.getMonth() + 1;
-    return d.getFullYear() + ' · 第 ' + Math.ceil((d.getDate() + new Date(d.getFullYear(), m - 1, 1).getDay()) / 7) + ' 周';
-  }
-
   /* 待办的数据读写。存 store 的 'todos'。
 
      ---- 两个口子，不要混用 ----
@@ -2576,18 +2443,6 @@
       saveTodos(list);
       if (ctx.repaint) ctx.repaint();
     });
-  }
-
-  function cycleMood(ctx) {
-    /* 写路径过卫兵：指针停在上一个岛的人身上时，绝不能把心情写过去 */
-    var c = core.activeCharOnIsland ? core.activeCharOnIsland() : core.activeChar();
-    if (!c) { ctx.toast('这座岛还没选人 —— 用桌面下拉或切号器选一位', 'warn'); return; }
-    var cur = c.mood || skin().mood;
-    var idx = MOODS.indexOf(cur);
-    var next = MOODS[(idx + 1 + MOODS.length) % MOODS.length];
-    saveActive({ mood: next, moodAt: Date.now() });
-    ctx.toast('心情：' + next, 'ok');
-    if (ctx.repaint) ctx.repaint();
   }
 
   /* ---------------------------- 系统级切号（时空切换器） ---------------------------- */

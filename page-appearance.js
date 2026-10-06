@@ -49,11 +49,14 @@
      现在壁纸只决定**明暗**，色相仍旧由主题给：四个主题各出一对，
      预览和真实桌面读的是同一对变量，不可能再对不上。 */
   var THEMES = [
-    { id: 'grape', name: '纯白', hint: '纯白底 · 暖棕字 · 焦糖点缀',
-      chip: 'linear-gradient(140deg,#B08A5E,#FFFFFF)',
-      bg: 'linear-gradient(165deg,#FBFAF7 0%,#F1EDE4 100%)', dark: false,
-      accent: '#B08A5E', ink: '#43382C', ink2: '#8A7A67',
-      wallInkDark: '#F2EDE3', wallInkLight: '#4A4238' },
+    /* 2026-10-07：默认主题从「纯白 + 焦糖」换成「奶蓝」。
+       用户：「纯白有点不太好看」「这个橙色不好看，马卡龙类会好看些，
+       倾向蓝色的、透亮的柔和色调」。色值跟 style.css 的 :root 对齐。 */
+    { id: 'grape', name: '奶蓝', hint: '奶蓝底 · 冷墨字 · 柔和蓝点缀',
+      chip: 'linear-gradient(140deg,#7CA8D6,#F7FAFE)',
+      bg: 'linear-gradient(165deg,#F7FAFE 0%,#E8F1FA 100%)', dark: false,
+      accent: '#7CA8D6', ink: '#2F3A47', ink2: '#66768A',
+      wallInkDark: '#EDF4FB', wallInkLight: '#2A3542' },
     { id: 'night', name: '夜灯', hint: '深色，晚上看不刺眼',
       chip: 'linear-gradient(140deg,#7FC97A,#252F27)',
       bg: 'linear-gradient(165deg,#232E29 0%,#31403B 100%)', dark: true,
@@ -64,11 +67,15 @@
       bg: 'linear-gradient(165deg,#F9E9E2 0%,#F4EDE3 100%)', dark: false,
       accent: '#E8846B', ink: '#3E2F2A', ink2: '#806A62',
       wallInkDark: '#FFEDE4', wallInkLight: '#4A322C' },
-    { id: 'sea', name: '海盐', hint: '冷蓝，安静',
-      chip: 'linear-gradient(140deg,#4C86B8,#DCEAF6)',
-      bg: 'linear-gradient(165deg,#E6EFF3 0%,#EDF0EA 100%)', dark: false,
-      accent: '#5B93C4', ink: '#28394A', ink2: '#5F7A92',
-      wallInkDark: '#E8F1F8', wallInkLight: '#243444' }
+    /* 2026-10-07：原来是「海盐 · 冷蓝」，但默认主题换成奶蓝之后两套撞色，
+       改成**马卡龙薄荷绿**。id 仍是 sea（老存档里选过它的不能失效）。
+       色值与 style.css 的 #phone[data-theme="mint"] 保持一致。
+      2026-10-07 用户确认：开发期没有外传用户，主题 id 也可以改，故 sea -> mint。 */
+    { id: 'mint', name: '薄荷', hint: '马卡龙薄荷，清透',
+      chip: 'linear-gradient(140deg,#8AC9C3,#F3FBFA)',
+      bg: 'linear-gradient(165deg,#F3FBFA 0%,#E4F4EF 100%)', dark: false,
+      accent: '#8AC9C3', ink: '#243B39', ink2: '#5C8280',
+      wallInkDark: '#E9F7F4', wallInkLight: '#223836' }
   ];
 
   var FONTS = [
@@ -103,8 +110,8 @@
      落点 = #phone 的 --g-ink（inline 覆盖主题块定义，--text 是它的别名，
      聊天气泡/朋友圈/日记的正文字色跟着换）。 */
   var INK_PALETTE = [
-    ['#26231E', '#43382C', '#5A554D', '#8A7A67', '#B5A78F'],
-    ['#A85840', '#C0392B', '#D9832B', '#C9A227', '#B08A5E'],
+    ['#1E242C', '#2F3A47', '#4A5563', '#66768A', '#94A3B4'],
+    ['#A85840', '#C0392B', '#D9832B', '#C9A227', '#7CA8D6'],
     ['#4A9068', '#3E8E83', '#3A6898', '#2E6E9E', '#7868A0'],
     ['#C97B8E', '#8A6B48', '#6B5842', '#D9CBB6', '#E8E2D6']
   ];
@@ -514,7 +521,7 @@
   }
 
   function wallSwatch(w) {
-    if (w.id === 'auto') return 'linear-gradient(140deg,#B08A5E33,#FFFFFF)';
+    if (w.id === 'auto') return 'linear-gradient(140deg,#7CA8D633,#F7FAFE)';
     return w.css;
   }
   function iconSwatch(s) {
@@ -674,7 +681,7 @@
     moreLab.appendChild(h('span', 'lk-upload-main', '更多颜色…'));
     var cIn = h('input');
     cIn.type = 'color';
-    cIn.value = draft.textColor || '#43382C';
+    cIn.value = draft.textColor || '#2F3A47';
     cIn.style.cssText = 'width:34px;height:28px;border:0;background:none;padding:0;cursor:pointer;';
     moreLab.appendChild(cIn);
     moreRow.appendChild(moreLab);

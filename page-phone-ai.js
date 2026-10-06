@@ -281,8 +281,7 @@
       taobao: '你正停在「淘宝」里',
       notes: '你正停在「备忘录」里',
       browser: '你正停在「浏览器」里',
-      health: '你正停在「健康打卡」里',
-      gallery: '你正在翻他的相册'
+      health: '你正停在「健康打卡」里'
     };
     var sys = [Sleepy.promptEngine.cardBody('phoneCaught')];
     if (char.content) sys.push('[CHARACTER]\n' + String(char.content).slice(0, 800) + '\n[/CHARACTER]');

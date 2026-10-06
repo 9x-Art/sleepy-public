@@ -174,6 +174,9 @@
 <!-- 钱包（流水从对话消息里扫）与表情包管理（聊天 App「我」那一屏的两个入口） -->
 <script src="page-wallet.js" defer></script>
 <script src="page-stickers.js" defer></script>
+<!-- 小岛指南：App 内使用说明手册（桌面第 3 屏那一格）。
+     只依赖壳子（Sleepy.register / ctx），位置随意，放这儿跟 wallet 一组。 -->
+<script src="page-guide.js" defer></script>
 <!-- 聊天 App 容器（4 Tab：消息 / 通讯录 / 朋友圈 / 我）。
      它是壳，内容由 page-chat（消息）、page-moments（朋友圈）、
      page-switch（我）各自提供，所以必须排在它们后面。

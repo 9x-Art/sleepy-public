@@ -532,7 +532,15 @@
 /* v187（2026-10-06）：**自定义组件+慢递信箱（商城批4）**——①自定义：store customWidgets（按岛隔离+删房清），page-desktop sanitizeTpl/scopeCss/substituteVars（变量白名单 time/date/weekday/weather/photo/lampNote/charName/todoCount/countdown:目标日；photo 走内存缓存异步取图），RENDER.custom（入库+渲染双次消毒、CSS 钉 .cust-<cellId> 作用域）；widgetstore 自制分组 + widgetmake 编辑器页（左模板右实时预览，size 1×1~4×6 自由）；②慢递：ability 卡 slowmail（[慢递:小时|内容]，1~72h），page-chat extractSlowmail+管线落 slowLetters、proactive 同口径（addMessage 前抽）、buildMessages unshift 说明书，RENDER.slowmail（未到点只显示在途时长绝不剧透）。smoke 新增慢递解析+消毒/作用域单测。→ 必须跳版本：store.js / core.js / prompt-engine.js / page-chat.js / page-proactive.js / page-desktop.js / page-widgetstore.js / style.css / scripts/smoke.js 都变了。 */
 /* v189（2026-10-06）：**报错美化**——app.js 统一报错卡：①所有 toast(...,'err') 都走卡（含原来自行消失的丑胶囊）；②标题=明确原因（不再写死「出错了」），带稳定错误码 chip（NET/TIMEOUT/HTTP-404/CFG/PARSE/APP-XXXX，复制内容=[代码]原因+技术细节）；③scrubOwnUrl 补 127.0.0.1/localhost 本机调试地址（原只拦品牌域）；④报错卡永不自动关闭、右上角 × 关闭，普通 ok/warn 仍自动消失；加 --g-error/--g-error-dim 变量（亮色+夜灯珊瑚），重做 .is-card 玻璃卡视觉（标题色/错误码/圆形 ×/复制按钮）。→ 必须跳版本：app.js / style.css / scripts/smoke.js 都变了。 */
 /* v188（2026-10-06）：**HTML 小游戏（char 发可玩网页）**——①prompt-engine 新增 htmlgame 卡（[html]…[/html] 多行块，说明书教模型写内联 CSS/JS 的整页小游戏）；page-chat extractHtmlGames 剥标签→commitHtmlGame 落 type:'html'（html 字段存源码），沙箱 iframe（htmlGameCard，sandbox=allow-scripts 不给 same-origin + CSP default-src none 堵出网 + SleepyGame.report 桥只认 registerGameFrame 登记窗口）；②结算：report 走 postMessage→noteGameResult 落 htmlGameResult:<chatId>（同局重复上报不覆盖、换局才更新），gameResultPeekMsg 下一轮把结算垫进上下文（读出即摘）；③删房清 htmlGameResult:<chatId> 幽灵键（同 charRel 动态键口径）；④重绘复用（缺口①）：htmlGameCard 按 msgId 缓存同一节点，renderMessages 每次 innerHTML='' 摘下、同对象 appendChild 回去不重载 iframe，玩到一半来新消息也不从头来，末尾 prune 失效条目。→ 必须跳版本：prompt-engine.js / page-chat.js / core.js / style.css / scripts/smoke.js 都变了。 */
-var CACHE = 'sleepy-v189';
+/* v190（2026-10-06）：**小岛指南 App（使用说明手册）**——①新增 page-guide.js，注册 app 'guide'：按板块把现有功能（聊天/浮岛/世界书/日记/相册/日历/ta/We/外观/组件/工坊/预设/设置各 API…）整理成可滚动的说明书，条目带「在哪儿」+「打开›」可点跳对应 App；②桌面第 3 屏 (x3,y4) 那格从「钱包」空壳改成「小岛指南」真入口（p3-guide / type app / app guide），ICONS 加 guide 图标，LAYOUT_VERSION 19→20 强制迁移；③style.css 加手册页样式。→ 必须跳版本：page-guide.js（新）/ page-desktop.js / style.css / index.html 都变了。 */
+/* v191（2026-10-06）：**四件事下线**——①桌面 6 个组件彻底移除（情绪印章 mood / 思念电量 battery / 时钟 clock / 双城时钟 worldclock / 正在播放 player / 农历日历组件 calendar）：RENDER 里的渲染函数 + style.css 对应 CSS + 孤儿函数（lunarText / cycleMood）+ 无消费者的 ICONS.mood/ICONS.clock 全清（**第 3 屏那个日历 App 不动**，它走 type:'app'）；②查手机里的相册 App 下线（一直只是空壳，无专属页面无专属数据表），PHONE_APPS 白名单 + 图标 + 文案 + phone.js 的 appOrder 全清；③面具轮盘（宇宙内就地切皮套）下线：page-switch.js 删 openWheel/getChatSafe/buildWheel/switchMask 整块 123 行 + switcher.wheel 导出 + page-chat.js 的死代码 chatDetailRefresh + style.css 的 .wh-* CSS（.sw-mask 是系统级切号器，只摘 .wh-mask 部分）；④删掉 smoke.js 里那条「禁止出现来源项目名」的护栏（新项目不该有这类来源禁令）。→ 必须跳版本：page-desktop.js / style.css / page-phone.js / phone.js / page-phone-ai.js / page-switch.js / page-chat.js / scripts/smoke.js 都变了。 */
+/* v192（2026-10-06）：**小岛指南改折叠版（最小版）**——page-guide.js 重写：开篇常显 + 「第一次使用」默认展开 + 其余 10 个板块默认折叠（原生 <details>，箭头自绘）；内容块分 7 类（p / item / note / tag / li / step / qa），靠字体与颜色分层突出重点（功能名=深焦糖加粗，说明降一级，提示块=浅底+左边框，能力标记三色：本地/需要API/选配）。⚠️ 类名前缀从 .gd- 换成 .gz-（.gd- 是 page-group.js 群详情的前缀，会撞）。内容对齐 docs/文稿-小岛指南 定稿 v1。→ 必须跳版本：page-guide.js / style.css 都变了。 */
+/* v193（2026-10-07）：**默认主题换奶蓝**——用户：「纯白不太好看了」「搭配的橙色不好看，马卡龙类会好看些，倾向蓝色的、透亮的柔和色调」。①style.css :root 主色系焦糖→奶蓝（accent #7CA8D6 / deep #5C86B4 / soft #C3DCF1 / pale #E4EEF9），字色暖深棕→冷墨（#2F3A47/#66768A/#94A3B4），底色纯白→奶蓝（base #F7FAFE / base-2 #F1F6FC / base-3 #E3EDF7），--g-pin-wash 跟着主色走，设置页织物纸转冷灰；②清掉 **144 处写死的 rgba(176,138,94,*) 焦糖**→rgba(124,168,214,*)，以及 #8A6844 兜底 / 音乐卡 / 照片墙纸带等暖色小件；③JS 里的硬编码同步：page-appearance 第一套改名「奶蓝」+ chip/bg/ink 全套换新、auto 壁纸预览、textColor 默认；page-workshop 模板默认色；phone ACCENTS 首色；splash --g-accent 兜底；sw.js 离线降级页。玻璃系统（--g-glass 系 / --tk 系 / --g-lens）本来就是冷灰蓝调，**未改动**。⚠️ 旧红线「不要蓝绿」已由用户澄清作废（禁的是廉价荧光绿，蓝与柔和蓝绿可用），:root 注释已更新。→ 必须跳版本：style.css / page-appearance.js / page-workshop.js / phone.js / splash.js / sw.js 都变了。 */
+/* v194（2026-10-07）：**浮岛页保留暖杏色系（奶蓝主题的例外）**——用户：「浮岛页的进孤岛其实用原本的就可以，因为背景是杏色那种，用蓝色会比较突兀」。把 v193 里被批量换成奶蓝的浮岛专属色回退成暖杏：island 页的返回键/文字、isl-dot.is-on、进岛按钮底（#B08A5E / #8A6844）。⚠️ 只有 isl-* 与 island 页那两支享受这个例外；simple-form / simple-sub 是浮岛与名片夹共用类，跟随全局奶蓝。已在 style.css 该块顶部加注释锁住这个例外，别再当成漏改的旧焦糖统一掉。→ 必须跳版本：style.css 变了。 */
+/* v195（2026-10-07）：**海盐换薄荷 + 小岛指南多色混搭**——①原 sea 主题（冷蓝）跟新的奶蓝默认撞色，用户同意改成马卡龙薄荷绿（accent #8AC9C3 / base #F3FBFA / 墨色同步转绿），data-theme 的 id 仍是 sea 不动（老存档里选过它的不能失效）；page-appearance 的 THEMES 预览色卡同步改名为「薄荷」。②小岛指南 12 个板块各配一支马卡龙色（SECTIONS 增加 c 字段，渲染时写进 --gz-c），标题/色点/箭头/功能名/步骤圆标/路径/列表 marker/提示块左边框/问答问句全部吃它；提示块底用 color-mix 兑到 12%（12 种色再给实底太吵）。→ 必须跳版本：style.css / page-guide.js / page-appearance.js 都变了。 */
+/* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
+/* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
+var CACHE = 'sleepy-v197';
 var CORE = [
   './',
   './index.html',
@@ -648,14 +656,14 @@ function offlineShell() {
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>Sleepy</title></head>' +
     '<body style="margin:0;display:flex;min-height:100vh;align-items:center;' +
-    'justify-content:center;background:#FFFFFF;color:#43382C;' +
+    'justify-content:center;background:#F7FAFE;color:#2F3A47;' +
     'font:15px/1.7 system-ui,sans-serif;text-align:center">' +
     '<div style="padding:32px">' +
     '<p style="font-size:17px;margin:0 0 10px">连不上，本地也还没有缓存</p>' +
     '<p style="margin:0;color:#8A7A67">第一次打开需要联网。' +
     '加载过一次之后，再到桌面打开就能离线用了。</p>' +
     '<p style="margin:16px 0 0;color:#8A7A67"><button ' +
-    'onclick="location.reload()" style="font:inherit;color:#8A6844;' +
+    'onclick="location.reload()" style="font:inherit;color:#5C86B4;' +
     'background:none;border:0;border-bottom:1px solid currentColor;' +
     'padding:0 0 1px;cursor:pointer">再试一次</button></p>' +
     '</div></body></html>';

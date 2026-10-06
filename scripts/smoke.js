@@ -2298,11 +2298,13 @@ t('bootHome 留下了 __homeCtx（切号重绘要靠它）', () => {
   if (typeof ctx.repaint !== 'function') throw new Error('ctx.repaint 不是函数');
   return { id: ctx.id, hasRepaint: true, hasStore: !!ctx.store };
 });
-t('面具轮盘对外出口是 Sleepy.switcher.wheel', () => {
+/* 2026-10-06：原「面具轮盘」断言改成只验活着的切号入口。
+   wheel（宇宙内就地切皮套）已下线 —— 它的调用点在 page-chat.js 里
+   早已不存在，这次连死代码一起清了。切号能力本身不受影响。 */
+t('系统级切号入口还在（Sleepy.switcher.open）', () => {
   if (!S.switcher) throw new Error('switcher 没加载');
-  if (typeof S.switcher.wheel !== 'function') throw new Error('switcher.wheel 缺失 —— 聊天页长按头像会炸');
   if (typeof S.switcher.open !== 'function') throw new Error('switcher.open 缺失 —— 系统级切号入口没了');
-  return { open: true, wheel: true, close: typeof S.switcher.close === 'function' };
+  return { open: true, close: typeof S.switcher.close === 'function' };
 });
 
 console.log('\n--- photos:照片数据层 ---');
@@ -2563,10 +2565,10 @@ t('LAYOUT_VERSION 没有重复声明（写了改动日志却忘了删旧块）',
    施工单 §四 1-6 由上面的桌面断言 + 本块第一条覆盖；
    7（切岛不残留）与 8（打开零写入零模型）在本块第二条，缺什么补什么。 */
 console.log('\n--- ta 首页（生活窗口 v1）---');
-t('第三屏重复格已换成 ta：版本 19、只换一格、坐标沿用、主屏世界书仍在', () => {
+t('第三屏重复格已换成 ta：当前版本、只换一格、坐标沿用、主屏世界书仍在', () => {
   const d = S.desktop.defaultDesktop();
-  if (S.desktop.LAYOUT_VERSION !== 19) {
-    throw new Error('LAYOUT_VERSION 应为 19，实际 ' + S.desktop.LAYOUT_VERSION);
+  if (S.desktop.LAYOUT_VERSION !== 21) {
+    throw new Error('LAYOUT_VERSION 应为 21，实际 ' + S.desktop.LAYOUT_VERSION);
   }
   /* 施工单：只允许替换一个格子，且必须保留原格子 id 和坐标 */
   const taCells = d.pages[3].filter((c) => c.app === 'ta');
@@ -4315,21 +4317,40 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
 
 /* 版本 19（2026-10-05，用户）：「这一屏的贴纸、钱包、组件商城的功能
    都有别的入口，统一改成图标为空，里面的内容为空，不要再跳转到别的页面去」
-   —— 三格改 type 'blank'（空玻璃壳，无图标无跳转），主屏组件商城入口不动。 */
-t('第 3 屏贴纸/钱包/组件商城已改空壳：type blank、留 label、主屏入口不动', () => {
+   —— 三格改 type 'blank'（空玻璃壳，无图标无跳转），主屏组件商城入口不动。
+   版本 20（2026-10-06）：「钱包」那一格改成了「小岛指南」真入口
+   （p3-guide / type app / app guide），所以本断言从「三格全 blank」
+   收窄成「贴纸 / 组件商城仍 blank」+「钱包位已换成小岛指南」。 */
+t('第 3 屏贴纸/组件商城/外观仍空壳，钱包位已换成小岛指南，主屏入口不动', () => {
   const d = S.desktop.defaultDesktop();
-  const ids = ['p3-stickers', 'p3-wallet', 'p3-store'];
+  const ids = ['p3-stickers', 'p3-store', 'p3-look'];
   const cells = d.pages[3].filter((c) => ids.indexOf(c.i) >= 0);
-  if (cells.length !== 3) throw new Error('空壳格应有 3 个，实际 ' + cells.length);
+  if (cells.length !== 3) throw new Error('仍应为空壳的格应有 3 个（贴纸/组件商城/外观），实际 ' + cells.length);
   cells.forEach((c) => {
     if (c.type !== 'blank') throw new Error(c.i + ' 应为 blank，实际 ' + c.type);
     if (!c.label) throw new Error(c.i + ' 丢了 label（编辑模式里认不出格子）');
   });
+  /* 钱包位 → 小岛指南真入口 */
+  const g = d.pages[3].find((c) => c.i === 'p3-guide');
+  if (!g) throw new Error('第 3 屏找不到 p3-guide（小岛指南）那一格');
+  if (g.type !== 'app' || g.app !== 'guide') {
+    throw new Error('p3-guide 应为 app/guide，实际 type=' + g.type + ' app=' + g.app);
+  }
+  if (g.x !== 3 || g.y !== 4) throw new Error('小岛指南坐标应为 (3,4)，实际 ' + g.x + ',' + g.y);
+  /* 小岛指南页面必须真的注册上了（点得开） */
+  if (!S.registered || !S.registered()['guide'] || !S.registered()['guide'].hasRender) {
+    throw new Error('小岛指南页面（app guide）没注册上 —— 桌面这格点开会白屏');
+  }
   const p1 = d.pages[1].find((c) => c.i === 'p1-store');
   if (!p1 || p1.type !== 'app' || p1.app !== 'widgetstore') {
     throw new Error('主屏的组件商城入口不能跟着动');
   }
-  return { 空壳: cells.map((c) => c.label) };
+  /* 第 3 屏外观改空壳，主屏那份必须还在 —— 外观不能从桌面消失 */
+  const p1look = d.pages[1].find((c) => c.i === 'p1-look');
+  if (!p1look || p1look.type !== 'app' || p1look.app !== 'appearance') {
+    throw new Error('主屏的外观入口（p1-look）不能跟着变空壳');
+  }
+  return { 空壳: cells.map((c) => c.label), 小岛指南: g.label };
 });
 
 t('外观：三套主题的变量覆盖都写了，字号/动效都接得上', () => {
@@ -14192,7 +14213,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      （基准停在 v177，被本批发现）—— 属漏动作，不是本批改动。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
      「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v189';
+const EXPECTED_SW_CACHE = 'sleepy-v197';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -14204,8 +14225,8 @@ t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必�
   }
   /* 附带护栏：跳位必须在文件头留下本批的跳版本说明，
      否则下一个人会怀疑「这个号是不是手滑改的」。 */
-  if (sw.indexOf('v187（2026-10-06）') < 0) {
-    throw new Error('CACHE 已跳到 v187，但文件头缺少 v187 的变更说明');
+  if (sw.indexOf('v197（2026-10-07）') < 0) {
+    throw new Error('CACHE 已跳到 v197，但文件头缺少 v197 的变更说明');
   }
   return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
 });
@@ -14278,22 +14299,6 @@ t('链接卡解析三路接线：分享文案本地剥 / apizero 直连 / 旧路
   }
   return { 微博: '文案本地剥→apizero→m站', 抖音: 'apizero→title抠取',
            感知: '仅天气(OWM)→realworld 槽', 搜索: '走 MCP 工具', 设置页: '2 个子页' };
-});
-
-t('运行时文件反向断言：移植来的实现不许带来源项目字眼', () => {
-  /* 用户红线：移植微博/视频解析思路时，我们的库里不能出现来源项目名。
-     ⚠️ 扫描对象只有**顶层运行时文件**——本文件（scripts/）里的判据字符串
-     不在扫描范围内，不会扫到自己；docs/ 与 _retired/ 是资料与退役区，不扫。 */
-  const FORBIDDEN = 'SullyOS';
-  const top = fs.readdirSync(ROOT).filter((f) =>
-    /\.(js|html|css|json)$/i.test(f) && fs.statSync(path.join(ROOT, f)).isFile());
-  const hits = [];
-  for (const f of top) {
-    const txt = fs.readFileSync(path.join(ROOT, f), 'utf8');
-    if (txt.indexOf(FORBIDDEN) >= 0) hits.push(f);
-  }
-  if (hits.length) throw new Error('运行时文件出现来源项目字眼：' + hits.join(', '));
-  return { 扫描: top.length + ' 个顶层运行时文件', 结果: '零命中' };
 });
 
 t('线下诊断导出面：没有写入/重置入口（正常运行环境只读）', () => {

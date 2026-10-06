@@ -144,7 +144,7 @@
   }
   var NIGHT = '#0B1220';
   var BASE = token('--g-base', '#FFFFFF');
-  var ACCENT = token('--g-accent', '#B08A5E');
+  var ACCENT = token('--g-accent', '#7CA8D6');
 
   /* ---------------- 跳过 / 摘遮罩 ---------------- */
 

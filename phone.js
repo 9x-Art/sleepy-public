@@ -90,7 +90,7 @@
     { bg: '#E9E9E2', deep: '#DBDCD1', name: '米灰' },
     { bg: '#EFEADF', deep: '#E2D9C9', name: '亚麻' }
   ];
-  var ACCENTS = ['#B08A5E', '#B4766B', '#8F9B7A', '#A98AA8', '#C08A52'];
+  var ACCENTS = ['#7CA8D6', '#B4766B', '#8F9B7A', '#A98AA8', '#C08A52'];
 
   /* 字符串 → 稳定正整数。用来派生壁纸/排列/密码，别用 Math.random ——
      那样每次刷新手机就换一张脸，违反「持续存在」。 */
@@ -156,12 +156,14 @@
     var hit = phoneOf(sbId, charId);
     if (hit) return hit;
     var h = hashOf(sbId + ':' + charId);
-    /* 桌面上的 App 排列。**日历不在里面** ——
-       2026-09-19 用户拍板：日历是桌面上的一个独立 App（第 3 屏），
-       不是查手机里翻到的那一个，所以这里的日历撤掉了（相册暂时留着）。
-       ⚠️ 老存档的 phones.appOrder 里可能还有 'calendar'，page-phone 渲染时
-       会按这张表过滤掉它 —— 不改这里的话删记录的写法也得跟着动，别偷懒。 */
-    var order = ['messages', 'taobao', 'health', 'notes', 'browser', 'gallery'];
+    /* 桌面上的 App 排列。**日历和相册都不在里面** ——
+       日历 2026-09-19 用户拍板：它是桌面上的一个独立 App（第 3 屏），
+       不是查手机里翻到的那一个；相册 2026-10-06 下线（一直只是空壳，
+       没有专属页面也没有专属数据表）。
+       ⚠️ 老存档的 phones.appOrder 里可能还有 'calendar' / 'gallery'，
+       page-phone 渲染时会按那张白名单过滤掉 —— 不改这里的话
+       删记录的写法也得跟着动，别偷懒。 */
+    var order = ['messages', 'taobao', 'health', 'notes', 'browser'];
     /* 排列微调：把第 0 个和第 h%len 个对调，制造「他习惯把常用的放别处」 */
     var k = h % order.length;
     var tmp = order[0]; order[0] = order[k]; order[k] = tmp;
