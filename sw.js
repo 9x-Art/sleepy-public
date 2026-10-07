@@ -13,6 +13,13 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v198（2026-10-07）：**退出 app 后桌面点不动（隐形玻璃盖）**——
+   · style.css：.page 转场改纯淡入后（a5e9c29），退场页停留在 opacity:0
+     但仍铺满全屏、可命中，挡住桌面全部点击。补 visibility:hidden +
+     pointer-events:none 默认态，is-active/is-behind 恢复；visibility
+     挂 transition 延迟 0.26s，淡出动画播完才真正隐藏。
+   → 必须跳版本：style.css 变了。
+
    v168（2026-10-05）：**relation.intent 接主动消息候选合成**——
    · page-proactive：candidatesFor 接 relationIntent:<rootId> 的 nextAction
      为候选（排在 attention/loop/unspoken 之后）；evaluate 加 [RELATION_INTENT]
@@ -540,7 +547,7 @@
 /* v195（2026-10-07）：**海盐换薄荷 + 小岛指南多色混搭**——①原 sea 主题（冷蓝）跟新的奶蓝默认撞色，用户同意改成马卡龙薄荷绿（accent #8AC9C3 / base #F3FBFA / 墨色同步转绿），data-theme 的 id 仍是 sea 不动（老存档里选过它的不能失效）；page-appearance 的 THEMES 预览色卡同步改名为「薄荷」。②小岛指南 12 个板块各配一支马卡龙色（SECTIONS 增加 c 字段，渲染时写进 --gz-c），标题/色点/箭头/功能名/步骤圆标/路径/列表 marker/提示块左边框/问答问句全部吃它；提示块底用 color-mix 兑到 12%（12 种色再给实底太吵）。→ 必须跳版本：style.css / page-guide.js / page-appearance.js 都变了。 */
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
-var CACHE = 'sleepy-v197';
+var CACHE = 'sleepy-v198';
 var CORE = [
   './',
   './index.html',

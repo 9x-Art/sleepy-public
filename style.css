@@ -344,8 +344,18 @@ body{
      position:fixed 靠它约束在手机屏内，去掉会铺满整个浏览器窗口。 */
   transform:translateX(0);
   opacity:0;
+  /* 退场的页只是摘掉 is-active，元素本体还留在 #stack 里（build 缓存复用）。
+     以前转场是 translateX(100%)，退出后整页滑出屏幕、被 #stack 裁掉，
+     点不到也无所谓；改成纯淡入后页面永远停在原位 —— 默认态必须把
+     指针事件和命中测试一起关掉，否则就是一块铺满全屏的隐形玻璃盖，
+     「进了 app 再退出，桌面什么都点不动」（实测 2026-10-07）。
+     visibility 挂进 transition 并延迟到淡出播完才生效：动画照常，
+     播完才真正不可命中。 */
+  visibility:hidden;
+  pointer-events:none;
   transition:opacity .26s var(--ease-page),
-             filter .34s var(--ease-page);
+             filter .34s var(--ease-page),
+             visibility 0s linear .26s;
   will-change:opacity;
   z-index:10;
   --shift:-14%;   /* 每层视差位移，relayout 按深度覆盖 */
@@ -357,11 +367,19 @@ body{
    把它变成滤镜合成层、拖累滚动和页面内的 fixed 子元素。 */
 .page.is-active{
   opacity:1;
+  visibility:visible;
+  pointer-events:auto;
+  /* visibility 立即生效（0s 无延迟）：进场要马上可以命中、马上开画 */
+  transition:opacity .26s var(--ease-page),
+             filter .34s var(--ease-page),
+             visibility 0s;
   box-shadow:-22px 0 46px rgba(38,28,18,.20);
 }
 /* 后台页：零位移，只用轻微 brightness 压暗给层级（方案B，桌面纹丝不动）。 */
 .page.is-behind{
   opacity:1;
+  visibility:visible;
+  pointer-events:auto;
   filter:brightness(var(--dim));
 }
 .page.is-dragging{transition:none;}
