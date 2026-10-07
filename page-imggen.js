@@ -98,8 +98,10 @@
       body.appendChild(g0.wrap);
 
       /* ---------- 正式生图视觉层（内置 / 自定义，2026-10-01 施工单 v1 §四） ----------
-         只有两档；内置词暂不提供编辑（§一）。切换不清空自定义原文；
-         自定义框只在 custom 档露面。独立字段，与实验区的 visualExp* 互不混用。 */
+         只有两档；内置词不提供编辑（§一）。切换不清空自定义原文；
+         自定义框只在 custom 档露面。独立字段，与实验区的 visualExp* 互不混用。
+         2026-10-07 用户：组内说明文字全去掉（自定义框 hint / 动态提示 / NAI 段），
+         只留组标题、视觉层下拉、自定义框。功能与显隐逻辑未动。 */
       var gs = group('视觉层（正式生图）',
         '聊天发图、日记、朋友圈这些正式入口用哪套审美：内置＝已核准底座；自定义＝只替换审美层，人数、身份、镜头与画面事实照常保留。');
       var styleWrap = h('div', 'set-field');
@@ -116,28 +118,16 @@
 
       var styleCustom = textArea({
         label: '自定义视觉词',
-        hint: '只替换审美层；留空也合法 —— 保留结构与必要质量层，不会回退成内置词。',
         rows: 3,
         value: imggen.imgStyleCustom(),
         placeholder: '例：flat graphic illustration, limited 6-color palette'
       });
       gs.card.appendChild(styleCustom.el);
-      var styleHint = h('p', 'set-hint', '');
-      gs.card.appendChild(styleHint);
-      /* 返修单 v2 P1：NAI 不接本轮视觉层要在 UI 如实说（custom 也不生效）；
-         正式设置与实验设置分开讲清楚，旧实验文本不迁移、不清空。 */
-      gs.card.appendChild(h('p', 'set-hint',
-        'NAI 接口沿用其原生图路径，本组的内置／自定义视觉层（含自定义原文）都不生效。'
-        + '这组只管「正式生图」入口；「试一张」实验区有自己独立的视觉设置，'
-        + '两边互不影响，各自的原文都原样保留。'));
+      /* 2026-10-07 用户：视觉层这一组的说明文字（自定义框 hint、随档位变的动态
+         提示、NAI 那段）全部去掉 —— 字段本身与显隐逻辑一字未动。
+         NAI 沿用原生图路径、本组视觉层对 NAI 不生效，仍是事实，只是不再显示。 */
       function syncStyleUI() {
-        var isCustom = styleSel.value === 'custom';
-        styleCustom.el.style.display = isCustom ? '' : 'none';
-        styleHint.textContent = isCustom
-          ? (imggen.imgStyleCustom().trim()
-            ? '自定义原文会整份进请求（恰好一份，不与内置词混拼）。'
-            : '未添加自定义视觉词：这张就没有额外审美词，不回退内置。')
-          : '内置词暂不提供编辑；切到「自定义」时这里写的原文原样保留。';
+        styleCustom.el.style.display = styleSel.value === 'custom' ? '' : 'none';
       }
       styleSel.addEventListener('change', function () {
         imggen.setImgStyleMode(styleSel.value);

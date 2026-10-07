@@ -34,19 +34,32 @@
   function cfg() {
     var v = store.get(KEY);
     if (!v || typeof v !== 'object') {
-      v = { useEngine: true, developerMode: true, overrides: {}, disabled: {}, custom: [] };
+      /* 2026-10-07 用户：「预设里的内置全部上锁不可见不可编辑」——
+         开发者模式出厂改为**关**（旧默认是开，内置卡因此全都可见可编辑）。 */
+      v = { useEngine: true, developerMode: false, overrides: {}, disabled: {}, custom: [] };
       store.set(KEY, v);
     }
     if (!v.overrides) v.overrides = {};
     if (!v.disabled) v.disabled = {};
     if (!v.custom) v.custom = [];
+    /* 一次性迁移：旧默认把 developerMode:true 写进了老存档（不是用户自己开的），
+       这里洗成 false —— 不洗的话老设备升级后内置卡照样解锁。
+       置 devMigrated 之后，设置页 5 连点**主动**开出的 true 不再被这里动。
+       （基线捕获夹具显式带 devMigrated:true + developerMode:true，不受影响。） */
+    if (!v.devMigrated) {
+      v.devMigrated = true;
+      v.developerMode = false;
+      saveCfg(v);
+    }
     return v;
   }
 
   function saveCfg(v) { store.set(KEY, v); }
 
   function isEngineOn() { return cfg().useEngine !== false; }
-  function isDev() { return cfg().developerMode !== false; }
+  /* 只认**显式** true：出厂关（2026-10-07 用户拍板内置全上锁），
+     设置页 5 连点才开。不写 `!== false` —— 那会把没设过也算成开。 */
+  function isDev() { return cfg().developerMode === true; }
 
   /* 开发者模式是隐蔽开关（设置页「关于 Sleepy」连点 5 次），
      这里只提供读写，不提供任何显眼入口。 */
@@ -1186,6 +1199,14 @@
       note: '岛里有手机的角色才有（[手机] 行搭载，0 新增调用）' },
     { id: 'weproposal', slot: 'C04', name: '收藏提议', kind: 'program', required: false,
       note: '当前岛有可提议的日程事件才注入（[收藏提议:事件id|分类|理由]，We 收藏馆 P2）' },
+    /* 群声（施工卡-群声-v1 Batch E 补强，2026-10-07）：论坛能力说明。
+       只挂线上；条件注入——该岛的论坛板块初始化过（开过张）才注入，
+       没开张的岛 char 不需要知道有论坛。内容是能力认知层（知道有这个社区、
+       匿名规矩、帖子≠现实）；真正的发帖/回帖由 forum-gen 的独立调用落库。
+       program 卡：内容由 compileForum 生成，不进 page-presets 的卡编辑面
+       （与 genimg/phone 同口径 —— 不存在「内容被改」也就不需要上锁）。 */
+    { id: 'forum', slot: 'C04', name: '群声', kind: 'program', required: false,
+      note: '当前岛的论坛开张后才注入（能力认知 + 匿名规矩）' },
     /* 心声说明不再单独注入：引擎的输出协议（c05 卡）已经规定了 [WHISPER]，
        模块 E 的 replySpec 教的是旧 <心声> 写法 —— 两份同时进 prompt 会打架。 */
     { id: 'drop', slot: 'K03', name: '掉马事件', kind: 'program', required: false,
@@ -1633,6 +1654,25 @@
      伪造 id / 自报标题在程序侧 fail closed（page-we-proposal.js 的
      validateSource：不存在的 / 已取消的 / 跨角色 / 跨岛的一律丢弃，
      title 等字段以真实事件为准）。 */
+  /* 群声能力说明（施工卡-群声-v1 Batch E 补强）：当前岛的论坛开过张
+     （板块初始化过）才注入。只做能力认知与规矩三条；发帖/回帖的真实
+     落库在 forum-gen，这里不教模型动作协议。 */
+  function compileForum() {
+    var F = Sleepy.forum;
+    if (!F || !F.scopedForum) return '';
+    var sb = core.activeSandbox();
+    if (!sb) return '';
+    var boards = F.scopedForum('forumBoards', sb.id);
+    if (!boards.length) return '';
+    return '[群声]\n' +
+      '这座岛有自己的公共论坛「群声」（当前社区：' + (sb.name || '未命名小岛') + '）。' +
+      '你可以在上面刷帖、回帖、发帖，也可以把帖子分享进聊天——这些会真的发生并留下来。\n' +
+      '三条规矩：\n' +
+      '① 只谈你真实刷到过、或被人分享给你的帖子；没看过就说没看过，不虚构。\n' +
+      '② 匿名帖的作者是谁，你只能凭公开线索猜测，不能当成已知事实。\n' +
+      '③ 帖子里的内容是论坛发言，不是已经发生的现实；聊到可以，当成亲历不行。';
+  }
+
   function compileWeProposal(charId) {
     var wp = Sleepy.weProposals;
     if (!wp || !wp.candidatesOf) return '';
@@ -1865,7 +1905,7 @@
     var userId = ctx.userId || null;
     var history = ctx.history || [];
     var v = cfg();
-    var dev = v.developerMode !== false;
+    var dev = v.developerMode === true;
     var slots = [];
     var system = [];
 
@@ -1916,6 +1956,7 @@
         case 'genimg': pushSlot(def, compileGenimg()); break;
         case 'htmlgame': pushSlot(def, cardBody('htmlgame')); break;
         case 'weproposal': pushSlot(def, compileWeProposal(charId)); break;
+        case 'forum': pushSlot(def, compileForum()); break;
         case 'phone': pushSlot(def, compilePhoneDelta(charId)); break;
         case 'drop': pushSlot(def, compileDrop(charId)); break;
         case 'relation': pushSlot(def, compileRelation(charId, userId, 0)); break;
@@ -2230,7 +2271,7 @@
        最后回落当前激活马甲 —— 老会话没存 userId 也能接上记忆认知层。 */
     var userId = ctx.userId || session.userId ||
       (core.activeUser ? (core.activeUser() || {}).id : null) || null;
-    var dev = cfg().developerMode !== false;
+    var dev = cfg().developerMode === true;
     var slots = [];
     var messages = [];          /* 最终输出：system 段 + 历史原文（按序） */
 

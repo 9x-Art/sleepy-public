@@ -216,6 +216,10 @@
       item.url = entry.url;
     }
 
+    /* 群声帖子引用（施工卡-群声-v1 Batch E）：只存公开摘要 qsRef，
+       点开时显式带 sandboxId+postId 回原帖；朋友圈评论不写回群声。 */
+    if (entry.qsRef) item.qsRef = entry.qsRef;
+
     /* **为什么发这条**（reason）—— 角色自己发的时候由模型给出。
        用户：「朋友圈和记忆挂钩，他一定要知道自己为什么发这条朋友圈」。
        所以它不只是个备注，是要写进记忆库的（见 rememberMoment）。 */
@@ -965,6 +969,22 @@
     main.appendChild(h('div', 'mo-name', author.name));
 
     if (m.text) main.appendChild(h('p', 'mo-text', m.text));
+
+    /* 群声引用卡（Batch E）：米白小卡一行来源，点开回原帖（显式带岛）。 */
+    if (m.qsRef && m.qsRef.sourcePostId) {
+      var qsCard = h('div', 'mo-qs-card');
+      qsCard.appendChild(h('span', 'mo-qs-k', '群声 · ' + (m.qsRef.boardName || '社区')));
+      qsCard.appendChild(h('b', null, m.qsRef.title || '（无标题）'));
+      var qsSub = (m.qsRef.authorName || '') +
+        ((m.qsRef.stats && m.qsRef.stats.comments) ? ' · ' + m.qsRef.stats.comments + ' 条留声' : '');
+      if (qsSub) qsCard.appendChild(h('small', null, qsSub));
+      qsCard.addEventListener('click', function () {
+        Sleepy.nav.open('qunsheng-post', {
+          sandboxId: m.qsRef.sandboxId, postId: m.qsRef.sourcePostId
+        });
+      });
+      main.appendChild(qsCard);
+    }
 
     /* 带图（用户：「朋友圈可以带图发」）。本体在图库，现取 objectURL；
        取不到就整块不显示 —— 别留一个破图占着位置。 */

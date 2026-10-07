@@ -984,6 +984,27 @@ body{
   position:absolute;
 }
 .anchor-pop.is-up{animation-name:anchorPopUp;}
+/* 指向锚点的小角（2026-10-07 用户：微信长按菜单那种「下面有个小角」）。
+   水平位置由 ui.anchorPopover 的 place() 写 --ap-x；面板在锚点上方时
+   （.is-up）角挪到底边、三角翻转朝下。颜色用玻璃底色，边只画贴外那一条，
+   跟面板自己的 1px 玻璃边接上。 */
+.ap-arrow{
+  position:absolute;
+  top:-5px;
+  left:calc(var(--ap-x,50%) - 6px);
+  width:0;height:0;
+  border-left:6px solid transparent;
+  border-right:6px solid transparent;
+  border-bottom:6px solid var(--g-glass);
+}
+.anchor-pop.is-up .ap-arrow{
+  top:auto;bottom:-5px;
+  border-bottom:none;
+  border-top:6px solid var(--g-glass);
+}
+/* 长按等待期给气泡一点「按住了」的反馈（手指还在屏上、菜单还没弹出）。
+   filter 不挪布局，松手/触发即摘。 */
+.lp-pressing{filter:brightness(.9);}
 @keyframes anchorPopDown{
   from{opacity:0;transform:translateY(-4px) scale(.985);}
   to{opacity:1;transform:none;}
@@ -6422,6 +6443,32 @@ span.msg-avatar-initial{
   margin:0 0 8px;
   font-size:calc(15px * var(--fs-scale, 1));line-height:1.55;color:#1A1A1A;
   word-break:break-word;
+}
+
+/* 群声帖子引用卡（施工卡-群声-v1 Batch E）：照 demo 的米白卡 + 蓝眉行 */
+.mo-qs-card{
+  display:block;
+  margin:0 0 8px;
+  padding:8px 10px;
+  border:1px solid #bcb4a8;
+  background:#faf7ef;
+  cursor:pointer;
+}
+.mo-qs-card .mo-qs-k{
+  display:block;
+  color:#315d68;
+  font-size:9px;font-weight:800;letter-spacing:.1em;
+}
+.mo-qs-card b{
+  display:block;
+  margin-top:4px;
+  font-family:"Songti SC","STSong",serif;
+  font-size:calc(13px * var(--fs-scale, 1));line-height:1.42;color:#25231f;
+}
+.mo-qs-card small{
+  display:block;
+  margin-top:3px;
+  color:#756f65;font-size:9px;
 }
 
 /* 时间 + 两个点：一行，两端对齐 */
@@ -15435,4 +15482,151 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   font-family:var(--ff-serif);
   font-size:14px;font-style:italic;
   color:var(--g-ink-3);
+}
+
+/* ============================================================
+   协议 / 隐私弹层（legal.js · 2026-10-07）
+   复用 .dl-mask / .dl-card 的骨架，视觉自动跟其余弹层一致；
+   额外需要的只有：双标签切换 + 可滚动正文 + 两条按钮的主次分明。
+
+   真机验收后改过（首版的问题）：
+     · 卡片底太透 → 标题/正文被桌面背景糊掉，读不清 → 底色加实
+     · 正文区只有 246px 装 813px 内容 → 用户不知道能滚 → 加高 + 底部渐隐提示
+     · 两条按钮 flex 比例失衡（主按钮占满、次按钮被挤扁）→ 改成固定比例
+   ============================================================ */
+
+.legal-mask{
+  align-items:center;
+  z-index:96;              /* 高于 .dl-mask(80)：协议必须盖住任何已开的浮层 */
+  -webkit-backdrop-filter:blur(3px) saturate(1.05);
+  backdrop-filter:blur(3px) saturate(1.05);
+}
+
+.legal-card{
+  width:min(348px, 90%);
+  max-height:min(88vh, 660px);
+  padding:0;
+  display:none;
+  overflow:hidden;
+  /* 底色比 .dl-card 更实：协议是要读的东西，糊了就等于没写 */
+  background:rgba(253,254,255,.94);
+}
+.legal-mask.is-open .legal-card{
+  display:flex;
+  animation:dl-in .18s var(--ease) both;
+}
+
+/* ---- 头部 ---- */
+.legal-head{ padding:16px 20px 0; flex:none; }
+.legal-title{
+  margin:0 0 3px;
+  font-size:16px;
+  font-weight:500;
+  color:var(--text);
+}
+.legal-sub{
+  margin:0;
+  font-size:12px;line-height:1.55;
+  color:var(--text-dim);
+}
+
+/* ---- 标签切换 ---- */
+.legal-tabs{
+  display:flex;gap:6px;
+  padding:10px 20px 0;
+  flex:none;
+}
+.legal-tab{
+  flex:1;
+  padding:8px 0;
+  font-family:var(--ff-sans);
+  font-size:13px;line-height:1;
+  color:var(--text-dim);
+  background:var(--g-accent-pale);
+  border:1px solid transparent;
+  border-radius:10px;
+  cursor:pointer;
+  transition:color .14s var(--ease), background .14s var(--ease), border-color .14s var(--ease);
+}
+.legal-tab.is-on{
+  color:var(--g-accent-deep);
+  background:rgba(255,255,255,.9);
+  border-color:var(--g-accent-soft);
+}
+
+/* ---- 正文（可滚动） ----
+   底部渐隐是「下面还有」的信号 —— 没有它用户会以为协议就这点。 */
+.legal-body{
+  flex:1 1 auto;
+  min-height:200px;
+  /* 视口矮时（手机横屏 / 小窗口）别让正文被压成两三行 —— 用 dvh 拿到真实可用高度 */
+  max-height:min(58dvh, 460px);
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  padding:12px 20px 20px;
+  margin-top:10px;
+  border-top:1px solid var(--line);
+  -webkit-mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 18px),transparent 100%);
+  mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 18px),transparent 100%);
+}
+.legal-doc-title{
+  margin:0 0 3px;
+  font-family:var(--ff-serif);
+  font-size:15px;
+  color:var(--text);
+}
+.legal-doc-meta{
+  margin:0 0 6px;
+  font-size:11.5px;
+  color:var(--text-faint);
+}
+.legal-sec{ margin:0 0 14px; }
+.legal-sec h3{
+  margin:0 0 6px;
+  font-family:var(--ff-sans);
+  font-size:13px;
+  font-weight:500;
+  color:var(--g-accent-deep);
+}
+.legal-sec p{
+  margin:0 0 6px;
+  font-size:12.5px;line-height:1.8;
+  color:var(--text-dim);
+}
+.legal-sec em{
+  font-style:normal;
+  color:var(--text);
+  background:var(--g-accent-pale);
+  border-radius:3px;
+  padding:0 2px;
+}
+
+/* ---- 底部按钮 ----
+   主次分明：主操作占大头、次操作固定窄一点。
+   「先看看」用 ghost 视觉（不诱导），但仍留一个可点的像样的目标。 */
+.legal-acts{
+  display:flex;gap:9px;align-items:stretch;
+  padding:10px 20px 0;
+  flex:none;
+  border-top:1px solid var(--line);
+}
+.legal-acts .dl-btn{
+  padding:11px 14px;
+  border-radius:11px;
+  font-size:13px;
+}
+.legal-acts .dl-btn:first-child{ flex:0 0 84px; }
+.legal-acts .dl-btn-ok{ flex:1 1 auto; }
+
+.legal-foot{
+  margin:8px 20px 12px;
+  font-size:11px;line-height:1.5;
+  color:var(--text-faint);
+  flex:none;
+}
+
+/* 桌面端：屏宽裕，给正文更多行，少滚动 */
+@media (min-width: 720px){
+  .legal-card{ width:min(460px, 62%); max-height:min(80vh, 660px); }
+  .legal-body{ max-height:min(60dvh, 520px); }
 }

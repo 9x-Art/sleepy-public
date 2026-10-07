@@ -129,7 +129,10 @@ async function main() {
     });
     chk('F1 视觉层下拉存在且默认内置', ui1.sel === 'builtin', String(ui1.sel));
     chk('F1 内置档不露自定义框（内置词不提供编辑）', ui1.ta && !ui1.taVisible);
-    chk('F1 内置档提示「暂不提供编辑」', ui1.text.indexOf('内置词暂不提供编辑') >= 0);
+    /* 2026-10-07 用户：视觉层的说明文字全去掉，改为反向断言「不再出现」。
+       功能判据（框不露面 / 显隐）在上面那条，不因文案删除而失效。 */
+    chk('F1 内置档不再显示「暂不提供编辑」提示',
+      ui1.text.indexOf('内置词暂不提供编辑') < 0);
 
     /* 切到 custom：框露面；写原文 → 切回内置 → 再切回来原文还在 */
     await page.evaluate(() => {
@@ -179,7 +182,8 @@ async function main() {
     const kept = await page.evaluate(() => window.Sleepy.imggen.imgStyleCustom());
     chk('F1 切换不清空自定义原文', kept === 'flat graphic illustration, limited 6-color palette', kept);
 
-    /* 空原文提示：清空后提示「未添加自定义视觉词」 */
+    /* 空原文：2026-10-07 起不再有「未添加自定义视觉词」这句提示（用户去说明文案）。
+       改验真正要紧的一条 —— 留空不报错、不回退成内置词，imgStyleCustom 落库为空串。 */
     await page.evaluate(() => {
       const pg = document.querySelector('.page[data-page="settings-imggen"]');
       const ta = Array.from(pg.querySelectorAll('textarea')).find((t) => {
@@ -192,9 +196,12 @@ async function main() {
     await sleep(150);
     const ui3 = await page.evaluate(() => {
       const pg = document.querySelector('.page[data-page="settings-imggen"]');
-      return (pg.textContent || '').indexOf('未添加自定义视觉词') >= 0;
+      return { gone: (pg.textContent || '').indexOf('未添加自定义视觉词') < 0,
+        empty: window.Sleepy.imggen.imgStyleCustom() === '',
+        stillCustom: window.Sleepy.imggen.imgStyleMode() === 'custom' };
     });
-    chk('F1 空 custom 提示「未添加自定义视觉词」', ui3);
+    chk('F1 清空原文落库为空且档位不弹回内置',
+      ui3.gone && ui3.empty && ui3.stillCustom, JSON.stringify(ui3));
 
     /* ========== F2/F3 generate({plan}) 请求级验证 ========== */
     const genApi = await page.evaluate(() => {

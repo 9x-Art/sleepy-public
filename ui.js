@@ -537,9 +537,11 @@
     if (pop.el && pop.el.parentNode) pop.el.parentNode.removeChild(pop.el);
   }
 
-  /* anchorPopover(anchorEl, {className, width})
+  /* anchorPopover(anchorEl, {className, width, arrow})
        返回 { el, place(), close() }。el 是面板本体，往里塞内容；
        内容尺寸变了（比如列表填进去之后）要再调一次 place() 重新贴。
+     opt.arrow：带一枚指向锚点的小角（微信长按菜单那种）。
+       2026-10-07 用户：长按要「下面有个小角指向被选中的气泡」。
      同一时刻只允许一个浮层 —— 开新的会把旧的收掉。
 
      ⚠️ 面板挂到 #phone 上，**不能挂进页面里**：页面自身是可滚动的
@@ -554,6 +556,7 @@
     var pop = h('div', 'anchor-pop glass' + (opt.className ? ' ' + opt.className : ''));
     pop.setAttribute('role', 'dialog');
     if (opt.width) pop.style.width = opt.width;
+    if (opt.arrow) pop.appendChild(h('i', 'ap-arrow'));
     host.appendChild(pop);
 
     var GAP = 8, EDGE = 10;
@@ -593,6 +596,15 @@
       pop.style.left = Math.round(left) + 'px';
       pop.style.top = Math.round(top) + 'px';
       pop.classList.toggle('is-up', up);
+
+      /* 小角跟着锚点的水平中心走：算它相对面板左缘的位置，clamp 在面板
+         内侧（留出角自身宽度和圆角的安全距）。up 时角在面板底边朝下，
+         否则在顶边朝上 —— CSS 靠 .is-up 切换位置，水平都用 --ap-x。 */
+      if (opt.arrow) {
+        var cx = r.left + r.width / 2 - left;
+        cx = Math.max(18, Math.min(cx, pw - 18));
+        pop.style.setProperty('--ap-x', Math.round(cx) + 'px');
+      }
     }
 
     /* 浮层里的滚动不该被当成「页面滚了」→ 只认浮层外面的滚动 */

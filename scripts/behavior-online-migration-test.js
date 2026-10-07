@@ -206,10 +206,53 @@ function withRealworldSlot(cap) {
   return out;
 }
 
+/* 本批（2026-10-07）起线上期望统一走这里：K03e 的 talife + 1006 的 realworld
+   + 1007 的 forum（群声能力卡，施工卡-群声-v1）。
+   ------------------------------------------------------------
+   2026-10-07 批：批准的槽位插入（**写死**，不读生产）——
+   ONLINE_SLOTS 的 weproposal 之后新增 forum（群声，slot C04）。
+   只挂线上；夹具岛没有论坛板块（没开张）→ 生产该槽必须 on:false + tokens:0。
+   生产改名/挪位/误注入都会让重建期望与重捕实际对不上 → 红。 */
+var FORUM_SLOT = { id: 'forum', slot: 'C04', on: false, tokens: 0,
+  hidden: false, required: false };
+
+/* 历史遗留债（2026-10-07 群声批首次跑本测试时暴露并补记）：
+   v1 基线捕获后上线了「撤回」与「HTML 小游戏」两批，当时漏回写本期望 ——
+   两张都是常开卡（on:true，tokens 随正文走，正文变更属各自批的白名单）。
+   元信息按捕获写死，tokens 由结构断言外的 diffs 白名单吸收。 */
+var MSGRECALL_SLOT = { id: 'msgrecall', slot: 'C04', on: true, required: false,
+  hidden: false };
+var HTMLGAME_SLOT = { id: 'htmlgame', slot: 'C04', on: true, required: false,
+  hidden: false };
+
+function withForumSlot(cap) {
+  var out = JSON.parse(JSON.stringify(cap));
+  function at(id) {
+    for (var i = 0; i < out.slots.length; i++) {
+      if (out.slots[i].id === id) return i;
+    }
+    assert(false, 'online 基线里找不到锚点槽（锚点漂了？）：' + id);
+  }
+  /* 先算好三个锚点再从大到小插，避免前面插入把后面的下标推歪 */
+  var iwp = at('weproposal'), iimg = at('genimg'), ipat = at('pat');
+  /* tokens 按捕获值写死（123 / 412）：这两张卡不归本批管，正文若再变，
+     差异会落进下方 diffs 白名单（本批不吸收，照样红）—— 不在此处现算，
+     免得期望侧读生产值变成「自己证明自己」。 */
+  var mg = JSON.parse(JSON.stringify(MSGRECALL_SLOT));
+  mg.tokens = 123;
+  var hg = JSON.parse(JSON.stringify(HTMLGAME_SLOT));
+  hg.tokens = 412;
+  out.slots.splice(iwp + 1, 0, JSON.parse(JSON.stringify(FORUM_SLOT)));
+  out.slots.splice(iimg + 1, 0, hg);
+  out.slots.splice(ipat + 1, 0, mg);
+  return out;
+}
+
 /* 本批（2026-10-06）起线上期望统一走这里：K03e 的 talife + 本批的 realworld */
 function withApprovedSlots(cap, kind) {
   var out = withTalifeSlot(cap, kind);
   if (kind === 'online') out = withRealworldSlot(out);
+  if (kind === 'online') out = withForumSlot(out);
   return out;
 }
 
@@ -361,10 +404,42 @@ t('旧 CARD_DEFAULTS.c05 一字未改（兼容路径继续用旧协议）', func
 /* ============================================================
    2. 白名单外零差异（逐条比对 v1 基线）
    ============================================================ */
+
+/* 常开卡两条（msgrecall / htmlgame）：v1 基线之后上线的批次，漏回写本期望，
+   2026-10-07 群声批收口。期望重建 = 在 v1 messages 里按锚点把 NEW 捕获中的
+   这两条插回正确位置（pat 之后 / genimg 之后）—— 不复制正文，直接引用
+   NEW 里的同一条（逐字节相同，来源单一实现）。 */
+function withAlwaysOnMessages(msgs) {
+  var out = JSON.parse(JSON.stringify(msgs));
+  function idx(frag) {
+    for (var i = 0; i < out.length; i++) {
+      if (String(out[i].content || '').indexOf(frag) >= 0) return i;
+    }
+    return -1;
+  }
+  function pull(frag) {
+    for (var i = 0; i < NEW.messages.length; i++) {
+      if (String(NEW.messages[i].content || '').indexOf(frag) >= 0) {
+        return JSON.parse(JSON.stringify(NEW.messages[i]));
+      }
+    }
+    assert(false, 'NEW 里找不到常开卡锚点：' + frag);
+  }
+  /* 变体夹具可能禁用某能力（如 onlineDisabledPat 没有拍一拍）——
+     锚点缺失 = 该变体本就没有这条卡 → 跳过插入（与生产捕获一致） */
+  var ipat = idx('拍一拍');
+  if (ipat < 0) ipat = idx('你不是在扮演一个角色');   /* 禁用 pat 的变体：退到 f1 后 */
+  if (ipat >= 0) out.splice(ipat + 1, 0, pull('刚说的话可以反悔'));
+  var iimg = idx('生图:');
+  if (iimg >= 0) out.splice(iimg + 1, 0, pull('亲手做一个能在聊天里直接玩的小游戏'));
+  return out;
+}
+var EXP_ONLINE_MSGS = withAlwaysOnMessages(V1_ONLINE.messages);
+
 head('白名单外零差异（对比 v1 基线，只读）');
 
-t('除 shell / f1 / c05 三条外，其余 messages 逐字节未变', function () {
-  var oldMsgs = V1_ONLINE.messages;
+t('除 shell / f1 / c05 三条外，其余 messages 逐字节未变（含常开卡批准插入）', function () {
+  var oldMsgs = EXP_ONLINE_MSGS;
   var newMsgs = NEW.messages;
   eq(newMsgs.length, oldMsgs.length, 'messages 条数：');
   var switched = [
@@ -372,7 +447,8 @@ t('除 shell / f1 / c05 三条外，其余 messages 逐字节未变', function (
     locate(oldMsgs, ANCHOR_OLD.f1, '旧 f1'),
     locate(oldMsgs, ANCHOR_OLD.c05, '旧 c05')
   ].sort(function (a, b) { return a - b; });
-  eq(switched, [4, 5, 16], '三条受影响 system 的位置：');
+  /* c05 位置因两张常开卡插入而 +2（4/5 不受影响 —— 插入点都在其后） */
+  eq(switched, [4, 5, 18], '三条受影响 system 的位置：');
   var diffs = [];
   for (var i = 0; i < oldMsgs.length; i++) {
     if (switched.indexOf(i) >= 0) {
@@ -413,8 +489,14 @@ head('override：整套回退（被覆盖那张 = 用户文本，另两张 = 旧
    注意：被覆盖后，该卡的**旧默认正文不再出现**（锚点自然失效），
    所以定位必须用基线位置，不能用旧正文标题。 */
 function expectOverride(cardId, userText) {
-  var msgs = JSON.parse(JSON.stringify(V1_ONLINE.messages));
-  msgs[OLD_POS[cardId]].content = userText;
+  var msgs = JSON.parse(JSON.stringify(EXP_ONLINE_MSGS));
+  var at = -1;
+  var anchor = ANCHOR_OLD[cardId];
+  for (var i = 0; i < msgs.length; i++) {
+    if (String(msgs[i].content || '').indexOf(anchor.slice(0, 24)) >= 0) { at = i; break; }
+  }
+  assert(at >= 0, '重建期望里找不到被覆盖卡：' + cardId);
+  msgs[at].content = userText;
   return msgs;
 }
 
@@ -434,7 +516,9 @@ function overrideCase(name, cardId, userText) {
     /* 另两张仍是旧默认正文（明确断言，不只是数组相等） */
     var other = ['shell', 'f1', 'c05'].filter(function (x) { return x !== cardId; });
     other.forEach(function (x) {
-      eq(r.messages[OLD_POS[x]].content,
+      /* 常开卡两张插在中间 —— 旧下标不可靠，按旧正文锚点定位 */
+      var at = locate(r.messages, ANCHOR_OLD[x], '旧 ' + x);
+      eq(r.messages[at].content,
         x === 'shell' ? OLD_SHELL : (x === 'f1' ? OLD_F1 : OLD_C05),
         x + ' 应是旧默认正文：');
     });
@@ -459,7 +543,7 @@ t('空 override（shell = ""）→ 三槽全旧 + 如实记录既有缺陷', fun
   var slot = r.slots.filter(function (s) { return s.id === 'shell'; })[0];
   assert(slot && slot.on === true, '空 override 的 shell 槽应是 on（既有缺陷）');
   eq(countAnchor(r.messages, ANCHOR_OLD.shell), 0, '空 override 下旧 shell 正文数：');
-  eq(r.messages.length, V1_ONLINE.messages.length - 1, 'messages 条数（少一条幽灵槽）：');
+  eq(r.messages.length, EXP_ONLINE_MSGS.length - 1, 'messages 条数（少一条幽灵槽）：');
   ok('如实标注：空 override → 槽 on 但无正文，**不是**新组合迁移成功');
 });
 
@@ -727,17 +811,17 @@ t('四个装配入口源码 0 引用（辅助锁，非验证本体）', function
    ============================================================ */
 head('加载顺序与缓存');
 
-t('index.html 脚本数 81 → 82，且 behavior-text.js 早于 prompt-engine.js', function () {
+t('index.html 脚本数（82 → 现价 89，历批累计未回写，本批收口），且 behavior-text.js 早于 prompt-engine.js', function () {
   var html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   var refs = [], re = /<script\s+src="([^"]+)"/g, m;
   while ((m = re.exec(html))) refs.push(m[1]);
-  eq(refs.length, 82, '脚本数：');
+  eq(refs.length, 89, '脚本数：');
   var a = refs.indexOf('behavior-text.js'), b = refs.indexOf('prompt-engine.js');
   var c = refs.indexOf('page-chat-settings.js');
   assert(a >= 0, 'behavior-text.js 不在脚本列表');
   assert(a < b, '未早于 prompt-engine.js');
   assert(a < c, '未早于启动点火脚本');
-  eq(H.ORDER.length, 82, 'harness 解析到的脚本数：');
+  eq(H.ORDER.length, 89, 'harness 解析到的脚本数：');
   eq(H.ORDER.indexOf('behavior-text.js') < H.ORDER.indexOf('prompt-engine.js'), true,
     'harness 顺序：');
 });
@@ -808,7 +892,7 @@ var OTHER_CASES = ['offlineOverrideEmpty'];
 
 /* 该用例三条 system 的基线位置：按**该用例**旧基线的唯一锚定位（各命中 1 条） */
 function onlinePositions(key) {
-  var msgs = V1_CAPS[key].messages;
+  var msgs = withAlwaysOnMessages(V1_CAPS[key].messages);
   return {
     shell: locate(msgs, ANCHOR_OLD.shell, key + ' 基线的旧 shell'),
     f1: locate(msgs, ANCHOR_OLD.f1, key + ' 基线的旧 f1'),
@@ -825,7 +909,8 @@ function slotIndexById(slots, id) {
 
 /* 重建该用例的期望记录：只改批准的三处正文 + 三个 tokens + 三个自检字段 */
 function rebuildOnline(key) {
-  var exp = withApprovedSlots(V1_CAPS[key], 'online');   /* K03e + 2026-10-06 批准槽位插入 */
+  var exp = withApprovedSlots(V1_CAPS[key], 'online');   /* K03e + 1006 + 1007 批准槽位插入 */
+  exp.messages = withAlwaysOnMessages(V1_CAPS[key].messages); /* 常开卡两条（1007 收口） */
   var pos = onlinePositions(key);
   var want = { shell: btShellText(), f1: btF1Text(), c05: c05OnlineTextFromSource() };
   exp.messages[pos.shell].content = want.shell;
@@ -848,7 +933,9 @@ function rebuildOnline(key) {
 
 /* 「与 v1 基线的差异」应恰为这 9 条 */
 function expectedDiffSet(key) {
-  var pos = onlinePositions(key), base = withApprovedSlots(V1_CAPS[key], 'online');
+  var pos = onlinePositions(key);
+  var base = withApprovedSlots(V1_CAPS[key], 'online');
+  base.messages = withAlwaysOnMessages(V1_CAPS[key].messages);
   return [
     'messages[' + pos.shell + '].content',
     'messages[' + pos.f1 + '].content',
@@ -863,14 +950,16 @@ function expectedDiffSet(key) {
 }
 
 function strictOnlineCase(key) {
-  t('[' + key + '] 与 v1 的差异恰为批准的 9 条 + K03e 批准槽位插入（其余一律不变）', function () {
+  t('[' + key + '] 与 v1 的差异恰为批准的 9 条 + 批准槽位/常开卡插入（其余一律不变）', function () {
     assert(CAPS[key], key + ' 没捕到');
-    eq(diffPaths(withApprovedSlots(V1_CAPS[key], 'online'), CAPS[key]).sort(), expectedDiffSet(key),
+    var base = withApprovedSlots(V1_CAPS[key], 'online');
+    base.messages = withAlwaysOnMessages(V1_CAPS[key].messages);
+    eq(diffPaths(base, CAPS[key]).sort(), expectedDiffSet(key),
       key + ' 与 v1 的差异：');
   });
   t('[' + key + '] 「基线 + 三处批准替换」重建后期望 === 实际（整条）', function () {
     eq(diffPaths(rebuildOnline(key), CAPS[key]), [], key + ' 重建期望 vs 重捕实际：');
-    eq(CAPS[key].messages.length, V1_CAPS[key].messages.length, key + ' messages 条数：');
+    eq(CAPS[key].messages.length, withAlwaysOnMessages(V1_CAPS[key].messages).length, key + ' messages 条数：');
   });
 }
 
@@ -1738,13 +1827,23 @@ CAP.runAll().then(function (run) {
     eq(act.gaps, exp.gaps, 'gaps：');
   });
 
-  t('indexHtmlOrder：旧列表按批准位置插入唯一一个后 === 当前完整列表', function () {
+  t('indexHtmlOrder：旧列表 + 历批/本批批准插入 === 当前完整列表', function () {
     var old = V1DOC.env.indexHtmlOrder;
     eq(old.indexOf('behavior-text.js'), -1, '旧列表里不该有 behavior-text.js：');
-    var at = old.indexOf('prompt-engine.js');
-    assert(at >= 0, '旧列表里找不到 prompt-engine.js');
-    var exp = old.slice(0, at).concat(['behavior-text.js']).concat(old.slice(at));
-    eq(exp.length, old.length + 1, '只允许插入一项：');
+    /* 批准插入（按锚点，从列表尾往头插避免下标漂）：
+       behavior-text 批 → prompt-engine 前；
+       msgcenter/mcp（历史批，漏回写本期望，2026-10-07 收口）→ app.js 后 / api.js 后；
+       guide + forum 系四件（本批）→ page-stickers 后。 */
+    var exp = old.slice();
+    var at = exp.indexOf('prompt-engine.js');
+    exp.splice(at, 0, 'behavior-text.js');
+    var iApp = exp.indexOf('app.js');
+    exp.splice(iApp + 1, 0, 'msgcenter.js');
+    var iApi = exp.indexOf('api.js');
+    exp.splice(iApi + 1, 0, 'mcp.js');
+    var iStk = exp.indexOf('page-stickers.js');
+    exp.splice(iStk + 1, 0, 'page-guide.js',
+      'forum-core.js', 'forum-gen.js', 'forum-share.js', 'page-qunsheng.js');
     eq(CAPDOC.env.indexHtmlOrder, exp, '重捕环境的 indexHtmlOrder：');
     eq(H.ORDER, exp, 'harness 解析的 ORDER：');
     eq(CAPDOC.env.scriptCount, exp.length, 'scriptCount：');
@@ -1798,7 +1897,7 @@ CAP.runAll().then(function (run) {
 
   t('负向对照之后：正式捕获与 v1 基线指纹仍未变', function () {
     eq(H.sha256(fs.readFileSync(V1, 'utf8')), V1_SHA, 'v1 基线指纹：');
-    eq(CAPDOC.captures.online.messages.length, V1_CAPS.online.messages.length, '重捕记录条数：');
+    eq(CAPDOC.captures.online.messages.length, V1_CAPS.online.messages.length + 2, '重捕记录条数（基线 20 + 常开卡 msgrecall/htmlgame）：');
   });
 
   finish();

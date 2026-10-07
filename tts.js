@@ -239,49 +239,14 @@
           caps: { performanceTags: false, speed: true, maxCharacters: 4000 }
         }
       ]
-    },
-
-    /* ============ 下面这些是**探测过、现在接不了**的 ============
-       planned 只表示「没有适配器」，desc 里写的是实测出来的真实原因 ——
-       用户看到的是「为什么不能直连」，而不是一个神秘的灰行。 */
-
-    dashscope: {
-      id: 'dashscope', planned: true,
-      name: '阿里云 CosyVoice',
-      desc: '跨域是通的，但音频是用**临时链接**返回的：那个链接能不能跨域取回还没验过' +
-        '（要真 Key 跑一次）→ 暂时请走「自定义 · OpenAI 兼容」'
-    },
-    volcengine: {
-      id: 'volcengine', planned: true,
-      name: '火山引擎（豆包语音）',
-      desc: '接口不支持浏览器跨域（预检直接 404）→ 需要自建中转，走「自定义 · OpenAI 兼容」'
-    },
-    tencent_tts: {
-      id: 'tencent_tts', planned: true,
-      name: '腾讯云语音合成',
-      desc: '要求 TC3-HMAC-SHA256 签名，而且响应里没有跨域头 → 需要自建中转'
-    },
-    xfyun: {
-      id: 'xfyun', planned: true,
-      name: '讯飞语音合成',
-      desc: '只提供 WebSocket 接口，静态前端这条「拿回二进制」的链路接不了'
-    },
-    edge_tts: {
-      id: 'edge_tts', planned: true,
-      name: 'Edge 朗读（免费）',
-      desc: '免费、音色多，但同样只有 WebSocket 口子 —— 浏览器里连不了'
-    },
-    openai: {
-      id: 'openai', planned: true,
-      name: 'OpenAI 官方 TTS',
-      desc: 'OpenAI 不给浏览器跨域，本机网络也到不了 → 只能用「自定义 · OpenAI 兼容」填中转地址'
     }
   };
-  var PROVIDER_ORDER = ['fish_audio', 'minimax', 'elevenlabs', 'siliconflow', 'azure', 'custom_openai'];
 
-  /* 探测过、但**现在接不了**的（连同原因一起摆出来 —— 用户看得到「为什么不能直连」，
-     而不是一个神秘的灰行）。这些一律不显示成可用（契约 §8.6）。 */
-  var PROVIDER_PLANNED = ['dashscope', 'volcengine', 'tencent_tts', 'xfyun', 'edge_tts', 'openai'];
+  /* 2026-10-07 用户：「阿里云那些用不了的全部去掉」——
+     原先这里挂着一份「探测过、接不了」的 planned 清单（dashscope / volcengine /
+     tencent_tts / xfyun / edge_tts / openai），页面照着摆了一组灰行。
+     现在整份撤掉：接不了的就不再出现，想接自建/中转走 custom_openai。 */
+  var PROVIDER_ORDER = ['fish_audio', 'minimax', 'elevenlabs', 'siliconflow', 'azure', 'custom_openai'];
 
   function providerOf(id) { return PROVIDERS[id] || null; }
   function modelsOf(providerId) {
@@ -292,6 +257,48 @@
     var list = modelsOf(providerId);
     for (var i = 0; i < list.length; i++) if (list[i].id === modelId) return list[i];
     return list[0] || null;
+  }
+
+  /* 拉取模型列表（2026-10-07 用户：自建/中转要有「拉取模型」的地方）。
+     OpenAI 兼容口径：GET {接口地址去掉 /audio/speech}/models，Bearer 鉴权；
+     解析 { data: [{ id }] }，兼容直接回字符串数组的服务。
+     只读不改数据 —— 选哪个模型由页面落库。 */
+  function fetchModelList(conn) {
+    conn = conn || {};
+    return new Promise(function (resolve) {
+      if ((conn.provider || '') !== 'custom_openai') {
+        resolve({ ok: false, message: '只有「自定义 · OpenAI 兼容」支持拉取模型（别家的模型表是内置的）' });
+        return;
+      }
+      var ep = String(conn.endpoint || '').trim();
+      if (!ep) { resolve({ ok: false, message: '先填接口地址再拉取' }); return; }
+      var base = ep.replace(/\/audio\/speech\/?$/, '').replace(/\/+$/, '');
+      var url = base + '/models';
+      global.fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer ' + (conn.apiKey || '') }
+      }).then(function (r) {
+        return r.text().then(function (txt) {
+          var json = null;
+          try { json = JSON.parse(txt); } catch (e) { /* 原样报错 */ }
+          if (!r.ok) {
+            resolve({ ok: false, status: r.status, message: '拉取失败（HTTP ' + r.status + '）' + (txt ? '：' + txt.slice(0, 160) : '') });
+            return;
+          }
+          var ids = [];
+          if (json && Array.isArray(json.data)) {
+            json.data.forEach(function (m) { if (m && m.id) ids.push(String(m.id)); });
+          } else if (Array.isArray(json)) {
+            json.forEach(function (m) { ids.push(String(typeof m === 'string' ? m : (m && m.id))); });
+          }
+          ids = ids.filter(Boolean);
+          if (!ids.length) { resolve({ ok: false, message: '服务通了，但没解析出模型列表（不是 OpenAI 兼容的 /models？）' }); return; }
+          resolve({ ok: true, models: ids });
+        });
+      }, function (err) {
+        resolve({ ok: false, message: '连不上服务：' + ((err && err.message) || 'network error') });
+      });
+    });
   }
   /* 模型级能力表（契约要求）。缺省给最保守的一份 */
   function capabilitiesOf(providerId, modelId) {
@@ -1578,7 +1585,6 @@
     FREQUENCIES: FREQUENCIES,
     PROVIDERS: PROVIDERS,
     PROVIDER_ORDER: PROVIDER_ORDER,
-    PROVIDER_PLANNED: PROVIDER_PLANNED,
     OUTPUT_DEFAULT: OUTPUT_DEFAULT,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     DEFAULT_VOICE: DEFAULT_VOICE,
@@ -1605,6 +1611,7 @@
     /* 能力与映射（纯函数，给 UI 和测试用） */
     modelsOf: modelsOf,
     modelOf: modelOf,
+    fetchModelList: fetchModelList,
     providerOf: providerOf,
     capabilitiesOf: capabilitiesOf,
     featuresOf: featuresOf,

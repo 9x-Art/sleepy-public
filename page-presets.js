@@ -68,6 +68,17 @@
         eng.appendChild(engSwitch);
         body.appendChild(eng);
 
+        /* 2026-10-07 用户：内置上锁卡**直接点不进二级页** —— 点进去也看不了
+           编辑不了，没意义。列表里拦住，弹个 toast 说明（开发者模式不受限）。 */
+        function openCard(id) {
+          var meta = E.cardMeta(id);
+          if (meta && meta.locked && !E.isDev()) {
+            ctx.toast('这张是内置卡，已上锁', 'warn');
+            return;
+          }
+          ctx.open('preset-card', { id: id });
+        }
+
         /* ---- 调用类型 ---- */
         var types = h('div', 'pp-sec');
         types.appendChild(h('p', 'pp-sec-title', '调用类型'));
@@ -75,12 +86,11 @@
         tRow.type = 'button';
         var tMain = h('span', 'pp-row-main');
         tMain.appendChild(h('span', 'pp-row-label', '线上普通回复'));
-        tMain.appendChild(h('span', 'pp-row-hint', 'F1 · 已实装'));
         tRow.appendChild(tMain);
         tRow.appendChild(h('span', 'pp-row-arrow', '›'));
         tRow.addEventListener('click', function () {
           global.scrollTo(0, 0);
-          ctx.open('preset-card', { id: 'f1' });
+          openCard('f1');
         });
         types.appendChild(tRow);
 
@@ -88,20 +98,19 @@
            page-offline 的 requestTurn 走的就是 assembleOffline）：
            线下走线下页、总结引擎和主动消息引擎在后台用各自的卡。 */
         [
-          { id: 'f2', name: '线下普通回复', hint: '线下模式 · 已接' },
-          { id: 'summary', name: '总结（线上累计 / 线下大）', hint: '记忆系统 v5 · 已接' },
-          { id: 'proactive', name: '主动消息', hint: '主动消息引擎 · 已接' },
-          { id: 'groupRound', name: '群聊一轮编排', hint: '线上群聊 · 已接' }
+          { id: 'f2', name: '线下普通回复' },
+          { id: 'summary', name: '总结（线上累计 / 线下大）' },
+          { id: 'proactive', name: '主动消息' },
+          { id: 'groupRound', name: '群聊一轮编排' }
         ].forEach(function (t) {
           var lockedCard = !!(E.cardMeta(t.id) && E.cardMeta(t.id).locked) && !dev;
           var r = h('button', 'pp-row pp-row-active');
           r.type = 'button';
           var m = h('span', 'pp-row-main');
           m.appendChild(h('span', 'pp-row-label', t.name));
-          m.appendChild(h('span', 'pp-row-hint', t.hint));
           r.appendChild(m);
           r.appendChild(h('span', 'pp-row-lock', lockedCard ? '已上锁' : '内置'));
-          r.addEventListener('click', function () { ctx.open('preset-card', { id: t.id }); });
+          r.addEventListener('click', function () { openCard(t.id); });
           types.appendChild(r);
         });
         body.appendChild(types);
@@ -122,15 +131,13 @@
           r.type = 'button';
           var m = h('span', 'pp-row-main');
           m.appendChild(h('span', 'pp-row-label', def.name));
-          m.appendChild(h('span', 'pp-row-hint', def.note ||
-            (meta && meta.locked ? 'Sleepy 内置注入' : '')));
           r.appendChild(m);
           /* 上锁 UI（第三梯队 7）：非开发者模式下，内置锁卡在列表里就标出来 */
           if (meta && meta.locked && !dev) r.appendChild(h('span', 'pp-row-lock', '已上锁'));
           r.appendChild(h('span', 'pp-row-tag', def.slot));
           if (isCard && toks) r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(toks)));
           if (!def.required) r.appendChild(h('span', 'pp-row-req', '可选'));
-          r.addEventListener('click', function () { ctx.open('preset-card', { id: def.id }); });
+          r.addEventListener('click', function () { openCard(def.id); });
           seq.appendChild(r);
         });
         body.appendChild(seq);
@@ -152,13 +159,11 @@
           if (isCard) r.type = 'button';
           var m = h('span', 'pp-row-main');
           m.appendChild(h('span', 'pp-row-label', def.name));
-          m.appendChild(h('span', 'pp-row-hint', def.note ||
-            (meta && meta.locked ? 'Sleepy 内置注入' : '')));
           r.appendChild(m);
           if (meta && meta.locked && !dev) r.appendChild(h('span', 'pp-row-lock', '已上锁'));
           r.appendChild(h('span', 'pp-row-tag', def.slot));
           if (isCard && toks) r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(toks)));
-          if (isCard) r.addEventListener('click', function () { ctx.open('preset-card', { id: def.id }); });
+          if (isCard) r.addEventListener('click', function () { openCard(def.id); });
           seqOff.appendChild(r);
         });
         body.appendChild(seqOff);
@@ -184,8 +189,10 @@
           r.type = 'button';
           var m = h('span', 'pp-row-main');
           m.appendChild(h('span', 'pp-row-label', cc.title));
-          m.appendChild(h('span', 'pp-row-hint', '≈' + fmtTok(E.estimate(cc.body)) + ' tok'));
           r.appendChild(m);
+          /* token 数是数值不是解释：从原来的 hint 行挪到右侧标签位，
+             与上面两个注入序列区一致（2026-10-07 用户：条目下面的解释全去掉）。 */
+          r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(E.estimate(cc.body)) + ' tok'));
           r.addEventListener('click', function () { ctx.open('preset-custom-edit', { id: cc.id }); });
           cus.appendChild(r);
         });
@@ -198,7 +205,6 @@
         pv.type = 'button';
         var pm = h('span', 'pp-row-main');
         pm.appendChild(h('span', 'pp-row-label', '打开预览'));
-        pm.appendChild(h('span', 'pp-row-hint', '逐槽 tokens + 完整 prompt'));
         pv.appendChild(pm);
         pv.appendChild(h('span', 'pp-row-arrow', '›'));
         pv.addEventListener('click', function () { ctx.open('preset-preview', {}); });

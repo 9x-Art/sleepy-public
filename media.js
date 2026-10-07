@@ -272,6 +272,119 @@
     });
   }
 
+  /* ---------------------------- 导出 / 导入 ----------------------------
+
+     2026-10-07 用户：导出备份要能带上媒体数据（语音、图片这些）。
+     图库本体在 IndexedDB，主备份（store.exportUserData）只装 localStorage，
+     所以这里单独给一对 exportAll / importAll，备份页整包下载、整包灌回。
+     格式仍然是零依赖的 .json：blob 转 dataURL 塞进去（几百 MB 量级会大，
+     但这是纯静态项目不引库能做到的最直一份）。 */
+
+  function blobToDataURL(blob) {
+    return new Promise(function (resolve) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '')); };
+      fr.onerror = function () { resolve(''); };
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  function blobFromDataURL(u) {
+    try {
+      var comma = String(u).indexOf(',');
+      if (comma < 0) return null;
+      var head = String(u).slice(0, comma);
+      var mime = (head.match(/data:([^;,]*)/) || [])[1] || 'application/octet-stream';
+      var bin = global.atob(String(u).slice(comma + 1));
+      var arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new global.Blob([arr], { type: mime });
+    } catch (e) { return null; }
+  }
+
+  /* exportAll() → Promise<{ ok, count, bytes, items }>
+     items: [{ id, name, kind, type, size, at, w, h, data }]（data 是 dataURL）。 */
+  function exportAll() {
+    var items = [];
+    return withStore('readonly', function (os) {
+      var req = os.openCursor();
+      req.onsuccess = function () {
+        var cur = req.result;
+        if (!cur) return;
+        var v = cur.value || {};
+        items.push({
+          id: v.id, name: v.name || '', kind: v.kind || 'other',
+          type: v.type || '', size: v.size || 0, at: v.at || 0,
+          w: v.w || 0, h: v.h || 0,
+          blob: v.blob || null
+        });
+        cur.continue();
+      };
+    }).then(function () {
+      var bytes = 0;
+      var out = [];
+      var chain = Promise.resolve();
+      items.forEach(function (it) {
+        chain = chain.then(function () {
+          if (!it.blob) return Promise.resolve();
+          return blobToDataURL(it.blob).then(function (data) {
+            if (!data) return;
+            bytes += it.size || 0;
+            out.push({
+              id: it.id, name: it.name, kind: it.kind, type: it.type,
+              size: it.size, at: it.at, w: it.w, h: it.h, data: data
+            });
+          });
+        });
+      });
+      return chain.then(function () {
+        return { ok: true, count: out.length, bytes: bytes, items: out };
+      });
+    }, function (e) {
+      return { ok: false, message: (e && e.message) || '读不了图库' };
+    });
+  }
+
+  /* importAll(items, { merge }) → Promise<{ ok, added, skipped }>
+     默认 merge：同 id 的媒体**不覆盖**（新设备上已有的图不冲掉）；
+     merge=false 才整条覆写。导入前**不清库** —— 那是破坏性动作，调用方自己确认。 */
+  function importAll(items, opt) {
+    opt = opt || {};
+    var list = Array.isArray(items) ? items : [];
+    var added = 0, skipped = 0;
+    var chain = Promise.resolve();
+    list.forEach(function (it) {
+      chain = chain.then(function () {
+        if (!it || !it.id || !it.data) { skipped++; return; }
+        var blob = blobFromDataURL(it.data);
+        if (!blob) { skipped++; return; }
+        /* 存在性检查照 get() 的口径：变量放 withStore 外面 ——
+           fn 是同步执行的，onsuccess 还没 fire 时返回值必是 null，
+           事务完成后再读外层变量才是查到的那条。 */
+        var exist = null;
+        return withStore('readonly', function (os) {
+          var req = os.get(it.id);
+          req.onsuccess = function () { exist = req.result || null; };
+        }).then(function () {
+          if (opt.merge !== false && exist) { skipped++; return; }
+          return withStore('readwrite', function (os) {
+            os.put({
+              id: it.id, blob: blob,
+              name: it.name || '', type: it.type || blob.type || '',
+              size: blob.size || it.size || 0, kind: it.kind || 'other',
+              at: it.at || 0, w: it.w || 0, h: it.h || 0
+            });
+          }).then(function () { added++; });
+        });
+      });
+    });
+    return chain.then(function () {
+      return { ok: true, added: added, skipped: skipped };
+    }, function (e) {
+      return { ok: false, message: (e && e.message) || '写不进图库', added: added, skipped: skipped };
+    });
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.media = {
@@ -284,6 +397,8 @@
     usage: usage,
     clear: clear,
     shrink: shrink,
+    exportAll: exportAll,
+    importAll: importAll,
     MAX_EDGE: MAX_EDGE,
     /* 给人看的容量文案。设置页和相册都要用，放这儿一份，别各写各的 */
     fmtBytes: function (n) {

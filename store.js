@@ -255,6 +255,27 @@
        ⚠️ status:'ok' 只能在拿到真实 eventId 之后写 —— 见 action.js 头六条规矩 */
     actionRequests: [],
 
+    /* 群声 · 公共论坛（施工卡-群声-v1 Batch A，forum-core.js）：
+       13 张表全部按岛 scoped（tagScope 盖章 + cleanupSandbox 删房清）。
+       Batch A 只落键与上下文解析；账号 / 板块 / 帖子的服务入口是 Batch B。
+       两个 BySandbox 映射键按 sandboxId 切，不在 scoped 名单里，
+       删房走「带 sbId 的键」那条路（同 widgetCfg）。 */
+    forumAccounts: [],          /* 论坛账号 { id, sandboxId, ownerEntityId, ownerType, accountType, displayName, handle, avatarRef, bio, status, createdAt, updatedAt } */
+    forumBoards: [],            /* 板块实例（模板跨岛复用，实例带 sandboxId） */
+    forumPosts: [],             /* 帖子 { id, sandboxId, boardId, authorAccountId, authorDisplayMode, anonymousAlias, postType, title, content, visibility, allowRepost, sourceType, sourceId, sourceRef, assetRefs, placeText, status, createdAt, updatedAt } */
+    forumComments: [],          /* 回复树 { id, sandboxId, postId, parentId, rootCommentId, authorAccountId, isPostAuthor, content, status, createdAt, updatedAt } */
+    forumReposts: [],           /* 公开转帖（只引用 sourcePostId，不复制原帖） */
+    forumFollows: [],           /* 关注（账号 / 板块） */
+    forumLikes: [],             /* 同感（界面文案「同感」，数据层 likes） */
+    forumCollections: [],       /* 收藏（默认私有） */
+    forumNotifications: [],     /* 论坛通知（持久化，不碰 msgcenter 的内存层） */
+    forumShares: [],            /* 定向分享记录（单聊 / 群聊 / 朋友圈） */
+    forumShareReceipts: [],     /* 分享回执（送达 / 打开 / 已回应，只存状态不存正文） */
+    forumDrafts: [],            /* 草稿箱 */
+    forumKnowledge: [],         /* 论坛认知（观察者 × 公开身份，五档状态） */
+    forumSettingsBySandbox: {},          /* { [sandboxId]: 设置 } */
+    selectedForumAccountBySandbox: {},   /* { [sandboxId]: 当前论坛身份 } 切岛独立恢复 */
+
     /* 名片夹（树状）：见文件头 1) */
     characters: [],
 
@@ -505,6 +526,22 @@
   var PROCESS_KEYS = ['charMemMigrationState', 'vecEpoch'];
   var PROCESS_PREFIXES = ['charMemBackup:', 'vecCursor', 'vecFail:'];
 
+  /* ---- 设备本地键（2026-10-07 协议同意标记带出来的）----
+     「这台设备上发生过什么」：协议同意标记 legalAgreedAt 属于这一类。
+     它**跟着设备走，不跟着存档走** —— 所以两个方向都不带：
+       · 用户导出不带 → 换设备导入后**该弹的协议会重新弹**，
+         而不是带着上一台设备的「我已知情」直接进桌面；
+       · 内部回滚快照也不带 → 一次导入失败回滚不该把同意状态倒回去，
+         用户会莫名再被弹一次。
+     和过程数据的区别：过程数据**要**进内部快照（回滚时必须恢复），
+     同意标记是两个方向都不进，所以单列判据，不塞进 isProcessKey ——
+     混进去会让「回滚要恢复过程数据」这套口径失效。 */
+  var DEVICE_LOCAL_KEYS = ['legalAgreedAt'];
+
+  function isDeviceLocalKey(top) {
+    return DEVICE_LOCAL_KEYS.indexOf(top) >= 0;
+  }
+
   function isProcessKey(top) {
     if (PROCESS_KEYS.indexOf(top) >= 0) return true;
     for (var i = 0; i < PROCESS_PREFIXES.length; i++) {
@@ -528,6 +565,7 @@
     for (top in DEFAULTS) {
       if (!has(DEFAULTS, top)) continue;
       if (!withProcess && isProcessKey(top)) continue;
+      if (isDeviceLocalKey(top)) continue;         /* 设备本地状态不进任何快照 */
       out.data[top] = clone(load(top));
     }
 
@@ -545,6 +583,7 @@
         var key = k.slice(NS.length);
         if (!key || has(out.data, key)) continue;
         if (!withProcess && isProcessKey(key)) continue;   /* 过程数据不进用户备份 */
+        if (isDeviceLocalKey(key)) continue;              /* 同意标记等：两个方向都不进 */
         out.data[key] = clone(load(key));
       }
     } catch (e) {
@@ -587,6 +626,10 @@
          本机的迁移事务状态只由本机的迁移流程管，旧备份不能把它带回来、
          更不能覆盖掉当前正在跑的那个事务。（用户口径 2026-09-23） */
       if (isProcessKey(top)) { skipped.push(top); continue; }
+      /* 设备本地状态同理：旧设备导出的备份里可能有同意标记，
+         但**新设备的同意状态必须由这台设备自己重新决定** ——
+         带过来会让「该弹的协议」不弹。 */
+      if (isDeviceLocalKey(top)) { skipped.push(top); continue; }
       var base = has(DEFAULTS, top) ? clone(DEFAULTS[top]) : null;
       var incoming = unwrapSelf(top, payload.data[top]);
       cache[top] = base !== null ? merge(base, incoming) : clone(incoming);

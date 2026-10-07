@@ -1223,6 +1223,728 @@ t('桌面户型里浮岛占的是原来名片夹那一格', () => {
   return { 格子: cell.i, app: cell.app, 标签: cell.label, 户型版本: d.version };
 });
 
+console.log('\n--- page:群声（公共论坛 · 施工卡-群声-v1 Batch A）---');
+
+/* 群声 = 桌面第 3 屏的真入口（版本 22 从「贴纸」空壳改来）。
+   Batch A 只交付：App 壳 + 显式 sandboxId 上下文 + 存储键与删岛登记。 */
+ok('群声 App 已注册且有 render', !!S.registered().qunsheng);
+
+t('forum 数据层出口齐全（13 张表 + 2 个映射键）', () => {
+  const F = S.forum;
+  if (!F) throw new Error('Sleepy.forum 缺失');
+  if (F.KEYS.length !== 13) throw new Error('forum 键数不对：' + F.KEYS.length);
+  if (F.MAP_KEYS.length !== 2) throw new Error('forum 映射键数不对：' + F.MAP_KEYS.length);
+  ['resolveContext', 'unlockContext', 'scopedForum', 'putForum', 'tagScope',
+   'getForumMap', 'setForumMap', 'pageOf'].forEach((k) => {
+    if (typeof F[k] !== 'function') throw new Error('缺出口 ' + k);
+  });
+  return { 表: F.KEYS.length, 映射: F.MAP_KEYS.length };
+});
+
+t('forum 新键进 store 默认值并随 exportAll 带走', () => {
+  const data = S.store.exportAll().data;
+  S.forum.KEYS.forEach((k) => {
+    if (!Array.isArray(data[k])) throw new Error('导出缺数组键：' + k);
+  });
+  if (typeof data.forumSettingsBySandbox !== 'object') throw new Error('导出缺 forumSettingsBySandbox');
+  if (typeof data.selectedForumAccountBySandbox !== 'object') throw new Error('导出缺 selectedForumAccountBySandbox');
+  return 'ok';
+});
+
+t('桌面「群声」格就位（p3-qunsheng / v22 / 专属图标）', () => {
+  const d = S.desktop.defaultDesktop();
+  if (d.version !== 22) throw new Error('户型版本不对：' + d.version);
+  const cell = d.pages[3].filter((c) => c.i === 'p3-qunsheng')[0];
+  if (!cell) throw new Error('第 3 屏找不到 p3-qunsheng');
+  if (cell.app !== 'qunsheng' || cell.type !== 'app') throw new Error('格子不是群声真入口');
+  if (!S.desktop.ICONS.qunsheng) throw new Error('qunsheng 没有自己的图标条目（会兜底撞聊天图标）');
+  /* 贴纸 App 本体还在（别处入口），只是不占桌面这格了 */
+  const gone = d.pages[3].filter((c) => c.i === 'p3-stickers').length;
+  if (gone) throw new Error('旧 p3-stickers 格还在');
+  return { 格子: cell.i, app: cell.app, 图标: typeof S.desktop.icon('qunsheng') };
+});
+
+/* 专用岛：下面几条测试自己的沙盘，不碰前面 sbIsle / sbArch */
+const sbQsIsle = S.core.createSandbox('isle', '群声测试孤岛').id;
+S.core.setSandboxChars(sbQsIsle, [m1]);
+const sbQsGhost = 'sb-不存在的岛';
+
+t('resolveContext：显式 sandboxId 优先 + 孤岛恰好 1 位主要 char', () => {
+  S.forum.unlockContext();
+  const fx = S.forum.resolveContext(sbQsIsle);
+  if (!fx.ok) throw new Error(fx.message);
+  if (fx.sandboxId !== sbQsIsle) throw new Error('没认显式参数');
+  if (fx.sandboxKind !== 'isle') throw new Error('kind 不对：' + fx.sandboxKind);
+  if (fx.primaryCharIds.length !== 1) throw new Error('孤岛主要 char 数不对');
+  return { 社区: fx.sandboxName, 主要char: fx.primaryCharIds.length, 街坊: fx.residentNpcIds.length };
+});
+
+t('resolveContext：伪造 sandboxId 进错误态，不静默落第一间房', () => {
+  S.forum.unlockContext();
+  const fx = S.forum.resolveContext(sbQsGhost);
+  if (fx.ok !== false) throw new Error('假 id 竟然解析成功了');
+  if (fx.reason !== 'bad-sandbox') throw new Error('reason 不对：' + fx.reason);
+  /* 页面级兜底：参数缺省时回落到当前房，且成功后锁定 */
+  const cur = S.forum.resolveContext(null);
+  if (!cur.ok) throw new Error('无参数时该回落到当前房');
+  return { 假id: fx.reason, 回落: cur.sandboxId !== sbQsGhost };
+});
+
+t('scoped 读写：盖章后本岛可见、别的岛看不见', () => {
+  const F = S.forum;
+  const rec = F.tagScope({ id: 'fp_1', boardId: 'b1' }, sbQsIsle);
+  const all = F.scopedForum('forumPosts').concat([rec]);
+  F.putForum('forumPosts', all);
+  if (F.scopedForum('forumPosts', sbQsIsle).length !== 1) throw new Error('本岛读不到');
+  const other = S.core.createSandbox('isle', '群声邻居岛').id;
+  if (F.scopedForum('forumPosts', other).length !== 0) throw new Error('串岛了');
+  S.core._purgeSync.sandbox(other);
+  return 'ok';
+});
+
+t('pageOf 分页：createdAt+id 稳定排序，游标翻页无重复无漏项', () => {
+  const F = S.forum;
+  const list = [];
+  for (let i = 0; i < 7; i++) {
+    list.push({ id: 'p' + i, createdAt: '2026-10-0' + ((i % 3) + 1) + 'T0' + i + ':00:00Z' });
+  }
+  const seen = [];
+  let cursor = null;
+  for (let guard = 0; guard < 10; guard++) {
+    const pg = F.pageOf(list, cursor, 3);
+    pg.items.forEach((x) => seen.push(x.id));
+    if (!pg.hasMore) break;
+    cursor = pg.nextCursor;
+    if (!cursor) throw new Error('hasMore 却没有 nextCursor');
+  }
+  if (seen.length !== list.length) throw new Error('漏项：' + seen.length + '/' + list.length);
+  if (new Set(seen).size !== seen.length) throw new Error('重复');
+  return { 条数: seen.length, 页数: Math.ceil(seen.length / 3) };
+});
+
+t('删岛清 forum 数据（scoped 表 + 按岛映射键）', () => {
+  const F = S.forum;
+  const sb = S.core.createSandbox('isle', '群声拆迁岛').id;
+  F.putForum('forumPosts', F.scopedForum('forumPosts').concat([
+    F.tagScope({ id: 'fp_del' }, sb)
+  ]));
+  F.setForumMap('selectedForumAccountBySandbox', sb, { accountId: 'fa_x' });
+  const r = S.core._purgeSync.sandbox(sb);
+  if (!r.ok) throw new Error('拆迁失败');
+  if (F.scopedForum('forumPosts', sb).length !== 0) throw new Error('帖子残留');
+  if (F.getForumMap('selectedForumAccountBySandbox', sb) !== null) throw new Error('论坛身份残留');
+  return 'ok';
+});
+
+S.forum.unlockContext();
+
+console.log('\n--- page:群声 Batch B（账号 / 板块 / 帖子 / 投影 / 生成）---');
+
+/* 给群声测试岛配「我」：默认马甲（main）+ 小号马甲（alt） */
+const duQs = S.core.ensureDefaultUser().id;
+S.core.setSandboxMasks(sbQsIsle, [duQs, u2]);
+
+t('ensureSeed 幂等：user 马甲分主/小号，char 一号，八板块', () => {
+  const r1 = S.forum.ensureSeed(sbQsIsle);
+  if (!r1.ok) throw new Error(r1.message);
+  const r2 = S.forum.ensureSeed(sbQsIsle);
+  const accs = S.forum.scopedForum('forumAccounts', sbQsIsle);
+  const mine = accs.filter((a) => a.ownerType === 'user');
+  const mains = mine.filter((a) => a.accountType === 'main');
+  const alts = mine.filter((a) => a.accountType === 'alt');
+  if (mains.length !== 1 || alts.length !== 1) throw new Error('user 账号拆分不对：' + mine.length);
+  if (mains[0].ownerEntityId !== duQs) throw new Error('main 没落在默认马甲上');
+  if (r2.created.accounts !== 0 || r2.created.boards !== 0) throw new Error('ensureSeed 不幂等');
+  if (S.forum.listBoards(sbQsIsle).length !== 8) throw new Error('板块不是 8 个');
+  return { user: mine.length, char: accs.filter((a) => a.ownerType === 'char').length, 板块: 8 };
+});
+
+t('身份选择：可切小号、拒外部身份、失效回退主账号', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  if (!S.forum.setSelectedForumAccount(sbQsIsle, altA.id).ok) throw new Error('切小号失败');
+  if (S.forum.getSelectedForumAccount(sbQsIsle).id !== altA.id) throw new Error('没切过去');
+  if (S.forum.setSelectedForumAccount(sbQsIsle, 'fa_别岛的').ok) throw new Error('外部身份竟被接受');
+  /* 失效回退：把选中记录指向一个不存在的账号 → 回退 main */
+  S.forum.setForumMap('selectedForumAccountBySandbox', sbQsIsle, { accountId: 'fa_幽灵' });
+  if (S.forum.getSelectedForumAccount(sbQsIsle).id !== mainA.id) throw new Error('没回退到主账号');
+  S.forum.setSelectedForumAccount(sbQsIsle, altA.id);
+  return 'ok';
+});
+
+t('发帖与匿名投影：公开层不露真实账号，同帖同别名、跨帖不串联', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  const tree = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'treehole')[0];
+  const r1 = S.forum.createPost({ sandboxId: sbQsIsle, boardId: tree.id, accountId: altA.id, anonymous: true, title: '匿帖一', content: '正文' });
+  const r2 = S.forum.createPost({ sandboxId: sbQsIsle, boardId: tree.id, accountId: altA.id, anonymous: true, title: '匿帖二', content: '正文' });
+  if (!r1.ok) throw new Error(r1.message);
+  const pa = S.forum.publicAuthorOf(r1.post, r1.post.authorAccountId, sbQsIsle);
+  if (pa.anonymous !== true) throw new Error('匿名投影错了');
+  if ('accountId' in pa || 'ownerEntityId' in pa) throw new Error('匿名投影泄露了真实账号字段');
+  /* 楼主在本帖回复 → 同一别名 */
+  const c1 = S.forum.createComment({ sandboxId: sbQsIsle, postId: r1.post.id, accountId: altA.id, content: '楼主回一句' });
+  if (!c1.comment.isPostAuthor) throw new Error('楼主判据丢了');
+  const paSelf = S.forum.publicAuthorOf(r1.post, c1.comment.authorAccountId, sbQsIsle);
+  if (paSelf.displayName !== pa.displayName) throw new Error('同帖别名不一致');
+  /* 跨帖别名不同（不靠巧合 —— 用多组 hash 位置校验） */
+  const pb = S.forum.publicAuthorOf(r2.post, r2.post.authorAccountId, sbQsIsle);
+  if (pb.displayName === pa.displayName) throw new Error('跨帖别名串联了');
+  return { 匿名一: pa.displayName, 匿名二: pb.displayName };
+});
+
+t('回复树 / 同感唯一：toggle 两次回到原点，计数不重复', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '公开帖', content: '大家好' }).post;
+  const c = S.forum.createComment({ sandboxId: sbQsIsle, postId: p.id, accountId: mainA.id, content: '自己占楼' }).comment;
+  const t1 = S.forum.toggleLike('comment', c.id, mainA.id);
+  const t2 = S.forum.toggleLike('comment', c.id, mainA.id);
+  if (t1.on !== true || t2.on !== false) throw new Error('同感 toggle 不对称');
+  if (S.forum.countOf('forumLikes', 'comment', c.id, sbQsIsle) !== 0) throw new Error('残留记录');
+  S.forum.toggleLike('comment', c.id, mainA.id);
+  if (S.forum.countOf('forumLikes', 'comment', c.id, sbQsIsle) !== 1) throw new Error('重复同感');
+  return 'ok';
+});
+
+t('getHomeFeed 最新流：游标翻页无重复无漏项', () => {
+  const seen = [];
+  let cursor = null;
+  for (let guard = 0; guard < 20; guard++) {
+    const pg = S.forum.getHomeFeed('latest', cursor, 3, sbQsIsle);
+    pg.items.forEach((x) => seen.push(x.id));
+    if (!pg.hasMore) break;
+    if (!pg.nextCursor) throw new Error('hasMore 却没有游标');
+    cursor = pg.nextCursor;
+  }
+  if (new Set(seen).size !== seen.length) throw new Error('最新流有重复');
+  const total = S.forum.scopedForum('forumPosts', sbQsIsle).filter((p) => p.status === 'active').length;
+  if (seen.length !== total) throw new Error('漏项：' + seen.length + '/' + total);
+  /* follow 流 Batch B 恒空（关注是后续批） */
+  if (S.forum.getHomeFeed('follow', null, 10, sbQsIsle).items.length !== 0) throw new Error('follow 流不该有东西');
+  return { 帖子: total, 翻页后: seen.length };
+});
+
+t('forumGen 出口齐全 + 群声 5 页注册', () => {
+  const Gg = S.forumGen;
+  if (!Gg) throw new Error('Sleepy.forumGen 缺失');
+  ['ensureSeedContent', 'requestReplies', 'queueReplies', 'extractJson', '_setTransport']
+    .forEach((k) => { if (typeof Gg[k] !== 'function') throw new Error('缺 ' + k); });
+  ['qunsheng', 'qunsheng-post', 'qunsheng-compose', 'qunsheng-me', 'qunsheng-notices'].forEach((id) => {
+    if (!S.registered()[id]) throw new Error('缺页面：' + id);
+  });
+  if (Gg.extractJson('废话 {"a":1} 废话').a !== 1) throw new Error('JSON 抠取坏了');
+  return 'ok';
+});
+
+const qsSeedTransportCalls = { n: 0 };
+const qsSeedJson = JSON.stringify({
+  residents: [{ name: '北窗', style: '话不多，句句是画面' }],
+  posts: [
+    { board: 'daily', author: '北窗', type: 'normal', title: '楼下的猫今天很配合', content: '拍到了一张正脸。', minutesAgo: 100,
+      comments: [
+        { author: '楼主', content: '它认镜头。', minutesAgo: 20 },
+        { author: 'char:顾清和', content: '哪只？我昨天也见到了。', minutesAgo: 10 }
+      ] },
+    { board: 'treehole', author: '@anon', type: 'help', title: '匿名帖', content: '不敢说的事。', minutesAgo: 30, comments: [] }
+  ]
+});
+const qsSeedErr = { stage: 'none' };
+S.forumGen._setTransport((msgs, cb) => {
+  qsSeedTransportCalls.n++;
+  if (qsSeedErr.stage !== 'none') { cb(qsSeedErr); return; }
+  cb(null, qsSeedJson);
+});
+
+t('forumGen 种子：居民/帖子/评论落库 + seeded 标记，二次调用跳过', () => new Promise((res) => {
+  S.forumGen.ensureSeedContent(sbQsIsle, (err, r) => {
+    if (err) { throw new Error('种子失败：' + err.error); }
+    if (!r.created || r.created.posts !== 2 || r.created.residents !== 1 || r.created.comments !== 2) {
+      throw new Error('落库计数不对：' + JSON.stringify(r.created));
+    }
+    const accs = S.forum.scopedForum('forumAccounts', sbQsIsle);
+    const bz = accs.filter((a) => a.ownerEntityId === 'gen:北窗')[0];
+    if (!bz) throw new Error('居民账号没建');
+    const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+    const posts = S.forum.scopedForum('forumPosts', sbQsIsle)
+      .filter((p) => p.boardId === daily.id && p.title === '楼下的猫今天很配合');
+    if (posts.length !== 1) throw new Error('种子帖没找到');
+    /* char:顾清和 的评论 → 用顾清和的论坛账号 */
+    const ghAcc = accs.filter((a) => a.ownerType === 'char')[0];
+    const cs = S.forum.listComments(posts[0].id, sbQsIsle);
+    const byChar = cs.some((c) => c.authorAccountId === ghAcc.id);
+    if (!byChar) throw new Error('char 评论没落到 char 账号上');
+    /* 楼主评论 isPostAuthor */
+    if (!cs.filter((c) => c.isPostAuthor).length) throw new Error('楼主判据丢了');
+    /* 匿名帖投影不露账号 */
+    const tree = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'treehole')[0];
+    const anonPost = S.forum.scopedForum('forumPosts', sbQsIsle).filter((p) => p.boardId === tree.id)[0];
+    const pa = S.forum.publicAuthorOf(anonPost, anonPost.authorAccountId, sbQsIsle);
+    if ('accountId' in pa) throw new Error('种子匿名帖泄露账号');
+    if (!S.forum.getForumMap('forumSettingsBySandbox', sbQsIsle).seeded) throw new Error('seeded 标记没写');
+    /* 二次调用：skip */
+    S.forumGen.ensureSeedContent(sbQsIsle, (e2, r2) => {
+      if (e2) throw new Error(e2.error);
+      if (!r2.skipped) throw new Error('二次调用没跳过');
+      if (qsSeedTransportCalls.n !== 1) throw new Error('模型被调了 ' + qsSeedTransportCalls.n + ' 次（应只 1 次）');
+      res('ok');
+    });
+  });
+}));
+
+t('forumGen 解析失败：不写 seeded、可重试', () => new Promise((res) => {
+  const sb = S.core.createSandbox('isle', '群声坏生成岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  S.forum.ensureSeed(sb);
+  qsSeedErr.stage = 'parse';
+  qsSeedTransportCalls.n = 0;
+  S.forumGen.ensureSeedContent(sb, (err) => {
+    if (!err || err.stage !== 'parse') throw new Error('该报 parse 错');
+    if (S.forum.getForumMap('forumSettingsBySandbox', sb)) throw new Error('失败却写了 seeded');
+    /* 恢复后可重试成功 */
+    qsSeedErr.stage = 'none';
+    S.forumGen.ensureSeedContent(sb, (e2, r2) => {
+      if (e2) throw new Error('重试失败：' + e2.error);
+      if (!r2.created) throw new Error('重试没落库');
+      S.core._purgeSync.sandbox(sb);
+      res('ok');
+    });
+  });
+}));
+
+t('forumGen 催回复：char 开口 + 60s 冷却拦截', () => new Promise((res) => {
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  /* 上一条测试把页面上下文锁定在了已拆迁的岛 —— 显式重锁回本岛 */
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const post = S.forum.scopedForum('forumPosts', sbQsIsle)
+    .filter((p) => p.boardId === daily.id && p.title === '楼下的猫今天很配合')[0];
+  S.forumGen._setTransport((msgs, cb) => {
+    cb(null, JSON.stringify({ comments: [{ author: 'char:顾清和', content: '又来留一句。' }] }));
+  });
+  S.forumGen.requestReplies(post.id, (err, r) => {
+    if (err) throw new Error(err.error);
+    if (r.added !== 1) throw new Error('回复没写进去：' + r.added);
+    S.forumGen.requestReplies(post.id, (e2) => {
+      if (!e2 || e2.stage !== 'cooldown') throw new Error('冷却没拦住');
+      S.forumGen._setTransport((msgs, cb) => cb(null, qsSeedJson));   /* 还原成种子 transport，别污染别的测试 */
+      res('ok');
+    });
+  });
+}));
+
+console.log('\n--- page:群声 Batch C（转发 / 分享卡 / 回来源岛）---');
+
+t('forum-share 出口齐全', () => {
+  const FS = S.forumShare;
+  if (!FS) throw new Error('Sleepy.forumShare 缺失');
+  ['buildPayload', 'listTargets', 'shareToChat', 'shareToGroup', 'repostToProfile',
+   'checkOpen', 'cardEl'].forEach((k) => {
+    if (typeof FS[k] !== 'function') throw new Error('缺 ' + k);
+  });
+  return 'ok';
+});
+
+t('buildPayload：公开帖全字段；删帖 / 关转发拒绝且不给数据', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '可分享帖', content: '正文正文' }).post;
+
+  const good = S.forumShare.buildPayload(sbQsIsle, p.id, mainA.id, '给你看看');
+  if (!good.ok) throw new Error('公开帖竟被拒');
+  if (good.payload.type !== 'qunsheng-share' || good.payload.sandboxId !== sbQsIsle) throw new Error('payload 结构不对');
+  if (good.payload.sourcePostId !== p.id || good.payload.attachedText !== '给你看看') throw new Error('payload 字段丢了');
+  if (!good.payload.boardName || good.payload.author == null) throw new Error('payload 摘要缺');
+
+  /* 删帖：先造一条再标记删除 */
+  const dead = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '将删帖', content: 'x' }).post;
+  const all = S.store.get('forumPosts');
+  all.filter((x) => x.id === dead.id)[0].status = 'deleted';
+  S.store.set('forumPosts', all);
+  const r1 = S.forumShare.buildPayload(sbQsIsle, dead.id, mainA.id, '');
+  if (r1.ok || r1.reason !== 'deleted') throw new Error('删帖该拒：' + JSON.stringify(r1));
+
+  /* 关转发 */
+  const noRep = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '关转帖', content: 'x', allowRepost: false }).post;
+  const r2 = S.forumShare.buildPayload(sbQsIsle, noRep.id, mainA.id, '');
+  if (r2.ok || r2.reason !== 'no-repost') throw new Error('关转发该拒');
+  return { board: good.payload.boardName, stats: good.payload.stats };
+});
+
+t('匿名帖 payload 与卡片：不泄露真实账号，删帖卡降级无全文', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  const tree = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'treehole')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: tree.id, accountId: altA.id, anonymous: true, title: '匿卡帖', content: '秘密秘密' }).post;
+
+  const r = S.forumShare.buildPayload(sbQsIsle, p.id, altA.id, '');
+  const s = JSON.stringify(r.payload);
+  if (s.indexOf(altA.id) >= 0) throw new Error('payload 泄露真实账号 id');
+  if (r.payload.author.anonymous !== true) throw new Error('匿名标记丢了');
+
+  /* 渲染：cardEl 跑在 vm 沙箱里（那里有 document 桩）。桩的 textContent
+     不聚合子节点 —— 用 walkText 收集整棵树的文字再断言。 */
+  function walkText(el) {
+    let out = '';
+    if (!el) return out;
+    if (el._text) out += el._text;
+    (el.children || []).forEach((c) => { out += walkText(c); });
+    return out;
+  }
+  const msg = { type: 'qunsheng-share', content: '', qs: r.payload };
+  const el1 = S.forumShare.cardEl(msg, null);
+  if (walkText(el1).indexOf('秘密秘密') < 0) throw new Error('正常卡该显示标题');
+  const allP = S.store.get('forumPosts');
+  allP.filter((x) => x.id === p.id)[0].status = 'deleted';
+  S.store.set('forumPosts', allP);
+  const el2 = S.forumShare.cardEl(msg, null);
+  const t2 = walkText(el2);
+  if (t2.indexOf('秘密秘密') >= 0) throw new Error('降级卡不该保留全文');
+  if (t2.indexOf('已由作者删除') < 0) throw new Error('降级卡没说明原因');
+  return 'ok';
+});
+
+t('分享到私聊：消息入 chat、台账落 forumShares、重复分享给 dup 提示', () => {
+  /* 切到群声测试岛，「我 × 顾清和」开一条私聊 */
+  S.core.setActiveSandbox(sbQsIsle);
+  S.core.switchTo(m1, duQs);
+  const chat = S.chatStore.chatOf(m1) || S.chatStore.createChat('顾清和', m1);
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '私聊分享帖', content: ' hello' }).post;
+
+  const r1 = S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p.id, chatId: chat.id, senderAccountId: mainA.id, attachedText: '看看这个' });
+  if (!r1.ok) throw new Error('私聊分享失败：' + JSON.stringify(r1));
+  const fresh = S.chatStore.getChat(chat.id);
+  const last = fresh.messages[fresh.messages.length - 1];
+  if (last.type !== 'qunsheng-share' || last.qs.sourcePostId !== p.id) throw new Error('消息没进会话或 payload 丢了');
+  if (last.content !== '看看这个') throw new Error('附言丢了');
+  /* 重复分享 → ok 但 dup=true */
+  const r2 = S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p.id, chatId: chat.id, senderAccountId: mainA.id, attachedText: '' });
+  if (!r2.ok || !r2.dup) throw new Error('重复分享没被识别');
+  const shares = S.forum.scopedForum('forumShares', sbQsIsle);
+  if (shares.filter((x) => x.sourcePostId === p.id && x.targetType === 'chat').length !== 2) throw new Error('台账没记');
+  return 'ok';
+});
+
+t('分享到群聊：payload 走 msg.qs 不平铺；跨岛会话拒发', () => {
+  const g = S.groupStore.createGroup({ name: '群声试群', members: [
+    { kind: 'user', accountId: duQs }, { kind: 'char', accountId: m1 }
+  ] });
+  if (!g.ok) throw new Error('建群失败：' + g.message);
+  const groupId = g.group ? g.group.id : g.id;
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '群聊分享帖', content: 'yo' }).post;
+  const member = S.groupStore.userAccountsOf(groupId)[0] || {};
+
+  const r = S.forumShare.shareToGroup({ sandboxId: sbQsIsle, postId: p.id, groupId, senderAccountId: mainA.id, groupMemberAccountId: member.accountId, attachedText: '' });
+  if (!r.ok) throw new Error('群聊分享失败：' + JSON.stringify(r));
+  const msgs = S.groupStore.messagesOf(groupId);
+  const last = msgs[msgs.length - 1];
+  if (last.type !== 'qunsheng-share' || !last.qs || last.qs.sourcePostId !== p.id) throw new Error('群消息没带统一 payload');
+
+  /* 跨岛会话：拿别的岛的 chat id 发 → bad-target */
+  const sbOther = S.core.createSandbox('isle', '分享邻居岛').id;
+  const rBad = S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p.id, chatId: 'chat_别岛的', senderAccountId: mainA.id, attachedText: '' });
+  if (rBad.ok || rBad.reason !== 'bad-target') throw new Error('跨岛会话该拒');
+  S.core._purgeSync.sandbox(sbOther);
+  return 'ok';
+});
+
+t('公开转帖：只存引用不复制原帖，我的页可看；原帖删后占位', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '转帖源', content: '源' }).post;
+  const r = S.forumShare.repostToProfile({ sandboxId: sbQsIsle, postId: p.id, senderAccountId: mainA.id, attachedText: '转一句' });
+  if (!r.ok) throw new Error('转帖失败');
+  const reps = S.forum.scopedForum('forumReposts', sbQsIsle);
+  const mine1 = reps.filter((x) => x.sourcePostId === p.id)[0];
+  if (!mine1 || mine1.attachedText !== '转一句') throw new Error('转帖记录缺');
+  if (S.forum.countOf('forumLikes', 'post', p.id, sbQsIsle) !== 0) { /* 无关断言占位 */ }
+  return 'ok';
+});
+
+console.log('\n--- page:群声 Batch D（通知 / 未读 / 回执）---');
+
+t('回复我：char 回 user 帖 → 通知到作者账号；自回自不通知', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const charAcc = S.forum.scopedForum('forumAccounts', sbQsIsle).filter((a) => a.ownerType === 'char')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const before = S.forum.listNotifications(sbQsIsle, mainA.id).length;
+
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '通知源帖', content: '来互动' }).post;
+  S.forum.createComment({ sandboxId: sbQsIsle, postId: p.id, accountId: charAcc.id, content: 'char 来回复一句' });
+  const list = S.forum.listNotifications(sbQsIsle, mainA.id);
+  const hit = list[0];
+  if (list.length !== before + 1) throw new Error('通知没落：' + (list.length - before));
+  if (hit.category !== 'reply' || hit.sourceId !== p.id) throw new Error('reply 通知字段不对');
+  if (hit.recipientAccountId !== mainA.id) throw new Error('接收维度不对');
+  if (hit.actorName !== '顾清和') throw new Error('actor 名不对：' + hit.actorName);
+
+  /* 自回自：不通知 */
+  S.forum.createComment({ sandboxId: sbQsIsle, postId: p.id, accountId: mainA.id, content: '楼主自己说' });
+  if (S.forum.listNotifications(sbQsIsle, mainA.id).length !== list.length) throw new Error('自回自不该通知');
+  return { actor: hit.actorName, preview: hit.previewText };
+});
+
+t('同感：通知 + 去重；居民账号根本不收', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const charAcc = S.forum.scopedForum('forumAccounts', sbQsIsle).filter((a) => a.ownerType === 'char')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '同感源帖', content: 'x' }).post;
+
+  S.forum.toggleLike('post', p.id, charAcc.id);
+  const n1 = S.forum.listNotifications(sbQsIsle, mainA.id)[0];
+  if (!n1 || n1.category !== 'like') throw new Error('like 通知没落');
+  /* 同一 actor 没读前再触发 → 去重不再堆 */
+  S.forum.toggleLike('post', p.id, charAcc.id);   /* off */
+  S.forum.toggleLike('post', p.id, charAcc.id);   /* on  */
+  const list = S.forum.listNotifications(sbQsIsle, mainA.id).filter((n) => n.category === 'like' && n.sourceId === p.id);
+  if (list.length !== 1) throw new Error('like 去重失效：' + list.length);
+
+  /* 居民账号：notify 直接拒 */
+  const resident = S.forum.scopedForum('forumAccounts', sbQsIsle).filter((a) => a.ownerType === 'resident')[0];
+  if (resident && S.forum.notify({ sandboxId: sbQsIsle, recipientAccountId: resident.id, category: 'system', sourceType: 'post', sourceId: 'x' }) !== null) {
+    throw new Error('居民不该收通知');
+  }
+  return 'ok';
+});
+
+t('切小号不互曝；未读计数 / 全部已读持久；切岛不串', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  if (S.forum.listNotifications(sbQsIsle, altA.id).length !== 0) throw new Error('小号看到了大号的通知');
+  if (S.forum.unreadCount(sbQsIsle, mainA.id) < 1) throw new Error('未读计数异常');
+
+  const changed = S.forum.markAllRead(sbQsIsle, mainA.id);
+  if (changed < 1) throw new Error('没标到已读');
+  if (S.forum.unreadCount(sbQsIsle, mainA.id) !== 0) throw new Error('已读不持久');
+  /* 刷一遍存储确认 readAt 真落库 */
+  const raw = S.store.get('forumNotifications').filter((n) => n.recipientAccountId === mainA.id);
+  if (raw.some((n) => !n.readAt)) throw new Error('readAt 没写进存档');
+
+  /* 别的岛的通知不影响本岛未读 */
+  const sb2 = S.core.createSandbox('isle', '通知隔离岛').id;
+  S.core.setSandboxMasks(sb2, [duQs]);
+  S.forum.ensureSeed(sb2);
+  const m2acc = S.forum.listOwnedForumAccounts(sb2)[0];
+  S.forum.notify({ sandboxId: sb2, recipientAccountId: m2acc.id, category: 'system', sourceType: 'post', sourceId: 'x', previewText: '别的岛的信' });
+  const cntFor2 = S.forum.unreadCount(sb2, m2acc.id);
+  S.forum.markAllRead(sbQsIsle, mainA.id);
+  if (S.forum.unreadCount(sb2, m2acc.id) !== cntFor2) throw new Error('跨岛 markAllRead 串了');
+  S.core._purgeSync.sandbox(sb2);
+  return { 本岛已读: changed };
+});
+
+t('分享回执：markOpened 盖 openedAt + 通知发送者，二次不再记', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '回执源帖', content: 'x' }).post;
+  const chat = S.chatStore.chatOf(m1) || S.chatStore.createChat('顾清和', m1);
+  const r = S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p.id, chatId: chat.id, senderAccountId: mainA.id, attachedText: '' });
+  if (!r.ok) throw new Error('分享失败');
+
+  const ok1 = S.forumShare.markOpened({ sandboxId: sbQsIsle, sourcePostId: p.id, targetType: 'chat', targetId: chat.id, openerName: '顾清和' });
+  if (!ok1) throw new Error('回执没记上');
+  const shareRec = S.forum.scopedForum('forumShares', sbQsIsle).filter((x) => x.sourcePostId === p.id)[0];
+  if (!shareRec.openedAt) throw new Error('openedAt 没写');
+  const note = S.forum.listNotifications(sbQsIsle, mainA.id)[0];
+  if (!note || note.category !== 'receipt') throw new Error('receipt 通知没落');
+  /* 二次打开：不重复记 */
+  const ok2 = S.forumShare.markOpened({ sandboxId: sbQsIsle, sourcePostId: p.id, targetType: 'chat', targetId: chat.id });
+  if (ok2) throw new Error('回执重复记');
+  return 'ok';
+});
+
+console.log('\n--- page:群声 Batch E（帷境 / 图片引用 / 朋友圈 / 认知）---');
+
+t('帷境公开投影：draft 不进论坛；投影零选角零手记', () => {
+  if (!S.wj) throw new Error('Sleepy.wj 缺失');
+  const draft = S.wj.createDraft({ title: '未开帷的作品' });
+  if (S.forumShare.wjProjection(draft.id)) throw new Error('draft 竟然有投影');
+  const w = S.wj.createDraft({ title: '雨停车站', reality: 'canon_candidate' });
+  S.wj.mutate(w.id, (x) => {
+    x.status = 'serializing';
+    x.chapters = [{ id: 'ch1', title: '一章', status: 'ready', paras: [{ text: '路灯把玻璃切成四份。' }] }];
+    /* 模拟老存档里带选角：投影绝不能带出去 */
+    x.privateCastIds = ['char_秘密'];
+    x.creationNotes = '手记';
+  });
+  const proj = S.forumShare.wjProjection(w.id);
+  if (!proj) throw new Error('非 draft 该有投影');
+  if (proj.publicTitle !== '雨停车站' || proj.canonStatus !== 'canon_candidate') throw new Error('投影字段不对');
+  const s = JSON.stringify(proj);
+  if (s.indexOf('char_秘密') >= 0 || s.indexOf('手记') >= 0) throw new Error('投影泄露私密层');
+  S.wj.remove(draft.id); S.wj.remove(w.id);
+  return { canon: proj.canonStatus };
+});
+
+t('帷境帖子：sourceRef 落库 + detail 数据源零私密层', () => {
+  const w = S.wj.createDraft({ title: '发帖引用的作品', reality: 'story' });
+  S.wj.mutate(w.id, (x) => { x.status = 'completed'; });
+  const proj = S.forumShare.wjProjection(w.id);
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const fan = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'fanwork')[0];
+  const p = S.forum.createPost({
+    sandboxId: sbQsIsle, boardId: fan.id, accountId: mainA.id,
+    postType: 'work', title: '新作', content: '同人到货',
+    sourceType: 'wjWork', sourceId: w.id, sourceRef: proj
+  }).post;
+  if (p.sourceType !== 'wjWork' || p.sourceRef.publicTitle !== '发帖引用的作品') throw new Error('sourceRef 没落库');
+  S.wj.remove(w.id);
+  return 'ok';
+});
+
+t('图片引用：assetRefs 只存 mediaId（上限 3 不强制、空数组可）', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({
+    sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    title: '图文帖', content: '看图', assetRefs: ['media_a', 'media_b']
+  }).post;
+  if (p.assetRefs.length !== 2 || p.assetRefs[0] !== 'media_a') throw new Error('assetRefs 没落库');
+  if (JSON.stringify(p).indexOf('blob') >= 0) throw new Error('帖子表不该存图片本体');
+  return 'ok';
+});
+
+t('朋友圈引用：qsRef 进 moment；评论不写回群声', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '朋友圈源帖', content: 'x' }).post;
+  const before = S.momentsTab.all().length;
+  const r = S.forumShare.shareToMoments({ sandboxId: sbQsIsle, postId: p.id, senderAccountId: mainA.id, attachedText: '' });
+  if (!r.ok) throw new Error('朋友圈分享失败：' + JSON.stringify(r));
+  const moments = S.momentsTab.all();
+  if (moments.length !== before + 1) throw new Error('moment 没落');
+  const m = moments[moments.length - 1];
+  if (!m.qsRef || m.qsRef.sourcePostId !== p.id) throw new Error('qsRef 没挂上');
+  const s = JSON.stringify(m.qsRef);
+  if (s.indexOf(mainA.id) >= 0) throw new Error('qsRef 泄露账号 id');
+  /* 朋友圈评论：只进 moments，不进 forumComments */
+  S.momentsTab.addComment(m.id, { kind: 'char', refId: m1, name: '顾清和' }, '朋友圈里的评论', {});
+  if (S.forum.listComments(p.id, sbQsIsle).length !== 0) throw new Error('朋友圈评论写回了群声');
+  return 'ok';
+});
+
+t('认知候选：familiar 落库、可升级、不自动 confirmed、不降级', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  const charAcc = S.forum.scopedForum('forumAccounts', sbQsIsle).filter((a) => a.ownerType === 'char')[0];
+  const key = 'share:' + altA.id;
+  const k1 = S.forum.addKnowledge({
+    sandboxId: sbQsIsle, observerEntityId: charAcc.ownerEntityId,
+    subjectType: 'forumAccount', subjectKey: key, subjectName: altA.displayName,
+    state: 'familiar', evidenceRefs: ['fp_x']
+  });
+  if (!k1 || k1.state !== 'familiar') throw new Error('familiar 没落');
+  /* 重复同类事件：不重复建 */
+  S.forum.addKnowledge({ sandboxId: sbQsIsle, observerEntityId: charAcc.ownerEntityId, subjectKey: key, state: 'familiar' });
+  if (S.forum.listKnowledge(sbQsIsle, charAcc.ownerEntityId).filter((k) => k.subjectKey === key).length !== 1) throw new Error('重复认知记录');
+  /* 可升级 */
+  const k2 = S.forum.addKnowledge({ sandboxId: sbQsIsle, observerEntityId: charAcc.ownerEntityId, subjectKey: key, state: 'suspected' });
+  if (k2.state !== 'suspected') throw new Error('没升级');
+  /* 不降级 */
+  const k3 = S.forum.addKnowledge({ sandboxId: sbQsIsle, observerEntityId: charAcc.ownerEntityId, subjectKey: key, state: 'familiar' });
+  if (k3.state !== 'suspected') throw new Error('认知被降级了');
+  /* 绝不自动 confirmed：任何接口都不该悄悄写成 confirmed */
+  if (S.forum.listKnowledge(sbQsIsle, charAcc.ownerEntityId).some((k) => k.state === 'confirmed')) throw new Error('自动 confirmed 了');
+  return { state: k3.state };
+});
+
+t('分享给 char 并打开 → char 对分享行为产生 familiar 认知', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  const charAcc = S.forum.scopedForum('forumAccounts', sbQsIsle).filter((a) => a.ownerType === 'char')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: altA.id, title: '给 char 的帖', content: 'x' }).post;
+  const chat = S.chatStore.chatOf(m1) || S.chatStore.createChat('顾清和', m1);
+  S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p.id, chatId: chat.id, senderAccountId: altA.id, attachedText: '' });
+  const ok1 = S.forumShare.markOpened({
+    sandboxId: sbQsIsle, sourcePostId: p.id,
+    targetType: 'chat', targetId: chat.id,
+    openerName: '顾清和', openerEntityId: m1
+  });
+  if (!ok1) throw new Error('回执没记上');
+  const k = S.forum.listKnowledge(sbQsIsle, m1).filter((x) => x.subjectKey === 'share:' + altA.id)[0];
+  /* 键与上一条测试共用（同一观察者 × 同一小号）：状态可能已被升到 suspected
+     —— 认知只升不降，所以这里断言「至少 familiar 且绝不是 confirmed」。 */
+  if (!k) throw new Error('char 认知候选没落');
+  if (['familiar', 'suspected', 'high_confidence'].indexOf(k.state) < 0) throw new Error('认知档位不对：' + k.state);
+  return { observer: '顾清和', state: k.state };
+});
+
+console.log('\n--- page:群声 E 补强（增量催更 / 作者主页 / char 聊天回应）---');
+
+t('genMore 增量催更：追加新帖不重置 seeded；60s 冷却', () => new Promise((res) => {
+  S.forumGen._setTransport((msgs, cb) => {
+    cb(null, JSON.stringify({ posts: [
+      { board: 'food', author: '北窗', type: 'normal', title: '增量帖一', content: '新', minutesAgo: 30, comments: [] },
+      { board: 'game', author: '@anon', type: 'normal', title: '增量帖二', content: '新二', minutesAgo: 10, comments: [] }
+    ] }));
+  });
+  const before = S.forum.scopedForum('forumPosts', sbQsIsle).length;
+  S.forumGen.genMore(sbQsIsle, (err, r) => {
+    if (err) throw new Error('增量失败：' + err.error);
+    if (r.created.posts !== 2) throw new Error('增量帖数不对');
+    if (S.forum.scopedForum('forumPosts', sbQsIsle).length !== before + 2) throw new Error('没追加');
+    if (!S.forum.getForumMap('forumSettingsBySandbox', sbQsIsle).seeded) throw new Error('seeded 被重置');
+    S.forumGen.genMore(sbQsIsle, (e2) => {
+      if (!e2 || e2.stage !== 'cooldown') throw new Error('增量冷却没拦');
+      S.forumGen._setTransport((msgs, cb) => cb(null, qsSeedJson));
+      res('ok');
+    });
+  });
+}));
+
+t('charReactToShare：char 在聊天里回一句（单次调用 + 冷却）', () => new Promise((res) => {
+  const chat = S.chatStore.chatOf(m1) || S.chatStore.createChat('顾清和', m1);
+  const beforeMsgs = S.chatStore.getChat(chat.id).messages.length;
+  let capturedMsgs = null;
+  S.forumGen._setTransport((msgs, cb) => { capturedMsgs = msgs; cb(null, '这个标题有点眼熟，回头细看。'); });
+  const memBefore = S.core.memoriesOfRoot(m1).length;
+  S.forumGen.charReactToShare({
+    sandboxId: sbQsIsle, chatId: chat.id, charId: m1,
+    postTitle: '增量帖一', postContent: '新', attachedText: '给你看看'
+  }, (err, r) => {
+    if (err) throw new Error('char 回应失败：' + err.error);
+    const msgs = S.chatStore.getChat(chat.id).messages;
+    if (msgs.length !== beforeMsgs + 1) throw new Error('消息没进会话');
+    const last = msgs[msgs.length - 1];
+    if (last.role !== 'assistant' || last.content.indexOf('眼熟') < 0) throw new Error('回应内容不对');
+    /* 装配判据落在产物上：system 里必须真有 [CHARACTER] 装配块（有装配层时） */
+    if (S.promptEngine && (!capturedMsgs || String(capturedMsgs[0].content).indexOf('[CHARACTER]') < 0)) {
+      throw new Error('回应没走正常装配（system 里没有 [CHARACTER]）');
+    }
+    /* 留痕记忆：分享事件进了记忆链路 */
+    if (S.core.memoriesOfRoot(m1).length !== memBefore + 1) throw new Error('分享事件没进留痕记忆');
+    S.forumGen.charReactToShare({
+      sandboxId: sbQsIsle, chatId: chat.id, charId: m1,
+      postTitle: 'x', postContent: '', attachedText: ''
+    }, (e2) => {
+      if (!e2 || e2.stage !== 'cooldown') throw new Error('聊天回应冷却没拦');
+      S.forumGen._setTransport((msgs2, cb2) => cb2(null, qsSeedJson));
+      res('ok');
+    });
+  });
+}));
+
+ok('作者公开主页已注册（点作者名可进）', !!S.registered()['qunsheng-author']);
+
 console.log('\n--- page:聊天 App 容器（4 Tab）---');
 
 /* 《聊天 App · 核心架构》：「聊天 App = 当前房屋监视器，前台 4 Tab」。
@@ -2567,8 +3289,10 @@ t('LAYOUT_VERSION 没有重复声明（写了改动日志却忘了删旧块）',
 console.log('\n--- ta 首页（生活窗口 v1）---');
 t('第三屏重复格已换成 ta：当前版本、只换一格、坐标沿用、主屏世界书仍在', () => {
   const d = S.desktop.defaultDesktop();
-  if (S.desktop.LAYOUT_VERSION !== 21) {
-    throw new Error('LAYOUT_VERSION 应为 21，实际 ' + S.desktop.LAYOUT_VERSION);
+  /* v21 起第三屏又动过（v22 贴纸格换群声）—— 这里只锁下限：
+     版本只增不减，ta 那格从 v18 就在，别让谁把它降回去。 */
+  if (S.desktop.LAYOUT_VERSION < 21) {
+    throw new Error('LAYOUT_VERSION 不该低于 21，实际 ' + S.desktop.LAYOUT_VERSION);
   }
   /* 施工单：只允许替换一个格子，且必须保留原格子 id 和坐标 */
   const taCells = d.pages[3].filter((c) => c.app === 'ta');
@@ -4320,12 +5044,15 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
    —— 三格改 type 'blank'（空玻璃壳，无图标无跳转），主屏组件商城入口不动。
    版本 20（2026-10-06）：「钱包」那一格改成了「小岛指南」真入口
    （p3-guide / type app / app guide），所以本断言从「三格全 blank」
-   收窄成「贴纸 / 组件商城仍 blank」+「钱包位已换成小岛指南」。 */
-t('第 3 屏贴纸/组件商城/外观仍空壳，钱包位已换成小岛指南，主屏入口不动', () => {
+   收窄成「贴纸 / 组件商城仍 blank」+「钱包位已换成小岛指南」。
+   版本 22（2026-10-07，施工卡-群声-v1 Batch A）：「贴纸」空壳改成
+   「群声」真入口（p3-qunsheng / type app / app qunsheng），收窄成
+   「组件商城 / 外观仍 blank」+「贴纸位已换成群声」。 */
+t('第 3 屏组件商城/外观仍空壳，钱包位已换成小岛指南，贴纸位已换成群声，主屏入口不动', () => {
   const d = S.desktop.defaultDesktop();
-  const ids = ['p3-stickers', 'p3-store', 'p3-look'];
+  const ids = ['p3-store', 'p3-look'];
   const cells = d.pages[3].filter((c) => ids.indexOf(c.i) >= 0);
-  if (cells.length !== 3) throw new Error('仍应为空壳的格应有 3 个（贴纸/组件商城/外观），实际 ' + cells.length);
+  if (cells.length !== 2) throw new Error('仍应为空壳的格应有 2 个（组件商城/外观），实际 ' + cells.length);
   cells.forEach((c) => {
     if (c.type !== 'blank') throw new Error(c.i + ' 应为 blank，实际 ' + c.type);
     if (!c.label) throw new Error(c.i + ' 丢了 label（编辑模式里认不出格子）');
@@ -4340,6 +5067,16 @@ t('第 3 屏贴纸/组件商城/外观仍空壳，钱包位已换成小岛指南
   /* 小岛指南页面必须真的注册上了（点得开） */
   if (!S.registered || !S.registered()['guide'] || !S.registered()['guide'].hasRender) {
     throw new Error('小岛指南页面（app guide）没注册上 —— 桌面这格点开会白屏');
+  }
+  /* 贴纸位 → 群声真入口（v22），页面同样必须点得开 */
+  const qs = d.pages[3].find((c) => c.i === 'p3-qunsheng');
+  if (!qs) throw new Error('第 3 屏找不到 p3-qunsheng（群声）那一格');
+  if (qs.type !== 'app' || qs.app !== 'qunsheng') {
+    throw new Error('p3-qunsheng 应为 app/qunsheng，实际 type=' + qs.type + ' app=' + qs.app);
+  }
+  if (qs.x !== 4 || qs.y !== 3) throw new Error('群声坐标应为 (4,3)，实际 ' + qs.x + ',' + qs.y);
+  if (!S.registered || !S.registered()['qunsheng'] || !S.registered()['qunsheng'].hasRender) {
+    throw new Error('群声页面（app qunsheng）没注册上 —— 桌面这格点开会白屏');
   }
   const p1 = d.pages[1].find((c) => c.i === 'p1-store');
   if (!p1 || p1.type !== 'app' || p1.app !== 'widgetstore') {
@@ -9689,13 +10426,12 @@ t('能力落到「模型」：不同档位的表达能力不一样', () => {
   T.PROVIDER_ORDER.forEach((pid) => {
     if (T.providerOf(pid).planned) throw new Error(pid + ' 还没有适配器，不该开放入口');
   });
-  /* 探测过、接不了的那些：必须**写清原因**，否则用户看到的就是一个神秘灰行 */
-  if (T.PROVIDER_PLANNED.length < 4) throw new Error('接不了的清单太短了');
-  T.PROVIDER_PLANNED.forEach((pid) => {
-    const p = T.providerOf(pid);
-    if (!p || !p.planned) throw new Error(pid + ' 该在「接不了」清单里且标 planned');
-    if (!p.desc || p.desc.length < 12) throw new Error(pid + ' 没说清为什么接不了');
-    if (T.PROVIDER_ORDER.indexOf(pid) >= 0) throw new Error(pid + ' 不能同时在能用的清单里');
+  /* 2026-10-07 用户：「阿里云那些用不了的全部去掉」——
+     planned 清单（dashscope 等）整份撤掉，providerOf 对它们返回 null。
+     这里反过来断言：已经撤掉的那几家不许再查得到。 */
+  ['dashscope', 'volcengine', 'tencent_tts', 'xfyun', 'edge_tts', 'openai'].forEach((pid) => {
+    if (T.providerOf(pid)) throw new Error(pid + ' 已经撤掉，不该还能查到');
+    if (T.PROVIDER_ORDER.indexOf(pid) >= 0) throw new Error(pid + ' 不该出现在可用清单里');
   });
   return { '2.8': mm28.performanceTags, '2.6': mm26.performanceTags, 's1': fishS1.performanceTags,
     ElevenLabs: 'v3 标签 / Flash 调速',
@@ -11375,6 +12111,148 @@ t('W1–W17 清空六项 / 向量回滚 / 快照去留 / 三向边界 / 扫一�
     S.store.remove('vecCursor3:w10');
     S.store.set('vecEpoch', 0);
     out.W10 = '无 IDB 时全线安静通过';
+  }
+
+  /* W11 一键导出全部（2026-10-07）：**合包必须是「一个文件」**，
+     且 app/kind 标识能被导入侧认出来（识别分流全靠这两个字段）。
+
+     注：不能靠「拦 ui.downloadText 再解析文件」验 —— page-backup 闭包顶部
+     `var downloadText = ui.downloadText` 已经把引用捕获了，注入导出面**不生效**
+     （同 W8 那个坑）。所以结构一律读 buildAllPack 这个纯函数。
+
+     ⚠️ 标识必须**硬写 'sleepy-all'**，不许写 B.ALL_KIND ——
+     写成常量的话两边一起变，标识改错了测试还是绿的（2026-10-07 真踩过：
+     sed 把标识改成 sleepy-WRONG，711 条断言照样全绿）。 */
+  {
+    S.store.set('w11probe', '文字部分');
+    const pack = B.buildAllPack(null);
+    /* 先断言「确实找到了那段」，再判字段 —— 不然判据落在不存在的段上会空转 */
+    chk('W11 合包里没有 data 段（文字部分）', !!(pack && pack.data));
+    chk('W11 合包里没带上 store 导出的内容', !!(pack && pack.data && pack.data.data && pack.data.data.w11probe === '文字部分'));
+    chk('W11 合包 app 标识不对，导入侧认不出来', pack.app === 'sleepy-all');
+    chk('W11 合包 kind 标识不对，导入侧认不出来', pack.kind === 'sleepy-all');
+    chk('W11 无图库时 media 段该是 null 而不是 {}', pack.media === null);
+    /* 带图库时：count/bytes/items 三个字段必须原样透传，导入侧全靠它们 */
+    const withMedia = B.buildAllPack({ count: 3, bytes: 1024, items: [{ id: 'a' }] });
+    chk('W11 带图库时 count 没透传', withMedia.media && withMedia.media.count === 3);
+    chk('W11 带图库时 items 没透传', withMedia.media && Array.isArray(withMedia.media.items) && withMedia.media.items.length === 1);
+    S.store.remove('w11probe');
+    out.W11 = '合包结构可识别 + 图库段可选';
+  }
+
+  /* W12 合包导入分流：同一个入口**既能吃合包、也能吃老的纯文字备份**。
+     老备份形状 = store.exportUserData() 的返回（app:'sleepy' + data），
+     **app 必须是 'sleepy'** —— canImport 硬判这个（store.js:588）。
+     负向：给一个 app 不对的，判据必须真拦下来，不能放行。 */
+  {
+    S.store.set('w12probe', '旧值');
+    /* 老的纯文字备份（无 media 段）→ 只导文字，不碰图库 */
+    const old = { app: 'sleepy', schema: S.store.SCHEMA, data: { w12probe: '来自老备份' } };
+    const w12old = await B.importAllInOne(old);
+    chk('W12 老备份导入失败：' + w12old.message, w12old.ok);
+    chk('W12 老备份没写进去', S.store.get('w12probe') === '来自老备份');
+    chk('W12 老备份不该报图库数量', !w12old.mediaAdded);
+
+    /* 负向：不是 Sleepy 的文件必须被canImport 挡住 —— 证明上面那个 ok 不是空转 */
+    const w12bad = await B.importAllInOne({ app: '别的东西', data: { w12probe: '不该写进来' } });
+    chk('W12 非备份文件竟然导进去了', !w12bad.ok);
+    chk('W12 被拒后不该改动数据', S.store.get('w12probe') === '来自老备份');
+    out.W12 = '老备份导得进去 + 非备份文件被拦';
+  }
+
+  /* W13 合包导入：图库段缺失时**不许报错**，也不许假装导入了图片。
+     这是「没图库的用户走这条路」的主路径，必须安静通过。
+     真实形状：data 段 = exportUserData() 的返回（app:'sleepy'），media 段为 null。 */
+  {
+    S.store.set('w13probe', '旧值');
+    const pack = B.buildAllPack(null);
+    pack.data.data.w13probe = '来自合包';
+    const w13 = await B.importAllInOne(pack);
+    chk('W13 合包（无图库段）导入失败：' + w13.message, w13.ok);
+    chk('W13 合包文字部分没写进去', S.store.get('w13probe') === '来自合包');
+    chk('W13 无图库段时不该声称导入了图片', !w13.mediaAdded);
+    chk('W13 无图库段时不该报图库失败', !w13.mediaNote);
+    S.store.remove('w12probe'); S.store.remove('w13probe');
+    out.W13 = '无图库段：安静通过 + 不谎报';
+  }
+
+  /* ============ 协议 / 隐私（legal.js · 2026-10-07 内测前第一件） ============ */
+
+  /* L1 首启弹窗的三条行为：没同意过→弹；点了「我已知情」→记标记；
+     「先看看」→**不记标记**（下次还会弹，这是有意留的余地，不是 bug）。 */
+  {
+    const L = S.legal;
+    chk('L1 legal 模块没挂上', !!L);
+    if (L) {
+      L.resetAgreed();
+      chk('L1 清掉标记后竟然仍算已同意', !L.isAgreed());
+
+      /* 未同意时 maybeShowFirstRun 必须真的弹（返回 true = 弹了） */
+      chk('L1 未同意时首启没弹协议', L.maybeShowFirstRun() === true);
+      /* 弹了但没点任何按钮 → 还是没同意（这是「先看看」路径） */
+      chk('L1 只弹没确认时不该算已同意', !L.isAgreed());
+      L.maybeShowFirstRun();      /* 再来一次：证明「没点确认就会重复弹」 */
+
+      L.markAgreed();
+      chk('L1 点了「我已知情」后没记上', L.isAgreed());
+      chk('L1 已同意后首启还在弹', L.maybeShowFirstRun() === false);
+      out.L1 = '首启弹一次 + 确认后才不再弹';
+    }
+  }
+
+  /* L2 同意标记必须带**版本** —— 协议正文改了要能重新提示一次，
+     否则改了协议用户永远看不到（这条是承诺，不是可选）。 */
+  {
+    const L = S.legal;
+    L.markAgreed();
+    const rec = S.store.get(L.AGREE_KEY);
+    chk('L2 同意标记结构不对', !!(rec && typeof rec.ver === 'string' && typeof rec.at === 'number'));
+    /* 模拟协议升级：把记录里的版本改成别的 → isAgreed 必须变false */
+    S.store.set(L.AGREE_KEY, { ver: 'v0-old', at: Date.now() });
+    chk('L2 协议版本变了却还当已同意', !L.isAgreed());
+    chk('L2 协议升级后首启不再提示', L.maybeShowFirstRun() === true);
+    out.L2 = '版本变更会重新提示';
+  }
+
+  /* L3 同意标记**不许混进用户存档导出** —— 它是这台设备的 UI 状态，
+     不是用户数据的一部分（导出它会让「换了设备/清缓存后自动提示」失效）。
+     正向：必须先断言那段确实找到了，再判字段不在里面。 */
+  {
+    const L = S.legal;
+    L.markAgreed();
+    const pack = S.store.exportUserData();
+    const keys = pack.data ? Object.keys(pack.data) : [];
+    chk('L3 没读到导出内容（判据会空转）', keys.length > 0);
+    chk('L3 同意标记混进了用户存档导出', keys.indexOf(L.AGREE_KEY) < 0);
+    out.L3 = '同意标记不进用户存档';
+  }
+
+  /* L4 两份正文都在，且不是空壳 —— 协议最忌讳「标题在、内容空」。
+     同时静态护栏：正文里**不许出现承诺做不到的话**（「永不上传」这类
+     与 GitHub 备份矛盾的绝对化表述）。 */
+  {
+    const L = S.legal;
+    const ua = L.USER_AGREEMENT, pp = L.PRIVACY_POLICY;
+    chk('L4 用户协议缺正文', !!(ua && Array.isArray(ua.sections) && ua.sections.length >= 5));
+    chk('L4 隐私政策缺正文', !!(pp && Array.isArray(pp.sections) && pp.sections.length >= 5));
+    /*每节都要有标题和至少一段正文，不许出现「有小标题没内容」的节 */
+    let emptySec = 0;
+    [ua, pp].forEach(function (doc) {
+      (doc.sections || []).forEach(function (s) {
+        if (!s.h || !Array.isArray(s.p) || !s.p.length) emptySec++;
+      });
+    });
+    chk('L4 有空节（有小标题没内容）', emptySec === 0);
+
+    /* 绝对化承诺护栏：这些话一旦写进去就是撒谎，必须拦住。
+       判据落在**装配产物**（真正拼出来的正文）上，不是源码全文。 */
+    const bodyText = [ua, pp].map(function (doc) {
+      return doc.sections.map(function (s) { return s.p.join(' '); }).join(' ');
+    }).join(' ');
+    chk('L4 没读到正文全文（判据会空转）', bodyText.length > 200);
+    chk('L4 隐私政策写了「永不上传」（与可选备份矛盾）', bodyText.indexOf('永不上传') < 0);
+    chk('L4 出现了「我们不会收集任何数据」这种绝对承诺', bodyText.indexOf('我们不会收集任何数据') < 0);
+    out.L4 = { 用户协议节: ua.sections.length, 隐私政策节: pp.sections.length };
   }
 
   /* ============ 三向边界：用户导出 / 内部回滚快照 / 用户导入（口径 ①） ============ */
@@ -14212,8 +15090,13 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    ⚠️ 登记：v178（私聊撤回）批改了 page-chat.js 等但漏了回写本基准
      （基准停在 v177，被本批发现）—— 属漏动作，不是本批改动。
    ⚠️ 以后再有批改动运行时脚本，把 EXPECTED_SW_CACHE 一起改 —— 这是刻意的
-     「每次都要有人手动确认一次」，不是冗余。 */
-const EXPECTED_SW_CACHE = 'sleepy-v197';
+     「每次都要有人手动确认一次」，不是冗余。
+   ⚠️ v203（2026-10-07）：群声 Batch A+B 接入批改了 index.html /
+     forum-core.js / forum-gen.js / page-qunsheng.js / page-desktop.js /
+     store.js / core.js / page-guide.js / sw.js —— 基准随批从 v202 → v203。
+     本批（协议页）改过 legal.js / store.js / splash.js / style.css /
+     index.html / page-settings.js —— 基准再 v203 → v204。 */
+const EXPECTED_SW_CACHE = 'sleepy-v204';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

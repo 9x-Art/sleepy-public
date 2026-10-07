@@ -13,6 +13,60 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
+   v203（2026-10-07）：**群声 Batch A+B 接入批**——
+   · 新增 forum-core.js（数据层）/ forum-gen.js（内容生成层）/
+     page-qunsheng.js（App，6 页）；index.html 加载列表 +2；
+   · page-desktop：第三屏贴纸空壳格换「群声」真入口，LAYOUT_VERSION 22；
+   · store.js：forum 系列 13 键 + 2 映射键；core.js：删岛清理登记；
+   · page-guide：两处桌面文案修正。
+   → 必须跳版本：index.html / forum-*.js / page-qunsheng.js /
+     page-desktop.js / store.js / core.js / page-guide.js 都变了。
+
+   v202（2026-10-07）：**去冗余文案批**——
+   · page-presets：条目下面那行解释（pp-row-hint）全部去掉 —— 调用类型的
+     「F1 · 已实装」等、注入序列的槽位说明 / 「Sleepy 内置注入」、
+     调试预览的「逐槽 tokens + 完整 prompt」。自定义注入行的 token 数不是
+     解释，挪到右侧标签位（与两个序列区一致），没丢信息；
+   · page-imggen：「视觉层（正式生图）」组内说明文字全去掉 —— 自定义框
+     hint、随档位变的动态提示（内置档「内置词暂不提供编辑…」等三句）、
+     NAI 那段「NAI 接口沿用其原生图路径…」。组标题说明按用户口径保留；
+     字段、显隐逻辑、出站内容一字未动；
+   · scripts/browser-e2-formal-style-test.js + browser-e2-v2-revamp-test.js：
+     断言上述文案的用例改成**反向断言**（钉住别再长回来）；「空 custom 提示」
+     那条换成真功能判据（落库为空 + 档位不弹回内置）；
+   · browser-tts-preset-test.js：预设页快照加 rowHints 计数（应为 0）。
+   → 必须跳版本：page-presets.js / page-imggen.js 变了。
+
+   v201（2026-10-07）：**用户四点收尾批**——
+   · page-presets：内置上锁卡点不进二级页（openCard 统一拦 + toast）；
+   · page-chat：表情回应改按气泡段贴（reactions 存储升级为
+     { segKey: { emoji: [maskId] } }，旧数据读取时归一化到第一段）；
+   · tts.js + page-tts：新增「拉取模型列表」（custom_openai 走 OpenAI
+     兼容 /models，Bearer）+ 拉到的模型下拉选、选中即落库；
+     撤掉「全都是浏览器直连…」残留说明；
+   → 必须跳版本：page-presets.js / page-chat.js / tts.js / page-tts.js 都变了。
+
+   v200（2026-10-07）：**长按手感（五批遗留第 4 条）**——
+   · page-chat：bindLongPress 按住期间气泡压暗（.lp-pressing）、触发瞬间
+     navigator.vibrate(10) 微震动（iOS Safari 无 vibrate，静默跳过）；
+   · ui.js + style.css：anchorPopover 支持 opt.arrow —— 面板带一枚小角
+     指向锚点（微信长按菜单那种），水平位置 place() 算好写 --ap-x，
+     .is-up 时角翻到底边朝下；消息长按菜单和撤回灰字条浮层已接 arrow；
+   → 必须跳版本：page-chat.js / ui.js / style.css 都变了。
+
+   v199（2026-10-07）：**五处手感/功能批**——
+   · page-chat：长按贴表情 ReferenceError（`core is not defined`）修复，
+     chat-detail render 闭包补 `var core` 声明；
+   · tts.js + page-tts：接不了的「还不能直连」清单整组撤掉（含阿里云），
+     模型选择搬进各服务的连接详情页（存到连接上），
+     自定义服务的「模型 ID」此前从不落盘也一并修掉；
+   · media.js + page-backup：新增「导出/导入媒体数据」（图库图片/语音本体
+     整包 .json，dataURL 承载）；
+   · prompt-engine：内置预设全部上锁——开发者模式出厂改为关，
+     旧存档里的 dev:true 一次性洗成 false（设置页 5 连点可再开）；
+   → 必须跳版本：page-chat.js / tts.js / page-tts.js / media.js /
+     page-backup.js / prompt-engine.js 都变了。
+
    v198（2026-10-07）：**退出 app 后桌面点不动（隐形玻璃盖）**——
    · style.css：.page 转场改纯淡入后（a5e9c29），退场页停留在 opacity:0
      但仍铺满全屏、可命中，挡住桌面全部点击。补 visibility:hidden +
@@ -547,7 +601,8 @@
 /* v195（2026-10-07）：**海盐换薄荷 + 小岛指南多色混搭**——①原 sea 主题（冷蓝）跟新的奶蓝默认撞色，用户同意改成马卡龙薄荷绿（accent #8AC9C3 / base #F3FBFA / 墨色同步转绿），data-theme 的 id 仍是 sea 不动（老存档里选过它的不能失效）；page-appearance 的 THEMES 预览色卡同步改名为「薄荷」。②小岛指南 12 个板块各配一支马卡龙色（SECTIONS 增加 c 字段，渲染时写进 --gz-c），标题/色点/箭头/功能名/步骤圆标/路径/列表 marker/提示块左边框/问答问句全部吃它；提示块底用 color-mix 兑到 12%（12 种色再给实底太吵）。→ 必须跳版本：style.css / page-guide.js / page-appearance.js 都变了。 */
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
-var CACHE = 'sleepy-v198';
+/* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
+var CACHE = 'sleepy-v204';
 var CORE = [
   './',
   './index.html',

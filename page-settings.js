@@ -287,6 +287,28 @@
 
       var g5 = group('其他');
       g5.card.appendChild(row({ label: '激活与设备', hint: '2.19 激活码 · QQ 绑定' }));
+
+      /* 用户协议 / 隐私政策（2026-10-07）：首启弹过一次之后，**这里必须留一个
+         随时能翻回去的入口** —— 只在第一次弹是耍流氓，用户要能自己再查。
+         两行分开放，各看一份，标题写清是什么。 */
+      var legalRowA = row({
+        label: '用户协议',
+        hint: '数据在你自己的设备上 · 使用规范',
+        onClick: function () {
+          if (Sleepy.legal && Sleepy.legal.openDoc) Sleepy.legal.openDoc('user');
+          else ctx.toast('这一版没有协议页', 'err');
+        }
+      });
+      var legalRowP = row({
+        label: '隐私政策',
+        hint: '我们默认不收集你的任何数据',
+        onClick: function () {
+          if (Sleepy.legal && Sleepy.legal.openDoc) Sleepy.legal.openDoc('priv');
+          else ctx.toast('这一版没有隐私政策', 'err');
+        }
+      });
+      g5.card.appendChild(legalRowA);
+      g5.card.appendChild(legalRowP);
       /* 「关于 Sleepy」背着隐蔽开关：3 秒内连点 5 次 = 切开发者模式。
          面向用户后内置 prompt 上锁，这个开关是唯一的解锁口 ——
          所以它不能像普通开关一样摆在明面上（用户：「隐蔽一些qwq」）。

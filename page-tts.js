@@ -226,54 +226,13 @@
           }));
         });
         body.appendChild(gSvc.wrap);
-        body.appendChild(h('p', 'set-group-note',
-          '全都是浏览器直连（这个 App 没有服务端）。Fish Audio 的接口在部分网络下连不上，' +
-          '要代理或自建中转；MiniMax、硅基流动、Azure 国内可达；ElevenLabs 只有 v3 能带 Audio Tags。'));
+        /* 2026-10-07 用户：接不了的服务整组撤掉（原「全都是浏览器直连…」
+           那段说明一并删掉）；自建/中转走上面的 custom_openai。 */
 
-        /* ---- 接不了的那些（连同实测原因一起摆出来）----
-           契约 §8.6：没有 Adapter 一律不许显示成可用。但「灰着不说为什么」和
-           「写清为什么」是两件事 —— 用户要的是后者（这样才知道该走中转还是死心）。 */
-        var gNo = group('还不能直连的服务', '这些是探测过、现在接不了的；原因写在每一行下面。');
-        tts.PROVIDER_PLANNED.forEach(function (pid) {
-          var prov = tts.providerOf(pid);
-          if (!prov) return;
-          gNo.card.appendChild(row({
-            label: prov.name,
-            hint: prov.desc,
-            badge: '未实现',
-            badgeKind: 'dim'
-          }));
-        });
-        gNo.card.appendChild(row({
-          label: '用「自定义 · OpenAI 兼容」接它们',
-          hint: '自己搭一个中转（或本地跑 GPT-SoVITS / fish-speech / one-api），把地址填进去就行',
-          onClick: function () {
-            var p = tts.providerOf('custom_openai');
-            ui.confirm({
-              title: '自定义 · OpenAI 兼容',
-              note: '这条连接用于：自建的语音服务，或者你自己搭的中转。\n\n' +
-                '它要求对方认 OpenAI 的 /v1/audio/speech（GPT-SoVITS、fish-speech、' +
-                'openedai-speech、LocalAI、one-api 这些都能这么用）。\n\n' +
-                '上面那些「还不能直连」的家，也都可以先转成这个形状再填进来。',
-              ok: '去配一条'
-            }).then(function (yes) {
-              if (!yes) return;
-              ctx.open('settings-tts-provider', { provider: 'custom_openai' });
-            });
-          }
-        }));
-        body.appendChild(gNo.wrap);
-
-        /* ---- 默认生成设置（模型列表跟着默认服务的供应商走） ---- */
-        var curConn = tts.connection(s.defaultConnectionId) || tts.firstConnectionOf(null);
-        var gDef = group('默认生成设置', '角色之后仍可单独覆盖。');
-        gDef.card.appendChild(selectField('默认模型', '换默认服务时记得回来看一眼这一项',
-          tts.modelsOf(curConn ? curConn.provider : 'fish_audio').map(function (m) {
-            return { id: m.id, label: m.label + (m.note ? '（' + m.note + '）' : '') };
-          }), s.defaultModel, function (v) {
-            tts.saveSettings({ defaultModel: v });
-            ctx.toast('已更新默认语音模型', 'ok');
-          }).el);
+        /* ---- 默认生成设置 ----
+           2026-10-07 用户：「模型选择那些应该在每个服务接口里面而不是外面」——
+           默认模型已搬进各服务的连接详情页（存到那条连接上），这里不再放模型下拉。 */
+        var gDef = group('默认生成设置', '角色之后仍可单独覆盖。模型在每家服务的连接页里选。');
         /* 导演引擎（契约 §5）：规则版不出网；模型版多一次便宜调用，判得更准。
            出厂是规则版 —— 不给用户默认就多花 token。 */
         gDef.card.appendChild(selectField('导演引擎',
@@ -457,9 +416,12 @@
         keyWrap.appendChild(keyBox);
         gConn.card.appendChild(keyWrap);
 
+        /* ---- 模型（2026-10-07 用户：模型选择放在每个服务接口里面）----
+           有固定模型表的服务：下拉选，选完立即落到这条连接上（角色的
+           「跟随默认模型」读的就是连接上这份，见 tts.resolveVoice 的回落链）。
+           自建/中转（freeModel）：保留自由填的「模型 ID」—— 它以前只在测试时
+           临时用、从不落盘（doSave 漏了 model 字段），这轮一并修掉。 */
         if (prov.freeModel) {
-          /* 自建/中转的服务，模型名五花八门（sft / gpt-4o-mini-tts / 随便什么），
-             只能让用户自由填 —— 它优先于全局默认模型（见 tts.resolveVoice）。 */
           fields.model = textField({
             label: '模型 ID',
             hint: '这个服务要的模型名（不知道就先留空，会用默认那条）· 例：tts-1 / sft / cosyvoice',
@@ -467,6 +429,19 @@
             placeholder: 'tts-1'
           });
           gConn.card.appendChild(fields.model.el);
+          /* 「拉取模型」的选单落点（2026-10-07 用户：要有拉取和选模型的地方）。
+             拉到的清单渲染成下拉，选中即落到这条连接上、并同步回模型 ID 输入框。 */
+          fields.modelPick = h('div', '');
+          gConn.card.appendChild(fields.modelPick);
+        } else if (tts.modelsOf(providerId).length) {
+          fields.modelSel = selectField('模型', '这条连接用哪个模型；角色里选「跟随默认」时读这里',
+            tts.modelsOf(providerId).map(function (m) {
+              return { id: m.id, label: m.label + (m.note ? '（' + m.note + '）' : '') };
+            }), c.model || '', function (v) {
+              tts.saveConnection({ id: c.id, provider: providerId, model: v });
+              ctx.toast('已更新这条连接的模型', 'ok');
+            });
+          gConn.card.appendChild(fields.modelSel.el);
         }
 
         fields.endpoint = textField({
@@ -500,6 +475,13 @@
 
         /* ---- 验证 ---- */
         var gTest = group('验证', '');
+        if (prov.freeModel) {
+          gTest.card.appendChild(row({
+            label: '拉取模型列表',
+            hint: '按 OpenAI 兼容口径问服务要 /models（用上面填的接口地址和密钥），拉到后出现下拉选',
+            onClick: function () { doPullModels(); }
+          }));
+        }
         gTest.card.appendChild(row({
           label: '测试语音生成',
           hint: '走完整链路：语音计划 → 组装 → 请求 → 播放',
@@ -547,6 +529,33 @@
 
         ctx.setActions([{ label: '保存连接', kind: 'primary', onClick: function () { doSave(); } }]);
 
+        /* 拉取模型列表（2026-10-07 用户）：读的是页面上**当前填的**地址/密钥
+           （还没点保存也能拉）；拉到就渲染下拉，选中即落库。 */
+        function doPullModels() {
+          var conn0 = {
+            provider: providerId,
+            endpoint: fields.endpoint ? fields.endpoint.get() : '',
+            apiKey: String(keyInput.value || '').trim()
+          };
+          ctx.toast('正在拉取模型…', 'ok');
+          tts.fetchModelList(conn0).then(function (r) {
+            if (!r.ok) { ctx.toast(r.message || '拉取失败', 'err'); return; }
+            ctx.toast('拉到 ' + r.models.length + ' 个模型', 'ok');
+            var cur = fields.model.get();
+            fields.modelPick.innerHTML = '';
+            var sel = selectField('从服务拉取的模型',
+              '点一个就用它（已同步到上面的模型 ID 和这条连接）',
+              r.models.map(function (m) {
+                return { id: m, label: m + (m === cur ? ' · 当前' : '') };
+              }), cur, function (v) {
+                fields.model.input.value = v;
+                tts.saveConnection({ id: c.id, provider: providerId, model: v });
+                ctx.toast('模型已选为 ' + v, 'ok');
+              });
+            fields.modelPick.appendChild(sel.el);
+          });
+        }
+
         function doSave() {
           var key = String(keyInput.value || '').trim();
           var patch = {
@@ -556,6 +565,10 @@
             endpoint: String(fields.endpoint.get() || '').trim() || prov.endpoint,
             testVoiceId: String(fields.voiceId.get() || '').trim()
           };
+          /* 模型：自建的读自由填的文本框；有模型表的读下拉（下拉自己也会即时存，
+             这里再带上是为了「改了模型直接点保存」也不丢）。 */
+          if (fields.model) patch.model = String(fields.model.get() || '').trim();
+          else if (fields.modelSel) patch.model = fields.modelSel.get();
           if (key) patch.apiKey = key;   /* 留空 = 不替换 */
           tts.saveConnection(patch);
           ctx.toast(key ? '已保存，等真实服务验证' : '已保存', 'ok');
@@ -575,7 +588,8 @@
           var cfg = {
             id: c.id,
             provider: providerId,
-            model: fields.model ? String(fields.model.get() || '').trim() : c.model,
+            model: fields.model ? String(fields.model.get() || '').trim()
+              : (fields.modelSel ? fields.modelSel.get() : c.model),
             endpoint: epNow,
             apiKey: key || c.apiKey,
             displayName: nameNow,
@@ -629,7 +643,8 @@
              这样设置页的测试和聊天里的正式生成不会出现两套组装逻辑。 */
           tts.generate({
             conn: cfg,
-            model: tts.settings().defaultModel,
+            /* 不显式给 model：generate 内部按 连接上填的 → 全局默认 回落，
+               模型选择已经搬进这条连接页里了（2026-10-07）。 */
             voiceId: cfg.testVoiceId,
             text: '你好，这是一次测试。今天过得怎么样？',
             manual: true
@@ -1101,7 +1116,8 @@
     var text = '你今天怎么这么晚才回来？';
     var plan = tts.speechPlanOf(text, cfg, { manual: true, rng: function () { return 0; } });
     var req = tts.buildRequest({
-      provider: providerId, conn: c, model: tts.settings().defaultModel,
+      provider: providerId, conn: c,
+      model: c.model || (tts.modelsOf(providerId)[0] || {}).id || tts.settings().defaultModel,
       voiceId: c.testVoiceId || '(未填音色)', plan: plan,
       originalText: text, output: tts.settings().output
     });

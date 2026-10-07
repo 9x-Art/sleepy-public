@@ -396,6 +396,9 @@
     if (msg.mediaId) item.mediaId = msg.mediaId;
     if (msg.url) item.url = String(msg.url);
     if (msg.name) item.name = String(msg.name);
+    /* 业务 payload（施工卡-群声-v1 Batch C）：群声分享卡的统一结构挂在
+       msg.qs —— 不平铺成零散字段（一套 payload，私聊/群聊共用一份） */
+    if (msg.qs) item.qs = msg.qs;
     core.tagScope(item);
     var list = allMessages();
     list.push(item);

@@ -1892,17 +1892,24 @@
     });
   }
 
-  /* 长按（触摸 480ms / 鼠标按住 480ms / 右键）打开菜单 */
+  /* 长按（触摸 480ms / 鼠标按住 480ms / 右键）打开菜单。
+     手感（2026-10-07 用户：要微信那种「按住了」的感觉）：
+     · 按住期间气泡轻微压暗（.lp-pressing），松手/触发即摘；
+     · 触发瞬间 navigator.vibrate(10) 来一下微震动（Android 有效，
+       iOS Safari 不支持 vibrate —— 没有替代 API，静默跳过）。 */
   function bindLongPress(el, fn) {
     var timer = null;
     var sx = 0, sy = 0;
 
     function clear() {
       if (timer) { clearTimeout(timer); timer = null; }
+      el.classList.remove('lp-pressing');
     }
     function fire() {
       timer = null;
+      el.classList.remove('lp-pressing');
       el.__lpAt = Date.now();
+      try { if (global.navigator && global.navigator.vibrate) global.navigator.vibrate(10); } catch (e) {}
       fn();
     }
     function move(x, y) {
@@ -1914,6 +1921,7 @@
       var t = e.touches[0];
       sx = t.clientX; sy = t.clientY;
       clear();
+      el.classList.add('lp-pressing');
       timer = setTimeout(fire, 480);
     }, { passive: true });
     el.addEventListener('touchmove', function (e) {
@@ -1927,6 +1935,7 @@
       if (e.button !== 0) return;
       sx = e.clientX; sy = e.clientY;
       clear();
+      el.classList.add('lp-pressing');
       timer = setTimeout(fire, 480);
     });
     el.addEventListener('mousemove', function (e) { move(e.clientX, e.clientY); });
@@ -2217,6 +2226,10 @@
     title: '聊天',
     render: function (ctx) {
       var chatId = ctx.params.chatId;
+      /* 本闭包里 myMaskId（表情回应）/ 慢递信落库都裸用 `core` ——
+         这里必须声明，否则点表情直接 `core is not defined`（真机 2026-10-07）。
+         5543 行的 core2 是当年同一个坑的绕行痕迹，留着不动。 */
+      var core = Sleepy.core;
 
       if (!getChat(chatId)) {
         ctx.toast('找不到这个对话', 'err');
@@ -2710,7 +2723,7 @@
         line.addEventListener('click', function () {
           if (selecting) return;            /* 多选模式里灰字条不参与选择 */
           if (wasLongPressed(line)) return;
-          var pop = ui.anchorPopover(line, { className: 'msg-pop' });
+          var pop = ui.anchorPopover(line, { className: 'msg-pop', arrow: true });
           var box = h('div', 'msg-recall-pop');
           box.appendChild(h('p', 'msg-recall-pop-label', '撤回的内容'));
           box.appendChild(h('p', 'msg-recall-pop-text',
@@ -2842,21 +2855,42 @@
         flush();
       }
 
-      /* 长按菜单里点 emoji → 给这条消息贴/取消表情回应（QQ/企微风）。
-         存储 msg.reactions = { emoji: [maskId,…] }，落库走 patchMessage
-         （store.get 深拷贝，不能直接拿对象改字段）。 */
-      function toggleReaction(msg, emoji) {
+      /* 长按菜单里点 emoji → 给**这个气泡**贴/取消表情回应（QQ/企微风）。
+         2026-10-07 用户：一条回复拆成几段时，只贴被长按的那一段，不是整轮。
+         存储 msg.reactions = { segKey: { emoji: [maskId,…] } }，segKey 是段下标
+         的字符串（无分段的按 '0'）。旧数据 { emoji: [maskId,…] } 在读取时
+         统一归一化到 '0' —— 老的贴纸本来就显示在每一段下面，迁到第一段最接近原意。
+         落库走 patchMessage（store.get 深拷贝，不能直接拿对象改字段）。 */
+      function normReactions(r) {
+        var out = {};
+        if (!r) return out;
+        for (var k in r) {
+          if (!Object.prototype.hasOwnProperty.call(r, k)) continue;
+          if (Array.isArray(r[k])) {
+            var seg0 = out['0'] || (out['0'] = {});
+            seg0[k] = r[k].slice();
+          } else if (r[k] && typeof r[k] === 'object') {
+            for (var sk in r[k]) {
+              if (!Object.prototype.hasOwnProperty.call(r[k], sk)) continue;
+              var seg = out[sk] || (out[sk] = {});
+              seg[k] = (r[k][sk] || []).slice();
+            }
+          }
+        }
+        return out;
+      }
+      function toggleReaction(msg, emoji, segIdx) {
         if (!msg || !msg.id) return;
+        var segKey = String(segIdx == null ? 0 : segIdx);
         var id = myMaskId();
-        var cur = (msg.reactions && msg.reactions[emoji]) || [];
+        var next = normReactions(msg.reactions);
+        var seg = next[segKey] || (next[segKey] = {});
+        var cur = seg[emoji] || [];
         var set = (cur.indexOf(id) >= 0)
           ? cur.filter(function (x) { return x !== id; })
           : cur.concat([id]);
-        var next = {};
-        for (var k in (msg.reactions || {})) {
-          if (Object.prototype.hasOwnProperty.call(msg.reactions, k)) next[k] = msg.reactions[k];
-        }
-        if (set.length) next[emoji] = set; else delete next[emoji];
+        if (set.length) seg[emoji] = set; else delete seg[emoji];
+        if (!Object.keys(seg).length) delete next[segKey];
         patchMessage(chatId, msg.id, { reactions: next });
         renderMessages();
       }
@@ -3198,6 +3232,8 @@
           content.appendChild(htmlGameCard(msg, chatId));
         } else if (msg.type === 'link-card') {
           content.appendChild(linkCard(msg));
+        } else if (msg.type === 'qunsheng-share') {
+          content.appendChild(qunshengCard(msg));
         } else if (msg.mood && !((msg.text || '').trim())) {
           /* 纯盖章（没打字）：气泡就是这枚印章本身 */
           content.appendChild(moodStampBubble(msg));
@@ -3258,21 +3294,24 @@
         }
         content.appendChild(meta);
 
-        /* 表情回应药丸（QQ/企微风长按贴表情）：挂在气泡正文下方 */
-        var rk = msg.reactions ? Object.keys(msg.reactions).filter(function (k) {
-          return (msg.reactions[k] || []).length;
-        }) : [];
+        /* 表情回应药丸（QQ/企微风长按贴表情）：挂在气泡正文下方。
+           只显示**这一段**的回应（normReactions 按段取）。 */
+        var segKey0 = String(seg && seg.idx != null ? seg.idx : 0);
+        var segReactions = normReactions(msg.reactions)[segKey0] || {};
+        var rk = Object.keys(segReactions).filter(function (k) {
+          return (segReactions[k] || []).length;
+        });
         if (rk.length) {
           var rrow = h('div', 'msg-reactions');
           var mid0 = myMaskId();
           rk.forEach(function (k) {
-            var arr = msg.reactions[k] || [];
+            var arr = segReactions[k] || [];
             var chip = h('button', 'msg-reaction', k + (arr.length > 1 ? ' ' + arr.length : ''));
             chip.type = 'button';
             if (arr.indexOf(mid0) >= 0) chip.classList.add('is-mine');
             chip.addEventListener('click', function (e) {
               e.stopPropagation();
-              toggleReaction(msg, k);
+              toggleReaction(msg, k, seg ? seg.idx : 0);
             });
             rrow.appendChild(chip);
           });
@@ -3526,6 +3565,49 @@
           try { window.open(openTarget, '_blank'); } catch (err) { /* 弹窗被拦就拦吧 */ }
         });
         return card;
+      }
+
+      /* 群声帖子卡（施工卡-群声-v1 Batch C）：payload 与权限复检全在
+         Sleepy.forumShare（forum-share.js）—— 这里只渲染 + 点击跳原帖。
+         附言（msg.content）按普通文字气泡显示在卡片上方，微信转发那套。
+         点卡片显式带 sandboxId + postId 回来源岛（active 停在别的岛也对）。 */
+      function qunshengCard(msg) {
+        var box = h('div', 'msg-qs-share');
+        if (String(msg.content || '').trim()) {
+          var note = h('div', 'msg-text');
+          note.textContent = msg.content;
+          box.appendChild(note);
+        }
+        box.appendChild(Sleepy.forumShare.cardEl(msg, function (qs) {
+          /* 回执（Batch D）：接收方打开了 → 给分享者记一条（只状态不正文） */
+          var ch = getChat(chatId);
+          var who = ch && ch.characterId && findCharacter(ch.characterId);
+          Sleepy.forumShare.markOpened({
+            sandboxId: qs.sandboxId, sourcePostId: qs.sourcePostId,
+            targetType: 'chat', targetId: chatId,
+            openerName: who ? who.name : '对方',
+            openerEntityId: who ? who.id : null
+          });
+          /* char 在聊天里直接回一句（user 2026-10-07 点名）：
+             单次模型调用、60s 冷却、失败静默；同时帖子里也可能有回应。 */
+          var post0 = Sleepy.forum.getPost(qs.sourcePostId, qs.sandboxId);
+          if (who && post0 && Sleepy.forumGen) {
+            Sleepy.forumGen.charReactToShare({
+              sandboxId: qs.sandboxId, chatId: chatId, charId: who.id,
+              postTitle: post0.title, postContent: post0.content,
+              attachedText: String(msg.content || '')
+            }, function (err2) {
+              if (!err2 && Sleepy.nav.top() === 'chat-detail' &&
+                  Sleepy.nav.topCtx() && Sleepy.nav.topCtx().params.chatId === chatId) {
+                /* 还停在这个会话就刷新一下，别让回复悄悄躺在下面 */
+                Sleepy.nav.topCtx().refresh && Sleepy.nav.topCtx().refresh();
+              }
+            });
+            Sleepy.forumGen.queueReplies(qs.sourcePostId, 3000);
+          }
+          ctx.open('qunsheng-post', { sandboxId: qs.sandboxId, postId: qs.sourcePostId });
+        }));
+        return box;
       }
 
       /* 表情消息：贴图本身，**没有气泡框**（微信就这样）。
@@ -4015,14 +4097,14 @@
 
       function openMenu(msg, seg, bubbleEl) {
         var idx = (seg && seg.idx !== undefined) ? seg.idx : null;
-        var pop = ui.anchorPopover(bubbleEl, { className: 'msg-pop' });
+        var pop = ui.anchorPopover(bubbleEl, { className: 'msg-pop', arrow: true });
 
         /* 顶部 emoji 回应条（QQ/企微风长按贴表情）；点一下贴/取消 */
         var emojiRow = h('div', 'msg-pop-emoji');
         REACTION_EMOJIS.forEach(function (em) {
           var b = h('button', 'msg-pop-emoji-btn', em);
           b.type = 'button';
-          b.addEventListener('click', function () { pop.close(); toggleReaction(msg, em); });
+          b.addEventListener('click', function () { pop.close(); toggleReaction(msg, em, idx); });
           emojiRow.appendChild(b);
         });
         pop.el.appendChild(emojiRow);

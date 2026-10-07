@@ -109,6 +109,9 @@
      必须在 page-desktop.js 之后（要用它的 defaultDesktop / COLS / ROWS）。 -->
 <script src="page-widgetstore.js" defer></script>
 <script src="page-backup.js" defer></script>
+<!-- 用户协议 / 隐私政策（legal.js · 2026-10-07 发售路线内测前第一件）。
+     依赖 ui.js + store.js，所以排在它们之后。首启弹窗由 splash.js 收尾时触发。 -->
+<script src="legal.js" defer></script>
 <script src="page-subapi.js" defer></script>
 <!-- 单份接口配置（总结 API / 向量记忆 API）：它们和副 API **完全独立**，
      只是「新增副 API 时顺手带一份进来」。所以必须排在 page-subapi 之后。 -->
@@ -177,6 +180,21 @@
 <!-- 小岛指南：App 内使用说明手册（桌面第 3 屏那一格）。
      只依赖壳子（Sleepy.register / ctx），位置随意，放这儿跟 wallet 一组。 -->
 <script src="page-guide.js" defer></script>
+<!-- 群声（公共论坛，施工卡-群声-v1 Batch A）：forum-core 是数据层
+     （显式 sandboxId 上下文解析 + forum 系列 scoped 读写 + 游标分页），
+     page-qunsheng 是 App shell（桌面第 3 屏「群声」格进入）。
+     都只依赖壳子（Sleepy / store / core），排这儿跟 guide 一组；
+     后续 page-forum-* 依赖 forum-core，必须排在它后面。 -->
+<script src="forum-core.js" defer></script>
+<!-- forum-gen：群声内容生成层（居民种子 / char·居民回帖）。
+     依赖 forum-core 的服务入口与 api.runChat（运行时才真发请求），
+     必须排在 forum-core 之后、page-qunsheng 之前。 -->
+<script src="forum-gen.js" defer></script>
+<!-- forum-share：群声分享层（统一 payload + 权限复检 + 共用聊天卡渲染）。
+     page-chat / page-group / page-qunsheng 都吃它，排 forum-gen 后即可
+     —— 三处消费方都在本行之后加载，运行时才调用。 -->
+<script src="forum-share.js" defer></script>
+<script src="page-qunsheng.js" defer></script>
 <!-- 聊天 App 容器（4 Tab：消息 / 通讯录 / 朋友圈 / 我）。
      它是壳，内容由 page-chat（消息）、page-moments（朋友圈）、
      page-switch（我）各自提供，所以必须排在它们后面。

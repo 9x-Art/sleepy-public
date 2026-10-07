@@ -660,6 +660,25 @@
               mimg.src = msg.url;
             }
             bubble.appendChild(mimg);
+          } else if (msg.type === 'qunsheng-share') {
+            /* 群声帖子卡（Batch C）：渲染共用 forum-share.cardEl；
+               附言先按普通文本一行，卡片点击显式带 sandboxId+postId 回原帖 */
+            bubble.classList.add('is-media');
+            if (String(msg.content || '').trim()) {
+              var qsNote = h('div', 'gc-text');
+              qsNote.textContent = msg.content;
+              qsNote.style.cssText = 'font-size:12px;line-height:1.6;margin-bottom:6px';
+              bubble.appendChild(qsNote);
+            }
+            bubble.appendChild(Sleepy.forumShare.cardEl(msg, function (qs) {
+              /* 回执（Batch D）：群成员打开 → 给分享者记一条 */
+              Sleepy.forumShare.markOpened({
+                sandboxId: qs.sandboxId, sourcePostId: qs.sourcePostId,
+                targetType: 'group', targetId: groupId,
+                openerName: meta.name
+              });
+              Sleepy.nav.open('qunsheng-post', { sandboxId: qs.sandboxId, postId: qs.sourcePostId });
+            }));
           } else {
             bubble.innerHTML = bubbleHtml(msg);
           }

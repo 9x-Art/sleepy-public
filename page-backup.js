@@ -494,6 +494,110 @@
     });
   }
 
+  /* ==================== 一键导出全部（2026-10-07 发售路线 · 内测前） ====================
+
+     为什么加这个：换设备时用户得**导两个文件、导两次**（文字一份 + 图片一份），
+     漏掉图库就会「聊天里的图全裂」。这个摩擦是「换设备焦虑」的主要来源，
+     而路线 v1 里云同步要内测之后才做 —— 所以现在用「合包」把成本降到零：
+     一个文件带走全部，导入时自动分流，用户不需要理解两套备份的区别。
+
+     口径（重要）：
+       · 文字部分走 exportUserData，与「导出备份」**完全同源**（不含过程数据）。
+       · 图片部分来自图库（IndexedDB），**没有图库 / 图库空都不算失败** ——
+         本来就没存图的用户不该被拦下。
+       · 图库不可用（无痕模式）→ 仍然导出文字部分，并在结果里明说图库没进去。
+     不许假成功：下载被浏览器拦下必须报错，不许 toast ok。 */
+
+  var ALL_KIND = 'sleepy-all';   /* 合包标识 —— 导入侧靠它识别，别写成别的字符串 */
+
+  /* 合包结构**单独抽成纯函数**：它决定「导入侧能不能认出这是合包」，
+     是契约本身，不该只能靠「拦下载再解析文件」来验。
+     downloadText 是在闭包顶部捕获的引用（`var downloadText = ui.downloadText`），
+     注入 S.ui.downloadText **不生效** —— 所以结构必须能被直接读到。 */
+  function buildAllPack(media) {
+    return {
+      v: 1,
+      app: ALL_KIND,
+      kind: ALL_KIND,
+      at: Date.now(),
+      data: store.exportUserData(),
+      media: media ? { count: media.count, bytes: media.bytes, items: media.items } : null
+    };
+  }
+
+  function exportAllInOne() {
+    var m = Sleepy.media;
+    if (!m || !m.exportAll) {
+      return Promise.resolve(exportAllTextOnly('这台设备用不了图库（无痕模式？）'));
+    }
+    return m.available().then(function (yes) {
+      if (!yes) return exportAllTextOnly('这台设备用不了图库（无痕模式？）');
+      return m.exportAll().then(function (r) {
+        if (!r.ok) return exportAllTextOnly('图库读不出来（' + (r.message || '未知原因') + '）');
+        return exportAllTextOnly(null, { count: r.count, bytes: r.bytes, items: r.items });
+      });
+    });
+  }
+
+  /* 文字是主体、图库是可选 —— 所以图库出问题时**照样出文件**，
+     只把note 如实带上，绝不因为图片把整份备份卡掉。 */
+  function exportAllTextOnly(note, media) {
+    var payload = buildAllPack(media);
+    var text = JSON.stringify(payload);
+    var name = FILE_PREFIX + '-全部-' + stamp() + '.json';
+    var ok = downloadText(name, text, 'application/json');
+    if (!ok) return { ok: false, message: '导出失败：浏览器拦下了下载' };
+
+    var mCount = media ? media.count : 0;
+    return {
+      ok: true,
+      name: name,
+      mediaCount: mCount,
+      mediaBytes: media ? media.bytes : 0,
+      note: note,
+      bytes: store.usage().bytes
+    };
+  }
+
+  /* 合包导入：按 kind 分流 —— 有图库就一起灌，没有就只导文字。
+     **图库失败不算整体失败**（它用 merge 语义，补缺的，不覆盖已有的）。
+
+     ⚠️ 两种输入形状不一样，**别混**（这是个真踩过的坑）：
+       · 合包     ：{ app:'sleepy-all', data:{ app:'sleepy', data:{…} }, media:{…} }
+                     → 交给 importEverything 的是**内层** payload.data
+       · 老纯文字 ：{ app:'sleepy', data:{…} }
+                     → 交给 importEverything 的是**整个 payload**
+       canImport 硬判 payload.app === 'sleepy'（store.js:588），
+       老备份直接把整个传进去才会过；合包必须剥一层。 */
+function importAllInOne(payload) {
+    var isAll = payload && (payload.app === ALL_KIND || payload.kind === ALL_KIND);
+    var m = Sleepy.media;
+    var media = isAll && payload.media && Array.isArray(payload.media.items)
+      ? payload.media : null;
+    var textPayload = isAll ? payload.data : payload;
+
+    function afterText(r) {
+      if (!media || !m || !m.importAll) return r;
+      return m.available().then(function (yes) {
+        if (!yes) {
+          r.mediaNote = '图库没能导进去（这台设备可能开了无痕模式）';
+          return r;
+        }
+        return m.importAll(media.items, { merge: true }).then(function (mr) {
+          r.mediaAdded = mr.ok ? mr.added : 0;
+          r.mediaSkipped = mr.skipped || 0;
+          r.mediaNote = mr.ok ? null : (mr.message || '图库导入失败');
+          return r;
+        }, function (e) {
+          r.mediaNote = '图库导入失败：' + ((e && e.message) || '未知原因');
+          return r;
+        });
+      });
+    }
+
+    return importEverything(textPayload).then(afterText);
+  }
+
   Sleepy.register('settings-backup', {
     title: '数据与备份',
     render: function (ctx) {
@@ -508,6 +612,44 @@
       fileInput.addEventListener('change', onPick);
       body.appendChild(fileInput);
 
+      /* 媒体备份（图库：图片 / 语音本体）单独一个口，别和全量备份混 */
+      var mediaInput = h('input');
+      mediaInput.type = 'file';
+      mediaInput.accept = '.json,application/json';
+      mediaInput.style.display = 'none';
+      mediaInput.addEventListener('change', onPickMedia);
+      body.appendChild(mediaInput);
+
+      function onPickMedia() {
+        var f = mediaInput.files && mediaInput.files[0];
+        if (!f) return;
+        var m = Sleepy.media;
+        if (!m || !m.importAll) { ctx.toast('这一版没有图库，导不进图片与语音', 'err'); return; }
+        var reader = new global.FileReader();
+        reader.onload = function () {
+          var data = null;
+          try { data = JSON.parse(String(reader.result)); } catch (e) { data = null; }
+          var items = data && Array.isArray(data.items) ? data.items : null;
+          if (!items) {
+            ctx.toast('这个文件读不出内容，确认选的是「导出图片与语音」生成的 json', 'err');
+            return;
+          }
+          ctx.toast('正在导入 ' + items.length + ' 条图片与语音…', 'ok');
+          m.importAll(items, { merge: true }).then(function (r) {
+            if (r.ok) {
+              ctx.toast('导入完成：新增 ' + r.added + ' 条' +
+                (r.skipped ? '、跳过 ' + r.skipped + ' 条（图库里已有）' : ''), 'ok');
+            } else {
+              ctx.toast('导入没完成：' + (r.message || '未知原因'), 'err');
+            }
+            refresh();
+          });
+        };
+        reader.onerror = function () { ctx.toast('读取文件失败', 'err'); };
+        reader.readAsText(f);
+        mediaInput.value = '';
+      }
+
       function onPick() {
         var f = fileInput.files && fileInput.files[0];
         if (!f) return;
@@ -519,12 +661,24 @@
             ctx.toast('这个文件读不出内容，确认选的是 Sleepy 的备份 json', 'err');
             return;
           }
+          /* 合包识别（2026-10-07）：用户很可能选了「一键导出全部」那个文件。
+             它带 app:'sleepy-all'，里面 data 是文字部分、media 是图库部分 ——
+             这里自动分流，**同一个按钮**既能吃合包也能吃老的纯文字备份。
+             判据看有没有 data 字段，不看 app 名（老备份没有 app 字段）。 */
+          var isAll = (data.app === ALL_KIND || data.kind === ALL_KIND) && data.data;
+          var job = isAll ? importAllInOne(data) : importEverything(data);
+
           /* 走 importEverything：校验 → 快照（本地 + 旧向量块 + 索引进度）→ 清向量库
              → 覆盖写 → 失败回滚。成功才刷新；失败**留在本页**并把逐项结果说清楚
              （刷新会掩盖残留）。回滚也失败时快照会被保留，页面顶部会出现「继续恢复」。 */
-          importEverything(data).then(function (r) {
+          job.then(function (r) {
             if (r.ok) {
-              ctx.toast('导入成功，正在刷新…', 'ok');
+              var extra = '';
+              if (isAll) {
+                if (r.mediaAdded) extra = '，含 ' + r.mediaAdded + ' 条图片语音';
+                if (r.mediaNote) extra += '（' + r.mediaNote + '）';
+              }
+              ctx.toast('导入成功' + extra + '，正在刷新…', r.mediaNote ? 'warn' : 'ok');
               setTimeout(function () { global.location.reload(); }, 700);
             } else if (r.restored === 'failed') {
               ctx.toast('导入失败，自动回滚也没完成：' + r.message, 'err');
@@ -569,9 +723,50 @@
 
       /* ---------------------------- 备份 ---------------------------- */
 
-      var g1 = group('备份',
+      /* 一键导出全部放最上面（2026-10-07）：这是换设备时**唯一该用的按钮**。
+         下面那四个分开的入口留着 —— 单独导文字更快、单独导图库便于分次搬家，
+         但新手只需要认识上面这一个。 */
+      var gAll = group('换设备 / 一键搬家',
+        '**换手机、换电脑、重装浏览器，用这一个按钮就够了。** ' +
+        '导出的文件包含聊天记录、设置**和图片语音**，一个文件带走全部；' +
+        '导入时也用它，图片会自动还原。');
+      var allBusy = false;
+      var allBtn = button('一键导出全部（文字 + 图片语音）', 'primary', function () {
+        if (allBusy) return;
+        allBusy = true;
+        allBtn.textContent = '正在打包…';
+        allBtn.disabled = true;
+        exportAllInOne().then(function (r) {
+          allBusy = false;
+          allBtn.textContent = '一键导出全部（文字 + 图片语音）';
+          allBtn.disabled = false;
+          if (!r.ok) { ctx.toast(r.message, 'err'); return; }
+          var bits = ['已导出全部'];
+          if (r.mediaCount) bits.push('含 ' + r.mediaCount + ' 条图片语音');
+          if (r.note) bits.push('（' + r.note + '，只导出了文字部分）');
+          ctx.toast(bits.join(' · '), r.note ? 'warn' : 'ok');
+        }, function (e) {
+          allBusy = false;
+          allBtn.textContent = '一键导出全部（文字 + 图片语音）';
+          allBtn.disabled = false;
+          ctx.toast('导出失败：' + ((e && e.message) || '未知原因'), 'err');
+        });
+      });
+      var allBtnRow = h('div', 'btn-row');
+      allBtnRow.appendChild(allBtn);
+      gAll.card.appendChild(allBtnRow);
+      gAll.card.appendChild(row({
+        label: '导入全部（换设备用）',
+        hint: '选「一键导出全部」生成的那个文件，文字和图片一起还原',
+        onClick: function () { fileInput.click(); }
+      }));
+      body.appendChild(gAll.wrap);
+
+      var g1 = group('分开导出（可选）',
         '导出的是 Sleepy 自己的存档格式（.json），换设备时用它搬家。' +
-        '**图片不在里面** —— 那些存在图库里（IndexedDB），换设备要重新传一次。');
+        '**图片和语音不在全量备份里** —— 它们存在图库（IndexedDB）。' +
+        '只是想快速导出文字存档、不想等图库打包，用下面这两个；' +
+        '**换设备请直接用上面「一键导出全部」**，那个是一个文件全带走。');
       g1.card.appendChild(row({
         label: '导出备份',
         hint: '含设置、Key 和以后的所有聊天记录',
@@ -582,6 +777,19 @@
         label: '导入备份',
         hint: '会覆盖当前数据，导之前先导出一次',
         onClick: function () { fileInput.click(); }
+      }));
+      /* 2026-10-07 用户：导出数据要有媒体数据的选择（语音 / 外观图片这些）。
+         媒体本体在 IndexedDB 图库，与全量备份分开导、分开导回。
+         2026-10-07 用户：不用「媒体」这个词，改叫「图片与语音」。 */
+      g1.card.appendChild(row({
+        label: '导出图片与语音',
+        hint: '头像、壁纸、表情包、聊天图、语音这些本体，一次全带走（可能很大，会花点时间）',
+        onClick: function () { doExportMedia(); }
+      }));
+      g1.card.appendChild(row({
+        label: '导入图片与语音',
+        hint: '把「导出图片与语音」的 json 灌回图库；已有的同 id 不覆盖，只补缺的。和「导入备份」先后无所谓，但两个都要导',
+        onClick: function () { mediaInput.click(); }
       }));
       body.appendChild(g1.wrap);
 
@@ -737,6 +945,34 @@
         refresh();
       }
 
+      /* 导出媒体数据（2026-10-07 用户）：图库（IndexedDB）里的图片 / 语音 /
+         附件本体整包下载成 .json。dataURL 承载 blob —— 大图库会慢，
+         导出期间先占住按钮别让人连点。 */
+      var mediaExporting = false;
+      function doExportMedia() {
+        var m = Sleepy.media;
+        if (!m || !m.exportAll) { ctx.toast('这一版没有图库，导不出图片与语音', 'err'); return; }
+        if (mediaExporting) return;
+        mediaExporting = true;
+        ctx.toast('正在打包图片与语音…（图库大的话会等一会儿）', 'ok');
+        m.available().then(function (yes) {
+          if (!yes) { mediaExporting = false; ctx.toast('这台设备用不了图库（无痕模式？）', 'err'); return; }
+          return m.exportAll().then(function (r) {
+            mediaExporting = false;
+            if (!r.ok) { ctx.toast(r.message || '读图库失败', 'err'); return; }
+            if (!r.count) { ctx.toast('图库是空的，没有东西可导出', 'warn'); return; }
+            var payload = { v: 1, app: 'sleepy-media', at: Date.now(), count: r.count, items: r.items };
+            var ok = downloadText(FILE_PREFIX + '-media-' + stamp() + '.json',
+              JSON.stringify(payload), 'application/json');
+            if (ok) ctx.toast('已导出 ' + r.count + ' 条 · ' + fmtBytes(r.bytes), 'ok');
+            else ctx.toast('导出失败：浏览器拦下了下载', 'err');
+          });
+        }, function () {
+          mediaExporting = false;
+          ctx.toast('读不了图库', 'err');
+        });
+      }
+
       refresh();
 
       ctx.setActions([{
@@ -755,6 +991,13 @@
     importEverything: importEverything,
     resumeRestore: resumeRestore,
     RB_KEY: RB_KEY,
+    /* 一键导出全部（2026-10-07）：合包导出 + 合包导入分流，
+       冒烟走的是**和按钮同一个函数**（导出面已挂，测试不该复制一份逻辑）。 */
+    ALL_KIND: ALL_KIND,
+    exportAllInOne: exportAllInOne,
+    importAllInOne: importAllInOne,
+    /* 合包结构纯函数：冒烟直接读它验契约（拦不住downloadText —— 它在闭包顶部捕获） */
+    buildAllPack: buildAllPack,
     /* 给冒烟读恢复区现状（键名由本模块定，测试不该自己拼字符串） */
     pendingRestore: takeRestore
   };

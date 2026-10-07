@@ -370,7 +370,15 @@
                   'lampNotes',
                   /* 组件商城批4（施工卡-组件商城-v1）：自定义组件模板 +
                      慢递信箱。都是 user/char 的内容数据，跟岛走，删房跟着清 */
-                  'customWidgets', 'slowLetters'];
+                  'customWidgets', 'slowLetters',
+                  /* 群声 · 公共论坛（施工卡-群声-v1 Batch A，forum-core.js）：
+                     13 张表全部 scoped，删房跟着清；
+                     forumSettingsBySandbox / selectedForumAccountBySandbox
+                     是按 sbId 切的映射键，走下面「带 sbId 的键」那条路。 */
+                  'forumAccounts', 'forumBoards', 'forumPosts', 'forumComments',
+                  'forumReposts', 'forumFollows', 'forumLikes', 'forumCollections',
+                  'forumNotifications', 'forumShares', 'forumShareReceipts',
+                  'forumDrafts', 'forumKnowledge'];
 
     /* ⚠️ 顺序敏感：挂在**会话 id** 上的动态单键必须先清，再清 chats。
        键名里带的是 chatId（不是 sbId），所以 scoped() 和下面「带 sbId 的键」
@@ -445,6 +453,17 @@
         removed.charAppearance = goneAp;
       }
     }
+
+    /* 群声的按岛映射键（forum-core.js）：键名是 sbId、值是对象，
+       同上面幽灵岛那套道理 —— 删房不清会留下幽灵岛的设置 / 论坛身份。 */
+    ['forumSettingsBySandbox', 'selectedForumAccountBySandbox'].forEach(function (mk) {
+      var m = store.get(mk);
+      if (m && has(m, id)) {
+        delete m[id];
+        store.set(mk, m);
+        removed[mk] = 1;
+      }
+    });
 
     if (store.get('activeSandboxId') === id) store.set('activeSandboxId', null);
 

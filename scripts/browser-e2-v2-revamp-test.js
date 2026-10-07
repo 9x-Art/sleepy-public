@@ -549,13 +549,17 @@ async function main() {
     });
     chk('B10c 明确确认后才回填草稿', applied2.indexOf('银灰色齐肩短发') >= 0, applied2.slice(0, 40));
 
-    /* A10 NAI UI 标注 */
+    /* A10 NAI 标注：2026-10-07 用户要求去掉生图页视觉层的说明文字，这段
+       「NAI 不接本轮视觉层」的提示随之移除（事实仍成立，只是不再显示）。
+       改成反向断言钉住「别再注册回来」；NAI 不接视觉层的功能判据由
+       browser-e2-formal-style-test.js 的请求级断言负责。 */
     const naiHint = await page.evaluate(() => {
       const pg = document.querySelector('.page[data-page="settings-imggen"]');
-      return (pg.textContent || '').indexOf('NAI 接口沿用其原生图路径') >= 0
-        && (pg.textContent || '').indexOf('都不生效') >= 0;
+      const t = pg.textContent || '';
+      return t.indexOf('NAI 接口沿用其原生图路径') < 0
+        && t.indexOf('都不生效') < 0;
     });
-    chk('A10 设置页如实标注 NAI 不接本轮视觉层', naiHint);
+    chk('A10 设置页不再显示 NAI 视觉层说明段', naiHint);
 
     failed = results.filter((r) => !r.ok).length;
     console.log('\n结果：' + results.filter((r) => r.ok).length + ' ✓ / ' + failed + ' ✗'

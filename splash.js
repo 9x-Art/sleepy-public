@@ -167,6 +167,15 @@
     el.style.opacity = '0';
     global.setTimeout(function () {
       if (el.parentNode) el.parentNode.removeChild(el);
+      /* 开屏彻底摘掉之后才弹协议（2026-10-07 内测前第一件）。
+         放在这里而不是在 finish 里同步调用：**别让协议盖在开屏动画上** ——
+         用户会以为点不动。已同意过当前版本的用户这一步什么都不发生。
+         legal.js 排在 ui.js / store.js 之后、splash.js 之前（见 index.html）。 */
+      try {
+        if (Sleepy.legal && typeof Sleepy.legal.maybeShowFirstRun === 'function') {
+          Sleepy.legal.maybeShowFirstRun();
+        }
+      } catch (e) { /* 协议弹不出来也不该挡住进桌面 */ }
     }, ms + 20);
   }
 

@@ -20,3 +20,6 @@ _shots/
 # WorkBuddy 助手工作区（记忆文件，不上传）
 .workbuddy/
 .wrangler/
+
+# 解包临时目录（第三方 zip 解出来的中间产物，不入库）
+_tmp-*-zip/
