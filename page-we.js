@@ -333,9 +333,16 @@
     return facts.slice(0, 4);
   }
 
-  /* ============================ 收藏展示（不改造 favorites） ============================ */
-
+  /* ============================ 收藏展示 ============================ */
+  /* 计数与收藏馆门厅同口径（2026-10-08 并馆轮）：
+     共同记录 + 聊天收藏（按岛）+ 票根（全局），直接问 page-collection 的
+     并馆出口；它没加载好时回退老口径（只数聊天收藏），不报错。 */
   function favoritesCount() {
+    try {
+      if (Sleepy.collectionStore && Sleepy.collectionStore.entries) {
+        return Sleepy.collectionStore.entries().length;
+      }
+    } catch (e) { /* 回退老口径 */ }
     return arr(store.get('favorites')).filter(function (f) {
       return f && f.sandboxId === core.scopeId();
     }).length;
@@ -402,6 +409,98 @@
       bodyEl.appendChild(srcWrap);
       bodyEl.__weCands = cands;
     }
+
+    /* ---- 帮我们记（2026-10-08 用户拍板 B1）----
+       模型从最近聊天 + 生活动态里起草一条共同记录：只把草稿填进表单，
+       看不看、改不改、存不存全是你的事 —— 落库仍走下面的保存（user 主权，
+       草稿绝不直接入库）。主 API；之后可被「副 API 功能多选」接管。 */
+    var draftBtn = h('button', 'we-draft-btn', '✦ 帮我们记');
+    draftBtn.type = 'button';
+    draftBtn.style.cssText =
+      'width:100%;margin:10px 0 4px;padding:9px 12px;border:1px solid rgba(27,25,23,.3);' +
+      'background:transparent;color:inherit;font-family:inherit;font-size:13px;' +
+      'letter-spacing:.05em;cursor:pointer;border-radius:8px;';
+    var draftHint = h('p', 'we-drawer-label',
+      '从最近的日子和聊天里帮你想一条，填进上面，改改就能存。');
+    bodyEl.appendChild(draftBtn);
+    bodyEl.appendChild(draftHint);
+
+    draftBtn.addEventListener('click', function () {
+      var API = Sleepy.api;
+      var LF = Sleepy.lifeFeed;
+      var CS = Sleepy.chatStore;
+      var ch = null, us = null;
+      try { ch = core.activeCharOnIsland(); us = core.activeUserOnIsland(); } catch (e0) {}
+      if (!ch || !us) { ctx.toast('先在 We 里选好你们俩', 'warn'); return; }
+      var main = store.get('mainApi');
+      if (!(API && main && main.enabled && main.baseUrl && main.model)) {
+        ctx.toast('帮我们记需要主 API —— 去 设置 → 模型接口 配一个', 'warn');
+        return;
+      }
+      draftBtn.disabled = true;
+      var oldText = draftBtn.textContent;
+      draftBtn.textContent = '在想…';
+
+      var chatLines = [];
+      try {
+        var chat = (CS && CS.chatOf) ? CS.chatOf(ch.id) : null;
+        if (chat && Array.isArray(chat.messages)) {
+          chatLines = chat.messages.slice(-15).map(function (m) {
+            var who = m.role === 'user' ? '我' : (ch.name || 'TA');
+            return who + '：' + String(m.type ? '（发了' + (m.type === 'photo' ? '一张照片' : '个附件') + '）' : (m.content || '')).slice(0, 60);
+          }).filter(Boolean);
+        }
+      } catch (e1) { /* 取不到聊天就空着 */ }
+      var feed = '';
+      try { feed = LF ? LF.text(ch.id, us.id) : ''; } catch (e2) { /* 同上 */ }
+      var d = new Date();
+      var dayLine = d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+
+      var sys = [
+        '你替一对关系写「共同记录」的草稿：把值得留下来的一件小事，写成一张收藏卡。',
+        '素材是你们最近的聊天和生活动态 —— 只能从里面挑真实发生过 / 说定过的事，',
+        '不许编造没有依据的事件；宁可选平淡的真事，也不要编精彩热闹的假事。',
+        '【输出】只返回一个 JSON：{"title":"不超过 12 个字","note":"一句话，不超过 40 个字","kind":"ticket|photo|letter|music|gift|place|other"}',
+        '只输出 JSON 本体，不要解释。'
+      ].join('\n');
+      var userMsg = [
+        '[今天] ' + dayLine,
+        feed || '[近期生活动态]\n（暂时没有）',
+        chatLines.length ? '[最近聊天]\n' + chatLines.join('\n') : '[最近聊天]\n（最近没聊过什么）'
+      ].join('\n\n');
+
+      API.requestOnce(
+        { source: 'main', label: main.name || '主 API', cfg: main },
+        [{ role: 'system', content: sys }, { role: 'user', content: userMsg }], {}
+      ).then(function (res) {
+        draftBtn.disabled = false;
+        draftBtn.textContent = oldText;
+        if (!res.ok) {
+          ctx.toast('没想出来：' +
+            (API.describeError ? API.describeError(res) : (res.error || '请求失败')), 'err');
+          return;
+        }
+        var t = String(res.content || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+        var j = t.indexOf('{'), k = t.lastIndexOf('}');
+        var draft = null;
+        if (j >= 0 && k > j) {
+          try { draft = JSON.parse(t.slice(j, k + 1)); } catch (e3) { draft = null; }
+        }
+        if (!draft || !String(draft.title || '').trim()) {
+          ctx.toast('没想出来（模型输出不对劲），再点一次试试', 'err');
+          return;
+        }
+        title.input.value = String(draft.title || '').trim().slice(0, 24);
+        note.input.value = String(draft.note || '').trim().slice(0, 60);
+        if (WE_KINDS.indexOf(draft.kind) >= 0) kindSel.value = draft.kind;
+        draftHint.textContent = '草稿填好了 —— 看看、改改，满意就存。';
+        ctx.toast('帮你想好了一条，改改就能存', 'ok');
+      }, function () {
+        draftBtn.disabled = false;
+        draftBtn.textContent = oldText;
+        ctx.toast('没想出来：请求失败，稍后再试', 'err');
+      });
+    });
 
     var saveBtn = ui.button('保存到共同记录', 'primary');
     bodyEl.appendChild(saveBtn);

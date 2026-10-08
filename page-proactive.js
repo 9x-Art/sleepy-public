@@ -371,8 +371,24 @@
       name: (ch && ch.name) || 'TA'
     });
 
-    return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
-      if (!res.ok) return done({ ok: false, why: 'api', error: Sleepy.api.describeError(res) });
+    /* 勾了「TA 主动消息走副 API」→ 只轮询副 API（api.js）；没勾走主 API。
+       feature 路的失败是字符串；requestOnce 路的失败走 describeError。 */
+    var featureP = Sleepy.api.requestForFeature
+      ? Sleepy.api.requestForFeature('proactive', messages, {}) : null;
+    var p = featureP
+      ? featureP.then(function (r) {
+          return r.ok ? { ok: true, content: r.content }
+                      : { ok: false, error: r.error };
+        })
+      : Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
+          if (!res.ok) return { ok: false, error: Sleepy.api.describeError(res) };
+          return { ok: true, content: res.content };
+        }, function (e) {
+          return { ok: false, error: (e && e.message) || '请求失败' };
+        });
+
+    return p.then(function (res) {
+      if (!res.ok) return done({ ok: false, why: 'api', error: res.error });
       var d = parseDecision(res.content);
       if (!d) return done({ ok: false, why: 'parse' });
 

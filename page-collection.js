@@ -56,7 +56,7 @@
   /* 来源类型中文名（展示 + 复核用）。 */
   var SRC_LABEL = {
     manual: '手记', chat: '聊天', calendar: '日历', moments: '朋友圈',
-    photo: '照片', offline: '线下', ticket: '票根'
+    photo: '照片', offline: '线下', ticket: '票根', moment: '聊天'
   };
   function srcLabel(t) { return SRC_LABEL[t] || t || '未知'; }
 
@@ -106,6 +106,14 @@
         });
         if (fav.length) return { status: 'live', text: '收藏 · ' + String(fav[0].content || '').slice(0, 40) };
         return { status: 'gone', text: '原对话已删除' };
+      }
+      if (st === 'moment') {
+        /* char 记一笔提议入馆的：来源就是提议发生的那场对话 */
+        var mc = (Sleepy.chatStore && Sleepy.chatStore.getChat)
+          ? Sleepy.chatStore.getChat(id) : null;
+        return mc
+          ? { status: 'live', text: '你们聊出来的时刻' }
+          : { status: 'gone', text: '原对话已删除' };
       }
       if (st === 'photo') {
         var ph = Sleepy.photos;
@@ -170,7 +178,50 @@
     return isNaN(n) ? 0 : n;
   }
   function entries() {
-    return core.scoped(arr(store.get('weEntries'))).slice().sort(function (a, b) {
+    var list = core.scoped(arr(store.get('weEntries'))).slice();
+    /* —— 并馆（wj-data §5.1 原设计：聊天收藏按岛 + 票根全局并进收藏馆）——
+       2026-10-08 用户反馈：聊天收藏只落 favorites，收藏馆里看不到；票根同病
+       （帷境谢幕 toast 说「收进收藏馆了」但馆里没有）。修法 = 并馆展示、
+       不搬数据：favorites / wjTickets 仍是唯一真相，这里只是读出来统一形状。
+       weEntry 已引用过的（sourceType+sourceId 相同）不重复并，防双份。 */
+    var refd = {};
+    list.forEach(function (en) {
+      if (en && en.sourceType === 'chat' && en.sourceId) refd['c:' + en.sourceId] = 1;
+      if (en && en.sourceType === 'ticket' && en.sourceId) refd['t:' + en.sourceId] = 1;
+    });
+    core.scoped(arr(store.get('favorites'))).forEach(function (f) {
+      if (!f || !f.id || refd['c:' + f.id]) return;
+      var content = String(f.content || '');
+      var first = content.split('\n')[0];
+      list.push({
+        id: 'fav:' + f.id,          /* 假 id 只用于门厅/详情定位，不是 weEntry */
+        title: first.slice(0, 24) || '一条聊天',
+        note: content,
+        at: f.savedAt,
+        kind: 'letter',
+        sourceType: 'chat',
+        sourceId: f.id,
+        sourceRef: f.chatName || '',
+        createdBy: 'user',
+        merged: 'chat',             /* 详情页据此给「去原对话 / 移出」动作 */
+        workId: f.chatId
+      });
+    });
+    (Sleepy.wj && Sleepy.wj.tickets ? Sleepy.wj.tickets() : []).forEach(function (t) {
+      if (!t || !t.id || refd['t:' + t.id]) return;
+      list.push({
+        id: 'tk:' + t.id,
+        title: t.title || '未命名剧本',
+        at: t.at,
+        kind: 'ticket',
+        sourceType: 'ticket',
+        sourceId: t.id,
+        createdBy: 'user',
+        merged: 'ticket',
+        workId: t.workId
+      });
+    });
+    return list.sort(function (a, b) {
       return atNum(b.at) - atNum(a.at);
     });
   }
@@ -537,11 +588,18 @@
     var split = h('div', 'co-tk-split');
     var colL = h('div', 'co-tk-splitcol');
     colL.appendChild(h('div', 'co-tk-split-who', '我 的 留 言'));
-    colL.appendChild(memoCell(en, 'memoUser', '＋ 补一句留言', ctx));
     var cname = charName(en.refCharId) || 'TA';
     var colR = h('div', 'co-tk-splitcol');
     colR.appendChild(h('div', 'co-tk-split-who', cname + ' 记 录'));
-    colR.appendChild(memoCell(en, 'memoChar', '＋ 让这一格也有字', ctx));
+    if (en.merged === 'ticket') {
+      /* 并馆的帷境票根不是 weEntry，留言没有落库处 —— 摆静态占位，
+         不给点了必然「没写上」的假编辑入口（2026-10-08 并馆轮）。 */
+      colL.appendChild(h('div', 'co-tk-memo-static', '帷境票根 · 不在此写留言'));
+      colR.appendChild(h('div', 'co-tk-memo-static', '—'));
+    } else {
+      colL.appendChild(memoCell(en, 'memoUser', '＋ 补一句留言', ctx));
+      colR.appendChild(memoCell(en, 'memoChar', '＋ 让这一格也有字', ctx));
+    }
     split.appendChild(colL); split.appendChild(colR);
     grid.appendChild(split);
 
@@ -794,6 +852,55 @@
       meta.appendChild(metaRow('归属', charName(en.refCharId) + (userName(en.refUserId) ? ' · ' + userName(en.refUserId) : '')));
     }
     shell.appendChild(meta);
+
+    /* 并馆藏品（聊天收藏 / 票根）的动作行：回原物 + 移出。
+       数据真相不搬 —— 移除只动 favorites / wjTickets 原表，馆是读出来的。 */
+    if (en.merged === 'chat' || en.merged === 'ticket') {
+      var acts = h('div', 'co-merged-acts');
+      var goBtn = null;
+      if (en.merged === 'chat') {
+        if (src.status === 'live') {
+          goBtn = h('button', 'co-merged-btn', '去原对话看看');
+          goBtn.type = 'button';
+          goBtn.onclick = function () {
+            var f = arr(store.get('favorites')).filter(function (x) {
+              return x && x.id === en.sourceId;
+            })[0];
+            var cid = f ? f.chatId : en.workId;
+            if (!cid || !(Sleepy.chatStore && Sleepy.chatStore.getChat(cid))) {
+              ctx.toast('原来的对话已经删掉了', 'warn');
+              return;
+            }
+            Sleepy.nav.open('chat-detail', { chatId: cid });
+          };
+        }
+      } else if (Sleepy.wj && Sleepy.wj.get && en.workId && Sleepy.wj.get(en.workId)) {
+        goBtn = h('button', 'co-merged-btn', '去剧本看看');
+        goBtn.type = 'button';
+        goBtn.onclick = function () {
+          Sleepy.nav.open('wj-work', { id: en.workId });
+        };
+      }
+      if (goBtn) acts.appendChild(goBtn);
+      var rm = h('button', 'co-merged-btn is-danger', en.merged === 'ticket' ? '移除票根' : '移出收藏馆');
+      rm.type = 'button';
+      rm.onclick = function () {
+        if (en.merged === 'ticket') {
+          if (Sleepy.wj && Sleepy.wj.removeTicket) Sleepy.wj.removeTicket(en.sourceId);
+          ctx.toast('票根收起来了', 'ok');
+        } else {
+          var cur = arr(store.get('favorites')).filter(function (x) {
+            return x && x.id !== en.sourceId;
+          });
+          store.set('favorites', cur);
+          ctx.toast('已移出收藏馆', 'ok');
+        }
+        if (ctx.__paint) ctx.__paint();
+        else if (Sleepy.nav) Sleepy.nav.back();
+      };
+      acts.appendChild(rm);
+      shell.appendChild(acts);
+    }
 
     body.appendChild(shell);
   }

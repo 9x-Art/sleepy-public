@@ -298,10 +298,12 @@
 
   function setCurrent(id) { return store.set('imgApiId', id); }
 
-  /* 新建一份接口记录：预设当场拷进来（用户：「根据模型特色写内置预设词」，
-     拷进来之后就是他自己的，随便改不影响出厂值） */
+  /* 新建一份接口记录：**不再预灌内置预设词**（2026-10-08 用户拍板：
+     「不要把我们的提示词放出来」—— 预灌的词会直接出现在设置表单里）。
+     留空即可：正式/legacy/NAI 三条路对空 positivePreset / negativePreset
+     都回落 BUILTIN_PRESET，拼出来的词分毫不变，只是不再展示、不再拷进
+     用户存档。想覆盖的用户在表单里自己填。 */
   function newApi(kind) {
-    var base = BUILTIN_PRESET[kind] || BUILTIN_PRESET.general;
     return {
       id: 'ig' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       kind: KINDS[kind] ? kind : 'general',
@@ -313,8 +315,8 @@
       /* 用户 2026-09-29：「所有 api 类型的超时都改成 60s」——
          生图不再按类型给长超时，统一 60。 */
       timeoutSec: 60,
-      positivePreset: base.positive,
-      negativePreset: base.negative,
+      positivePreset: '',
+      negativePreset: '',
       /* B2 图片锁脸：参考图支持方式由用户按服务方能力显式声明
          （none=不支持/未核实，默认）；'edits'=通用 /images/edits，
          'chat'=文字通道多模态送图。NAI 暂不支持。 */

@@ -92,8 +92,12 @@
     return GEN_DEFAULTS.contextMessages;
   }
 
-  /* 候选列表：主 API（启用且有配置）排最前，然后是启用的副 API 按数组顺序 */
-  function candidates() {
+  /* 候选列表：主 API（启用且有配置）排最前，然后是启用的副 API 按数组顺序。
+     ov.feature 带了功能键且该功能被勾选「走副 API」→ **只**返回副 API
+     （多组间照旧轮询），绝不掺主 API —— 这是 2026-10-08 副 API 定位重构的
+     核心：副 API 服务指定功能，不是主聊天的接替队列。 */
+  function candidates(feature) {
+    if (feature && featureOn(feature)) return subCandidates();
     var list = [];
     var main = store.get('mainApi') || {};
     if (main.enabled && main.baseUrl && main.model) {
@@ -108,6 +112,82 @@
       });
     }
     return list;
+  }
+
+  /* ==================== 副 API 功能分配（2026-10-08 定位重构） ====================
+     副 API 的正确定位：服务**不那么重要 / 稍微简单 / 经常要用**的功能，
+     不是主 API 挂了之后的接替队列。user 在 设置 → 副 API 里勾选功能：
+     · 勾了 → 该功能严格走副 API（多组之间轮询，每组重试 subRetry 次），
+       全部失败就报错，**绝不偷用主 API**；
+     · 没勾 → 该功能照旧（主 API 候选链）。
+     清单在 FEATURES（UI 与报错共用一份）；新功能接线 = 调用方二选一：
+       · runChat 系：ov 传 { feature: '<key>' }（candidates 自动收窄）；
+       · requestOnce 系：Sleepy.api.requestForFeature(key, messages, ov)
+         —— 未勾选返回 null（调用方走自己的默认），勾选返回
+         Promise<{ok,content}>，内部只轮询副 API。 */
+  var KEY_FEATURES = 'subApiFeatures';
+
+  var FEATURES = [
+    { key: 'proactive', label: 'TA 主动消息' },
+    { key: 'schedule',  label: '角色日程（每日生成）' },
+    { key: 'heartbeat', label: '心声（手动想一条）' },
+    { key: 'moments',   label: '朋友圈动态（刷新 / TA 发帖）' },
+    { key: 'forum',     label: '群声（催更 / @ta）' },
+    { key: 'diary',     label: '日记代笔' },
+    { key: 'offline',   label: '线下模式' },
+    { key: 'talife',    label: 'TA 自主生活推进' },
+    { key: 'director',  label: '生图想画面（导演）' }
+  ];
+
+  function featureLabel(key) {
+    for (var i = 0; i < FEATURES.length; i++) {
+      if (FEATURES[i].key === key) return FEATURES[i].label;
+    }
+    return key;
+  }
+
+  function featureOn(key) {
+    var m = store.get(KEY_FEATURES);
+    return !!(m && m[key] === true);
+  }
+
+  /* 启用中且配置齐全的副 API（顺序 = 数组顺序，与候选队列同口径） */
+  function subCandidates() {
+    var list = [];
+    var subs = store.get('subApis');
+    (Array.isArray(subs) ? subs : []).forEach(function (it) {
+      if (it && it.enabled && it.baseUrl && it.model) {
+        list.push({ source: 'sub', label: it.name || '副 API', cfg: it });
+      }
+    });
+    return list;
+  }
+
+  /* 功能调用的统一入口（requestOnce 系模块用）。
+     返回 null  = 该功能没勾选，调用方走自己的默认路径；
+     返回 Promise = 已勾选，内部只在副 API 之间轮询：
+       全部失败 → { ok:false, error:'副 API 全部失败（…不回落主 API）' }；
+       一个都没有 → { ok:false, error:'…已指定走副 API，但没有启用中的副 API' }。 */
+  function requestForFeature(key, messages, ov) {
+    if (!featureOn(key)) return null;
+    var subs = subCandidates();
+    if (!subs.length) {
+      return Promise.resolve({ ok: false,
+        error: '「' + featureLabel(key) + '」已指定走副 API，但没有启用中的副 API —— 去 设置 → 副 API 检查' });
+    }
+    var i = 0;
+    function next() {
+      if (i >= subs.length) {
+        return Promise.resolve({ ok: false,
+          error: '副 API 全部失败（「' + featureLabel(key) + '」已指定走副 API，不回落主 API）' });
+      }
+      var cand = subs[i++];
+      return requestOnce(cand, messages, ov || {}).then(function (res) {
+        if (res.ok) return { ok: true, content: res.content, cand: cand };
+        return next();
+      }, function () { return next(); });
+    }
+    return next();
   }
 
   function requestHeaders(cfg) {
@@ -457,7 +537,7 @@
     /* 重试次数（设置 → 副 API → 每组重试次数）：每个候选连续尝试 N 次
        再轮到下一个。1~5，存档坏了/没填兜底 2。 */
     var retryN = Math.max(1, Math.min(5, Math.round(Number(store.get('subRetry'))) || 2));
-    var base = candidates();
+    var base = candidates(ov && ov.feature);
     /* 个性化（用户 2026-09-22：「模型没接上个性选择」）：
        这篇对话单独指定了走哪条连接就只用它。以前 ov 传进来**压根没读**，
        所以设置页那一行点了跟没点一样。选中的连接被删掉时（filter 后为空）
@@ -472,7 +552,9 @@
     });
     handlers = handlers || {};
     if (!c.length) {
-      var e0 = { stage: 'config', error: '还没有可用的模型连接，去 设置 → 模型连接 填 API' };
+      var e0 = (ov && ov.feature)
+        ? { stage: 'config', error: '「' + featureLabel(ov.feature) + '」已指定走副 API，但没有启用中的副 API —— 去 设置 → 副 API 检查' }
+        : { stage: 'config', error: '还没有可用的模型连接，去 设置 → 模型连接 填 API' };
       if (handlers.onFail) handlers.onFail(c, e0);
       return null;
     }
@@ -623,6 +705,12 @@
     describeError: describeError,
     streamOnce: streamOnce,
     runChat: runChat,
+    /* 副 API 功能分配（2026-10-08 定位重构）：清单/勾选态/功能调用入口 */
+    FEATURES: FEATURES,
+    featureLabel: featureLabel,
+    featureOn: featureOn,
+    subCandidates: subCandidates,
+    requestForFeature: requestForFeature,
     /* 向量：端点与回落规则都和对话不同，见上面那段注释 */
     embeddingsUrl: embeddingsUrl,
     embed: embed

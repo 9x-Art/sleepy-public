@@ -290,11 +290,29 @@
     var user = '[今天] ' + dateLine + '\n[今天的聊天节选]\n' +
       (transcript || '（今天还没有聊天）');
 
-    return Sleepy.api.requestOnce(cand, [
-      { role: 'system', content: sys },
-      { role: 'user', content: user }
-    ], {}).then(function (res) {
-      if (!res.ok) return { ok: false, error: Sleepy.api.describeError(res) };
+    /* 勾了「日记代笔走副 API」→ 只轮询副 API（api.js）；没勾走主 API。
+       两条路的 res 处理共用下面一段（requestForFeature 的失败已带人话）。 */
+    var featureP = Sleepy.api.requestForFeature
+      ? Sleepy.api.requestForFeature('diary', [
+          { role: 'system', content: sys },
+          { role: 'user', content: user }
+        ], {})
+      : null;
+    var p = featureP
+      ? featureP.then(function (r) {
+          return r.ok ? { ok: true, content: r.content }
+                      : { ok: false, error: r.error };
+        })
+      : Sleepy.api.requestOnce(cand, [
+          { role: 'system', content: sys },
+          { role: 'user', content: user }
+        ], {});
+
+    return p.then(function (res) {
+      if (!res.ok) {
+        return { ok: false, error: (typeof res.error === 'string')
+          ? res.error : Sleepy.api.describeError(res) };
+      }
       var raw = String(res.content || '').trim()
         .replace(/^```(?:markdown|text)?\s*|\s*```$/g, '')
         .replace(/^["「」]+|["「」]+$/g, '').trim();

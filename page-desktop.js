@@ -122,7 +122,15 @@
     calendar: ic('<rect x="3.6" y="5.4" width="16.8" height="14.2" rx="2.2"/>' +
       '<path d="M3.6 10.2h16.8"/>' +
       '<path d="M8.6 3.4v3.6M15.4 3.4v3.6"/>' +
-      '<path d="M7.4 13.4h2.2M12.4 13.4h4.2M7.4 16.4h2.2M12.4 16.4h2.4"/>')
+      '<path d="M7.4 13.4h2.2M12.4 13.4h4.2M7.4 16.4h2.2M12.4 16.4h2.4"/>'),
+    /* 以身入局（第 3 屏 x4,y5，版本 23 从「组件商城」空壳改来的真入口）：
+       一扇拱门里站着一个小人 —— 「踏进门里、亲身入局」的那道门。
+       形状跟上面那批线稿图标一致（24 格 / currentColor / 线宽 1.7）。
+       **必须有自己的条目**：RENDER.app 的兜底是 ICONS.chat，
+       不加就会跟聊天撞图标。 */
+    yishenruju: ic('<path d="M7 20.5V11a5 5 0 0 1 10 0v9.5"/>' +
+      '<circle cx="12" cy="9" r="1.85"/>' +
+      '<path d="M9.5 20.5v-4.6a2.5 2.5 0 0 1 5 0v4.6"/>')
   };
 
   /* ---------------------------- 默认布局 ---------------------------- */
@@ -228,8 +236,15 @@
      数据层 forum-core.js）。选贴纸这格是施工总单评估的默认项 + 用户确认：
      贴纸功能在聊天「我 → 表情包」和收藏馆里都有完整入口，桌面这格
      从版本 19 起就是空壳。贴纸的 stickers App 实现不删，只让出这一格。
-     语义变了所以换格子 id（同版本 20 那条规矩），LAYOUT_VERSION +1。 */
-  var LAYOUT_VERSION = 22;
+     语义变了所以换格子 id（同版本 20 那条规矩），LAYOUT_VERSION +1。
+
+    版本 23（2026-10-08）：第 3 屏 (x4,y5)「组件商城」空壳换成
+    **「以身入局」真入口**（type 'app' / app 'yishenruju' / 格子 id p3-yishenruju）。
+    组件商城在主屏 p1-store 已有完整入口，这格从版本 19 起就是空壳，正好接新 App。
+    语义变了所以换格子 id（同版本 20/22 那条规矩）。「以身入局」首版是诚实占位页
+    （page-yishenruju.js，点开显示「这一页还没贴好」），等定好玩法再填真实功能；
+    不冒充完成。LAYOUT_VERSION +1。 */
+  var LAYOUT_VERSION = 23;
 
   function defaultDesktop() {
     return {
@@ -348,7 +363,11 @@
              以后想接回来把 type 改回 'app' 一行就够。
              格子 id 沿用 p3-look 不变。 */
           { i: 'p3-look', type: 'blank', app: 'appearance', x: 3, y: 5, w: 1, h: 1, label: '外观' },
-          { i: 'p3-store', type: 'blank', app: 'widgetstore', x: 4, y: 5, w: 1, h: 1, label: '组件商城' }
+          /* 版本 23（2026-10-08）：(x4,y5) 这格从「组件商城」空壳换成「以身入局」真入口
+             （type 'app' / app 'yishenruju' / 格子 id p3-yishenruju）。组件商城在主屏 p1-store
+             已有完整入口，这格从版本 19 起就是空壳。语义变了换格子 id（同版本 20/22 规矩）。
+             「以身入局」首版是诚实占位页，点开显示「这一页还没贴好」，不冒充完成。 */
+          { i: 'p3-yishenruju', type: 'app', app: 'yishenruju', x: 4, y: 5, w: 1, h: 1, label: '以身入局' }
         ]
       ]
     };

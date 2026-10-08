@@ -434,16 +434,24 @@ async function main() {
     const hallA2 = await colText(page);
     chk('C11 返回原岛后藏品恢复', hallA2.indexOf('一起看过海') >= 0 && hallA2.indexOf('一张手写纸条') >= 0, '');
 
-    /* C12：旧 favorites 仍可开（注册未变，原语义不动） */
+    /* C12（翻转，2026-10-08）：旧 favorites 页已退役 —— 注册必须消失；
+       nav.open 对未知 id 会造「这一页还没贴好」的系统占位壳（app.js build()
+       的通用行为），所以不能断言 DOM 无壳，要断言壳里没有旧收藏内容。 */
     const favOpen = await page.evaluate(() => {
       const S = window.Sleepy;
       const reg = S.registered();
-      S.nav.open('favorites');
-      return { regFav: !!reg.favorites, open: !!document.querySelector('.page[data-page="favorites"]') };
+      try { S.nav.open('favorites'); } catch (e) { /* 不许炸壳，吞掉 */ }
+      const shell = document.querySelector('.page[data-page="favorites"]');
+      return {
+        regFav: !!reg.favorites,
+        shellTitle: shell ? (shell.querySelector('.app-title') || {}).textContent || '' : null,
+        hasOldContent: shell ? !!shell.querySelector('.fav-list, .fav-item, .fav-text') : false
+      };
     });
     await sleep(200);
-    const favOpenAfter = await page.evaluate(() => !!document.querySelector('.page[data-page="favorites"]'));
-    chk('C12 旧 favorites 仍正常（注册 + 可打开）', favOpen.regFav && favOpenAfter, '');
+    chk('C12 旧 favorites 已退役（无注册 + 壳里无旧收藏内容）',
+      !favOpen.regFav && !favOpen.hasOldContent &&
+        favOpen.shellTitle !== '收藏夹', JSON.stringify(favOpen));
 
     /* ---- 美化批（2026-10-02）：贴纸工坊入口/占位页 + 门厅实物缩略卡 + 群岛选人闸 ---- */
     chk('M1 门厅有贴纸工坊入口 + 票根/照片实物缩略卡',

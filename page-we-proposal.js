@@ -160,8 +160,15 @@
 
   /* ------------------------- 创建提议（唯一写入口） -------------------------
      chat：真实 chat 记录（getChat 的返回）；originMessageId：产生提议的
-     assistant 消息 id；tag：extractTag 的 hit。五道去重闸 + fail closed。 */
+     assistant 消息 id；tag：extractTag / extractEntryTag 的 hit。
+     hit.type === 'entry' → char 自己记共同记录（createEntryFromReply）；
+     其余（含省略 type 的老调用）→ 日历来源收藏提议。五道去重闸 fail closed。 */
   function createFromReply(chat, originMessageId, tag) {
+    if (tag && tag.type === 'entry') return createEntryFromReply(chat, originMessageId, tag);
+    return createCalendarFromReply(chat, originMessageId, tag);
+  }
+
+  function createCalendarFromReply(chat, originMessageId, tag) {
     tag = tag || {};
     if (!tag.sourceId || !tag.kind) return { ok: false, why: 'bad-tag' };
     var kinds = (Sleepy.weStore && Sleepy.weStore.KINDS) ||
@@ -243,12 +250,21 @@
     }
     if (p.status !== 'pending') return { ok: false, why: 'not-pending' };
 
-    /* 确认前重新核验来源（事件可能在提议后被人取消 / 清掉） */
-    var v = validateSource(
-      { characterId: p.refCharId, sandboxId: p.sandboxId, userId: p.refUserId },
-      p.sourceId
-    );
-    if (!v.ok) return { ok: false, why: v.why, proposal: p };
+    /* 确认前重新核验来源：
+       · calendar —— 事件可能在提议后被人取消 / 清掉；
+       · moment  —— 提议发生的那场对话可能已被删除。任一失效都拒绝入馆、
+         保留 pending，把 why 交回 UI 提示 user。 */
+    if (p.sourceType === ENTRY_SOURCE_TYPE) {
+      var cs = Sleepy.chatStore;
+      var oc = (cs && cs.getChat) ? cs.getChat(p.sourceId) : null;
+      if (!oc) return { ok: false, why: 'deleted', proposal: p };
+    } else {
+      var v = validateSource(
+        { characterId: p.refCharId, sandboxId: p.sandboxId, userId: p.refUserId },
+        p.sourceId
+      );
+      if (!v.ok) return { ok: false, why: v.why, proposal: p };
+    }
 
     if (!Sleepy.weStore || !Sleepy.weStore.add) return { ok: false, why: 'no-westore' };
     var entry = Sleepy.weStore.add({
@@ -284,15 +300,133 @@
     return { ok: true, proposal: findRaw(id) };
   }
 
+  /* ------------------------- char 自己记共同记录（2026-10-08 用户拍板） -------------------------
+     「[收藏提议] 只认日历事件」太窄 —— TA 在聊天里聊到的值得留下的时刻，
+     应该可以**自己开口提议记下来**，不用等 user 手填（用户原话：「我以为是
+     char 会自己记录的」）。
+
+     模型标签协议：[记一笔:标题|一句话|分类]（分类可省，省了按 other 收）。
+     纪律与收藏提议完全同款：
+     · 提议 ≠ 入馆：落 weProposals pending，user 在收藏馆「待确认」里点头
+       才生成 weEntry（createdBy:'char' + confirmedBy:'user'）；
+     · 标题/一句话是模型唯一能带的字段，身份/岛章/去重/时间全由程序生成；
+     · 去重：同 originMessageId 一次；同 char 同标题 pending/accepted 拒、
+       declined 7 天冷却；同 char 在途 pending 上限 1（与收藏提议共用计数）；
+     · 来源：sourceType='moment'，sourceId=提议发生的那场对话（chat.id）
+       —— 详情页据此显示「来自聊天」，对话删了如实降级。
+
+     失败语义：格式非法 / 超长 → 静默丢弃，不影响聊天。 */
+
+  var ENTRY_SOURCE_TYPE = 'moment';
+  var ENTRY_NOTE_MAX = 60;
+  /* [记一笔:标题|一句话] 或 [记一笔:标题|一句话|分类] —— 两个字段起步，
+     分类可选。at 记录匹配位置（page-chat 包装层据此在两个标签里挑先出现的）。 */
+  var ENTRY_TAG_RE =
+    /\[记一笔[：:]\s*([^|\]\n]*)\s*\|\s*([^|\]\n]*)\s*(?:\|\s*([^\]\n]*)\s*)?\]/g;
+
+  function extractEntryTag(raw) {
+    var hit = null;
+    var text = String(raw == null ? '' : raw).replace(ENTRY_TAG_RE, function (m, title, note, kind, off) {
+      if (!hit) {
+        var t = String(title || '').trim();
+        var n = String(note || '').trim();
+        if (t && n) {
+          hit = {
+            type: 'entry',
+            title: t,
+            note: n,
+            kind: String(kind || '').trim() || 'other',
+            at: off
+          };
+        }
+      }
+      return '';
+    })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return { text: text, hit: hit };
+  }
+
+  function createEntryFromReply(chat, originMessageId, tag) {
+    tag = tag || {};
+    if (!tag.title) return { ok: false, why: 'bad-tag' };
+    var kinds = (Sleepy.weStore && Sleepy.weStore.KINDS) ||
+      ['ticket', 'photo', 'letter', 'music', 'gift', 'place', 'other'];
+    var kind = kinds.indexOf(tag.kind) >= 0 ? tag.kind : 'other';
+    var note = String(tag.note || '').trim();
+    if (!note || note.length > ENTRY_NOTE_MAX) return { ok: false, why: 'bad-tag' };
+    /* 身份四要素缺一不可（与收藏提议同口径） */
+    if (!chat || !chat.id || !chat.sandboxId || !chat.characterId || !chat.userId) {
+      return { ok: false, why: 'scope' };
+    }
+
+    var list = allRaw();
+    var now = Date.now();
+    /* 闸 1：同一 originMessageId 只允许提议一次 */
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && originMessageId && list[i].originMessageId === originMessageId) {
+        return { ok: false, why: 'dup-message' };
+      }
+    }
+    var key = dedupeKey(chat.sandboxId, chat.characterId, ENTRY_SOURCE_TYPE, tag.title);
+    var sameKey = list.filter(function (p) { return p && p.dedupeKey === key; });
+    /* 闸 2/3/4：同标题 pending / accepted / declined 冷却 */
+    for (var j = 0; j < sameKey.length; j++) {
+      var p0 = sameKey[j];
+      if (!p0) continue;
+      if (p0.status === 'pending') return { ok: false, why: 'dup-pending' };
+      if (p0.status === 'accepted') return { ok: false, why: 'dup-accepted' };
+      if (p0.status === 'declined' &&
+          (now - (p0.resolvedAt || 0)) < DECLINE_COOLDOWN_MS) {
+        return { ok: false, why: 'cooldown' };
+      }
+    }
+    /* 闸 5：同一 char 在途 pending 上限（与收藏提议共用计数） */
+    var myPending = list.filter(function (p) {
+      return p && p.status === 'pending' &&
+        p.sandboxId === chat.sandboxId && p.refCharId === chat.characterId;
+    });
+    if (myPending.length >= MAX_PENDING_PER_CHAR) return { ok: false, why: 'pending-limit' };
+
+    var p = {
+      id: 'wep-' + now.toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+      sandboxId: chat.sandboxId,
+      refCharId: chat.characterId,
+      refUserId: chat.userId,
+      status: 'pending',
+      title: String(tag.title).trim(),
+      note: note,
+      kind: kind,
+      at: now,
+      sourceType: ENTRY_SOURCE_TYPE,
+      sourceId: chat.id,             /* 来源 = 提议发生的那场对话 */
+      sourceRef: '聊天',
+      proposedBy: 'char',
+      proposedAt: now,
+      originMessageId: originMessageId || null,
+      originChatId: chat.id,
+      dedupeKey: key,
+      resolvedBy: null,
+      resolvedAt: null,
+      acceptedEntryId: null
+    };
+    list.push(p);
+    saveRaw(list);
+    return { ok: true, proposal: p };
+  }
+
   /* ------------------------- 对外 ------------------------- */
   Sleepy.weProposals = {
     KEY: KEY,
     SOURCE_TYPE: SOURCE_TYPE,
+    ENTRY_SOURCE_TYPE: ENTRY_SOURCE_TYPE,
     REASON_MAX: REASON_MAX,
     DECLINE_COOLDOWN_MS: DECLINE_COOLDOWN_MS,
     MAX_PENDING_PER_CHAR: MAX_PENDING_PER_CHAR,
     /* 纯函数（冒烟/真机共用同一实现） */
     extractTag: extractTag,
+    extractEntryTag: extractEntryTag,
     dedupeKey: dedupeKey,
     validateSource: validateSource,
     candidatesOf: candidatesOf,

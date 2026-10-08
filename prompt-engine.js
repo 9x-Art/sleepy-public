@@ -1199,6 +1199,8 @@
       note: '岛里有手机的角色才有（[手机] 行搭载，0 新增调用）' },
     { id: 'weproposal', slot: 'C04', name: '收藏提议', kind: 'program', required: false,
       note: '当前岛有可提议的日程事件才注入（[收藏提议:事件id|分类|理由]，We 收藏馆 P2）' },
+    { id: 'wenote', slot: 'C04', name: '记一笔', kind: 'program', required: false,
+      note: 'We 可用即注入（[记一笔:标题|一句话|分类]，char 自己提议记共同记录，2026-10-08）' },
     /* 群声（施工卡-群声-v1 Batch E 补强，2026-10-07）：论坛能力说明。
        只挂线上；条件注入——该岛的论坛板块初始化过（开过张）才注入，
        没开张的岛 char 不需要知道有论坛。内容是能力认知层（知道有这个社区、
@@ -1673,6 +1675,29 @@
       '③ 帖子里的内容是论坛发言，不是已经发生的现实；聊到可以，当成亲历不行。';
   }
 
+  /* 记一笔说明（2026-10-08 用户拍板：char 自己记录共同时刻，不用等 user 手填）。
+     We 可用（岛 + weStore 在）就注入 —— 不依赖日程事件，聊到的时刻就能记。
+     纪律：真实（只记真的聊过/发生的）、克制（一场对话最多一条、不硬凑）、
+     提议≠入馆（对方确认才成立，不追问结果）。 */
+  function compileWeNote() {
+    var ws = Sleepy.weStore;
+    if (!ws || !ws.KIND_LABEL) return '';
+    var sb = core.activeSandbox();
+    if (!sb) return '';
+    var kindKeys = Object.keys(ws.KIND_LABEL).join(' / ');
+    return [
+      '【记一笔】你们的 We 收藏馆里有一本「共同记录」。聊天聊到、或刚刚发生的时刻，',
+      '如果你觉得值得留下来，可以在回复最后另起一行写一条标签（最多一条；',
+      '没有值得记的就不写，禁止每轮硬凑，禁止编造没发生过的事）：',
+      '[记一笔:标题|一句话|分类]',
+      '规则：',
+      '- 标题不超过 12 个字；一句话不超过 40 个字，写清是件什么事、为什么想留下；',
+      '- 分类只能填一个：' + kindKeys + '；',
+      '- 对方看不到标签文字本身，只会收到一张「待确认」的卡片——收不收由对方决定，',
+      '  你不用追问结果，没被收下也不代表这件事没发生过。'
+    ].join('\n');
+  }
+
   function compileWeProposal(charId) {
     var wp = Sleepy.weProposals;
     if (!wp || !wp.candidatesOf) return '';
@@ -1956,6 +1981,7 @@
         case 'genimg': pushSlot(def, compileGenimg()); break;
         case 'htmlgame': pushSlot(def, cardBody('htmlgame')); break;
         case 'weproposal': pushSlot(def, compileWeProposal(charId)); break;
+        case 'wenote': pushSlot(def, compileWeNote()); break;
         case 'forum': pushSlot(def, compileForum()); break;
         case 'phone': pushSlot(def, compilePhoneDelta(charId)); break;
         case 'drop': pushSlot(def, compileDrop(charId)); break;

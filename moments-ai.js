@@ -269,7 +269,7 @@
         called = true;
         cb((err && (err.message || err.error || err.stage)) || '模型没答上来');
       }
-    }, false);
+    }, false, { feature: 'moments' });
   }
 
   /* ---------------------------- ② 回复 ---------------------------- */
@@ -495,7 +495,7 @@
         called = true;
         done((err && (err.message || err.error || err.stage)) || '模型没答上来');
       }
-    }, false);
+    }, false, { feature: 'moments' });
   }
 
   /* 回完要记下来 —— 用户要的「朋友圈和记忆挂钩」是双向的：
@@ -648,7 +648,7 @@
           called = true;
           done((err && (err.message || err.error || err.stage)) || '模型没答上来');
         }
-      }, false);
+      }, false, { feature: 'moments' });
     });
   }
 

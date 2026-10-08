@@ -1353,12 +1353,32 @@
   }
 
   /* 收藏提议（We 收藏馆 P2）：回复里写 [收藏提议:事件id|分类|理由]。
+     记一笔（We 共同记录）：回复里写 [记一笔:标题|一句话|分类] —— char 自己
+     开口提议把聊到的时刻记进收藏馆（2026-10-08）。
      抽取 / 校验 / 去重 / 来源核验 / 落库全部收口在 Sleepy.weProposals
-     （唯一出口 page-we-proposal.js）—— 这里只负责剥标签，正文里
-     不出现任何标签文本。引擎缺席时退化为「只剥标签不创建提议」。 */
+     （唯一出口 page-we-proposal.js）—— 这里只负责剥标签。
+     两个标签**都从正文剥干净**（标签文本绝不留在气泡/历史/心声里），
+     提议动作只认**先出现的那个**；一分口供都不留给下一个 handler。 */
   function extractProposal(raw) {
     if (Sleepy.weProposals && Sleepy.weProposals.extractTag) {
-      return Sleepy.weProposals.extractTag(raw);
+      /* 先剥收藏提议，再在**剥净后的文本**上剥记一笔 —— 两层串行，
+         缺一层标签都会整段漏回气泡里（2026-10-08 实测：第二层跑在原文上
+         会把第一层的剥除冲掉）。 */
+      var a = Sleepy.weProposals.extractTag(raw);
+      var b = (Sleepy.weProposals.extractEntryTag)
+        ? Sleepy.weProposals.extractEntryTag(a.text)
+        : { text: a.text, hit: null };
+      /* 两个都命中时只认先出现的那个（位置在原文上比，互不干扰） */
+      var hit;
+      if (a.hit && b.hit) {
+        var pa = raw.indexOf('[收藏提议');
+        var pb = raw.indexOf('[记一笔');
+        hit = (pa >= 0 && (pb < 0 || pa <= pb)) ? a.hit : b.hit;
+      } else {
+        hit = a.hit || b.hit;
+      }
+      if (hit && !hit.type) hit.type = 'calendar';
+      return { text: b.text, hit: hit };
     }
     return { text: String(raw == null ? '' : raw), hit: null };
   }
@@ -1755,7 +1775,10 @@
     if (msg.type === 'phone-invite') return '[手机邀请]' + (msg.content ? ' ' + msg.content : '');
     if (msg.type === 'wj-share') return '[作品]《' + (msg.title || '未命名') + '》';
     if (msg.type === 'wj-invite') return '[同席邀请]《' + (msg.title || '未命名') + '》';
-    if (msg.type === 'we-proposal') return '[收藏提议]' + (msg.title ? ' ' + msg.title : '');
+    if (msg.type === 'we-proposal') {
+      var pLabel = msg.sourceType === 'moment' ? '[记一笔]' : '[收藏提议]';
+      return pLabel + (msg.title ? ' ' + msg.title : '');
+    }
     if (msg.type === 'fwd-merged') return '[聊天记录]';
     if (msg.type === 'html') return '[小游戏]' + (msg.content ? ' ' + msg.content : '');
     if (msg.type === 'link-card') {
@@ -2217,6 +2240,9 @@
     /* 主动消息引擎：回到聊天列表就是一次扫描时机
        （引擎自己有 2 分钟节流 + 资格闸门，这里只管喊） */
     if (Sleepy.proactiveEngine) Sleepy.proactiveEngine.sweep();
+    /* 每日日程生成器：同样只管喊 —— 模块自己按「自然日 × 岛」节流，
+       开了「生成角色日程」开关的角色才排（schedule-gen.js） */
+    if (Sleepy.scheduleGen) Sleepy.scheduleGen.maybeRun();
     return { rebuild: rebuild };
   }
 
@@ -4214,7 +4240,9 @@
         if (Sleepy.core && Sleepy.core.tagScope) Sleepy.core.tagScope(fav);
         list.unshift(fav);
         store.set('favorites', list);
-        ctx.toast('已收藏，右上角 ★ 里能查到', 'ok');
+        /* 收藏真相在 favorites（收藏馆读这张表并馆展示），这里只落库 + 说人话 ——
+           老「收藏夹」页已退役，别再把人往不存在的 ★ 指了（2026-10-08）。 */
+        ctx.toast('已收进 We 收藏馆啦', 'ok');
       }
 
       async function editMsg(msg, idx) {
@@ -4784,6 +4812,9 @@
               /* 主动消息引擎：回复落地后扫一遍当前岛的其他角色
                  （引擎自带节流和资格闸门，这里只管喊一声） */
               if (Sleepy.proactiveEngine) Sleepy.proactiveEngine.sweep();
+              /* 每日日程生成器（schedule-gen.js）：同上只管喊，
+                 自然日 × 岛 节流在模块里；失败静默，不阻塞聊天 */
+              if (Sleepy.scheduleGen) Sleepy.scheduleGen.maybeRun();
               /* ta 已成立的影响（第五批）：这一轮**注入过**的影响，到此刻才算
                  「角色已经有过反应」（只记第一次，幂等）。放在和总结/主动消息
                  同一位置 —— 都不阻塞聊天；失败静默：ta 出问题不影响聊天。 */
@@ -5379,10 +5410,22 @@
           user = '[画面意图] ' + (intent || '');
         }
 
-        return api.requestOnce({ source: 'main', cfg: main }, [
+        /* 勾了「生图想画面走副 API」→ 只轮询副 API（api.js requestForFeature）；
+           没勾照旧主 API。两条路的 res 处理共用下面那一段。 */
+        var featureP = api.requestForFeature('director', [
           { role: 'system', content: sys },
           { role: 'user', content: user }
-        ], {}).then(function (res) {
+        ], {});
+        var p = featureP
+          ? featureP.then(function (r) {
+              return r.ok ? { ok: true, content: r.content }
+                          : { ok: false, error: r.error };
+            })
+          : api.requestOnce({ source: 'main', cfg: main }, [
+              { role: 'system', content: sys },
+              { role: 'user', content: user }
+            ], {});
+        return p.then(function (res) {
           if (!res.ok) return { ok: false, error: api.describeError(res) };
           /* B0：导演改吐结构化结果（description/contentType/shot/subjects）。
              模型没按新格式来（还是裸 subject）→ legacyFallback=true，
@@ -6200,109 +6243,12 @@
     }
   });
 
-  /* ======================= 页面：收藏夹 ======================= */
-  Sleepy.register('favorites', {
-    title: '收藏夹',
-    render: function (ctx) {
-      var body = ctx.body;
-
-      var listWrap = h('div', 'fav-list');
-      var emptyWrap = h('div', 'empty');
-      emptyWrap.appendChild(h('div', 'empty-paper'));
-      emptyWrap.appendChild(h('p', 'empty-text', '还没有收藏过任何一条'));
-      emptyWrap.appendChild(h('p', 'empty-hint',
-        '长按一条消息，选「收藏」；帷境的作品在谢幕时可以存一张票根'));
-      body.appendChild(emptyWrap);
-      body.appendChild(listWrap);
-
-      function rebuild() {
-        /* 读取方：只列当前房里的收藏 */
-        var list = Sleepy.core.scoped(store.get('favorites'));
-        if (!Array.isArray(list)) list = [];
-        /* 票根（帷境 T6）：**全局不 scoped**（群岛作品不归属单岛），
-           所以跟聊天收藏分两段列 —— 换一座岛，票根不该跟着消失。 */
-        var tk = (Sleepy.wj && Sleepy.wj.tickets) ? Sleepy.wj.tickets() : [];
-        listWrap.innerHTML = '';
-        emptyWrap.style.display = (list.length || tk.length) ? 'none' : 'flex';
-
-        if (tk.length && Sleepy.wjCurtainUI) {
-          listWrap.appendChild(h('p', 'chat-list-sect', '票根'));
-          tk.forEach(function (t) {
-            var tItem = h('div', 'fav-item');
-            tItem.appendChild(Sleepy.wjCurtainUI.ticketEl(t, { small: true }));
-
-            var tMeta = h('div', 'fav-meta');
-            var when = new Date(t.at || 0).getTime();
-            tMeta.appendChild(h('span', 'fav-src',
-              '帷境 · ' + (when ? relativeTime(when) : '—')));
-
-            var tJump = h('button', 'fav-btn', '去看看');
-            tJump.type = 'button';
-            tJump.addEventListener('click', function () {
-              if (!Sleepy.wj || !Sleepy.wj.get(t.workId)) {
-                ctx.toast('这部剧本已经不在门厅里了', 'err');
-                return;
-              }
-              ctx.open('wj-work', { id: t.workId });
-            });
-
-            var tDel = h('button', 'fav-btn is-danger', '移除');
-            tDel.type = 'button';
-            tDel.addEventListener('click', function () {
-              /* 只收票根，作品一个字都不动 ——「收藏纪念」是这个意思 */
-              Sleepy.wj.removeTicket(t.id);
-              rebuild();
-              ctx.toast('票根收起来了', 'ok');
-            });
-
-            tMeta.appendChild(tJump);
-            tMeta.appendChild(tDel);
-            tItem.appendChild(tMeta);
-            listWrap.appendChild(tItem);
-          });
-          if (list.length) listWrap.appendChild(h('p', 'chat-list-sect', '聊天收藏'));
-        }
-
-        list.forEach(function (f) {
-          var item = h('div', 'fav-item');
-          item.appendChild(h('div', 'fav-text', f.content || '（空）'));
-
-          var meta = h('div', 'fav-meta');
-          meta.appendChild(h('span', 'fav-src',
-            (f.chatName || '聊天') + ' · ' + relativeTime(f.savedAt)));
-
-          var jump = h('button', 'fav-btn', '去看看');
-          jump.type = 'button';
-          jump.addEventListener('click', function () {
-            if (!getChat(f.chatId)) { ctx.toast('原来的对话已经删掉了', 'err'); return; }
-            ctx.open('chat-detail', { chatId: f.chatId });
-          });
-
-          var del = h('button', 'fav-btn is-danger', '移除');
-          del.type = 'button';
-          del.addEventListener('click', function () {
-            var cur = store.get('favorites');
-            var next = [];
-            (Array.isArray(cur) ? cur : []).forEach(function (x) {
-              if (x.id !== f.id) next.push(x);
-            });
-            store.set('favorites', next);
-            rebuild();
-            ctx.toast('已移除', 'ok');
-          });
-
-          meta.appendChild(jump);
-          meta.appendChild(del);
-          item.appendChild(meta);
-          listWrap.appendChild(item);
-        });
-      }
-
-      ctx.rebuild = rebuild;
-      rebuild();
-    },
-    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
-  });
+  /* ======================= 页面：收藏夹（已退役 2026-10-08） =======================
+     收藏数据仍在 favorites，展示统一收进 We 收藏馆（page-collection 并馆：
+     共同记录 + 聊天收藏按岛 + 票根全局，wj-data §5.1 的原设计）。
+     老页面连独立入口都没有了，留着一个「能看到但没人指路」的页只会让人迷路 ——
+     注册整段摘除；别处引用 toast 已改成「已收进 We 收藏馆啦」。
+     冒烟反向断言：registered().favorites 必须为 undefined（scripts/smoke.js）。 */
 
   /* =================== 对外的数据层（给模块 E 用） ===================
      chats 的数据模型归本文件管，模块 E（心声）要把 heartbeats 挂到对话上，

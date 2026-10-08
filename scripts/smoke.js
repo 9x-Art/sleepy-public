@@ -1251,9 +1251,9 @@ t('forum 新键进 store 默认值并随 exportAll 带走', () => {
   return 'ok';
 });
 
-t('桌面「群声」格就位（p3-qunsheng / v22 / 专属图标）', () => {
+t('桌面「群声」格就位（p3-qunsheng / v23 / 专属图标）', () => {
   const d = S.desktop.defaultDesktop();
-  if (d.version !== 22) throw new Error('户型版本不对：' + d.version);
+  if (d.version !== 23) throw new Error('户型版本不对：' + d.version);
   const cell = d.pages[3].filter((c) => c.i === 'p3-qunsheng')[0];
   if (!cell) throw new Error('第 3 屏找不到 p3-qunsheng');
   if (cell.app !== 'qunsheng' || cell.type !== 'app') throw new Error('格子不是群声真入口');
@@ -5043,20 +5043,25 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
    都有别的入口，统一改成图标为空，里面的内容为空，不要再跳转到别的页面去」
    —— 三格改 type 'blank'（空玻璃壳，无图标无跳转），主屏组件商城入口不动。
    版本 20（2026-10-06）：「钱包」那一格改成了「小岛指南」真入口
-   （p3-guide / type app / app guide），所以本断言从「三格全 blank」
-   收窄成「贴纸 / 组件商城仍 blank」+「钱包位已换成小岛指南」。
+   （p3-guide / type app / app guide），收窄成「贴纸 / 组件商城仍 blank」+「钱包位已换成小岛指南」。
    版本 22（2026-10-07，施工卡-群声-v1 Batch A）：「贴纸」空壳改成
    「群声」真入口（p3-qunsheng / type app / app qunsheng），收窄成
-   「组件商城 / 外观仍 blank」+「贴纸位已换成群声」。 */
-t('第 3 屏组件商城/外观仍空壳，钱包位已换成小岛指南，贴纸位已换成群声，主屏入口不动', () => {
+   「组件商城 / 外观仍 blank」+「贴纸位已换成群声」。
+   版本 23（2026-10-08）：「组件商城」空壳改成「以身入局」真入口
+   （p3-yishenruju / type app / app yishenruju），收窄成
+   「外观仍 blank」+「组件商城位已换成以身入局」。 */
+t('第 3 屏外观仍空壳，组件商城位已换成「以身入局」真入口，钱包位→小岛指南，贴纸位→群声，主屏入口不动', () => {
   const d = S.desktop.defaultDesktop();
-  const ids = ['p3-store', 'p3-look'];
-  const cells = d.pages[3].filter((c) => ids.indexOf(c.i) >= 0);
-  if (cells.length !== 2) throw new Error('仍应为空壳的格应有 2 个（组件商城/外观），实际 ' + cells.length);
-  cells.forEach((c) => {
-    if (c.type !== 'blank') throw new Error(c.i + ' 应为 blank，实际 ' + c.type);
-    if (!c.label) throw new Error(c.i + ' 丢了 label（编辑模式里认不出格子）');
-  });
+  /* 外观那份空壳还在（主屏 p1-look 已有同功能入口） */
+  const look = d.pages[3].filter((c) => c.i === 'p3-look')[0];
+  if (!look || look.type !== 'blank') throw new Error('p3-look 应仍是空壳，实际 ' + (look && look.type));
+  if (!look.label) throw new Error('p3-look 丢了 label（编辑模式里认不出格子）');
+  /* 组件商城位 → 以身入局真入口 */
+  const ru = d.pages[3].filter((c) => c.i === 'p3-yishenruju')[0];
+  if (!ru) throw new Error('第 3 屏找不到 p3-yishenruju（以身入局）那一格');
+  if (ru.type !== 'app' || ru.app !== 'yishenruju' || ru.label !== '以身入局')
+    throw new Error('p3-yishenruju 应是 以身入局 真入口，实际 ' + JSON.stringify(ru));
+  if (S.desktop.LAYOUT_VERSION !== 23) throw new Error('户型版本应为 23，实际 ' + S.desktop.LAYOUT_VERSION);
   /* 钱包位 → 小岛指南真入口 */
   const g = d.pages[3].find((c) => c.i === 'p3-guide');
   if (!g) throw new Error('第 3 屏找不到 p3-guide（小岛指南）那一格');
@@ -5087,7 +5092,7 @@ t('第 3 屏组件商城/外观仍空壳，钱包位已换成小岛指南，贴�
   if (!p1look || p1look.type !== 'app' || p1look.app !== 'appearance') {
     throw new Error('主屏的外观入口（p1-look）不能跟着变空壳');
   }
-  return { 空壳: cells.map((c) => c.label), 小岛指南: g.label };
+  return { 空壳剩: [look.label], 以身入局: ru.label, 小岛指南: g.label, 群声: qs.label };
 });
 
 t('外观：三套主题的变量覆盖都写了，字号/动效都接得上', () => {
@@ -5376,24 +5381,49 @@ t('imggen 模块出口齐全', () => {
   return 'ok';
 });
 
-/* 新建接口时内置预设要按 kind 拷进来 —— 用户：「根据模型特色写内置预设词」。
-   NAI 必须自带正面质量词 + 负面模板；general 也要有起手式。 */
-t('newApi 按 kind 带上内置预设（NAI 有正负面）', () => {
+/* 新建接口**不再预灌内置预设词**（2026-10-08 用户拍板：「不要把我们的提示词
+   放出来」——预灌的词会直接出现在设置表单里）。留空即合法：三条消费路
+   （legacy / NAI 正式 / buildFormalPrompt）对空 positivePreset / negativePreset
+   都回落 BUILTIN_PRESET，词面分毫不变，只是不再展示、不再拷进用户存档。 */
+t('newApi 预设词留空（不预灌内置词，运行时回落 BUILTIN）', () => {
   const g = S.imggen;
   const gen = g.newApi('general');
   const nai = g.newApi('nai');
   if (gen.kind !== 'general' || nai.kind !== 'nai') throw new Error('kind 不对');
-  if (!gen.positivePreset || gen.positivePreset.indexOf('{p}') < 0) throw new Error('general 预设没有 {p} 占位');
-  if (!nai.negativePreset) throw new Error('nai 没有负面预设');
-  if (nai.negativePreset.indexOf('{p}') >= 0) throw new Error('负面预设不该有 {p}');
-  return { nai正面: nai.positivePreset.slice(0, 20), nai负面: nai.negativePreset.slice(0, 24) };
+  /* 硬写字符串登记：预设词必须为空串（falsy），不许再预灌 BUILTIN 原文 */
+  if (gen.positivePreset) throw new Error('general 新接口不该预灌正面预设');
+  if (gen.negativePreset) throw new Error('general 新接口不该预灌负面预设');
+  if (nai.positivePreset || nai.negativePreset) throw new Error('NAI 新接口不该预灌预设');
+  /* 回落仍然成立：BUILTIN_PRESET 模板原样在（{p} 占位、NAI 负面无 {p}） */
+  if (g.BUILTIN_PRESET.general.positive.indexOf('{p}') < 0) throw new Error('general 内置正面没有 {p} 占位');
+  if (!g.BUILTIN_PRESET.nai.negative) throw new Error('nai 没有内置负面预设');
+  if (g.BUILTIN_PRESET.nai.negative.indexOf('{p}') >= 0) throw new Error('负面预设不该有 {p}');
+  return { 预设留空: true, 内置模板原样: true };
+});
+
+/* 试一张退役实验 UI（2026-10-08 用户拍板）：改走正式管线 generate({plan})，
+   不再有「实验」「对照」措辞、临时双人/多人入口或内置词展示。 */
+t('生图试一张：实验 UI 退役，改走正式管线', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'page-imggen.js'), 'utf8');
+  if (src.indexOf('仅本地实验') >= 0) throw new Error('试一张还有「实验」措辞');
+  if (src.indexOf('视觉拼接模式') >= 0) throw new Error('E1 实验下拉还在');
+  if (src.indexOf('（临时测试，不读取角色资料）') >= 0) throw new Error('临时实验主体选项还在');
+  if (src.indexOf('imggen.generate({') < 0) throw new Error('试一张没走 generate 正式入口');
+  if (src.indexOf('plan: {') < 0) throw new Error('试一张没有构造 plan');
+  /* 预设词组不得展示内置词原文：留空＝用内置，只在想覆盖时才填 */
+  if (src.indexOf('内置词不在这里展示') < 0) throw new Error('预设词组没有「不展示内置词」的说明');
+  return { 实验UI退役: true, 正式管线: true, 预设词不展示: true };
 });
 
 /* 拼提示词管线：预设基底 ← 锁脸段 + 动态段 + 词条，{p} 替换、顺序固定、
-   重复词条去重。锁脸在最前面 —— 它锁的是「长什么样」，不是动作。 */
+   重复词条去重。锁脸在最前面 —— 它锁的是「长什么样」，不是动作。
+   （2026-10-08 起 newApi 预设留空：这里显式给一份预设，测的是消费端契约。） */
 t('buildPrompt：{p} 替换 + 段落顺序 + 词条去重', () => {
   const g = S.imggen;
-  const api = g.newApi('nai');
+  const api = Object.assign(g.newApi('nai'), {
+    positivePreset: g.BUILTIN_PRESET.nai.positive,
+    negativePreset: g.BUILTIN_PRESET.nai.negative
+  });
   const r = g.buildPrompt({
     api,
     faceText: '1girl, silver hair, red eyes',
@@ -6298,7 +6328,10 @@ t('文字通道：extractImageFromChatText 三种回图形态 + newApi(chat)', (
   if (g.extractImageFromChatText('抱歉我不会画画') !== '') throw new Error('纯文本不该抽出图');
   const chat = g.newApi('chat');
   if (chat.kind !== 'chat') throw new Error('chat kind 没建上');
-  if (chat.positivePreset.indexOf('{p}') < 0) throw new Error('文字通道没拷质量预设');
+  /* 2026-10-08：newApi 不再预灌预设词 —— 空串即「用内置」，运行时回落 */
+  if (chat.positivePreset) throw new Error('文字通道新接口不该预灌预设词');
+  /* 消费端口径：BUILTIN_PRESET[api.kind] 缺 chat 档 → 回落 general */
+  if (g.BUILTIN_PRESET.general.positive.indexOf('{p}') < 0) throw new Error('文字通道回落用的内置预设没质量头');
   if (g.KINDS.chat.label !== '文字通道') throw new Error('KINDS 缺文字通道');
   return 'ok';
 });
@@ -13115,13 +13148,23 @@ t('收藏馆：来源复核 manual/live/completed/cancelled/deleted + ticket 口
     ticketById: true, ticketWorkId拒绝: true, unknown: true };
 });
 
-t('收藏馆：We 首页入口指向 collection，不再开 favorites', () => {
+t('收藏馆：We 首页入口指向 collection，收藏夹页已退役（2026-10-08 并馆轮）', () => {
   const src = fs.readFileSync(path.join(ROOT, 'page-we.js'), 'utf8');
   if (src.indexOf("nav.open('collection')") < 0) throw new Error('We 首页未改为打开 collection');
   if (src.indexOf("nav.open('favorites')") >= 0) throw new Error('We 首页仍打开 favorites（应改为 collection）');
-  /* 旧 favorites 页面保持注册（原语义不动） */
-  if (!S.registered().favorites) throw new Error('旧 favorites 页没了');
-  return { 入口改collection: true, favorites原样: true };
+  /* 旧 favorites 页已退役：注册必须不存在（硬写字符串登记，别引常量防一起漂） */
+  if (S.registered().favorites) throw new Error('旧 favorites 页还在注册 —— 应已退役并进 We 收藏馆');
+  /* 并馆出口必须存在：门厅读它并馆（weEntries + favorites + wjTickets） */
+  const colSrc = fs.readFileSync(path.join(ROOT, 'page-collection.js'), 'utf8');
+  if (colSrc.indexOf("merged: 'chat'") < 0 || colSrc.indexOf("merged: 'ticket'") < 0)
+    throw new Error('page-collection 没有并馆 favorites / wjTickets 的通道');
+  /* 聊天收藏 toast 必须指向 We 收藏馆，不许再指回老收藏夹 */
+  const chatSrc = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  if (chatSrc.indexOf('已收进 We 收藏馆啦') < 0)
+    throw new Error('聊天收藏 toast 未改为「已收进 We 收藏馆啦」');
+  if (chatSrc.indexOf('右上角 ★ 里能查到') >= 0)
+    throw new Error('聊天收藏 toast 还在指向已退役的 ★ 收藏夹');
+  return { 入口改collection: true, favorites退役: true, 并馆通道: true, toast改口径: true };
 });
 
 /* ======================== We 收藏馆 C1 · 藏品实物化（2026-10-02） ========================
@@ -13962,6 +14005,77 @@ t('收藏馆P2：weProposals 默认存在；标签抽取纯函数（剥干净 / 
   if (r4.text !== '') throw new Error('字段缺失的标签也应从正文剥掉：' + r4.text);
 
   return { 默认存在: true, 半角: true, 全角: true, 单条: true, 缺字段丢弃: true };
+});
+
+/* 记一笔（2026-10-08）：char 自己提议记共同记录。
+   标签 [记一笔:标题|一句话|分类]（分类可省）→ hit.type='entry'；
+   createFromReply 按 type 分发；accept 对 moment 来源核验原对话存在。 */
+t('记一笔：extractEntryTag 抽取 + createFromReply 分发 + moment 来源', () => {
+  const g = S.weProposals;
+  if (typeof g.extractEntryTag !== 'function') throw new Error('extractEntryTag 没导出');
+  /* 半角/全角都认；分类可省 → other */
+  const a = g.extractEntryTag('刚才那家店真好。[记一笔:巷口的赭石|一起找到的颜料铺|place] 改天再去');
+  if (!a.hit || a.hit.type !== 'entry' || a.hit.title !== '巷口的赭石' ||
+      a.hit.note !== '一起找到的颜料铺' || a.hit.kind !== 'place') {
+    throw new Error('entry hit 字段错：' + JSON.stringify(a.hit));
+  }
+  if (a.text.indexOf('记一笔') >= 0 || a.text.indexOf('巷口的赭石') >= 0) {
+    throw new Error('记一笔标签没剥干净：' + a.text);
+  }
+  if (a.text.indexOf('改天再去') < 0) throw new Error('正文被误伤');
+  const b = g.extractEntryTag('[记一笔：旧书签|夹在扉页的那张]');
+  if (!b.hit || b.hit.kind !== 'other') throw new Error('省略分类应回落 other：' + JSON.stringify(b.hit));
+  const c = g.extractEntryTag('普通一句话');
+  if (c.hit) throw new Error('无标签不该有 hit');
+  if (c.text.indexOf('记一笔') < 0 ? false : c.text.indexOf('记一笔') >= 0) { /* noop */ }
+  /* 字段缺失 → 丢弃但剥干净 */
+  const d = g.extractEntryTag('[记一笔:|只有一句话]');
+  if (d.hit) throw new Error('缺标题应丢弃');
+  /* createFromReply 按 hit.type 分发：entry 提议不需要日历事件 */
+  const fakeChat = { id: 'ct_x', sandboxId: 'sb_x', characterId: 'ch_x', userId: 'u_x' };
+  const made = g.createFromReply(fakeChat, 'm1', { type: 'entry', title: '巷口的赭石', note: '一起找到的颜料铺', kind: 'place' });
+  if (!made.ok) throw new Error('entry 提议没建成：' + JSON.stringify(made));
+  if (made.proposal.sourceType !== 'moment' || made.proposal.sourceId !== 'ct_x') {
+    throw new Error('moment 来源字段错：' + JSON.stringify(made.proposal));
+  }
+  /* 同 originMessageId 去重 */
+  const dup = g.createFromReply(fakeChat, 'm1', { type: 'entry', title: '第二条', note: '不该建成', kind: 'other' });
+  if (dup.ok || dup.why !== 'dup-message') throw new Error('同消息去重失效：' + JSON.stringify(dup));
+  /* accept：原对话不存在 → 拒绝入馆且保留 pending */
+  const acc = g.accept(made.proposal.id);
+  if (acc.ok || acc.why !== 'deleted') throw new Error('moment 来源核验失效：' + JSON.stringify(acc));
+  const after = g.findInScope ? null : null; /* findInScope 依赖岛指针，这里只验状态 */
+  const kept = (S.store.get('weProposals') || []).filter((p) => p && p.id === made.proposal.id)[0];
+  if (!kept || kept.status !== 'pending') throw new Error('accept 拒绝后应保留 pending');
+  /* 收尾：清掉夹具提议，不污染其他用例 */
+  S.store.set('weProposals', (S.store.get('weProposals') || []).filter((p) => p && p.id !== made.proposal.id));
+  return { 抽取: true, 分发: true, 去重: true, moment核验: true };
+});
+
+/* 副 API 功能分配（2026-10-08 定位重构）：勾选的功能严格走副 API。
+   核心判据（硬写字符串登记，防以后被"优化"回主 API）：没勾 → requestForFeature
+   返回 null（调用方走默认）；勾了但没副 API → 明确报错、绝不回落主 API。 */
+t('副API功能分配：未勾返回 null；勾了无副API如实报错不回落', async () => {
+  const g = S.api;
+  if (!Array.isArray(g.FEATURES) || !g.FEATURES.length) throw new Error('FEATURES 清单缺失');
+  if (typeof g.requestForFeature !== 'function' || typeof g.featureOn !== 'function') {
+    throw new Error('api 出口不齐（requestForFeature/featureOn）');
+  }
+  /* 未勾选：返回 null，路由权留给调用方 */
+  S.store.set('subApiFeatures', {});
+  if (g.requestForFeature('schedule', [{ role: 'user', content: 'x' }], {}) !== null) {
+    throw new Error('未勾选的功能不该被接管（应返回 null）');
+  }
+  /* 勾选 + 无副 API：明确报错，报错里必须点名「副 API」，不许静默回落主 API */
+  S.store.set('subApiFeatures', { schedule: true });
+  if (!g.featureOn('schedule')) throw new Error('featureOn 读取失效');
+  const r = await g.requestForFeature('schedule', [{ role: 'user', content: 'x' }], {});
+  S.store.set('subApiFeatures', {});
+  if (r.ok) throw new Error('没有副 API 却成功了？');
+  if (String(r.error).indexOf('副 API') < 0) {
+    throw new Error('报错没有指明副 API 定位：' + r.error);
+  }
+  return { 未勾返null: true, 勾选生效: true, 无副API如实报错: true };
 });
 
 t('收藏馆P2：创建提议带正确 sandboxId/身份（不用全局指针），pending 不进 weStore.list，跨岛不可见', () => {
@@ -15094,9 +15208,15 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    ⚠️ v203（2026-10-07）：群声 Batch A+B 接入批改了 index.html /
      forum-core.js / forum-gen.js / page-qunsheng.js / page-desktop.js /
      store.js / core.js / page-guide.js / sw.js —— 基准随批从 v202 → v203。
-     本批（协议页）改过 legal.js / store.js / splash.js / style.css /
-     index.html / page-settings.js —— 基准再 v203 → v204。 */
-const EXPECTED_SW_CACHE = 'sleepy-v204';
+   ⚠️ v204（2026-10-08 之前）：协议页批，基准 v203 → v204。
+   ⚠️ v205（2026-10-08）：集中核查修复批一 —— 收藏并馆 + 老 favorites 页退役
+     （page-collection / page-chat / page-we / style.css / smoke / browser 测试）、
+     生图试一张正式管线 + newApi 预设留空（page-imggen / imggen）、
+     app.js toast onClick、page-summary、群声板块主页与布局返修（page-qunsheng）、
+     wj 分享卡断链修复（page-wj-curtain）、**新增 schedule-gen.js**、
+     calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
+     基准随批 v204 → v205。 */
+const EXPECTED_SW_CACHE = 'sleepy-v206';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

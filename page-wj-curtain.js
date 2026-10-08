@@ -84,14 +84,24 @@
 
   /* --------------------------- 作品卡（聊天用） ---------------------------
      Demo #6 的 .share：书封 + 标题 + 字数 + blockquote 附言。
-     聊天页惰性取（本文件在 page-chat.js 之后加载），所以这里只负责画。 */
+     聊天页惰性取（本文件在 page-chat.js 之后加载），所以这里只负责画。
+     2026-10-08 断链修复：整卡可点 → wj-read（勘察轮发现收卡人只能去
+     wj-foyer 自己翻）；作品已删时点了给一句实话，不假装能读。 */
   function shareEl(msg) {
     var box = h('div', 'wj-share');
+    box.style.cursor = 'pointer';
+    box.addEventListener('click', function () {
+      if (!(Sleepy.wj && Sleepy.wj.get && msg.workId && Sleepy.wj.get(msg.workId))) {
+        Sleepy.toast('这部作品已经不在门厅里了', 'err');
+        return;
+      }
+      Sleepy.nav.open('wj-read', { id: msg.workId });
+    });
     var cover = h('div', 'wj-share-cover');
     cover.appendChild(h('span', 'wj-share-cover-t', msg.title || '未命名剧本'));
     box.appendChild(cover);
     var main = h('div', 'wj-share-main');
-    main.appendChild(h('div', 'wj-eyebrow', 'SHARED · 收到的作品'));
+    main.appendChild(h('div', 'wj-eyebrow', 'SHARED · 收到的作品 · 点开去读'));
     main.appendChild(h('h4', 'wj-share-title', msg.title || '未命名剧本'));
     main.appendChild(h('p', 'wj-share-meta', metaLine(msg)));
     if (msg.note) main.appendChild(h('blockquote', 'wj-share-note', msg.note));

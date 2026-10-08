@@ -63,6 +63,13 @@
   }
 
   function callOnce(cand, messages) {
+    /* 勾了「TA 自主生活推进走副 API」→ 只轮询副 API（api.js）；没勾走主 API */
+    var fr = Sleepy.api.requestForFeature ? Sleepy.api.requestForFeature('talife', messages, {}) : null;
+    if (fr) {
+      return fr.then(function (r) {
+        return r.ok ? { ok: true, text: r.content } : r;
+      });
+    }
     if (!cand) return Promise.resolve({ ok: false, error: '还没有可用的模型连接 —— 先去设置配主 API' });
     return Sleepy.api.requestOnce(cand, messages, {}).then(function (res) {
       if (res.ok) return { ok: true, text: res.content };

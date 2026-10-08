@@ -1706,87 +1706,11 @@
     return g.wrap;
   }
 
-  /* ==================== 页面：群聊（跨宇宙投影） ==================== */
-
-  Sleepy.register('contact-group', {
-    title: '发起群聊',
-    render: function (ctx) {
-      var body = ctx.body;
-      var picked = {};
-
-      var g = group('勾选要拉进群的大号',
-        '群聊会作为「分身」同时投影到各角色的聊天列表里。' +
-        '在不同角色的桌面看，视觉氛围完全不同。');
-
-      var mains = core.mainChars();
-      if (mains.length < 1) {
-        g.card.appendChild(row({ label: '名片夹里还没有大号', plain: true }));
-      }
-
-      mains.forEach(function (m) {
-        var line = h('button', 'pick-line');
-        line.type = 'button';
-        line.appendChild(h('span', 'pick-box'));
-        line.appendChild(h('span', 'pick-av', core.initialOfUser(m)));
-        line.appendChild(h('span', 'pick-name', m.name));
-        line.addEventListener('click', function () {
-          if (picked[m.id]) delete picked[m.id];
-          else picked[m.id] = true;
-          line.classList.toggle('is-on', !!picked[m.id]);
-        });
-        g.card.appendChild(line);
-      });
-
-      body.appendChild(g.wrap);
-
-      var btnRow = h('div', 'btn-row');
-      btnRow.appendChild(button('建群', 'primary', function () { create(); }));
-      body.appendChild(btnRow);
-
-      function create() {
-        var ids = Object.keys(picked);
-        if (ids.length < 2) {
-          ctx.toast('至少勾两个大号才叫群', 'warn');
-          return;
-        }
-        var key = core.groupKeyOf(ids);
-        var name = core.makeGroupName(ids);
-
-        /* 群聊对每个成员各有一条对话记录 —— 这就是「分身投影」：
-           同一个群，在每个角色的聊天列表里都是独立的一条。
-           写入方：拿**全量**（store.get 的原始数组）改完再整表落盘，
-           不能拿过滤过的列表，否则别的存档的对话会被冲掉。 */
-        var chats = Array.isArray(store.get('chats')) ? store.get('chats') : [];
-        var made = 0;
-        ids.forEach(function (cid) {
-          var exist = false;
-          chats.forEach(function (c) {
-            if (c.groupKey === key && c.characterId === cid) exist = true;
-          });
-          if (exist) return;
-          var rec = {
-            id: core.newId('ct'),
-            name: name,
-            characterId: cid,
-            userId: store.get('activeUserId'),
-            groupKey: key,
-            groupIds: ids,
-            overrides: { temperature: null, maxTokens: null, contextMessages: null, stream: null },
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            messages: []
-          };
-          if (core.tagScope) core.tagScope(rec);   /* 盖上当前房的章 */
-          chats.unshift(rec);
-          made++;
-        });
-
-        store.set('chats', chats);
-        if (ctx.toast) ctx.toast(made ? ('已建群，投影到 ' + made + ' 个角色') : '这个群已经在了', made ? 'ok' : 'warn');
-        ctx.back();
-      }
-    }
-  });
+  /* ==================== 页面：群聊（跨宇宙投影）—— 已退役 2026-10-08 ====================
+     「发起群聊（投影群）」整段摘除：群聊实际入口走 group-create
+     （page-chat.js），这个页注册着却没有任何入口 —— 孤儿页（勘察轮 A 类）。
+     老投影群的数据语义仍由 core-group.js 兼容（core.js:89 注释登记）。
+     冒烟反向断言：registered()['contact-group'] 必须为 undefined。 */
 
   /* ==================== 页面：我的马甲 ==================== */
 

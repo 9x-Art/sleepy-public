@@ -33,7 +33,11 @@
     /* 第 2 屏新换的两个 App（2026-09-19）—— 页面本体还没开工，
        先用占位页接着，等用户发来需求再注册真正的页面。 */
     phonecheck: { title: '查手机', hint: '角色翻看这部手机的地方，页面还没贴好。' },
-    workshop:   { title: '工坊',   hint: '做小东西的地方，工具还没摆上来。' }
+    workshop:   { title: '工坊',   hint: '做小东西的地方，工具还没摆上来。' },
+    /* 版本 23（2026-10-08）：第三屏「组件商城」空壳格换成「以身入局」真入口。
+       首版是诚实占位页（page-yishenruju.js），点开显示「这一页还没贴好」，
+       等宝宝定好玩法再填真实功能。这里只是兜底标题/提示，真标题走注册表。 */
+    yishenruju: { title: '以身入局', hint: '「以身入局」还没布置好，想好玩法就活过来。' }
   };
 
   var registry = {};
@@ -233,7 +237,24 @@
 
     if (toastEl.__body) { toastEl.innerHTML = ''; resetCardRefs(); }
     toastEl.classList.remove('is-card');
+    /* 可点击 toast（2026-10-08）：opts.onClick 给了就整条可点，点了先收再跳。
+       上一次的点击手尾必须摘干净 —— toastEl 是复用的单例。 */
+    if (toastEl.__onClick) {
+      toastEl.removeEventListener('click', toastEl.__onClick);
+      toastEl.__onClick = null;
+    }
     toastEl.textContent = text;
+    if (typeof opts.onClick === 'function') {
+      var onToastTap = function () {
+        hideToast();
+        try { opts.onClick(); } catch (e) { /* 跳页失败不炸壳 */ }
+      };
+      toastEl.__onClick = onToastTap;
+      toastEl.addEventListener('click', onToastTap);
+      toastEl.style.cursor = 'pointer';
+    } else {
+      toastEl.style.cursor = '';
+    }
     toastEl.className = 'show' + (kind ? ' ' + kind : '');
     /* 只有普通提示（ok / warn）会自动消失；报错不会走到这里 */
     toastTimer = setTimeout(function () { toastEl.className = ''; }, kind === 'warn' ? 3000 : 2200);

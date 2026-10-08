@@ -422,6 +422,16 @@
        「服务端确实收到并拒绝」（http/parse）与「根本没送到」（network/timeout）。
        describeError 只把 stage 拼进一句中文，会把它吃掉。 */
   function callModel(cand, messages) {
+    /* 勾了「线下模式走副 API」→ 只轮询副 API（api.js）；没勾走调用方的 cand。
+       失败语义照旧分层：feature 路的报错是字符串，requestOnce 路带 stage。 */
+    var fr = Sleepy.api.requestForFeature
+      ? Sleepy.api.requestForFeature('offline', messages, {}) : null;
+    if (fr) {
+      return fr.then(function (r) {
+        if (r.ok) return { ok: true, text: r.content };
+        return { ok: false, stage: 'config', error: r.error };
+      });
+    }
     if (!cand) {
       /* stage='config'：本地判定，**没有出网**。与 network 区分开。 */
       return Promise.resolve({ ok: false, stage: 'config',

@@ -2115,27 +2115,9 @@ span.msg-avatar-initial{
   cursor:pointer;
 }
 
-/* ------------------------- 收藏夹 ------------------------- */
-.fav-list{display:flex;flex-direction:column;gap:12px;}
-.fav-item{
-  background:var(--bg-2);
-  border:1px solid var(--line);
-  border-radius:14px;
-  padding:12px 14px;
-}
-.fav-text{
-  font-size:13.5px;line-height:1.55;color:var(--text);
-  white-space:pre-wrap;word-break:break-word;
-}
-.fav-meta{display:flex;align-items:center;gap:8px;margin-top:10px;}
-.fav-src{margin-right:auto;font-size:11px;color:var(--text-faint);}
-.fav-btn{
-  border:0;background:var(--bg-3);color:var(--text-dim);
-  font-family:inherit;font-size:11.5px;padding:5px 11px;
-  border-radius:9px;cursor:pointer;
-}
-.fav-btn:active{transform:scale(.95);}
-.fav-btn.is-danger{color:var(--coral);}
+/* ------------------------- 收藏夹（已退役 2026-10-08） -------------------------
+   旧收藏夹页（page-chat 'favorites'）整页退役并进 We 收藏馆，
+   .fav-* 一族样式随之清死；收藏馆样式见 style.css 末尾 .co- 段。 */
 
 /* --------------------- 心声（模块 E 占位） --------------------- */
 .heartbeat-feed{display:flex;flex-direction:column;gap:12px;}
@@ -9806,7 +9788,10 @@ div.pp-row:active{background:none;}
 }
 .gen-sheet{
   width:100%;max-width:340px;max-height:86vh;overflow-y:auto;
-  background:var(--surface);border:1px solid var(--g-glass-line);
+  /* 不透明底：原来用 --surface（rgba 白 .78），弹层悬在聊天流上会把
+     底下气泡的字透出来（2026-10-08 用户反馈第 2 条）。改用主题实底。 */
+  background:var(--g-base,#FFFFFF);
+  border:1px solid var(--g-glass-line);
   border-radius:10px;padding:14px;
   box-shadow:0 18px 44px rgba(40,28,14,.28);
 }
@@ -12674,13 +12659,6 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wj-invite-foot{margin:8px 0 0;font-size:9.5px;line-height:1.6;color:var(--wj-dimmer);}
 .wj-invite-go{width:100%;margin-top:10px;}
 
-/* 票根进收藏馆（浅色页面）：缺口改成页面底色，投影也收掉 ——
-   收藏馆里每一件都是平铺的，单独一张浮起来会像点错了。 */
-.fav-item .wj-ticket{
-  --wj-ticket-hole:var(--g-base);
-  box-shadow:none;border:1px solid var(--line);
-}
-
 /* ==================== 帷境 · 正史审阅台（T7） ====================
    四步 stepper + 候选卡 + 认知行 + 写入预览。
    配色沿用 --wj-*，不引新变量。 */
@@ -13458,6 +13436,24 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .co-meta-row:last-child{border-bottom:0}
 .co-meta-k{flex:none;min-width:48px;color:var(--text-faint, var(--text-dim));letter-spacing:.08em}
 .co-meta-v{color:var(--text);word-break:break-all}
+
+/* ---- 并馆藏品动作行（2026-10-08：聊天收藏 / 票根并馆）----
+   档案卡下面一排实心小钮：回原物 + 移出。纸面编辑式语言，不另起玻璃卡。 */
+.co-merged-acts{
+  display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;
+}
+.co-merged-btn{
+  border:1px solid rgba(27,25,23,.35);background:transparent;color:var(--text);
+  font-family:inherit;font-size:12px;letter-spacing:.06em;
+  padding:8px 14px;cursor:pointer;
+}
+.co-merged-btn:active{background:rgba(27,25,23,.06)}
+.co-merged-btn.is-danger{color:#a63b32;border-color:rgba(166,59,50,.45)}
+/* 并馆票根背签的静态留言占位（不是 weEntry，没有落库处，不给假编辑入口） */
+.co-tk-memo-static{
+  border:1px dashed rgba(27,25,23,.25);padding:9px 10px;
+  font-size:12px;color:var(--text-faint, var(--text-dim));line-height:1.6;
+}
 
 /* ============================================================
    We 收藏馆 P2（提议确认流，2026-09-27）

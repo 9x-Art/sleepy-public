@@ -767,8 +767,11 @@
     'timezone', 'allDay', 'repeatRule', 'visibility', 'participants', 'participantStates',
     'status', 'sourceType', 'sourceIds', 'memoryId', 'meaningType', 'createdBy', 'requestKey',
     'authorizedVia'];
-  /* 谁能授权一次写入。空串 = 没记录（老数据）。 */
-  var AUTH_VIA = ['ui_form', 'anniversary_sheet', 'review_desk'];
+  /* 谁能授权一次写入。空串 = 没记录（老数据）。
+     'schedule_switch'（2026-10-08）：每日日程生成器（schedule-gen.js）——
+     user 打开某个角色的「生成角色日程」开关，就是对「替他排日程」这件事的
+     一次性长期授权；每次自动写入都带这个来源，审计时能认出是生成器写的。 */
+  var AUTH_VIA = ['ui_form', 'anniversary_sheet', 'review_desk', 'schedule_switch'];
 
   function requestCreateEvent(payload, options) {
     var opt = options || {};
@@ -1425,6 +1428,9 @@
           }
           return when + t + ' ' + e.title + st;
         }).join('；') + '。');
+        /* 2026-10-08 用户：日程是背景不是剧本 —— 别让角色被自己的
+           日程锁死；跟你聊到的事、临时起意都可以打乱它。 */
+        lines.push('（这些安排只是你自己的日常盘算，不是照着演的剧本——临时起意、或者聊天里冒出更要紧的事，都可以打乱它。）');
       }
     }
 

@@ -238,7 +238,22 @@
          也不会出现「页面内容奶油、边框另一色」的拼色感。 */
       '.page[data-page^="qunsheng"]{background:#f4f0e7;}',
       '.page[data-page^="qunsheng"] .page-inner{background:#f4f0e7;}',
-      '.page[data-page^="qunsheng"] .app-body{background:#f4f0e7;}'
+      '.page[data-page^="qunsheng"] .app-body{background:#f4f0e7;}',
+      /* ---- 2026-10-08 布局返修（用户反馈第 3 条）----
+         ① 滚动归页内：.page 对群声关掉自身整页滚动，.app-body 变有界 flex
+            容器，.qs-root 占满 —— 只有 .qs-main 滚，报头和底栏钉在原位。
+         ② 边距收掉 page-inner 的左右 22px（报纸版式自己管边距，不再
+            「内容挤在中间一条」）；顶部状态栏补偿保留，底部交给 .qs-nav
+            自带的 safe-area。
+         ③ 板块目录行加大字号行距（原来 11px/9px 太小太窄）。 */
+      '.page[data-page^="qunsheng"]{overflow:hidden;}',
+      '.page[data-page^="qunsheng"] .page-inner{height:100%;min-height:0;padding:calc(env(safe-area-inset-top) + 32px) 0 0;}',
+      '.page[data-page^="qunsheng"] .app-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;}',
+      '.qs-root{flex:1;min-height:0;width:100%;}',
+      '.qs-main{padding:18px 18px 22px;}',
+      '.qs-meta-row{padding:14px 2px;font-size:13px;}',
+      '.qs-meta-row span{font-size:11px;}',
+      '.qs-notice{font-size:11.5px;}'
     ].join('');
     document.head.appendChild(st);
   }
@@ -375,9 +390,18 @@
     meta.appendChild(h('div', 'qs-avatar', pa.avatarChar));
     var whoBox = h('div');
     whoBox.appendChild(h('div', 'qs-who', pa.displayName));
-    whoBox.appendChild(h('div', 'qs-sub',
-      (board ? board.name : '社区') + ' · ' + fmtTime(post.createdAt)));
+    var subLine = h('div', 'qs-sub',
+      (board ? board.name : '社区') + ' · ' + fmtTime(post.createdAt));
+    whoBox.appendChild(subLine);
     meta.appendChild(whoBox);
+    /* 板块名可点：直接进板块主页（2026-10-08 板块主页轮） */
+    if (board) {
+      subLine.style.cursor = 'pointer';
+      subLine.addEventListener('click', function (e) {
+        e.stopPropagation();
+        Sleepy.nav.open('qunsheng-board', { sandboxId: fx.sandboxId, boardId: board.id });
+      });
+    }
     /* 点作者名看 TA 的公开主页（匿名身份没有主页 —— 不串联不同帖的同一个人） */
     if (!pa.anonymous) {
       whoBox.style.cursor = 'pointer';
@@ -1368,7 +1392,7 @@
     return root;
   }
 
-  /* ------------------------------ 板块目录（占位 · Batch B 只做目录行） ------------------------------ */
+  /* ------------------------------ 板块目录 ------------------------------ */
 
   function renderBoards(ctx, fx) {
     var root = h('div', 'qs-root');
@@ -1388,14 +1412,137 @@
     var main = h('main', 'qs-main');
     F().listBoards(fx.sandboxId).forEach(function (b) {
       var row = h('div', 'qs-meta-row');
+      row.style.cursor = 'pointer';
       row.appendChild(h('b', null, b.name));
       row.appendChild(h('span', null, b.description || ' '));
       row.addEventListener('click', function () {
-        Sleepy.nav.open('qunsheng-compose', { sandboxId: fx.sandboxId, boardId: b.id });
+        /* 点板块进板块主页（版规 / 热议 / 帖流）—— 发帖在主页右上角或底栏「发布」 */
+        Sleepy.nav.open('qunsheng-board', { sandboxId: fx.sandboxId, boardId: b.id });
       });
       main.appendChild(row);
     });
-    main.appendChild(h('div', 'qs-notice', '板块独立主页（版规 / 热议 / 在线人数）在下一批接入；点板块名可以直接去发帖。'));
+    main.appendChild(h('div', 'qs-notice',
+      '点板块进去看版规、热议和帖子；要发言就在板块页右上角「发一帖」，或用底栏「发布」选板块。'));
+    root.appendChild(main);
+    root.appendChild(bottomNav('qunsheng-boards', fx));
+    return root;
+  }
+
+  /* ------------------------------ 板块主页（2026-10-08 返修轮） ------------------------------
+     占位补齐：版规（板块简介）+ 本板块帖流（最新 / 热议两个序）+ 统计条。
+     统计只放**真实可算**的三格：今日发帖 / 累计帖子 / 留声 ——
+     「在线人数」没有真实数据来源（本地优先 App 没有在线态），不放虚构数字。 */
+  var boardState = { sandboxId: null, boardId: null, tab: 'latest' };
+
+  function boardPostsOf(fx, boardId) {
+    return F().scopedForum('forumPosts', fx.sandboxId).filter(function (p) {
+      return p.status === 'active' && p.boardId === boardId;
+    });
+  }
+
+  function renderBoard(ctx, fx) {
+    var board = F().getBoard(ctx.params.boardId, fx.sandboxId);
+    var root = h('div', 'qs-root');
+    if (!board || board.status !== 'active') {
+      var eb = h('div', 'qs-err');
+      eb.appendChild(h('div', 'qs-err-t', '这个板块不在了'));
+      eb.appendChild(h('div', 'qs-err-d', '它可能已被撤下，或属于别的社区。'));
+      return eb;
+    }
+    /* 换岛 / 换板块后 tab 不沿用（热议序切板块沿用会把人看糊涂） */
+    if (boardState.sandboxId !== fx.sandboxId || boardState.boardId !== board.id) {
+      boardState.sandboxId = fx.sandboxId;
+      boardState.boardId = board.id;
+      boardState.tab = 'latest';
+    }
+
+    /* ---- 顶栏：返回 + 板块名 + 发一帖 ---- */
+    var top = h('div', 'qs-topbar');
+    var topline = h('div', 'qs-topline');
+    var back = h('button', 'qs-iconbtn', '返回');
+    back.addEventListener('click', function () { Sleepy.nav.back(); });
+    topline.appendChild(back);
+    var crumb = h('div', 'qs-crumb');
+    crumb.appendChild(h('b', null, board.name));
+    crumb.appendChild(h('small', null, fx.sandboxName + ' · 板块'));
+    topline.appendChild(crumb);
+    var newBtn = h('button', 'qs-textbtn', '发一帖');
+    newBtn.addEventListener('click', function () {
+      Sleepy.nav.open('qunsheng-compose', { sandboxId: fx.sandboxId, boardId: board.id });
+    });
+    topline.appendChild(newBtn);
+    top.appendChild(topline);
+    root.appendChild(top);
+
+    var main = h('main', 'qs-main');
+
+    /* ---- 版规卡（board.description；rules 是后续批的正式版规字段） ---- */
+    var intro = h('section', 'qs-ticker');
+    intro.style.alignItems = 'flex-start';
+    intro.appendChild(h('b', null, '版规'));
+    intro.appendChild(h('span', null,
+      String(board.description || '').trim() || '这个板块还没写下版规 —— 先来的人说了算。'));
+    main.appendChild(intro);
+
+    /* ---- 统计条：真实可算的三格 ---- */
+    var posts = boardPostsOf(fx, board.id);
+    var d = new Date();
+    var todayKey = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+    var todayCount = posts.filter(function (p) {
+      return String(p.createdAt || '').indexOf(todayKey) === 0;
+    }).length;
+    var commentCount = 0;
+    posts.forEach(function (p) {
+      commentCount += F().listComments(p.id, fx.sandboxId).length;
+    });
+    var stats = h('div', 'qs-me-stats');
+    [[todayCount, '今日发帖'], [posts.length, '帖子'], [commentCount, '留声']].forEach(function (x) {
+      var s = h('div');
+      s.appendChild(h('b', null, String(x[0])));
+      s.appendChild(document.createTextNode(x[1]));
+      stats.appendChild(s);
+    });
+    main.appendChild(stats);
+
+    /* ---- 序：最新（时间倒序）/ 热议（同感 + 留声加权） ---- */
+    var tabs = h('nav', 'qs-tabs');
+    tabs.style.height = '38px';
+    [['latest', '最新'], ['hot', '热议']].forEach(function (x) {
+      var b = h('button', 'qs-tab' + (boardState.tab === x[0] ? ' on' : ''), x[1]);
+      b.addEventListener('click', function () {
+        boardState.tab = x[0];
+        rebuild();
+      });
+      tabs.appendChild(b);
+    });
+    main.appendChild(tabs);
+    main.appendChild(h('div', 'qs-section-title',
+      boardState.tab === 'hot' ? '大家在热议' : '最新一版'));
+
+    var items = posts.slice();
+    if (boardState.tab === 'hot') {
+      items.sort(function (a, b) {
+        var sa = F().countOf('forumLikes', 'post', a.id, fx.sandboxId) +
+          F().listComments(a.id, fx.sandboxId).length;
+        var sb = F().countOf('forumLikes', 'post', b.id, fx.sandboxId) +
+          F().listComments(b.id, fx.sandboxId).length;
+        if (sa !== sb) return sb - sa;
+        return a.createdAt < b.createdAt ? 1 : -1;
+      });
+    } else {
+      items.sort(function (a, b) { return a.createdAt < b.createdAt ? 1 : -1; });
+    }
+
+    if (!items.length) {
+      var empty = h('div', 'qs-empty');
+      empty.appendChild(h('div', 'qs-empty-big', '这个板块还安静着'));
+      empty.appendChild(h('div', 'qs-empty-sub',
+        '右上角「发一帖」开个头，\n或者回首页点「催更」让居民们来聊聊。'));
+      main.appendChild(empty);
+    } else {
+      items.forEach(function (p) { main.appendChild(postCard(p, fx)); });
+    }
+
     root.appendChild(main);
     root.appendChild(bottomNav('qunsheng-boards', fx));
     return root;
@@ -1599,6 +1746,7 @@
   Sleepy.register('qunsheng-compose', page(renderCompose));
   Sleepy.register('qunsheng-me', page(renderMe));
   Sleepy.register('qunsheng-boards', page(renderBoards));
+  Sleepy.register('qunsheng-board', page(renderBoard));
   Sleepy.register('qunsheng-notices', page(renderNotices));
   Sleepy.register('qunsheng-author', page(renderAuthor));
 

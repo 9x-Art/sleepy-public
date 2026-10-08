@@ -218,6 +218,7 @@
 <!-- App 工坊（第 4 批）：要用 phone.ensurePhone（安装时建壳）和 island 的
      charsOfSandbox，排最后；同名 registry 覆盖 page-phone.js 里的门面。 -->
 <script src="page-workshop.js" defer></script>
+<script src="page-yishenruju.js" defer></script>
 
 <!-- 日历（《日历系统 · 产品与实施总纲 v1》）：
      calendar-data.js 是内置离线数据包（必须是 .js —— file:// 下 fetch json
@@ -233,6 +234,11 @@
      core.js 的删房 scoped 名单。 -->
 <script src="action.js" defer></script>
 <script src="page-calendar.js" defer></script>
+<!-- 每日角色日程生成器（2026-10-08 勘察轮 A1 修复）：排在 calendar.js 之后 ——
+     它执行时要调 calendar.requestCreateEvent / cfgOf / eventsOn。
+     数据+行为层，不是页面；触发点在 page-chat（聊天列表打开 / 一轮回复后喊
+     maybeRun()，模块自己按自然日节流）。 -->
+<script src="schedule-gen.js" defer></script>
 
 <!-- 帷境（Veilscape）——《帷境总体设计目标与实施意图总纲 v1》+ 8 张 Demo。
      wj-data.js 是数据层（**0 模型调用**，对齐 calendar.js 那条红线），

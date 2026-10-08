@@ -602,7 +602,34 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v204';
+var CACHE = 'sleepy-v206';
+
+/* v206（2026-10-08）：**以身入局注册批**——
+   · 新增 page-yishenruju.js（「以身入局」App，首版诚实占位页：
+     Sleepy.register + 「还没布置好」提示，不冒充完成）；index.html 加载列表 +1；
+   · page-desktop：第三屏组件商城空壳格 p3-store 换 p3-yishenruju 真入口
+     （type app / 专属线稿图标 / label 以身入局），LAYOUT_VERSION 22→23；
+   · app.js PLACEHOLDER 表加 yishenruju 兜底条目；
+   · scripts/smoke.js 第 3 屏断言改锁新格 + EXPECTED_SW_CACHE 同批回写。
+   → 必须跳版本：index.html / page-yishenruju.js / page-desktop.js / app.js 都变了。 */
+
+/* v205（2026-10-08）：**集中核查修复批一**——
+   · 收藏并馆：page-collection 并三路（weEntries+favorites+票根），
+     老 favorites 页退役（page-chat.js）、page-we 计数同口径、收藏 toast 改口径；
+   · 生图：page-imggen 试一张改走正式管线（实验 UI 退役）、newApi 不再预灌预设词；
+   · app.js toast 支持 opts.onClick（总结完成可点直达留痕）；page-summary 文案与跳转；
+   · 群声：page-qunsheng 板块主页（qunsheng-board）+ 布局返修（页内滚动/边距/字号）；
+   · 断链修复：page-wj-curtain 分享卡可点直达 wj-read；
+   · 新增 schedule-gen.js（每日角色日程生成器）+ calendar.js AUTH_VIA +schedule_switch；
+     page-chat 两个触发点。index.html 加载列表 +1；
+   · calendar.js：日程注入补「不是硬性剧本」一句（用户：不要太死）；
+     schedule-gen.js 提示词允许把「user 的影响」排进日程；
+   · page-we.js：记一笔抽屉加「✦ 帮我们记」（B1，模型起草、user 确认落库）；
+   · ⑦ 副 API 功能分配：api.js（candidates 按 ov.feature 收窄 + requestForFeature
+     + FEATURES 清单）、store.js subApiFeatures 键、page-subapi 功能分配组、
+     九个功能点接线（forum/moments×3/heartbeat/diary/offline/proactive/
+     talife/schedule/director）。勾选功能严格走副 API 轮询，全败报错不回落。
+   → 必须跳版本：以上文件全变了。 */
 var CORE = [
   './',
   './index.html',

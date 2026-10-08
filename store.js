@@ -115,8 +115,11 @@
       enabled: true
     },
 
-    /* 2.3 副 API：多组 + 轮询顺序 + 启用开关 */
+    /* 2.3 副 API：多组 + 轮询顺序 + 启用开关。
+       subApiFeatures（2026-10-08 定位重构）：功能分配勾选表
+       { 功能key: true } —— 勾了的功能严格走副 API（api.js 读它收窄候选）。 */
     subApis: [],
+    subApiFeatures: {},
 
     /* 2.16 生图：接口分类存（general / nai，见 imggen.js）、
        提示词库、全局开关。个人开关后置到 chat 个人聊天设置页，

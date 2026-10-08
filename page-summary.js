@@ -446,7 +446,12 @@
     summarizeOnline(chat).then(function (r) {
       running[chatId] = false;
       if (r.ok && r.stat && r.stat.added) {
-        if (Sleepy.toast) Sleepy.toast('悄悄整理了 ' + r.stat.added + ' 条新记忆，去「留痕」看看', 'ok');
+        /* 可点击 toast：整理出的记忆落在「留痕」App（memory）——
+           只有一句话指路没人找得到（2026-10-08 用户反馈第 5 条），
+           点 toast 直达留痕页。 */
+        if (Sleepy.toast) Sleepy.toast(
+          '悄悄整理了 ' + r.stat.added + ' 条新记忆，点这里去「留痕」看看', 'ok',
+          { onClick: function () { Sleepy.nav.open('memory'); } });
       }
       /* 失败静默：下一轮再试（游标没动，不会漏） */
     });

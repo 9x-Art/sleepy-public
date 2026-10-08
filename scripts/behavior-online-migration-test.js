@@ -233,6 +233,13 @@ function withForumSlot(cap) {
     }
     assert(false, 'online 基线里找不到锚点槽（锚点漂了？）：' + id);
   }
+  /* 本批（2026-10-08）批准插入：weproposal 之后新增 wenote（记一笔，
+     char 自己提议把聊到的时刻记进 We 共同记录，[记一笔:标题|一句话|分类]）。
+     注入门槛 = We 可用（岛 + weStore），不依赖日程候选；
+     夹具岛有 We → on:true，tokens 按首跑实测写死（同 msgrecall/htmlgame 口径，
+     正文再变就落 diffs 白名单，本批不吸收）。 */
+  var WENOTE_SLOT = { id: 'wenote', slot: 'C04', on: true, tokens: 0,
+    hidden: false, required: false };
   /* 先算好三个锚点再从大到小插，避免前面插入把后面的下标推歪 */
   var iwp = at('weproposal'), iimg = at('genimg'), ipat = at('pat');
   /* tokens 按捕获值写死（123 / 412）：这两张卡不归本批管，正文若再变，
@@ -242,7 +249,7 @@ function withForumSlot(cap) {
   mg.tokens = 123;
   var hg = JSON.parse(JSON.stringify(HTMLGAME_SLOT));
   hg.tokens = 412;
-  out.slots.splice(iwp + 1, 0, JSON.parse(JSON.stringify(FORUM_SLOT)));
+  out.slots.splice(iwp + 1, 0, JSON.parse(JSON.stringify(WENOTE_SLOT)));
   out.slots.splice(iimg + 1, 0, hg);
   out.slots.splice(ipat + 1, 0, mg);
   return out;

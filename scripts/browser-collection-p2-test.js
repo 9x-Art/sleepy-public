@@ -322,8 +322,11 @@ async function main() {
       return t;
     }));
     await sleep(250);
-    chk('P10c 详情对 completed 来源显示「来源已完成 · 日历 · …」（不显示原物不在）',
-      detDone.indexOf('来源已完成') >= 0 && detDone.indexOf('原物已不在') < 0,
+    /* C1 实物化后 completed 来源的语义在票根背面存根行（「关联：日历 · 标题[已完成]」），
+       字面「来源已完成」只在照片/通用路径 —— 断言对齐实物化语义（原断言漏改）。 */
+    chk('P10c completed 来源在票根存根行显示已完成口径（不显示已不在）',
+      detDone.indexOf('关联：日历 · 江边的日落') >= 0 && detDone.indexOf('[已完成]') >= 0 &&
+        detDone.indexOf('已不在') < 0,
       'det=' + detDone.slice(0, 200).replace(/\n+/g, ' '));
 
     /* P11/P12 cancelled / deleted：真实路径下提议直接被拒（fail closed），无卡片 */

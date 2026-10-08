@@ -230,6 +230,29 @@
       body.appendChild(g.wrap);
       body.appendChild(g2.wrap);
 
+      /* ---- 功能分配（2026-10-08 副 API 定位重构）----
+         勾了的功能**严格**走副 API（多组轮询，全失败报错，绝不回落主 API）；
+         没勾的照旧走主 API 候选链。这就是副 API 的正确定位：
+         服务不那么重要 / 简单 / 高频的功能，不是主聊天的备胎。 */
+      var api = Sleepy.api;
+      if (api && api.FEATURES) {
+        var g3 = group('功能分配', '勾选的功能固定用副 API（多组轮询，全失败就报错，不会偷用主 API）；没勾的照旧走主 API。');
+        api.FEATURES.forEach(function (f) {
+          var sw = ui.switchField({ label: f.label, value: api.featureOn(f.key) });
+          sw.input.addEventListener('change', function () {
+            var m = store.get('subApiFeatures') || {};
+            if (sw.input.checked) m[f.key] = true;
+            else delete m[f.key];
+            store.set('subApiFeatures', m);
+            ctx.toast(sw.input.checked
+              ? '「' + f.label + '」以后走副 API'
+              : '「' + f.label + '」回到主 API', 'ok');
+          });
+          g3.card.appendChild(sw.el);
+        });
+        body.appendChild(g3.wrap);
+      }
+
       var foot = h('p', 'set-foot', '所有 Key 只存在这台设备的浏览器里，不经过我的服务器。');
       body.appendChild(foot);
 

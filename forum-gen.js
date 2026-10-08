@@ -34,7 +34,7 @@
     Sleepy.api.runChat(messages, {
       onDone: function (cand, text) { cb(null, text); },
       onFail: function (cands, err) { cb(err || { stage: 'unknown', error: '生成失败' }); }
-    });
+    }, false, { feature: 'forum' });   /* 勾了「群声走副 API」→ 只轮询副 API（api.js） */
   }
 
   function ask(messages, cb) {
