@@ -150,6 +150,8 @@
 
   /* ------------------------------ 渲染 ------------------------------ */
 
+  var busy = false;   /* 模块级：onShow rebuild 重画后旧闭包的局部 busy 会丢，双发防线必须活过重建 */
+
   function identityName(key) {
     var hit = B().IDENTITIES.filter(function (x) { return x.key === key; })[0];
     return hit ? hit.name : key;
@@ -196,6 +198,7 @@
     }]);
     ctx.body.innerHTML = '';
     ensureStyle();
+    ctx.rebuild = function () { render(ctx); };
     if (!sid || !boxId) {
       ctx.body.appendChild(h('p', 'ph-entry-lead', '从建档页开局后才有可玩的世界。'));
       return;
@@ -227,7 +230,6 @@
 
     /* 动作区 */
     var act = h('div', 'yp-act');
-    var busy = false;
     if (run.identity === 'boss-watch') {
       var watch = h('button', 'yp-send', '看 TA 走一步');
       watch.addEventListener('click', function () {
@@ -271,6 +273,11 @@
      一轮 = 一次 fetch（feature 'book'；app 设置过连接则用之，仍单候选单次）。 */
   function round(ctx, box, run, input, onOk, onFail) {
     var sid = box.sandboxId;
+    /* 关键：render 闭包里的 run 是深拷贝快照 —— 直接在它身上 push 再 persist，
+       这条 pending 会永远留在闭包副本里，之后每次点击都把整份陈旧数组整表
+       写回 store（实测：每轮净 +1 条幽灵 pending，历史被慢慢污染）。
+       一进来重读 store 里的最新记录，done/fail 也各自重读，全程只认 store。 */
+    run = B().getRunByBox(box.id, sid) || run;
     var settings = getSettings(sid);
     var messages = B().buildBookMessages(run, box, B().getWorld(run.world), settings, input);
     var world = B().getWorld(run.world) || B().DRILL_WORLD;
@@ -343,6 +350,7 @@
 
   Sleepy.register('yr-play', {
     title: '入世',
-    render: render
+    render: render,
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
 })(window);

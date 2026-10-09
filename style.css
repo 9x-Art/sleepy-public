@@ -11795,9 +11795,12 @@ button.cal-ev:active{background:var(--g-glass-2);}
    面板会变成一块透明玻璃（真机截图抓到的）。 */
 .page[data-page^="wj-"],
 .page[data-page="yishenruju"],
+.page[data-page="yr-board"],
+.page[data-page="yr-play"],
 .wj-sheet,
 /* 以身入局（page-yishenruju）也走帷境夜色：加进同一选择器组共用一份
-   色板，不另抄一份防漂移（施工卡-以身入局-P0）。 */
+   色板，不另抄一份防漂移（施工卡-以身入局-P0）。
+   yr-board / yr-play 同属本 app 的页，一样共用（否则白底配深卡）。 */
 .yr-root{
   /* 2026-09-21（用户：「太深了，但原本的颜色真的很好看」）：整体提亮一档 ——
      夜蓝 → 靛蓝（色相不动，只提亮度）；纸本从米色改冷灰白
@@ -11820,7 +11823,9 @@ button.cal-ev:active{background:var(--g-glass-2);}
 }
 
 .page[data-page^="wj-"],
-.page[data-page="yishenruju"]{
+.page[data-page="yishenruju"],
+.page[data-page="yr-board"],
+.page[data-page="yr-play"]{
   --bg:#16203a;
   --bg-2:rgba(255,255,255,.07);
   --bg-3:rgba(255,255,255,.11);

@@ -15325,8 +15325,10 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      app.js toast onClick、page-summary、群声板块主页与布局返修（page-qunsheng）、
      wj 分享卡断链修复（page-wj-curtain）、**新增 schedule-gen.js**、
      calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
-     基准随批 v204 → v205。 */
-const EXPECTED_SW_CACHE = 'sleepy-v213';
+     基准随批 v204 → v205。
+   ⚠️ v214（2026-10-09）：以身入局整体验收批（style.css 换皮组 + 三页 onShow rebuild
+     + page-yr-play 幽灵 pending 修复），基准随批 v213 → v214。 */
+const EXPECTED_SW_CACHE = 'sleepy-v214';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

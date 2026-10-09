@@ -399,19 +399,29 @@
     ctx.body.appendChild(root);
   }
 
+  /* 入口 wrapper（具名！rebuild 必须指向它——若写 render(ctx) 会解析到
+     内层 render(ctx, sid)，sid 形参 undefined → ensureBoxes 直接抛）。 */
+  function renderEntry(ctx) {
+    var sid = (Sleepy.core.activeSandbox() || {}).id || null;
+    if (!sid) {
+      ctx.setTitle('以身入局');
+      ctx.setActions([]);
+      ctx.body.innerHTML = '';
+      ctx.body.appendChild(h('p', 'ph-entry-lead', '先进入一座岛，局里才有你的档案架。'));
+      return;
+    }
+    B().lockSandbox(sid);
+    render(ctx, sid);
+  }
+
   Sleepy.register('yishenruju', {
     title: '以身入局',
     render: function (ctx) {
-      var sid = (Sleepy.core.activeSandbox() || {}).id || null;
-      if (!sid) {
-        ctx.setTitle('以身入局');
-        ctx.setActions([]);
-        ctx.body.innerHTML = '';
-        ctx.body.appendChild(h('p', 'ph-entry-lead', '先进入一座岛，局里才有你的档案架。'));
-        return;
-      }
-      B().lockSandbox(sid);
-      render(ctx, sid);
-    }
+      /* render 末尾把自己挂成 ctx.rebuild —— onShow 每次都重读 activeSandbox
+         重画（页面实例缓存复用，先开页后进岛会拿到旧空态 DOM）。 */
+      ctx.rebuild = function () { renderEntry(ctx); };
+      renderEntry(ctx);
+    },
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
 })(window);

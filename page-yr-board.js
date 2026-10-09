@@ -114,6 +114,7 @@
     ctx.setActions([]);
     ctx.body.innerHTML = '';
     ensureStyle();
+    ctx.rebuild = function () { render(ctx); };
     if (!sid || !boxId) {
       ctx.body.appendChild(h('p', 'ph-entry-lead', '从档案架的档案盒进来才有局可领。'));
       return;
@@ -275,6 +276,7 @@
 
   Sleepy.register('yr-board', {
     title: '领局牌',
-    render: render
+    render: render,
+    onShow: function (ctx) { if (ctx.rebuild) ctx.rebuild(); }
   });
 })(window);
