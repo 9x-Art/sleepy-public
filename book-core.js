@@ -165,6 +165,13 @@
     return runs.length ? runs[runs.length - 1] : null;
   }
 
+  /* 不限状态取最近一条运行记录（结算封档后游玩页复显结算卡用） */
+  function getLastRunByBox(boxId, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    var runs = scoped('bookRuns', sid).filter(function (r) { return r.boxId === boxId; });
+    return runs.length ? runs[runs.length - 1] : null;
+  }
+
   /* 场景图（封面）：建档时贴，随时可换/可撕。mediaId 走 photos.pick 通道。 */
   function setCover(boxId, mediaId, sandboxId) {
     if (!lockedSandboxId && !sandboxId) throw new Error('book: setCover 必须带 sandboxId 或先 lockSandbox');
@@ -259,6 +266,14 @@
       '硬越界（提到局/原著/结局）一律记 +6 且当轮就有世界反应。'
     ]).join('\n');
 
+    var sealNotes = (run.interventions || []).filter(function (i) { return i && !i.used && i.text; });
+    if (sealNotes.length) {
+      system = system.concat([
+        '',
+        '【局印传话】（老板干预，来自局印，本轮必须体现；这是局对局内世界的暗手，不计异常度）'
+      ].concat(sealNotes.map(function (i) { return '- ' + i.text; })));
+    }
+
     var user = input
       ? '【本轮】user 以「' + (idn ? idn.name : run.identity) + '」的占位言行：\n' + input +
         '\n\n写出世界的回应（含在场人物反应），末尾按格式给判定块。'
@@ -311,6 +326,88 @@
     return entry;
   }
 
+  /* ---------- 3B：背包 / 局印干预 / 结算封档 ---------- */
+
+  /* 背包（run.inventory）：实物态（世界内可见可用）与存档态（副本，世界内不存在）分区。
+     boss-join/staff 是 user 自己的背包；boss-watch 看的是 char 的背包（只读，由局印发道具写入）。 */
+  function addInventoryItem(run, name, state, note) {
+    if (!run) throw new Error('book: addInventoryItem 缺 run');
+    if (['real', 'archived'].indexOf(state) < 0) throw new Error('book: 未知背包态 ' + state);
+    run.inventory = run.inventory || [];
+    var item = { id: uid('inv'), name: String(name || '').trim(), state: state, note: note || null, at: new Date().toISOString() };
+    if (!item.name) throw new Error('book: 物件名不能为空');
+    run.inventory.push(item);
+    return item;
+  }
+
+  /* 局印干预：不单独调用，写进 run.interventions（未 used）等下一轮消费（方案 §5.1/§六-3）。 */
+  function addIntervention(run, text) {
+    if (!run) throw new Error('book: addIntervention 缺 run');
+    var t = String(text || '').trim();
+    if (!t) throw new Error('book: 传话不能为空');
+    run.interventions = run.interventions || [];
+    var item = { id: uid('seal'), text: t, at: new Date().toISOString(), used: false };
+    run.interventions.push(item);
+    return item;
+  }
+
+  function pendingInterventions(run) {
+    return ((run && run.interventions) || []).filter(function (i) { return i && !i.used; });
+  }
+
+  /* 消费：一轮成功后把所有未读传话标记已用（调用方负责持久化）。 */
+  function consumeInterventions(run) {
+    var n = 0;
+    (run.interventions || []).forEach(function (i) {
+      if (i && !i.used) { i.used = true; n++; }
+    });
+    return n;
+  }
+
+  /* 结算分数：状态机按记录算，不信模型现编数（方案 §5.1）。
+     完成度=进度；规则遵守=100-异常度；能量点=基础 30 按完成度折算+实物物件每件 +2。 */
+  var BASE_ENERGY = 30;
+  function settleScores(run) {
+    var completion = Math.max(0, Math.min(100, run.progress || 0));
+    var compliance = Math.max(0, 100 - (run.anomaly || 0));
+    var items = ((run.inventory || []).filter(function (i) { return i.state === 'real'; })).length;
+    return {
+      completion: completion,
+      compliance: compliance,
+      energy: Math.round(BASE_ENERGY * completion / 100) + items * 2,
+      realItems: items
+    };
+  }
+
+  /* 结算封档：run.status='ended' + settlement 落库；档案盒 closed + 已结案戳。
+     narrative 可以是模型生成的结算叙述，也可以是 null（跳过叙述直接封档）。 */
+  function finishRun(boxId, narrative) {
+    if (!lockedSandboxId) throw new Error('book: finishRun 必须先 lockSandbox');
+    var run = getRunByBox(boxId, lockedSandboxId);
+    if (!run) throw new Error('book: 没有进行中的运行可结算');
+    var now = new Date().toISOString();
+    run.status = 'ended';
+    run.endedAt = now;
+    run.settlement = { scores: settleScores(run), narrative: narrative || null, at: now };
+    /* run 是深拷贝，必须整表落库，否则 store 里还挂着一条 ongoing */
+    var runs = store.get('bookRuns') || [];
+    runs.forEach(function (r, i) {
+      if (r && r.id === run.id) runs[i] = run;
+    });
+    store.set('bookRuns', runs);
+
+    var all = store.get('bookBoxes') || [];
+    all.forEach(function (b) {
+      if (b && b.sandboxId === lockedSandboxId && b.id === boxId) {
+        b.status = 'closed';
+        b.stamp = '已结案';
+        b.updatedAt = now;
+      }
+    });
+    store.set('bookBoxes', all);
+    return run;
+  }
+
   /* ---------- 身份（下一局身份；进局建档时抄到运行记录上锁死） ---------- */
 
   var IDENTITIES = [
@@ -346,6 +443,7 @@
     getBox: getBox,
     startRun: startRun,
     getRunByBox: getRunByBox,
+    getLastRunByBox: getLastRunByBox,
     setCover: setCover,
     DRILL_WORLD: DRILL_WORLD,
     DRILL_BRIEF: DRILL_BRIEF,
@@ -354,6 +452,12 @@
     buildBookMessages: buildBookMessages,
     parseVerdict: parseVerdict,
     applyVerdict: applyVerdict,
+    addInventoryItem: addInventoryItem,
+    addIntervention: addIntervention,
+    pendingInterventions: pendingInterventions,
+    consumeInterventions: consumeInterventions,
+    settleScores: settleScores,
+    finishRun: finishRun,
     DRILL_BOX_ID: DRILL_BOX_ID,
     IDENTITIES: IDENTITIES,
     getIdentity: getIdentity,

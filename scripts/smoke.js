@@ -3316,6 +3316,83 @@ t('以身入局：入世轮管线（注入四块 / 判定剥离 / 写回纪律�
   }
   return { 注入: '四块+判定格式', 剥离: true, 写回: '异常度累计/进度只进不退' };
 });
+t('以身入局 3B：局印干预并入下轮注入 / 背包两态 / 结算封档状态机（真跑）', () => {
+  const Bk = S.book;
+
+  /* 局印干预：有未消费传话 → 注入带【局印传话】块 + 传话原文；没有 → 不带；
+     已消费（used）的不再进注入。期望串硬写（判据不许引被测常量）。 */
+  const withSeal = Bk.buildBookMessages(
+    { id: 'r', identity: 'boss-watch', seat: { name: '借宿的旅人' }, anomaly: 0, progress: 0, logs: [],
+      interventions: [{ id: 's1', text: '让陈婆先开口', at: '', used: false },
+                       { id: 's2', text: '旧信别烧', at: '', used: true }] },
+    { title: '局内演练' }, Bk.getWorld('drill'), {}, null);
+  if (withSeal[0].content.indexOf('局印传话') < 0) throw new Error('有未消费传话但注入没有局印块');
+  if (withSeal[0].content.indexOf('让陈婆先开口') < 0) throw new Error('传话原文没进注入');
+  if (withSeal[0].content.indexOf('旧信别烧') >= 0) throw new Error('已消费传话不该再进注入');
+  const noSeal = Bk.buildBookMessages(
+    { id: 'r', identity: 'staff', seat: { name: '新来的帮工' }, anomaly: 0, progress: 0, logs: [] },
+    { title: '局内演练' }, Bk.getWorld('drill'), {}, '我去送包');
+  if (noSeal[0].content.indexOf('局印传话') >= 0) throw new Error('无传话不该有局印块');
+
+  /* 干预登记/消费：addIntervention 拒空；consume 标 used 且返回条数 */
+  const r = { id: 'rc', identity: 'boss-watch', interventions: [] };
+  Bk.addIntervention(r, '盯紧邮包');
+  let sealRejected = false;
+  try { Bk.addIntervention(r, '  '); } catch (e) { sealRejected = true; }
+  if (!sealRejected) throw new Error('空传话应被拒');
+  if (Bk.pendingInterventions(r).length !== 1) throw new Error('pending 数不对');
+  if (Bk.consumeInterventions(r) !== 1 || Bk.pendingInterventions(r).length !== 0) {
+    throw new Error('consume 没把传话标已用');
+  }
+
+  /* 背包两态：real/archived 收录；坏 state / 空名被拒 */
+  const rb = { id: 'rb', inventory: [] };
+  Bk.addInventoryItem(rb, '旧宅钥匙', 'real');
+  Bk.addInventoryItem(rb, '邮包底片', 'archived');
+  let invBad = 0;
+  try { Bk.addInventoryItem(rb, '坏态', 'ghost'); } catch (e) { invBad++; }
+  try { Bk.addInventoryItem(rb, '   ', 'real'); } catch (e) { invBad++; }
+  if (invBad !== 2) throw new Error('背包坏入参没被拦：' + invBad);
+  if (rb.inventory.length !== 2) throw new Error('背包收录数不对');
+
+  /* 结算分数：状态机硬口径 —— 完成度=进度；规则遵守=100-异常度；
+     能量点=30×完成度% + 实物件数×2（存档态不折）。期望值全部手算硬写。 */
+  const rs = { progress: 50, anomaly: 10, inventory: [{ state: 'real' }, { state: 'real' }, { state: 'archived' }] };
+  const sc = Bk.settleScores(rs);
+  if (sc.completion !== 50 || sc.compliance !== 90 || sc.energy !== (15 + 4) || sc.realItems !== 2) {
+    throw new Error('结算分不对：' + JSON.stringify(sc));
+  }
+  const rz = { progress: 0, anomaly: 0, inventory: [] };
+  const sc0 = Bk.settleScores(rz);
+  if (sc0.energy !== 0) throw new Error('零进度不该有能量点');
+
+  /* 封档真跑：run.ended + settlement；档案盒 closed + 「已结案」戳；
+     封档后 getRunByBox 不再返回，getLastRunByBox 拿得到 */
+  const sb = S.core.createSandbox('single', 'smoke-book-3b-fixture');
+  S.book.lockSandbox(sb.id);
+  const drill = S.book.ensureBoxes(sb.id).filter((b) => b.enterable)[0];
+  S.book.startRun(drill.id, 'boss-join', { name: '借宿的旅人' });
+  /* store.get 是深拷贝：改字段必须整表落库，否则 finishRun 重读拿到的还是 0 */
+  const live = S.book.getRunByBox(drill.id, sb.id);
+  Bk.addInventoryItem(live, '灯站铜钥匙', 'real');
+  const runsAll = S.store.get('bookRuns');
+  runsAll.filter((x) => x.id === live.id).forEach((x) => { x.progress = 100; x.inventory = live.inventory; });
+  S.store.set('bookRuns', runsAll);
+  const ended = Bk.finishRun(drill.id, '委托者的信到了。');
+  if (ended.status !== 'ended' || !ended.endedAt) throw new Error('run 没结束');
+  if (!ended.settlement || ended.settlement.narrative !== '委托者的信到了。') {
+    throw new Error('settlement 没落对：' + JSON.stringify(ended.settlement));
+  }
+  if (ended.settlement.scores.energy !== 30 + 2) throw new Error('满进度+1实物件应为 32 能量点');
+  const boxAfter = S.book.getBox(drill.id, sb.id);
+  if (boxAfter.status !== 'closed' || boxAfter.stamp !== '已结案') {
+    throw new Error('档案盒没变已结案：' + JSON.stringify(boxAfter));
+  }
+  if (S.book.getRunByBox(drill.id, sb.id) !== null) throw new Error('封档后不该再有 ongoing run');
+  const last = S.book.getLastRunByBox(drill.id, sb.id);
+  if (!last || last.status !== 'ended') throw new Error('getLastRunByBox 拿不到已结案记录');
+  return { 注入: '局印块+原文/已用不复入', 背包: '两态+坏参拦', 结算: '50/90/19 手算核对', 封档: 'ended+已结案戳' };
+});
 t('格子都在 4×6 的网格范围内', () => {
   const d = S.desktop.defaultDesktop();
   const out = [];
@@ -15327,8 +15404,10 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
      基准随批 v204 → v205。
    ⚠️ v214（2026-10-09）：以身入局整体验收批（style.css 换皮组 + 三页 onShow rebuild
-     + page-yr-play 幽灵 pending 修复），基准随批 v213 → v214。 */
-const EXPECTED_SW_CACHE = 'sleepy-v214';
+     + page-yr-play 幽灵 pending 修复），基准随批 v213 → v214。
+   ⚠️ v215（2026-10-09）：以身入局 3B 收尾批（book-core 悬浮球数据层/局印干预/
+     自动档/结算封档 + page-yr-play 面板与循环），基准随批 v214 → v215。 */
+const EXPECTED_SW_CACHE = 'sleepy-v215';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

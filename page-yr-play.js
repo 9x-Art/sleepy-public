@@ -6,7 +6,16 @@
      applyVerdict 写回异常度/进度，正文进行动日志）；
    · 在场轮（user 说话，亲自参与/员工）与行动轮（老板纯看，
      「看 TA 走一步」，无 user 输入）共用同一管线；
-   · 手动档：每轮点一次走一轮；自动连跑是下一批；
+   · 手动档：每轮点一次走一轮；自动档「让 TA 自己走一段」= 前端同进程
+     连跑 N 轮（默认 3，设置可改），随时可停，异常度≥60 / 进度满 / 失败
+     自动刹车；离开页面即停（本页循环不是后台任务，文案实话实说）；
+   · 悬浮球三件套（方案 §5.3）：按身份换装——
+     boss-watch=B套（局印/观测窗/char 背包只读）；boss-join=A套
+     （手机/背包/局印）；staff=A套但局印置灰（局印认老板）；
+   · 局印干预：不单独调用，传话写进 run.interventions，并入下一轮注入
+     （consumeInterventions 在轮成功后标记已用，日志条带局印批注）；
+   · 结算封档：分数由状态机按记录算（settleScores），结算叙述是一次
+     可选调用；finishRun 落 settlement + 档案盒变「已结案」；
    · 顶部常驻委托卡（明面目标 + 异常度 + 进度）——任务感钉子；
    · 右上角设置：每轮字数档 + 模型连接（主/副去重单选，缺省跟随
      全局分配）。调用走 feature 'book'（勾选走副 API，不回落）。
@@ -72,6 +81,35 @@
       '.yp-send{display:block;width:100%;margin-top:8px;padding:11px;border:1px solid rgba(236,230,218,.4);border-radius:6px;',
       'background:rgba(255,255,255,.05);color:var(--wj-text);font-family:var(--ff-serif);font-size:13.5px;letter-spacing:.2em;cursor:pointer}',
       '.yp-send[disabled]{opacity:.45;cursor:default}',
+      '.yp-sub{display:block;width:100%;margin-top:6px;padding:8px;border:0;background:transparent;',
+      'color:var(--wj-dim);font-size:11px;letter-spacing:.12em;cursor:pointer;text-decoration:underline dotted}',
+      '.yp-sub.warn{color:var(--wj-wine-lite)}',
+
+      /* 悬浮球三件套 */
+      '.yp-balls{flex:0 0 auto;display:flex;gap:14px;padding:8px 16px 2px;background:rgba(5,10,20,.34)}',
+      '.yp-ball{width:44px;height:44px;border-radius:50%;border:1px solid var(--wj-line);',
+      'background:rgba(255,255,255,.04);color:var(--wj-text);font-family:var(--ff-serif);',
+      'font-size:15px;cursor:pointer;line-height:1;padding:0}',
+      '.yp-ball small{display:block;font-size:8px;letter-spacing:.2em;color:var(--wj-dimmer);margin-top:3px}',
+      '.yp-ball:active{transform:scale(.93)}',
+      '.yp-ball.dim{opacity:.32;cursor:not-allowed}',
+      '.yp-ball.badge{border-color:var(--wj-wine-lite);box-shadow:0 0 0 1px var(--wj-wine-lite)}',
+      '.yp-sealnote{font-size:10.5px;color:var(--wj-gold,#c8a86b);border-left:2px solid #c8a86b;',
+      'padding-left:8px;margin-bottom:7px;line-height:1.6}',
+
+      /* 背包 / 观测窗条目 */
+      '.yp-item{display:flex;gap:8px;align-items:baseline;padding:7px 10px;border:1px solid var(--wj-line);',
+      'border-radius:8px;margin-top:6px;font-size:12px;color:var(--wj-text)}',
+      '.yp-item em{font-style:normal;font-size:9px;letter-spacing:.14em;color:var(--wj-dimmer);border:1px solid var(--wj-line-soft);padding:1px 5px;border-radius:3px}',
+      '.yp-item small{color:var(--wj-dimmer);margin-left:auto;font-size:10px}',
+      '.yp-row{display:flex;gap:6px;margin-top:8px}',
+      '.yp-row input{flex:1;border:1px solid var(--wj-line);border-radius:6px;background:rgba(255,255,255,.04);',
+      'color:var(--wj-text);padding:7px 9px;font-size:12px;font-family:inherit}',
+      '.yp-row button{border:1px solid var(--wj-line);border-radius:6px;background:rgba(255,255,255,.05);',
+      'color:var(--wj-text);padding:7px 12px;font-size:11px;cursor:pointer}',
+      '.yp-stat{display:flex;justify-content:space-between;font-size:12px;color:var(--wj-text);padding:7px 2px;border-bottom:1px dashed var(--wj-line-soft)}',
+      '.yp-stat b{color:var(--wj-silver);font-weight:500}',
+      '.yp-score{font-size:13px;color:var(--wj-text);line-height:2}',
 
       /* 设置抽屉 */
       '.yp-sheet{position:fixed;inset:0;z-index:60;background:rgba(3,7,14,.62);display:flex;align-items:flex-end;justify-content:center}',
@@ -140,6 +178,18 @@
       panel.appendChild(o);
     });
 
+    panel.appendChild(h('div', 'yr-eyebrow', '自动档连跑轮数'));
+    [1, 3, 5].forEach(function (n) {
+      var o = h('button', 'yp-opt' + ((s.autoRounds || 3) === n ? ' on' : ''));
+      o.appendChild(h('span', null, '让 TA 自己走 ' + n + ' 轮'));
+      o.appendChild(h('small', null, n === 3 ? '默认' : ''));
+      o.addEventListener('click', function () {
+        setSetting(sid, 'autoRounds', n);
+        sheet.remove(); openSettings(ctx, sid, onChange);
+      });
+      panel.appendChild(o);
+    });
+
     var close = h('button', 'yp-close', '收起');
     close.addEventListener('click', function () { sheet.remove(); if (onChange) onChange(); });
     panel.appendChild(close);
@@ -151,6 +201,8 @@
   /* ------------------------------ 渲染 ------------------------------ */
 
   var busy = false;   /* 模块级：onShow rebuild 重画后旧闭包的局部 busy 会丢，双发防线必须活过重建 */
+  /* 自动档状态（模块级）：token 让旧循环可停；boxId 区分是哪一局的自动档 */
+  var auto = { running: false, token: null, boxId: null, left: 0 };
 
   function identityName(key) {
     var hit = B().IDENTITIES.filter(function (x) { return x.key === key; })[0];
@@ -178,6 +230,7 @@
     head.appendChild(h('span', null, e.at ? e.at.replace('T', ' ').slice(11, 16) : '…'));
     el.appendChild(head);
     if (e.input) el.appendChild(h('div', 'yp-entry-input', e.input));
+    if (e.sealNote) el.appendChild(h('div', 'yp-sealnote', '局印 · ' + e.sealNote));
     el.appendChild(h('div', 'yp-entry-text', e.text || '…'));
     if (e.verdictText || e.anomalyDelta) {
       var v = h('div', 'yp-entry-verdict');
@@ -206,7 +259,13 @@
     B().lockSandbox(sid);
     var box = B().getBox(boxId, sid);
     var run = B().getRunByBox(boxId, sid);
-    if (!box || !run) {
+    if (!box) {
+      ctx.body.appendChild(h('p', 'ph-entry-lead', '找不到这个档案盒。'));
+      return;
+    }
+    if (!run) {
+      var last = B().getLastRunByBox(boxId, sid);
+      if (last && last.status === 'ended') { renderSettled(ctx, last); return; }
       ctx.body.appendChild(h('p', 'ph-entry-lead', '这局还没开。回建档页开局吧。'));
       return;
     }
@@ -214,6 +273,9 @@
 
     var root = h('div', 'yp-root');
     renderDeck(root, run);
+
+    /* 悬浮球三件套（按身份换装，方案 §5.3） */
+    renderBalls(root, ctx, sid, box, run);
 
     /* 行动日志 */
     var logEl = h('div', 'yp-log');
@@ -230,6 +292,7 @@
 
     /* 动作区 */
     var act = h('div', 'yp-act');
+    var pendingSeal = B().pendingInterventions(run).length;
     if (run.identity === 'boss-watch') {
       var watch = h('button', 'yp-send', '看 TA 走一步');
       watch.addEventListener('click', function () {
@@ -242,6 +305,23 @@
         });
       });
       act.appendChild(watch);
+
+      /* 自动档：前端同进程连跑 N 轮，可停；离开页面即停（实话实说） */
+      var n = getSettings(sid).autoRounds || 3;
+      var autoBtn = h('button', 'yp-send' + (auto.running && auto.boxId === box.id ? '' : ''),
+        auto.running && auto.boxId === box.id ? '停下（自动档在走）' : '让 TA 自己走一段（' + n + ' 轮）');
+      autoBtn.style.marginTop = '6px';
+      autoBtn.addEventListener('click', function () {
+        if (auto.running && auto.boxId === box.id) {
+          auto.token.stop = true;
+          autoBtn.textContent = '停下……';
+          return;
+        }
+        if (busy) return;
+        busy = true;
+        startAuto(ctx, box, n);
+      });
+      act.appendChild(autoBtn);
     } else {
       var ta = document.createElement('textarea');
       ta.className = 'yp-input';
@@ -264,9 +344,288 @@
       });
       act.appendChild(send);
     }
+
+    /* 结算封档入口：进度满高亮，其余时候也允许提前结案（§7.2 撤回口径） */
+    var settle = h('button', 'yp-sub' + ((run.progress || 0) >= 100 ? ' warn' : ''),
+      (run.progress || 0) >= 100 ? '委托已达成 —— 结算封档' : '提前结案（结算封档）');
+    settle.addEventListener('click', function () {
+      if (busy) { Sleepy.toast('等这一轮走完再结算。'); return; }
+      openSettle(ctx, sid, box);
+    });
+    act.appendChild(settle);
+
+    if (pendingSeal && run.identity !== 'staff') {
+      act.appendChild(h('div', 'yp-sealnote', '局印有 ' + pendingSeal + ' 条传话没送出，会并进下一轮。'));
+    }
     root.appendChild(act);
     ctx.body.appendChild(root);
     logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  /* ------------------------------ 悬浮球三件套（§5.3） ------------------------------ */
+
+  function ballDefs(run) {
+    if (run.identity === 'boss-watch') {
+      /* B 套 · 观测视角：局印（主工具）/ 观测窗 / char 背包只读；手机不出现 */
+      return [
+        { k: 'seal', glyph: '印', label: '局印' },
+        { k: 'observe', glyph: '窗', label: '观测窗' },
+        { k: 'bag', glyph: '囊', label: 'TA 的背包', readonly: true }
+      ];
+    }
+    /* A 套 · 在场视角：手机 / 背包 / 局印；staff 局印置灰 */
+    return [
+      { k: 'phone', glyph: '机', label: '手机' },
+      { k: 'bag', glyph: '囊', label: '背包' },
+      { k: 'seal', glyph: '印', label: '局印', dim: run.identity === 'staff' }
+    ];
+  }
+
+  function renderBalls(root, ctx, sid, box, run) {
+    var row = h('div', 'yp-balls');
+    ballDefs(run).forEach(function (d) {
+      var badge = d.k === 'seal' && !d.dim && B().pendingInterventions(run).length > 0;
+      var b = h('button', 'yp-ball' + (d.dim ? ' dim' : '') + (badge ? ' badge' : ''));
+      b.appendChild(h('span', null, d.glyph));
+      b.appendChild(h('small', null, d.label));
+      b.addEventListener('click', function () {
+        if (d.dim) { Sleepy.toast('局印认老板，员工的你只能看着。'); return; }
+        openBallPanel(ctx, sid, box, d.k, d.readonly);
+      });
+      row.appendChild(b);
+    });
+    root.appendChild(row);
+  }
+
+  function openBallPanel(ctx, sid, box, kind, readonly) {
+    var run = B().getRunByBox(box.id, sid);
+    if (!run) { Sleepy.toast('这局已经结了。'); return; }
+    var sheet = h('div', 'yp-sheet');
+    var panel = h('div', 'yp-panel');
+    function refresh() { sheet.remove(); render(ctx); }
+    function refreshStay() { sheet.remove(); render(ctx); openBallPanel(ctx, sid, box, kind, readonly); }
+    var world = B().getWorld(run.world) || B().DRILL_WORLD;
+
+    if (kind === 'phone') {
+      panel.appendChild(h('h3', null, '手机 · 局内系统'));
+      var brief = B().DRILL_BRIEF;
+      [['委托人', brief.requester], ['明面目标', brief.publicGoal],
+       ['守则', brief.restriction], ['同档', world.npcs.map(function (n) { return n.name; }).join('、')]]
+        .forEach(function (p) {
+          var s = h('div', 'yp-stat');
+          s.appendChild(h('span', null, p[0]));
+          s.appendChild(h('b', null, p[1]));
+          panel.appendChild(s);
+        });
+      panel.appendChild(h('p', 'yp-empty', '传话走局印，不走手机——手机只管信息。'));
+    }
+
+    if (kind === 'bag') {
+      panel.appendChild(h('h3', null, readonly ? 'TA 的背包（只读）' : '背包'));
+      var items = run.inventory || [];
+      if (!items.length) {
+        panel.appendChild(h('p', 'yp-empty', readonly ? 'TA 还没在世界里拿到东西。' : '还空着。收进一样东西试试。'));
+      }
+      items.forEach(function (it) {
+        var el = h('div', 'yp-item');
+        el.appendChild(h('em', null, it.state === 'real' ? '实物' : '存档'));
+        el.appendChild(h('span', null, it.name));
+        if (it.note) el.appendChild(h('small', null, it.note));
+        panel.appendChild(el);
+      });
+      var realN = items.filter(function (i) { return i.state === 'real'; }).length;
+      panel.appendChild(h('p', 'yp-empty', '结案折算预览：实物 ' + realN + ' 件 × 2 = ' + (realN * 2) + ' 能量点（存档态不折算）。'));
+      if (!readonly) {
+        var input = document.createElement('input');
+        input.placeholder = '收进一样东西……';
+        var row = h('div', 'yp-row');
+        row.appendChild(input);
+        ['real', 'archived'].forEach(function (st) {
+          var btn = h('button', null, st === 'real' ? '收实物' : '收存档');
+          btn.addEventListener('click', function () {
+            var name = input.value.trim();
+            if (!name) { Sleepy.toast('先写物件名。'); return; }
+            var live = B().getRunByBox(box.id, sid);
+            try { B().addInventoryItem(live, name, st); } catch (e) { Sleepy.toast(String(e.message || e), 'err'); return; }
+            persistRun(live); refreshStay();
+          });
+          row.appendChild(btn);
+        });
+        panel.appendChild(row);
+      } else {
+        panel.appendChild(h('p', 'yp-empty', '老板不能替 TA 用东西——发道具走局印。'));
+      }
+    }
+
+    if (kind === 'observe') {
+      panel.appendChild(h('h3', null, '观测窗'));
+      [['异常度', (run.anomaly || 0) + ' / 100'], ['任务进度', (run.progress || 0) + '%'],
+       ['已走轮数', String((run.logs || []).length)], ['身份', identityName(run.identity)]]
+        .forEach(function (p) {
+          var s = h('div', 'yp-stat');
+          s.appendChild(h('span', null, p[0]));
+          s.appendChild(h('b', null, p[1]));
+          panel.appendChild(s);
+        });
+      panel.appendChild(h('div', 'yr-eyebrow', '最近判定'));
+      var vs = (run.logs || []).filter(function (l) { return l.verdictText; }).slice(-3);
+      if (!vs.length) panel.appendChild(h('p', 'yp-empty', '还没有判定记录。'));
+      vs.forEach(function (l) {
+        panel.appendChild(h('p', 'yp-empty', '第 ' + l.n + ' 轮：' + (l.verdictText || '').split('\n').join(' · ')));
+      });
+    }
+
+    if (kind === 'seal') {
+      panel.appendChild(h('h3', null, '局印 · 干预传话'));
+      panel.appendChild(h('p', 'yp-empty', '传话不单独惊动世界：写好盖印，并入下一轮注入，不计异常度。'));
+      var ta = document.createElement('textarea');
+      ta.className = 'yp-input';
+      ta.rows = 2;
+      ta.placeholder = run.identity === 'boss-join'
+        ? '以老板的暗手给局里递一句话……'
+        : '给 TA 递一句话、一个提醒、一件道具……';
+      panel.appendChild(ta);
+      var stamp = h('button', 'yp-send', '盖 下 传 话');
+      stamp.addEventListener('click', function () {
+        var text = ta.value.trim();
+        if (!text) { Sleepy.toast('先写传话内容。'); return; }
+        var live = B().getRunByBox(box.id, sid);
+        B().addIntervention(live, text);
+        persistRun(live);
+        Sleepy.toast('已盖印。传话并进下一轮。');
+        refreshStay();
+      });
+      panel.appendChild(stamp);
+      var pend = B().pendingInterventions(run);
+      if (pend.length) {
+        panel.appendChild(h('div', 'yr-eyebrow', '待送出的传话'));
+        pend.forEach(function (i) {
+          var el = h('div', 'yp-item');
+          el.appendChild(h('span', null, i.text));
+          var tear = h('button', 'yp-sub', '撕掉');
+          tear.style.cssText = 'width:auto;margin:0;padding:0 4px';
+          tear.addEventListener('click', function () {
+            var live = B().getRunByBox(box.id, sid);
+            live.interventions = (live.interventions || []).filter(function (x) { return x.id !== i.id; });
+            persistRun(live); refreshStay();
+          });
+          el.appendChild(tear);
+          panel.appendChild(el);
+        });
+      }
+    }
+
+    var close = h('button', 'yp-close', '收起');
+    close.addEventListener('click', refresh);
+    panel.appendChild(close);
+    sheet.appendChild(panel);
+    sheet.addEventListener('click', function (e) { if (e.target === sheet) refresh(); });
+    ctx.body.appendChild(sheet);
+  }
+
+  /* ------------------------------ 结算封档 ------------------------------ */
+
+  function openSettle(ctx, sid, box) {
+    var run = B().getRunByBox(box.id, sid);
+    if (!run) { render(ctx); return; }
+    var scores = B().settleScores(run);
+    var sheet = h('div', 'yp-sheet');
+    var panel = h('div', 'yp-panel');
+    panel.appendChild(h('h3', null, '结算封档'));
+    panel.appendChild(h('p', 'yp-score',
+      '完成度 ' + scores.completion + '% · 规则遵守 ' + scores.compliance +
+      '\n能量点：基础 30 × 完成度 + 实物折算 = ' + scores.energy +
+      '\n（分数由状态机按记录算，模型只写叙述，不许现编数）'));
+    panel.appendChild(h('p', 'yp-empty', '封档后这局不再可玩，档案盒变「已结案」。'));
+
+    function settleBtn(label, fn) {
+      var b = h('button', 'yp-send', label);
+      b.addEventListener('click', function () {
+        b.disabled = true; b.textContent = '……';
+        fn();
+      });
+      panel.appendChild(b);
+      return b;
+    }
+
+    settleBtn('请一段结算叙述（一次调用）', function () {
+      var settings = getSettings(sid);
+      var messages = [
+        { role: 'system', content: '你是「以身入局」的叙事者。任务刚结束，写一段结算叙述：委托者的评价、局内角色的感想、一句评级包装。只写叙述，不写判定块，不许编造数字。' },
+        { role: 'user', content: '【任务档案】\n明面目标: ' + B().DRILL_BRIEF.publicGoal +
+          '\n完成度: ' + scores.completion + '%  异常度: ' + (run.anomaly || 0) +
+          '\n共 ' + (run.logs || []).length + ' 轮，老板传话 ' + (run.interventions || []).length + ' 条。\n篇幅 ' + (B().WORDS[settings.words] || B().WORDS.standard) + '。' }
+      ];
+      callModel(settings, messages, function (text) {
+        B().finishRun(box.id, String(text || '').trim());
+        Sleepy.toast('已封档，档案盒盖上「已结案」。');
+        render(ctx);
+      }, function (err) {
+        sheet.remove();
+        Sleepy.toast('结算叙述没写成：' + ((err && err.error) || '还没有可用的模型连接') + '，可改用直接封档。', 'err');
+        openSettle(ctx, sid, box);
+      });
+    });
+
+    settleBtn('不写叙述，直接封档', function () {
+      B().finishRun(box.id, null);
+      Sleepy.toast('已封档，档案盒盖上「已结案」。');
+      render(ctx);
+    });
+
+    var close = h('button', 'yp-close', '先不结');
+    close.addEventListener('click', function () { sheet.remove(); });
+    panel.appendChild(close);
+    sheet.appendChild(panel);
+    sheet.addEventListener('click', function (e) { if (e.target === sheet) sheet.remove(); });
+    ctx.body.appendChild(sheet);
+  }
+
+  function renderSettled(ctx, last) {
+    ctx.setTitle('入世 · 已结案');
+    var s = last.settlement && last.settlement.scores || {};
+    var root = h('div', 'yp-root');
+    var log = h('div', 'yp-log');
+    log.appendChild(h('div', 'yr-eyebrow', '本局已结案'));
+    log.appendChild(h('p', 'yp-score',
+      '完成度 ' + (s.completion || 0) + '% · 规则遵守 ' + (s.compliance || 0) +
+      ' · 入账 ' + (s.energy || 0) + ' 能量点'));
+    if (last.settlement && last.settlement.narrative) {
+      log.appendChild(h('div', 'yp-entry-text', last.settlement.narrative));
+    } else {
+      log.appendChild(h('p', 'yp-empty', '这局没写结算叙述（直接封档）。'));
+    }
+    log.appendChild(h('p', 'yp-empty', '回档案架看「已结案」的盒子吧。'));
+    root.appendChild(log);
+    ctx.body.appendChild(root);
+  }
+
+  /* ------------------------------ 自动档（前端循环，离开页面即停） ------------------------------ */
+
+  function startAuto(ctx, box, n) {
+    var token = { stop: false };
+    auto = { running: true, token: token, boxId: box.id, left: n };
+    render(ctx);
+    function halt(msg) {
+      auto = { running: false, token: null, boxId: null, left: 0 };
+      busy = false;
+      if (msg) Sleepy.toast(msg);
+      render(ctx);
+    }
+    function step() {
+      if (token.stop) return halt(null);
+      if (auto.left <= 0) return halt('自动档走完 ' + n + ' 轮，停。');
+      if (!ctx.body.offsetParent) return halt(null);   /* 离开页面即停（可见性看 offsetParent） */
+      var live = B().getRunByBox(box.id, box.sandboxId);
+      if (!live) return halt(null);
+      if ((live.anomaly || 0) >= 60) return halt('异常度到红线，自动档刹车等老板。');
+      if ((live.progress || 0) >= 100) return halt('委托达成，自动档停下等结算。');
+      auto.left--;
+      round(ctx, box, live, null,
+        function () { render(ctx); setTimeout(step, 0); },
+        function () { halt(null); });
+    }
+    step();
   }
 
   /* 一轮：pending 日志 → 调模型 → 剥判定 → 写回落库 → 重渲。
@@ -299,7 +658,13 @@
       var live = B().getRunByBox(box.id, sid);
       live.logs = live.logs || [];
       live.logs.pop();                    /* 摘掉 pending 占位 */
+      /* 本轮注入里带上的传话：成功后标记已用，日志条带局印批注（§六-3） */
+      var sealTexts = B().pendingInterventions(live).map(function (i) { return i.text; });
       var entry = B().applyVerdict(live, v, input);
+      if (sealTexts.length) {
+        entry.sealNote = sealTexts.join('；');
+        B().consumeInterventions(live);
+      }
       live.world = live.world || 'drill';
       live.chapter = world.chapter;
       persistRun(live);
@@ -317,6 +682,12 @@
 
     /* app 内指定连接（settings.connLabel）优先于 feature 分配：
        指定了 → 在该候选上单发（不轮询、不回落，失败如实报）。 */
+    callModel(getSettings(sid), messages, done, fail);
+  }
+
+  /* 单发通道：app 指定连接 > feature 'book' 分配；一轮=一次 fetch，无扇出。
+     结算叙述共用此通道（也是单次调用）。 */
+  function callModel(settings, messages, done, fail) {
     var connLabel = settings.connLabel || null;
     if (connLabel) {
       var cand = null;
