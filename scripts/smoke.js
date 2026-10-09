@@ -3248,6 +3248,35 @@ t('以身入局：记忆隔离红线（数据层不碰角色记忆通道）', ()
   if (hit.length) throw new Error('book-core.js 引用了角色记忆通道：' + hit.join(','));
   return { 通道: '仅 bookBoxes/bookRuns/bookSettingsBySandbox', 隔离: true };
 });
+t('以身入局：开局落库 + 身份按世界锁死（startRun 真跑）', () => {
+  const sb = S.core.createSandbox('single', 'smoke-book-fixture');
+  try {
+    S.book.lockSandbox(sb.id);
+    const boxes = S.book.ensureBoxes(sb.id);
+    const drill = boxes.filter((b) => b.enterable)[0];
+    if (!drill) throw new Error('ensureBoxes 没播撒可进入的演练盒');
+    const r1 = S.book.startRun(drill.id, 'boss-watch', { name: '借宿的旅人' });
+    if (r1.existed) throw new Error('首次 startRun 不应返回 existed');
+    const run = S.book.getRunByBox(drill.id, sb.id);
+    if (!run || run.identity !== 'boss-watch' || run.status !== 'ongoing') {
+      throw new Error('运行记录没落对：' + JSON.stringify(run));
+    }
+    const box = S.book.getBox(drill.id, sb.id);
+    if (box.identity !== 'boss-watch' || box.status !== 'ongoing') {
+      throw new Error('档案盒没被刻身份/没变进行中：' + JSON.stringify(box));
+    }
+    let locked = false;
+    try { S.book.startRun(drill.id, 'staff', { name: '新来的帮工' }); } catch (e) { locked = true; }
+    if (!locked) throw new Error('换身份开局没被拦（身份应按世界锁死）');
+    const r2 = S.book.startRun(drill.id, 'boss-watch', { name: '借宿的旅人' });
+    if (!r2.existed) throw new Error('同身份重复开局应返回 existed（幂等续接）');
+    return { run: run.id.slice(-6), 身份: 'boss-watch', 锁死: true, 幂等: true };
+  } catch (e) {
+    throw e;
+  }
+  /* 不删夹具岛：smoke 每轮独立实例无跨轮污染；purgeSandbox 是异步门禁，
+     拉进来反而把断言搅成异步。 */
+});
 t('格子都在 4×6 的网格范围内', () => {
   const d = S.desktop.defaultDesktop();
   const out = [];
@@ -15258,7 +15287,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      wj 分享卡断链修复（page-wj-curtain）、**新增 schedule-gen.js**、
      calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
      基准随批 v204 → v205。 */
-const EXPECTED_SW_CACHE = 'sleepy-v210';
+const EXPECTED_SW_CACHE = 'sleepy-v211';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

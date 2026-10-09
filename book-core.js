@@ -108,6 +108,60 @@
     return scoped('bookBoxes', sid).filter(function (b) { return b.id === boxId; })[0] || null;
   }
 
+  /* ---------- 运行（任务） ---------- */
+
+  /* 身份口径（用户 2026-10-09 晚）：**每个世界定一次身份就锁死**——
+     建档时把 identity 刻进档案盒，之后这个世界的所有运行都用它；
+     大厅的「下一局身份」只是默认值，别的世界建档时仍可换。 */
+  function startRun(boxId, identity, seat) {
+    if (!lockedSandboxId) throw new Error('book: startRun 必须先 lockSandbox');
+    var all = store.get('bookBoxes') || [];
+    var box = null;
+    all.forEach(function (b) {
+      if (b && b.sandboxId === lockedSandboxId && b.id === boxId) box = b;
+    });
+    if (!box) throw new Error('book: 找不到档案盒 ' + boxId);
+    if (!box.enterable) throw new Error('book: 不可进入的盒子');
+    var hit = IDENTITIES.filter(function (x) { return x.key === identity; })[0];
+    if (!hit) throw new Error('book: 未知身份 ' + identity);
+    if (box.identity && box.identity !== identity) {
+      throw new Error('book: 这个世界已定过身份（' + box.identity + '），不可再改');
+    }
+    if (box.status === 'ongoing') {
+      var running = scoped('bookRuns', lockedSandboxId)
+        .filter(function (r) { return r.boxId === boxId && r.status === 'ongoing'; })[0];
+      if (running) return { run: running, existed: true };
+    }
+
+    var now = new Date().toISOString();
+    box.identity = identity;          /* 刻死 */
+    box.status = 'ongoing';
+    box.updatedAt = now;
+    store.set('bookBoxes', all);
+
+    var runs = store.get('bookRuns') || [];
+    var run = tagScope({
+      id: uid('book-run'),
+      boxId: boxId,
+      identity: identity,             /* b 层：员工/老板（锁死） */
+      seat: seat || null,             /* c 层：穿书占位身份 */
+      status: 'ongoing',
+      logs: [],                       /* 行动日志（第三刀接） */
+      volume: { chapters: [], notes: [] },  /* 卷宗（分栏，§9.3） */
+      startedAt: now, endedAt: null
+    }, lockedSandboxId);
+    runs.push(run);
+    store.set('bookRuns', runs);
+    return { run: run, existed: false };
+  }
+
+  function getRunByBox(boxId, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    var runs = scoped('bookRuns', sid)
+      .filter(function (r) { return r.boxId === boxId && r.status === 'ongoing'; });
+    return runs.length ? runs[runs.length - 1] : null;
+  }
+
   /* ---------- 身份（下一局身份；进局建档时抄到运行记录上锁死） ---------- */
 
   var IDENTITIES = [
@@ -141,6 +195,8 @@
     uid: uid,
     ensureBoxes: ensureBoxes,
     getBox: getBox,
+    startRun: startRun,
+    getRunByBox: getRunByBox,
     DRILL_BOX_ID: DRILL_BOX_ID,
     IDENTITIES: IDENTITIES,
     getIdentity: getIdentity,

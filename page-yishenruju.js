@@ -148,19 +148,19 @@
     document.head.appendChild(st);
   }
 
-  /* ------------------------------ 环形牌台 ------------------------------ */
-  /* 三枚身份牌：观（老板纯看）/ 随（老板亲自参与）/ 行（员工）。 */
+  /* ------------------------------ 环形牌台（通用） ------------------------------ */
+  /* 照领局牌 Demo v2 口径移植：coverflow 三维透视 + 拖拽/箭头/圆点。
+     opts = { cards:[{glyph,name,sub,code,desc}], startIndex, takeText, onTake(i) }
+     挂到 Sleepy.yrRing —— 领局牌建档页（page-yr-board.js）复用同一组件。 */
 
-  var GLYPH = { 'boss-watch': '观', 'boss-join': '随', 'staff': '行' };
-  var CODE = { 'boss-watch': 'NO.01 · 观局', 'boss-join': 'NO.02 · 入局', 'staff': 'NO.03 · 当值' };
-
-  /* state：active=当前中央牌下标；virtual=拖拽中的连续位置 */
-  function ringWidget(ctx, sid, onDone) {
-    var seats = B().IDENTITIES;
-    var active = 0;
-    var virtual = 0;
+  function yrRing(opts) {
+    var seats = opts.cards;
+    var active = opts.startIndex || 0;
+    var virtual = active;
     var dragging = false;
     var startX = 0;
+    var baseAtDrag = 0;
+    var justDragged = false;
 
     var wrap = h('div');
 
@@ -170,13 +170,13 @@
       var card = h('button', 'yr-card');
       card.setAttribute('data-i', String(i));
       card.setAttribute('aria-label', it.name);
-      card.appendChild(h('div', 'yr-c-top', '以身入局 · 局牌'));
-      card.appendChild(h('b', 'yr-glyph', GLYPH[it.key] || '局'));
+      card.appendChild(h('div', 'yr-c-top', it.top || '以身入局 · 局牌'));
+      card.appendChild(h('b', 'yr-glyph', it.glyph || '局'));
       card.appendChild(h('i', 'yr-glass'));
       var name = h('div', 'yr-c-name', it.name);
-      name.appendChild(h('small', null, it.key === 'staff' ? '局印认老板，不认你' : '局印特权'));
+      name.appendChild(h('small', null, it.sub || ''));
       card.appendChild(name);
-      card.appendChild(h('div', 'yr-c-code', CODE[it.key] || ''));
+      card.appendChild(h('div', 'yr-c-code', it.code || ''));
       ring.appendChild(card);
     });
     stage.appendChild(ring);
@@ -198,12 +198,11 @@
 
     var motto = h('p', 'yr-motto');
     wrap.appendChild(motto);
-    var take = h('button', 'yr-take', '定下这一枚');
+    var take = h('button', 'yr-take', opts.takeText || '定下这一枚');
     wrap.appendChild(take);
 
     var cardEls = [...ring.querySelectorAll('.yr-card')];
-    var justDragged = false;   /* 拖完松手落在牌上的 click 要忽略，不然刚转过去的牌又被点回去 */
-    function narrow() { return ctx.body.clientWidth < 380; }
+    function narrow() { return Math.min(window.innerWidth, 430) < 380; }
 
     function layout() {
       var gapX = narrow() ? 96 : 118;
@@ -226,7 +225,7 @@
       var it = seats[active];
       motto.innerHTML = '';
       motto.appendChild(h('b', null, it.name + ' —— '));
-      motto.appendChild(document.createTextNode(it.desc));
+      motto.appendChild(document.createTextNode(it.desc || ''));
       dotEls.forEach(function (d, i) { d.classList.toggle('on', i === active); });
       prev.disabled = active === 0;
       next.disabled = active === seats.length - 1;
@@ -250,7 +249,7 @@
     });
 
     stage.addEventListener('pointerdown', function (e) {
-      dragging = true; startX = e.clientX;
+      dragging = true; startX = e.clientX; baseAtDrag = active; virtual = active;
       stage.classList.add('yr-dragging');
       if (stage.setPointerCapture) { try { stage.setPointerCapture(e.pointerId); } catch (err) {} }
     });
@@ -258,12 +257,9 @@
       if (!dragging) return;
       var dx = e.clientX - startX;
       var step = narrow() ? 96 : 118;
-      virtual = Math.max(0, Math.min(seats.length - 1, (dragBase()) - dx / step));
+      virtual = Math.max(0, Math.min(seats.length - 1, baseAtDrag - dx / step));
       layout();
     });
-    var baseAtDrag = 0;
-    function dragBase() { return baseAtDrag; }
-    stage.addEventListener('pointerdown', function (e) { baseAtDrag = active; virtual = active; }, true);
     stage.addEventListener('pointerup', function (e) {
       if (!dragging) return;
       dragging = false;
@@ -272,7 +268,6 @@
         justDragged = true;
         setTimeout(function () { justDragged = false; }, 0);
       }
-      var step = narrow() ? 96 : 118;
       if (Math.abs(dx) > 30) {
         active = Math.max(0, Math.min(seats.length - 1, baseAtDrag + (dx < 0 ? 1 : -1)));
       }
@@ -280,17 +275,14 @@
     });
     stage.addEventListener('pointercancel', function () { dragging = false; snap(); });
 
-    take.addEventListener('click', function () {
-      var it = seats[active];
-      B().setIdentity(sid, it.key);
-      Sleepy.toast('身份定了：' + it.name + '。进局后不可再换。');
-      onDone();
-    });
+    take.addEventListener('click', function () { opts.onTake(active); });
 
     layout();
     renderDetail();
     return wrap;
   }
+
+  Sleepy.yrRing = yrRing;
 
   /* ------------------------------ 渲染 ------------------------------ */
 
@@ -309,16 +301,29 @@
       var card = h('button', 'yr-id-now');
       card.style.cursor = 'pointer';
       card.appendChild(h('b', null, hit ? hit.name : cur));
-      card.appendChild(h('p', null, (hit ? hit.desc : '') + ' 点这张卡，回牌台换一个。'));
+      card.appendChild(h('p', null, (hit ? hit.desc : '') + ' 点这张卡，回牌台换一个（只影响还没定身份的世界）。'));
       /* 整卡可点（虚线小按钮太不起眼，用户反馈「点不回去」） */
       card.addEventListener('click', backToRing);
       wrap.appendChild(card);
-      /* 还没开局，身份可以换；一旦有进行中的任务就锁死（下一批在开局时抄进运行记录）。 */
-      var again = h('button', 'yr-again', '↺ 回牌台换身份');
+      var again = h('button', 'yr-again', '↺ 回牌台换默认身份');
       again.addEventListener('click', backToRing);
       wrap.appendChild(again);
     } else {
-      wrap.appendChild(ringWidget(ctx, sid, function () { render(ctx, sid); }));
+      wrap.appendChild(yrRing({
+        cards: B().IDENTITIES.map(function (it) {
+          var g = { 'boss-watch': '观', 'boss-join': '随', 'staff': '行' }[it.key] || '局';
+          var code = { 'boss-watch': 'NO.01 · 观局', 'boss-join': 'NO.02 · 入局', 'staff': 'NO.03 · 当值' }[it.key] || '';
+          var sub = it.key === 'staff' ? '局印认老板，不认你' : '局印特权';
+          return { glyph: g, name: it.name, sub: sub, code: code, desc: it.desc };
+        }),
+        takeText: '定下这一枚',
+        onTake: function (i) {
+          var it = B().IDENTITIES[i];
+          B().setIdentity(sid, it.key);
+          Sleepy.toast('默认身份定了：' + it.name + '。每个世界建档时各自定死。');
+          render(ctx, sid);
+        }
+      }));
     }
     return wrap;
   }
@@ -337,8 +342,8 @@
         Sleepy.toast('这一格等世界包定稿再上架。');
         return;
       }
-      /* 演练盒：领局牌 → 建档 → 入世在下一批接。这里说实话，不装能进。 */
-      Sleepy.toast('「' + box.title + '」的建档与入世在下一批开放。');
+      /* 演练盒 → 领局牌建档页（page-yr-board.js） */
+      Sleepy.nav.open('yr-board', { boxId: box.id, sandboxId: sid });
     });
     return el;
   }
