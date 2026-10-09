@@ -67,7 +67,9 @@
       '.qs-main{flex:1;overflow-y:auto;padding:16px 16px 20px}',
       '.qs-edition{display:flex;align-items:center;gap:9px;margin-bottom:14px;color:var(--muted);font-size:10px;letter-spacing:.12em}',
       '.qs-edition:before,.qs-edition:after{content:"";height:1px;background:var(--line);flex:1}',
-      '.qs-edition .qs-refresh{border:0;background:none;color:var(--blue);font-size:10px;letter-spacing:.12em;font-weight:700;padding:0}',
+      '.qs-edition .qs-refresh{border:0;background:none;color:var(--blue);font-size:10px;letter-spacing:.12em;font-weight:700;padding:0;cursor:pointer}',
+      '.qs-edition .qs-refresh:active{opacity:.55}',
+      '.qs-edition .qs-refresh[disabled]{opacity:.45;cursor:default}',
       '.qs-ticker{display:flex;min-height:43px;border:1px solid var(--ink);background:#fffaf0}',
       '.qs-ticker b{padding:11px 10px;background:var(--ink);color:var(--paper);white-space:nowrap;font-size:10px;letter-spacing:.12em}',
       '.qs-ticker span{padding:10px 11px;font-size:12px;line-height:1.7}',
@@ -493,9 +495,14 @@
     var refresh = h('button', 'qs-refresh', '催更');
     refresh.addEventListener('click', function () {
       refresh.disabled = true;
-      var seeded = F().getForumMap('forumSettingsBySandbox', fx.sandboxId);
-      function done(err, r) {
+      refresh.textContent = '催更中…';      /* 无反馈=「按了没反应」：状态必须写在按钮上 */
+      Sleepy.toast('正在喊大家开口…');
+      function settle() {
         refresh.disabled = false;
+        refresh.textContent = '催更';
+      }
+      function done(err, r) {
+        settle();
         if (err) {
           Sleepy.toast(err.stage === 'cooldown' ? err.error
             : '催更失败：' + (err.error || '还没有可用的模型连接'));
@@ -508,9 +515,15 @@
           Sleepy.toast('没有更多新声了');
         }
       }
-      /* 种过 → 增量补新帖；没种 → 先完整开张 */
-      if (seeded && seeded.seeded) G().genMore(fx.sandboxId, done);
-      else G().ensureSeedContent(fx.sandboxId, done);
+      /* 种过 → 增量补新帖；没种 → 先完整开张。
+         同步异常兜底：不接住的话 settle 永不执行，按钮永久 disabled（2026-10-09 催更卡死修）。 */
+      try {
+        var seeded = F().getForumMap('forumSettingsBySandbox', fx.sandboxId);
+        if (seeded && seeded.seeded) G().genMore(fx.sandboxId, done);
+        else G().ensureSeedContent(fx.sandboxId, done);
+      } catch (e) {
+        done({ stage: 'error', error: String((e && e.message) || e) });
+      }
     });
     edition.appendChild(refresh);
     main.appendChild(edition);

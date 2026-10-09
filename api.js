@@ -603,6 +603,13 @@
             lastErr = out.res;
             tryNext();
           }
+        }, function (err) {
+          /* requestOnce 只 resolve 不 reject（连 fetch 异常都转成 resolve），
+             但 executor 里若有同步异常仍会 reject —— 这里不接住的话整条
+             链路静默断掉：onDone/onFail 都不触发，调用方（如群声催更
+             按钮）会永久停在 disabled。兜住转 onFail。 */
+          lastErr = { stage: 'error', error: String((err && err.message) || err || '内部错误') };
+          tryNext();
         });
         handle = { abort: function () { /* 非流式中止留给未来的 AbortController 串接 */ } };
       }
