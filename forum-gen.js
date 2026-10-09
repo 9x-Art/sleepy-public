@@ -77,13 +77,21 @@
         '板块：' + boards + '\n\n' +
         '生成要求：\n' +
         '1. residents：5~7 位公共居民网友，各带 style（发言风格一句话）。\n' +
-        '2. posts：8~12 帖。其中至少 2 帖由岛上的角色发（符合各自人设与常看板块），' +
-        '至少 1 帖是树洞匿名帖（author 用 "@anon"），至少 1 帖发在 fanwork（同人创作：' +
-        '聊创作进度、有感而发的短评、虚构角色讨论——居民是「写同人的网友」，不是帷境作者本人）。其余由居民发。\n' +
-        '3. 每帖 comments 0~4 条，作者用居民名或 "char:角色名" 或 "楼主"；' +
-        '有的帖子就是没人回（0 条），别硬凑热闹。\n' +
+        '2. posts：8~12 帖。至少 1 帖是树洞匿名帖（author 用 "@anon"）。' +
+        '岛上的角色（char）**自然出演**：可能有一帖是他发的，也可能一帖都没有 —— ' +
+        '别让社区围着某个人转（他不一定有名，这里不是粉丝群）。' +
+        'author 写角色时用 "char:角色名"；如果这个角色这一帖选择匿名，写成 "char:角色名@anon"' +
+        '（只有确实符合他性格时才匿名，不要默认全匿名）。其余帖子全部由居民发。\n' +
+        '3. 每帖 comments 0~4 条，作者用居民名或 "char:角色名"（可选 @anon）或 "楼主"；' +
+        '有的帖子就是没人回（0 条），别硬凑热闹。' +
+        '角色回复属于偶发：这批内容里角色开口的次数别超过两三次。\n' +
         '4. minutesAgo：帖子 5~2880（分钟前），评论必须晚于所属帖子。\n' +
         '5. 语言像真实手机社区：口语、短句、有点生活气，别写鸡汤，别提 AI。\n' +
+        '6. 【禁止复读人设】不许把角色卡里的设定标签、口头禅、金句、身份介绍搬进帖子或回复。' +
+        '角色说话必须是在回应本楼这个具体的话题（说一件具体的事、一个具体的判断），' +
+        '并且和行为场合像路人发帖 —— 不是自我介绍，不是人设说明书。\n' +
+        '7. 【不要围着角色复读】居民之间要有自己的日常：找房子、加班、菜价、追剧、吐槽天气……' +
+        '提到角色时也只是「顺嘴一提」，不要写成夸奖合集或人物侧写。\n' +
         'JSON 结构：{"residents":[{"name":"..","style":".."}],' +
         '"posts":[{"board":"daily","author":"居民名|char:角色名|@anon","type":"normal|long|help",' +
         '"title":"..","content":"..","minutesAgo":120,' +
@@ -109,9 +117,14 @@
         '帖子' + (post.title ? '《' + post.title + '》' : '') + '：' + post.content.slice(0, 400) + '\n' +
         '已有回复：\n' + (lines.join('\n') || '（还没有人回）') + '\n\n' +
         '要求：\n' +
-        '1. comments 0~4 条；author 只能是岛上角色的 "char:角色名" 或居民名（若帖子的作者就是某个角色，他可以以 "楼主" 出现）。\n' +
-        '2. 只让会刷这个板块、且真有话说的角色/居民开口；没话说的就输出空数组。\n' +
-        '3. 回复像真人：短、口语、可以直接回应上面某条回复，别客套，别总结中心思想。' }
+        '1. comments 3~6 条（用户点了催更就是想看到讨论热起来，别只给一条；没人可说才给 0 条）。\n' +
+        '2. author 只能是居民名、岛上角色的 "char:角色名"（可选 "char:角色名@anon" 表示该角色这楼匿名），' +
+        '或 "楼主"。**居民占多数** —— 这批回复里出现的角色最好不超过 1 位，聊的就是帖子本身，' +
+        '不是给某人捧场。\n' +
+        '3. 只让会刷这个板块、且真有话说的居民/角色开口；实在没人开口就输出空数组。\n' +
+        '4. 回复像真人：短、口语、可以直接回应上面某条回复，别客套，别总结中心思想。\n' +
+        '5. 【禁止复读人设】不许复述角色的设定标签/口头禅/金句，不许把他写成被围观的对象。' +
+        '角色开口也只是在说自己对这个楼的看法，语气跟别人一样普通。' }
     ];
   }
 
@@ -126,16 +139,22 @@
     })[0] || null;
   }
 
+  /* author 写法：居民名 / "char:角色名" / "char:角色名@anon" / "@anon"。
+     v216：「char:名字@anon」= 这个角色**这一帖/这一楼**选择匿名（账号内部照旧落
+     真实 owner，公开层只露别名）—— 对应「char 可以选择匿不匿名」的口径。 */
   function resolveSeedAuthor(fx, raw, ctx, list) {
     var s = String(raw || '').trim();
     if (s === '@anon') {
       return { accountId: ctx.userMainId, anonymous: true };       /* 匿名树洞：借 user 主号发，公开层只露别名 */
     }
-    var charName = s.indexOf('char:') === 0 ? s.slice(5).trim() : '';
+    var charRaw = s.indexOf('char:') === 0 ? s.slice(5).trim() : '';
+    var charAnon = charRaw.slice(-5) === '@anon';
+    var charName = charAnon ? charRaw.slice(0, charRaw.lastIndexOf('@anon')).trim() : charRaw;
     var owner = null;
     if (charName) {
       var ch = core.charsOfSandbox(fx.sandboxId).filter(function (c) { return c.name === charName; })[0];
       if (ch) owner = findAccountByOwner(fx, ch.id, list);
+      if (owner && charAnon) return { accountId: owner.id, anonymous: true };
     } else {
       owner = findAccountByOwner(fx, 'gen:' + s, list);
     }
@@ -222,6 +241,8 @@
           parentId: null, rootCommentId: null,
           authorAccountId: cWho.accountId,
           isPostAuthor: cWho.accountId === who.accountId,
+          /* 帖子本身就是匿名帖时不重复记（那种由 post.authorDisplayMode 统一决定） */
+          anonymous: !!(cWho.anonymous && post.authorDisplayMode !== 'anonymous'),
           content: text,
           status: 'active',
           createdAt: cAt, updatedAt: cAt
@@ -297,8 +318,10 @@
         '板块：' + forum.BOARD_TEMPLATES.map(function (b) { return b.key + '=' + b.name; }).join('、') + '\n' +
         '已有帖子标题（别重复）：' + (have.join(' / ') || '无') + '\n\n' +
         '要求：2~4 帖新帖，字段同前（board/author/type/title/content/minutesAgo/comments）；' +
-        'author 只能是已有居民名或 "char:角色名" 或 "@anon"；minutesAgo 1~600；' +
-        '语言口语、有生活气，别提 AI。' }
+        'author 只能是已有居民名、"char:角色名"（可选 "char:角色名@anon" 表示这个角色这一帖匿名）或 "@anon"；' +
+        'minutesAgo 1~600；语言口语、有生活气，别提 AI。\n' +
+        '【自然出演】角色可以出现也可以不出现，**这批里最好一帖都没有** —— 社区不是围着某一人转的地方。\n' +
+        '【禁止复读人设】不许把角色的设定标签/口头禅/金句搬进帖子，不许写成夸奖合集或人物侧写。' }
     ], function (err, text) {
       if (err) { cb(err); return; }
       var data = extractJson(text);
@@ -416,12 +439,26 @@
         .filter(Boolean).join('\n\n')
       : ('你在扮演「' + ch.name + '」。' + String(ch.content || '').slice(0, 160));
 
+    /* char 匿名偏好（forumSettingsBySandbox 下 anonPrefByChar[charId]）：
+       public（必须露脸）/ anon（必须匿名）/ auto（让 TA 自己按性格决定，默认）。 */
+    var settingsMap = forum.getForumMap('forumSettingsBySandbox', fx.sandboxId) || {};
+    var pref = (settingsMap.anonPrefByChar || {})[charId] || 'auto';
+    var anonRule = pref === 'public'
+      ? '这一帖必须公开身份（anonymous 只能是 false）。'
+      : (pref === 'anon'
+        ? '这一帖必须匿名（anonymous 只能是 true）。'
+        : '你可以自己决定要不要藏起名字：说私事/见不得人的话就 anonymous=true，' +
+          '平常一句话就用本名 anonymous=false。按你的性格选，别每帖都藏。');
+
     ask([
       { role: 'system', content: sys +
         '\n\n【当前情境】你闲下来刷了刷这座岛的公共论坛「群声」。' +
         '基于你的人设与近况，决定要不要发一帖。只输出 JSON：' +
-        '{"action":"post|ignore","board":"板块key","title":"..","content":".."}。' +
-        '没得可说就输出 {"action":"ignore"} —— 允许沉默，别硬凑。' },
+        '{"action":"post|ignore","board":"板块key","title":"..","content":"..","anonymous":false}。' +
+        '没得可说就输出 {"action":"ignore"} —— 允许沉默，别硬凑。\n' +
+        '匿名：' + anonRule + '\n' +
+        '【禁止复读人设】不要自我介绍、不要搬用口头禅/金句/设定标签，' +
+        '也不要把社区当成自己的粉丝群：就事论事说一件具体的小事。' },
       { role: 'user', content: '板块：' + boards + '\n发帖要求：口语、短、像真实手机社区；不提 AI。' }
     ], function (err, text) {
       if (err) { cb(err); return; }
@@ -429,10 +466,12 @@
       if (!data || data.action !== 'post') { cb(null, { posted: false }); return; }
       var acc = findAccountByOwner(fx, charId);
       if (!acc) { cb({ stage: 'write', error: 'char 没有论坛账号' }); return; }
+      var anon = pref === 'public' ? false : (pref === 'anon' ? true : !!data.anonymous);
       var r = forum.createPost({
         sandboxId: fx.sandboxId,
         boardId: (forum.listBoards(fx.sandboxId).filter(function (b) { return b.templateKey === data.board; })[0] || {}).id,
         accountId: acc.id,
+        anonymous: anon,
         postType: 'normal',
         title: String(data.title || '').trim(),
         content: String(data.content || '').trim()
@@ -481,7 +520,7 @@
         cb({ stage: 'parse', error: '生成结果不是能用的 JSON' }); return;
       }
       var n = 0, now = Date.now();
-      (data.comments || []).slice(0, 4).forEach(function (c, i) {
+      (data.comments || []).slice(0, 6).forEach(function (c, i) {
         var text2 = String(c && c.content || '').trim();
         var authorRaw = String(c && c.author || '').trim();
         if (!text2 || !authorRaw) return;
@@ -489,14 +528,18 @@
         if (authorRaw === '楼主') {
           acc = { accountId: post.authorAccountId };
         } else if (authorRaw.indexOf('char:') === 0) {
-          var ch = core.charsOfSandbox(fx.sandboxId).filter(function (x) { return x.name === authorRaw.slice(5).trim(); })[0];
-          acc = ch ? { accountId: (findAccountByOwner(fx, ch.id) || {}).id } : null;
+          var cRaw = authorRaw.slice(5).trim();
+          var cAnon = cRaw.slice(-5) === '@anon';
+          var cName = cAnon ? cRaw.slice(0, cRaw.lastIndexOf('@anon')).trim() : cRaw;
+          var ch = core.charsOfSandbox(fx.sandboxId).filter(function (x) { return x.name === cName; })[0];
+          acc = ch ? { accountId: (findAccountByOwner(fx, ch.id) || {}).id, anonymous: cAnon } : null;
         } else {
           acc = { accountId: (findAccountByOwner(fx, 'gen:' + authorRaw) || {}).id };
         }
         if (!acc || !acc.accountId) return;
         var r = forum.createComment({
-          sandboxId: fx.sandboxId, postId: postId, accountId: acc.accountId, content: text2
+          sandboxId: fx.sandboxId, postId: postId, accountId: acc.accountId,
+          content: text2, anonymous: !!acc.anonymous
         });
         if (r.ok) n++;
       });
@@ -516,8 +559,144 @@
     }, Math.max(0, delayMs || 4000));
   }
 
+  /* char 在群声的匿名偏好：'auto'（TA 自己决定，默认）/ 'public' / 'anon'。 */
+  function setAnonPref(sandboxId, charId, pref) {
+    if (['auto', 'public', 'anon'].indexOf(pref) < 0) throw new Error('forum: 未知匿名偏好 ' + pref);
+    var map = forum.getForumMap('forumSettingsBySandbox', sandboxId) || {};
+    map.anonPrefByChar = map.anonPrefByChar || {};
+    map.anonPrefByChar[charId] = pref;
+    forum.setForumMap('forumSettingsBySandbox', sandboxId, map);
+  }
+  function getAnonPref(sandboxId, charId) {
+    var map = forum.getForumMap('forumSettingsBySandbox', sandboxId) || {};
+    return (map.anonPrefByChar || {})[charId] || 'auto';
+  }
+
+
+  /* ============================== v216：同人创作（真写一整篇） ==============================
+     口径（user 2026-10-09）：同人创作板块要**真的产出正文**，不是聊创作进度；
+     一次一篇，**要分自然段**（一千多字糊成一坨很难读）；点「追更」接着往下写，
+     追更时把最近读者留言交给作者，**作者自己挑哪些听进去**（不保证每条都采纳）。 */
+
+  /* 把模型输出规整成自然段数组：模型有时把 \n\n 写成 \n，这里按非空行切。
+     ⚠️ 别自作聪明合并短行 —— 中文一个自然段常常就十几二十个字，
+     按长度合并会把好好的段落吞掉（v216 首跑就是这么把 3 段并成 1 段的）。 */
+  function parasOf(text) {
+    return String(text || '').split(/\r?\n/)
+      .map(function (t) { return t.trim(); })
+      .filter(function (t) { return !!t; });
+  }
+
+  function fanworkBoard(fx) {
+    return forum.listBoards(fx.sandboxId).filter(function (b) { return b.templateKey === 'fanwork'; })[0];
+  }
+
+  /* 写一篇：accountId 是论坛身份（user 的小号 / 主号），topic 是 user 的题材提示。 */
+  function writeFanwork(sandboxId, opt, cb) {
+    cb = cb || function () {};
+    var fx = forum.resolveContext(sandboxId);
+    if (!fx.ok) { cb({ stage: 'config', error: fx.message }); return; }
+    var board = fanworkBoard(fx);
+    if (!board) { cb({ stage: 'config', error: '这个社区没有同人创作板块' }); return; }
+    var accId = opt && opt.accountId;
+    if (!accId) { cb({ stage: 'config', error: '还没选论坛身份' }); return; }
+    var chars = fx.primaryCharIds.map(function (id) { return core.findChar(id); })
+      .filter(Boolean).map(personaLine);
+
+    ask([
+      { role: 'system', content:
+        '你是这座岛上一位写同人的网友，现在要给社区的同人创作板块**开一篇新文**。' +
+        '你要真的写，不是聊创作计划。只输出 JSON：' +
+        '{"title":"标题","paras":["第一段","第二段",...]}，不要解释、不要 markdown 围栏。' },
+      { role: 'user', content:
+        '社区：' + fx.sandboxName + '\n' +
+        '这座岛上的人：' + (chars.join('；') || '暂无') + '\n' +
+        '楼主给的题材/要求：' + String((opt && opt.topic) || '（没说，你自己定）') + '\n\n' +
+        '要求：\n' +
+        '1. paras 是**自然段数组**，每段独立成段，一共写足一篇：1200~1800 字，' +
+        '分成 6~12 段（别把所有字塞进一两个段落里，也不要一句话一段）。\n' +
+        '2. 有开头有推进有收在一个念头上；可以留钩子方便以后追更，但这一篇本身要能单独读。\n' +
+        '3. 写得像人：带具体的感官细节、对话、具体的犹豫。别写总结句，别写「这是第一篇」。\n' +
+        '4. 不提 AI，不写与现实平台相关的内容，不碰现实政治与色情描写。' }
+    ], function (err, text) {
+      if (err) { cb(err); return; }
+      var data = extractJson(text);
+      var paras = parasOf(Array.isArray(data && data.paras) ? data.paras.join('\n\n') : '');
+      if (!paras.length) { cb({ stage: 'parse', error: '这次没写出正文，可以再点一次' }); return; }
+      var title = String((data && data.title) || '无题').trim();
+      var body = paras.join('\n\n');
+      var r = forum.createPost({
+        sandboxId: fx.sandboxId, boardId: board.id, accountId: accId,
+        anonymous: !!(opt && opt.anonymous),
+        postType: 'long', title: title, content: body
+      });
+      if (!r.ok) { cb({ stage: 'write', error: r.message }); return; }
+      var fw = {
+        topic: String((opt && opt.topic) || '').trim(),
+        chapters: [{
+          id: forum.uid('fwc'), n: 1, title: title, paras: paras,
+          createdAt: forum.nowIso(), heard: []
+        }]
+      };
+      var u = forum.updatePost(r.post.id, { fanwork: fw }, fx.sandboxId);
+      cb(null, { post: (u.ok ? u.post : r.post), paras: paras.length });
+    });
+  }
+
+  /* 追更：把已有全文 + 最近读者留言交给作者，由作者自选采纳哪几条。 */
+  function continueFanwork(postId, cb) {
+    cb = cb || function () {};
+    var fx = forum.resolveContext(null);
+    if (!fx.ok) { cb({ stage: 'config', error: fx.message }); return; }
+    var post = forum.getPost(postId, fx.sandboxId);
+    if (!post || post.status !== 'active') { cb({ stage: 'config', error: '帖子不在了' }); return; }
+
+    var comments = forum.listComments(postId, fx.sandboxId).slice(-10).map(function (c) {
+      var pa = forum.publicAuthorOfComment(post, c, fx.sandboxId);
+      return (pa.displayName || '某人') + '：' + String(c.content || '').slice(0, 120);
+    });
+    var fw = post.fanwork || { chapters: [] };
+    var n = (fw.chapters || []).length;
+    var tail = String(post.content || '').slice(-1200);   /* 只读尾巴：追更要接着上下文 */
+
+    ask([
+      { role: 'system', content:
+        '你是这帖的作者，正在给自己的连载**追更下一节**。' +
+        '读者在评论区留了些话 —— 你可以听一部分，也可以一条都不听，' +
+        '但你自己的笔要稳：别为了迎合读者把人物写歪、别突然转换笔调。' +
+        '只输出 JSON：{"title":"本节标题","paras":["..",".."],"heard":["被你采纳的那句读者留言"]}，不要解释。' },
+      { role: 'user', content:
+        '已有章节数：' + n + '\n' +
+        '正文末尾：\n' + tail + '\n\n' +
+        '最近读者留言：\n' + (comments.join('\n') || '（还没有人留言）') + '\n\n' +
+        '要求：\n' +
+        '1. 接着上面写下一节，600~1200 字，**分成 4~8 个自然段**（paras 数组），' +
+        '每段独立成段。\n' +
+        '2. 承接上文的人物与口吻；如果采纳了某条留言，heard 里写上那句原文摘要（没有就给空数组）。\n' +
+        '3. 写具体的场景推进，不要写提纲，不要总结前文。' }
+    ], function (err, text) {
+      if (err) { cb(err); return; }
+      var data = extractJson(text);
+      var paras = parasOf(Array.isArray(data && data.paras) ? data.paras.join('\n\n') : '');
+      if (!paras.length) { cb({ stage: 'parse', error: '这回没续出来，可以再试一次' }); return; }
+      var title = String((data && data.title) || ('第 ' + (n + 1) + ' 节')).trim();
+      var heard = Array.isArray(data && data.heard) ? data.heard.map(function (x) { return String(x).slice(0, 60); }) : [];
+      var chapter = { id: forum.uid('fwc'), n: n + 1, title: title, paras: paras, createdAt: forum.nowIso(), heard: heard };
+      var nextFw = JSON.parse(JSON.stringify(fw));
+      nextFw.chapters = (nextFw.chapters || []).concat([chapter]);
+      var body = String(post.content || '') + '\n\n—— ' + title + ' ——\n\n' + paras.join('\n\n');
+      var u = forum.updatePost(post.id, { content: body, fanwork: nextFw }, fx.sandboxId);
+      if (!u.ok) { cb({ stage: 'write', error: u.message }); return; }
+      cb(null, { chapter: chapter, heard: heard.length, paras: paras.length });
+    });
+  }
+
   Sleepy.forumGen = {
     ensureSeedContent: ensureSeedContent,
+    writeFanwork: writeFanwork,
+    continueFanwork: continueFanwork,
+    setAnonPref: setAnonPref,
+    getAnonPref: getAnonPref,
     genMore: genMore,
     requestReplies: requestReplies,
     queueReplies: queueReplies,

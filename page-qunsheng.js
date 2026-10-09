@@ -165,6 +165,23 @@
       '.qs-anon-state{display:none;margin-top:8px;padding:8px 10px;border-left:3px solid var(--red);background:#eee2d8;color:#5e554c;font-size:9px;line-height:1.55}',
       '.qs-anon-state.show{display:block}',
       '.qs-types{display:flex;gap:7px;overflow:auto;margin:17px -16px 0;padding:0 16px 9px}',
+      /* v216 同人创作：代笔入口 + 题材输入 */
+      '.qs-gw-btn{display:block;width:100%;margin-top:12px;padding:11px 12px;border:1px dashed #c9bfae;border-radius:10px;',
+      'background:rgba(255,255,255,.5);color:#4a443c;font-size:12.5px;cursor:pointer;text-align:left}',
+      '.qs-gw-box{margin-top:12px;padding:12px 13px;border:1px solid #d8d0c2;border-radius:10px;background:rgba(233,226,213,.5)}',
+      '.qs-gw-title{font-size:13px;font-weight:600;color:#25231f}',
+      '.qs-gw-box small{display:block;margin-top:5px;font-size:10.5px;line-height:1.6;color:#756f65}',
+      '.qs-topic-input{display:block;width:100%;margin-top:9px;border:1px solid #d8d0c2;border-radius:8px;',
+      'background:rgba(255,255,255,.7);padding:9px 10px;font:12.5px/1.7 inherit;color:#25231f;resize:none}',
+      /* 详情页：分节正文 + 追更 */
+      '.qs-fw-chapter{margin:14px 0 0;padding-top:12px;border-top:1px dashed #d8d0c2}',
+      '.qs-fw-chapter h3{margin:0 0 8px;font-size:13.5px;font-weight:600;color:#315d68;letter-spacing:.04em}',
+      '.qs-fw-p{margin:0 0 11px;font-size:14.5px;line-height:1.95;color:#3b372f;text-align:justify}',
+      '.qs-fw-heard{margin:6px 0 0;padding:7px 10px;border-left:2px solid #a63b32;background:rgba(166,59,50,.06);',
+      'font-size:10.5px;line-height:1.7;color:#6a5b57}',
+      '.qs-more-btn{display:block;width:100%;margin-top:12px;padding:11px;border:1px solid #c9bfae;border-radius:10px;',
+      'background:rgba(255,255,255,.55);color:#4a443c;font-size:12.5px;cursor:pointer}',
+      '.qs-more-btn[disabled]{opacity:.5;cursor:default}',
       '.qs-type{flex:0 0 auto;border:1px solid var(--line);background:transparent;padding:7px 10px;color:var(--muted);font-size:10px}',
       '.qs-type.on{border-color:var(--ink);background:var(--ink);color:var(--paper)}',
       '.qs-editor{margin-top:7px;border-top:1px solid var(--ink)}',
@@ -234,8 +251,6 @@
       '.qs-mark-read{border:0;background:none;color:var(--blue);font-size:10px;padding:2px 0}',
       /* 群声各页自带报头（demo 的报刊顶栏），项目默认的玻璃壳头隐藏
          —— 同 page[data-page="island"] 的先例（style.css:5408）。 */
-      '.page[data-page^="qunsheng"] .app-head{display:none;}',
-      '.page[data-page^="qunsheng"] .app-head::after{display:none;}',
       /* 通底色：三层壳全部刷成报纸底 —— 缝里不透出默认白/蓝底，
          也不会出现「页面内容奶油、边框另一色」的拼色感。 */
       '.page[data-page^="qunsheng"]{background:#f4f0e7;}',
@@ -268,7 +283,7 @@
      项目壳头被我按页藏了，返回键得自己长出来（user 2026-10-07 点名）。 */
   function backBar() {
     var bar = h('div', 'qs-backbar');
-    var b = h('button', 'qs-backbtn', '‹ 返回桌面');
+    var b = h('button', 'qs-backbtn', '‹ 返回');
     b.addEventListener('click', function () { Sleepy.nav.back(); });
     bar.appendChild(b);
     return bar;
@@ -303,11 +318,25 @@
 
   function errorRoot(message) {
     var root = h('div', 'qs-root');
+    /* ⚠️ 错误态也必须自带返回键：项目壳头在这一族页是 display:none，
+       没有它，任何「进不去/看不到」的空页面都变成一屏死路（退不出去）。 */
+    root.appendChild(backBar());
     var box = h('div', 'qs-err');
     box.appendChild(h('div', 'qs-err-t', '进不去这个社区'));
     box.appendChild(h('div', 'qs-err-d', message + '。从分享卡或通知进来时，来源的岛可能已经被拆掉了。'));
     root.appendChild(box);
     return root;
+  }
+
+  /* 一样的道理：帖子/板块不在了这类错误盒，也得挂一枚返回键再返回。 */
+  function errBox(title, detail) {
+    var wrap = h('div', 'qs-root');
+    wrap.appendChild(backBar());
+    var box = h('div', 'qs-err');
+    box.appendChild(h('div', 'qs-err-t', title));
+    box.appendChild(h('div', 'qs-err-d', detail));
+    wrap.appendChild(box);
+    return wrap;
   }
 
   /* 五底栏（首页 / 板块 / 发布 / 消息 / 我的）。当前页高亮；
@@ -421,7 +450,7 @@
 
     if (comments.length) {
       var first = comments[0];
-      var fpa = F().publicAuthorOf(post, first.authorAccountId, fx.sandboxId);
+      var fpa = F().publicAuthorOfComment(post, first, fx.sandboxId);
       card.appendChild(h('div', 'qs-quote',
         fpa.displayName + '：' + excerpt(first.content, 60)));
     }
@@ -583,10 +612,7 @@
     var post = F().getPost(ctx.params.postId, fx.sandboxId);
     var root = h('div', 'qs-root');
     if (!post || post.status !== 'active') {
-      var eb = h('div', 'qs-err');
-      eb.appendChild(h('div', 'qs-err-t', '帖子看不到了'));
-      eb.appendChild(h('div', 'qs-err-d', '它可能已被作者删除。'));
-      return eb;
+      return errBox('帖子看不到了', '它可能已被作者删除，或来自别的社区。');
     }
     var board = F().getBoard(post.boardId, fx.sandboxId);
     var me = F().getSelectedForumAccount(fx.sandboxId);
@@ -595,7 +621,7 @@
     /* ---- 顶栏 ---- */
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
-    var back = h('button', 'qs-iconbtn', '返回');
+    var back = h('button', 'qs-iconbtn', '‹ 返回');
     back.addEventListener('click', function () { Sleepy.nav.back(); });
     topline.appendChild(back);
     var crumb = h('div', 'qs-crumb');
@@ -607,6 +633,12 @@
     topline.appendChild(more);
     top.appendChild(topline);
     root.appendChild(top);
+
+    /* 滚动层：之前这里把主楼/动作条/回复列表直接平铺在 flex 的 .qs-root 里，
+       .qs-root 没有 overflow → 整屏被 .page 的 overflow:hidden 裁掉，往下推不动
+       （只有用了 .qs-main 的首页/消息页能滚）。为主楼以下全部进滚动容器，
+       底部回复框留在容器外面固定。 */
+    var main = h('main', 'qs-main');
 
     /* ---- 主楼 ---- */
     var pa = F().publicAuthorOf(post, post.authorAccountId, fx.sandboxId);
@@ -620,7 +652,50 @@
     if (pa.anonymous) meta.appendChild(h('span', 'qs-tag', '单帖匿名'));
     detail.appendChild(meta);
     if (post.title) detail.appendChild(h('h1', null, post.title));
-    detail.appendChild(h('div', 'qs-detail-body', post.content));
+
+    /* 正文渲染（v216）：带 fanwork 结构的按章节分节 + 每段独立成段；
+       普通帖维持原来的整块 pre-wrap（ retain 原有观感）。 */
+    function renderBody(target) {
+      var fw = post.fanwork;
+      if (fw && fw.chapters && fw.chapters.length) {
+        fw.chapters.forEach(function (ch, i) {
+          var sec = h('section', 'qs-fw-chapter');
+          if (fw.chapters.length > 1) {
+            sec.appendChild(h('h3', null, '第 ' + (ch.n || (i + 1)) + ' 节 · ' + (ch.title || '无题')));
+          }
+          (ch.paras || []).forEach(function (t) { sec.appendChild(h('p', 'qs-fw-p', t)); });
+          if (ch.heard && ch.heard.length) {
+            sec.appendChild(h('div', 'qs-fw-heard', '作者听进去的建议：' + ch.heard.join(' / ')));
+          }
+          target.appendChild(sec);
+        });
+      } else {
+        target.appendChild(h('div', 'qs-detail-body', post.content));
+      }
+    }
+    renderBody(detail);
+
+    /* 追更：同人连载一次一节（作者在模型侧自己挑要不要采纳读者留言） */
+    if (post.fanwork) {
+      var moreBtn = h('button', 'qs-more-btn', '✎ 追更下一节');
+      moreBtn.addEventListener('click', function () {
+        moreBtn.disabled = true;
+        moreBtn.textContent = '作者正在写…';
+        G().continueFanwork(post.id, function (err, r) {
+          moreBtn.disabled = false;
+          moreBtn.textContent = '✎ 追更下一节';
+          if (err) {
+            Sleepy.toast('这次没续出来：' + (err.error || '还没有可用的模型连接'), 'err');
+            return;
+          }
+          Sleepy.toast(r.heard ? ('续了一节（听取了 ' + r.heard + ' 条建议）') : '续了一节');
+          rebuild();
+        });
+      });
+      detail.appendChild(moreBtn);
+      detail.appendChild(h('small', 'qs-fw-heard',
+        '追更时最近的读者留言会交给作者过目 —— 但听不听、听哪几条由作者自己决定，不必每条都照做。'));
+    }
 
     /* 帷境作品来源卡（施工单 §E-1）：只展示公开投影；
        真实性标记必须显眼 —— 读到 ≠ 情节属实（总纲 §十一.4）。 */
@@ -655,7 +730,7 @@
       '留声 ' + comments.length,
       '收藏 ' + F().countOf('forumCollections', 'post', post.id, fx.sandboxId)
     ]));
-    root.appendChild(detail);
+    main.appendChild(detail);
 
     /* ---- 动作条（转发占位 → Batch C）---- */
     var actions = h('div', 'qs-post-actions');
@@ -692,9 +767,9 @@
       rebuild();
     });
     actions.appendChild(saveBtn);
-    root.appendChild(actions);
+    main.appendChild(actions);
 
-    root.appendChild(h('div', 'qs-notice',
+    main.appendChild(h('div', 'qs-notice',
       pa.anonymous
         ? '匿名只隐藏公开身份。回复区不会展示真实账号，也不会因转发暴露作者。'
         : '公开身份发言。你的回复会以当前论坛身份出现。'));
@@ -723,7 +798,7 @@
     });
     filters.appendChild(ownerBtn);
     replyHead.appendChild(filters);
-    root.appendChild(replyHead);
+    main.appendChild(replyHead);
 
     var poke = h('button', 'qs-poke', '催一下 —— 让可能看到这帖的人开口');
     poke.addEventListener('click', function () {
@@ -739,7 +814,7 @@
         rebuild();
       });
     });
-    root.appendChild(poke);
+    main.appendChild(poke);
 
     /* ---- 回复列表：根评论 + 局部对话枝 ---- */
     var list = h('section', 'qs-comment-list');
@@ -754,7 +829,7 @@
     });
 
     function commentEl(c, floorNo) {
-      var cpa = F().publicAuthorOf(post, c.authorAccountId, fx.sandboxId);
+      var cpa = F().publicAuthorOfComment(post, c, fx.sandboxId);
       var children = comments.filter(function (x) { return x.rootCommentId === c.id && x.parentId; });
       var el = h('article', 'qs-comment');
       var cm = h('div', 'qs-cmain');
@@ -790,7 +865,7 @@
       if (children.length) {
         var branch = h('div', 'qs-branch');
         children.slice(0, 4).forEach(function (x) {
-          var bpa = F().publicAuthorOf(post, x.authorAccountId, fx.sandboxId);
+          var bpa = F().publicAuthorOfComment(post, x, fx.sandboxId);
           var item = h('div', 'qs-branch-item');
           item.appendChild(h('b', null, bpa.displayName));
           item.appendChild(document.createTextNode('：' + x.content));
@@ -811,7 +886,9 @@
       list.appendChild(h('div', 'qs-empty',
         ownerOnly.v ? '楼主暂时没有单独发布更多回复。' : '还没有人留声。点下面的输入框说第一句。'));
     }
-    root.appendChild(list);
+    main.appendChild(list);
+
+    root.appendChild(main);
 
     /* ---- 底部回复框 ---- */
     var composer = h('footer', 'qs-composer');
@@ -869,6 +946,11 @@
 
   /* ------------------------------ 发帖与身份选择 ------------------------------ */
 
+  /* v216：代笔开关 + 题材必须活在 render 外面 —— renderCompose 里的 state 是
+     每次重建都new一份的局部对象，放在里面的话 rebuild（切换/贴图/切身份）一照面
+     就把勾选状态冲回默认。同页里 homeState / ownerOnly 都是这个道理。 */
+  var composeGW = { on: false, topic: '' };
+
   function renderCompose(ctx, fx) {
     var root = h('div', 'qs-root');
     var boards = F().listBoards(fx.sandboxId);
@@ -881,6 +963,7 @@
         (boards[0] ? boards[0].id : ''),
       type: 'normal',
       anonymous: false,
+      ghostwrite: composeGW.on,   /* v216：同人创作板块「请人代笔写一篇」（真写正文） */
       accountId: me ? me.id : null,
       workId: null,          /* 帷境作品引用（Batch E） */
       mediaIds: []           /* 图片附件 mediaId（Batch E，首版单图也走数组） */
@@ -889,7 +972,7 @@
     /* ---- 顶栏 ---- */
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
-    var back = h('button', 'qs-iconbtn', '返回');
+    var back = h('button', 'qs-iconbtn', '‹ 返回');
     back.addEventListener('click', function () { Sleepy.nav.back(); });
     topline.appendChild(back);
     var crumb = h('div', 'qs-crumb');
@@ -1044,6 +1127,34 @@
 
     main.appendChild(editor);
 
+    /* ---- v216：同人创作板块「请人代笔写一篇」 ----
+       以前 fanwork 只是普通编辑器，写出来的自然是「聊创作」的短帖，
+       用户以为这个板块会真的产出一篇同人 —— 现在给一条真会写正文的路：
+       一次一整篇，分好自然段，发布后还能在详情页「追更」。 */
+    var gwTopic = null;
+    if (state.ghostwrite) {
+      editor.style.display = 'none';
+      var gwBox = h('div', 'qs-gw-box');
+      gwBox.appendChild(h('div', 'qs-gw-title', '代笔一篇'));
+      gwBox.appendChild(h('small', null,
+        '交给岛上写同人的手替你成稿：一次一整篇、分好自然段；写完会以你的论坛身份发在同人创作板块。'));
+      gwTopic = document.createElement('textarea');
+      gwTopic.className = 'qs-topic-input';
+      gwTopic.rows = 3;
+      gwTopic.placeholder = '想看什么？（题材 / 谁和谁 / 什么情境 / 甜还是刀；留空就由作者自己选题）';
+      gwTopic.value = composeGW.topic || '';
+      gwTopic.addEventListener('input', function () { composeGW.topic = gwTopic.value; });
+      gwBox.appendChild(gwTopic);
+      gwBox.appendChild(h('small', null, '不满意可以不发；发了之后详情页能继续追更。'));
+      main.appendChild(gwBox);
+    }
+    var gwBtn = h('button', 'qs-gw-btn', state.ghostwrite ? '× 还是自己写' : '✎ 请人代笔写一篇');
+    gwBtn.addEventListener('click', function () {
+      composeGW.on = !composeGW.on;
+      rebuild();
+    });
+    main.appendChild(gwBtn);
+
     /* 已选图片预览 + 帷境引用条 */
     if (state.mediaIds.length) {
       var prev = h('div', 'qs-attachments');
@@ -1123,6 +1234,27 @@
     send.addEventListener('click', function () {
       var acc = owned.filter(function (a) { return a.id === state.accountId; })[0] || me;
       if (!acc) { Sleepy.toast('先在身份卡里领一个论坛身份'); return; }
+      if (state.ghostwrite) { writeGhost(acc); return; }
+
+      /* v216：同人创作代笔 —— 一次调用写一整篇（真的产出正文，不是聊进度） */
+      function writeGhost(useAcc) {
+        send.disabled = true;
+        send.textContent = '写着…';
+        G().writeFanwork(fx.sandboxId, {
+          accountId: useAcc.id, anonymous: anonChk.checked,
+          topic: gwTopic ? gwTopic.value.trim() : ''
+        }, function (err, r) {
+          send.disabled = false;
+          send.textContent = '发布';
+          if (err) {
+            Sleepy.toast('没写出来：' + (err.error || '还没有可用的模型连接') +
+              (err.stage === 'cooldown' ? '' : '，可以再试一次'), 'err');
+            return;
+          }
+          Sleepy.toast('写好了，' + r.paras + ' 段');
+          Sleepy.nav.open('qunsheng-post', { sandboxId: fx.sandboxId, postId: r.post.id });
+        });
+      }
       var opt = {
         sandboxId: fx.sandboxId,
         boardId: boardSel.value,
@@ -1411,7 +1543,7 @@
     var root = h('div', 'qs-root');
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
-    var backB = h('button', 'qs-iconbtn', '返回');
+    var backB = h('button', 'qs-iconbtn', '‹ 返回');
     backB.addEventListener('click', function () { Sleepy.nav.back(); });
     topline.appendChild(backB);
     var crumb = h('div', 'qs-crumb');
@@ -1457,10 +1589,7 @@
     var board = F().getBoard(ctx.params.boardId, fx.sandboxId);
     var root = h('div', 'qs-root');
     if (!board || board.status !== 'active') {
-      var eb = h('div', 'qs-err');
-      eb.appendChild(h('div', 'qs-err-t', '这个板块不在了'));
-      eb.appendChild(h('div', 'qs-err-d', '它可能已被撤下，或属于别的社区。'));
-      return eb;
+      return errBox('这个板块不在了', '它可能已被撤下，或属于别的社区。');
     }
     /* 换岛 / 换板块后 tab 不沿用（热议序切板块沿用会把人看糊涂） */
     if (boardState.sandboxId !== fx.sandboxId || boardState.boardId !== board.id) {
@@ -1472,7 +1601,7 @@
     /* ---- 顶栏：返回 + 板块名 + 发一帖 ---- */
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
-    var back = h('button', 'qs-iconbtn', '返回');
+    var back = h('button', 'qs-iconbtn', '‹ 返回');
     back.addEventListener('click', function () { Sleepy.nav.back(); });
     topline.appendChild(back);
     var crumb = h('div', 'qs-crumb');
@@ -1569,11 +1698,13 @@
   function renderNotices(ctx, fx) {
     var me = F().getSelectedForumAccount(fx.sandboxId);
     var root = h('div', 'qs-root');
-    root.appendChild(backBar());
+    /* ⚠️ 这里以前先挂 backBar()（‹ 返回桌面）再挂自带「返回」的顶栏 —— 同一个页面
+       两个返回按钮，作用重复还把「消息」这个标题压到第二排（user 2026-10-09 点名）。
+       按统一口径：一页只留一枚返回键，标题由顶栏的 crumb 承接。 */
 
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
-    var backB = h('button', 'qs-iconbtn', '返回');
+    var backB = h('button', 'qs-iconbtn', '‹ 返回');
     backB.addEventListener('click', function () { Sleepy.nav.back(); });
     topline.appendChild(backB);
     var crumb = h('div', 'qs-crumb');
@@ -1651,14 +1782,11 @@
     var acc = F().getAccount(ctx.params.accountId, fx.sandboxId);
     var root = h('div', 'qs-root');
     if (!acc) {
-      var eb = h('div', 'qs-err');
-      eb.appendChild(h('div', 'qs-err-t', '这位作者不在了'));
-      eb.appendChild(h('div', 'qs-err-d', '账号可能已注销或属于别的社区。'));
-      return eb;
+      return errBox('这位作者不在了', '账号可能已注销或属于别的社区。');
     }
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
-    var back = h('button', 'qs-iconbtn', '返回');
+    var back = h('button', 'qs-iconbtn', '‹ 返回');
     back.addEventListener('click', function () { Sleepy.nav.back(); });
     topline.appendChild(back);
     var crumb = h('div', 'qs-crumb');

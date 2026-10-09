@@ -360,6 +360,30 @@
     return { ok: true, post: post };
   }
 
+  /* 更新帖子字段（v216：同人创作追更要往同一帖追加章节）。
+     白名单是真的一步到位：fanwork 结构由数据层自己写，调用方传不来别的字段，
+     免得哪天手抖把 authorAccountId / sandboxId 一起改了。
+     ⚠️ store.get 是深拷贝，改完必须整表 put 回去（只改手里的副本不 put = 静默丢失）。 */
+  var POST_UPDATABLE = ['title', 'content', 'fanwork', 'updatedAt'];
+  function updatePost(postId, patch, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    if (!sid) return { ok: false, message: '没有当前岛' };
+    var all = store.get('forumPosts') || [];
+    var idx = -1;
+    all.forEach(function (p, i) {
+      if (p && p.id === postId && p.sandboxId === sid) idx = i;
+    });
+    if (idx < 0) return { ok: false, message: '帖子不在了' };
+    var post = all[idx];
+    Object.keys(patch || {}).forEach(function (k) {
+      if (POST_UPDATABLE.indexOf(k) >= 0) post[k] = patch[k];
+    });
+    post.updatedAt = nowIso();
+    all[idx] = post;
+    putForum('forumPosts', all);
+    return { ok: true, post: post };
+  }
+
   function getBoard(boardId, sandboxId) {
     var sid = sandboxId || lockedSandboxId;
     return scopedForum('forumBoards', sid).filter(function (b) { return b.id === boardId; })[0] || null;
@@ -380,8 +404,29 @@
       });
   }
 
-  /* 创建回复。opt: { sandboxId, postId, accountId, parentCommentId, content }。
-     匿名帖的楼主回复自动带 isPostAuthor（显示「匿名楼主」，同帖同别名）。 */
+  /* 回复级公开投影（v216 新增）：帖子本身是匿名帖 → 跟帖子走同一个别名；
+     否则看**这条回复自己**有没有匿名（char 可以只有这一楼匿名），
+     别名按 postId + 发言账号算，所以在同一帖里同一个匿名者前后一致、换帖就换脸。 */
+  function publicAuthorOfComment(post, comment, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    if (!comment) return publicAuthorOf(post, post.authorAccountId, sid);
+    if (post.authorDisplayMode === 'anonymous') {
+      return publicAuthorOf(post, post.authorAccountId, sid);
+    }
+    if (comment.anonymous) {
+      return {
+        anonymous: true,
+        displayName: anonymousAlias(sid, 'cm' + post.id, comment.authorAccountId),
+        avatarChar: '匿',
+        avatarColor: '#cfc8ba'
+      };
+    }
+    return publicAuthorOf(post, comment.authorAccountId, sid);
+  }
+
+  /* 创建回复。opt: { sandboxId, postId, accountId, parentCommentId, content, anonymous }。
+     匿名帖的楼主回复自动带 isPostAuthor（显示「匿名楼主」，同帖同别名）。
+     anonymous=true（v216：char 单楼匿名）：公开层只露这条回复的别名，账号内部保留。 */
   function createComment(opt) {
     var sid = opt.sandboxId || lockedSandboxId;
     var post = getPost(opt.postId, sid);
@@ -400,6 +445,7 @@
       rootCommentId: parent ? (parent.rootCommentId || parent.id) : null,
       authorAccountId: opt.accountId,
       isPostAuthor: post.authorAccountId === opt.accountId,
+      anonymous: !!opt.anonymous,      /* v216：单楼匿名（char 可以选择藏起这一楼的脸） */
       content: content,
       status: 'active',
       createdAt: nowIso(), updatedAt: nowIso()
@@ -408,7 +454,7 @@
 
     /* 回复我的（Batch D）：通知帖子作者。actor 显示名走公开投影 ——
        帖子匿名且回复者就是楼主时，通知里也只露匿名别名。 */
-    var actorPa = publicAuthorOf(post, comment.authorAccountId, sid);
+    var actorPa = publicAuthorOfComment(post, comment, sid);
     if (post.authorAccountId !== comment.authorAccountId) {
       notify({
         sandboxId: sid,
@@ -708,7 +754,9 @@
     getAccount: getAccount,
     anonymousAlias: anonymousAlias,
     publicAuthorOf: publicAuthorOf,
+    publicAuthorOfComment: publicAuthorOfComment,
     createPost: createPost,
+    updatePost: updatePost,
     getPost: getPost,
     getBoard: getBoard,
     listComments: listComments,

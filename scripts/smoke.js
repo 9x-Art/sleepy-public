@@ -1536,6 +1536,108 @@ t('forumGen 催回复：char 开口 + 60s 冷却拦截', () => new Promise((res)
   });
 }));
 
+t('群声 v216：单楼匿名投影 / 帖子更新白名单 / 同人追更与作者选择性听取', () => {
+  const Fx = S.forum, Gg = S.forumGen;
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const mine = Fx.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const altA = mine.filter((a) => a.accountType === 'alt')[0] || mainA;
+  const daily = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+
+  /* ① 单楼匿名：char 可以选择只在这一楼藏脸 —— 公开层不再有真实账号 */
+  const p1 = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '普通公开帖', content: '说点什么' }).post;
+  const cOpen = Fx.createComment({ sandboxId: sbQsIsle, postId: p1.id, accountId: mainA.id, content: '露脸回复' }).comment;
+  const cHide = Fx.createComment({ sandboxId: sbQsIsle, postId: p1.id, accountId: mainA.id, content: '藏起来这一楼', anonymous: true }).comment;
+  const paOpen = Fx.publicAuthorOfComment(p1, cOpen, sbQsIsle);
+  const paHide = Fx.publicAuthorOfComment(p1, cHide, sbQsIsle);
+  if (paOpen.anonymous) throw new Error('没勾匿名却被隐藏');
+  if (paOpen.accountId !== mainA.id) throw new Error('露脸回复丢了账号');
+  if (!paHide.anonymous) throw new Error('单楼匿名没生效');
+  if (paHide.accountId) throw new Error('匿名投影不该带真实账号');
+  /* 同帖同人别名一致、换帖换脸 */
+  const pHide2 = Fx.createComment({ sandboxId: sbQsIsle, postId: p1.id, accountId: mainA.id, content: '我也匿名', anonymous: true }).comment;
+  if (Fx.publicAuthorOfComment(p1, pHide2, sbQsIsle).displayName !== paHide.displayName) {
+    throw new Error('同帖同一个匿名者别名应一致');
+  }
+  const p2 = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '另一帖', content: 'x' }).post;
+  const pHide3 = Fx.createComment({ sandboxId: sbQsIsle, postId: p2.id, accountId: mainA.id, content: '换帖匿名', anonymous: true }).comment;
+  if (Fx.publicAuthorOfComment(p2, pHide3, sbQsIsle).displayName === paHide.displayName) {
+    throw new Error('换帖应换脸（别名按帖隔离）');
+  }
+  /* 整帖匿名优先于单楼标记 */
+  const p3 = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '匿名帖', content: 'x', anonymous: true }).post;
+  const cInAnon = Fx.createComment({ sandboxId: sbQsIsle, postId: p3.id, accountId: mainA.id, content: '楼里的', anonymous: true }).comment;
+  if (!Fx.publicAuthorOfComment(p3, cInAnon, sbQsIsle).anonymous) throw new Error('匿名帖里的一切都该匿名');
+
+  /* ② updatePost 白名单：fanwork/content 可改，身份与岛章改不动 */
+  const before = JSON.parse(JSON.stringify(p1));
+  const u1 = Fx.updatePost(p1.id, { content: '改过的正文', fanwork: { chapters: [{ n: 1, title: '第一节', paras: ['第一段。', '第二段。'] }] } }, sbQsIsle);
+  if (!u1.ok) throw new Error('白名单字段更新被拒');
+  const after = Fx.getPost(p1.id, sbQsIsle);
+  if (after.content !== '改过的正文' || (after.fanwork.chapters || []).length !== 1) throw new Error('内容没落库');
+  const u2 = Fx.updatePost(p1.id, { authorAccountId: altA.id, sandboxId: 'sb-别的岛' }, sbQsIsle);
+  if (!u2.ok) throw new Error('白名单更新本身应成功');
+  const after2 = Fx.getPost(p1.id, sbQsIsle);
+  if (after2.authorAccountId !== before.authorAccountId) throw new Error('白名单外字段被改了（作者被换）');
+  if (after2.sandboxId !== before.sandboxId) throw new Error('白名单外字段被改了（岛章被换）');
+  if (Fx.updatePost('fp-不存在', { content: 'x' }, sbQsIsle).ok) throw new Error('改不存在的帖子应失败');
+  return { 匿名: '单楼藏脸+同帖同名+换帖换脸', 白名单: '可改 content/fanwork，身份与岛章改不动' };
+});
+
+t('群声 v216：同人创作真写正文 / 追更时把留言交给作者自选', () => new Promise((res) => {
+  const Fx = S.forum, Gg = S.forumGen;
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const mine = Fx.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const sent = [];
+  Gg._setTransport((msgs, cb) => {
+    sent.push(msgs);
+    const last = String((msgs[msgs.length - 1] || {}).content || '');
+    if (last.indexOf('追更下一节') >= 0 || msgs[0].content.indexOf('追更下一节') >= 0) {
+      cb(null, JSON.stringify({ title: '第二节', paras: ['读者想看的表白场面。', '他还是没说出口。'], heard: ['想看他们表白'] }));
+      return;
+    }
+    cb(null, JSON.stringify({ title: '雾港夜行', paras: ['第一段：雾从灯柱后面漫过来。', '第二段：她把信揣在兜里没拿出来。', '第三段：船进港了。'] }));
+  });
+  Gg.writeFanwork(sbQsIsle, { accountId: mainA.id, topic: '雨夜表白' }, (err, r) => {
+    try {
+      if (err) throw new Error('代笔失败：' + (err.error || err.stage));
+      const post = Fx.getPost(r.post.id, sbQsIsle);
+      if (!post || !post.fanwork) throw new Error('落库缺 fanwork 结构');
+      if ((post.fanwork.chapters[0].paras || []).length !== 3) throw new Error('自然段没分段');
+      if (post.fanwork.topic !== '雨夜表白') throw new Error('题材没存');
+      /* 代笔 prompt 必须真的要求写一整篇、分段 —— 看装配产物，不看 intentions */
+      const writePrompt = String((sent[0] || []).map((m) => m.content).join(' '));
+      ['paras', '自然段', '12'].forEach((k) => {
+        if (writePrompt.indexOf(k) < 0) throw new Error('代笔 prompt 缺「' + k + '」');
+      });
+      /* 追更：留言要进 prompt，作者自己决定采纳哪几条（heard 落回来，不必每条都听） */
+      const fwBoard = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'fanwork')[0];
+      Fx.createComment({ sandboxId: sbQsIsle, postId: post.id, accountId: mainA.id, content: '想看他们表白，求作者考虑！' });
+      Fx.createComment({ sandboxId: sbQsIsle, postId: post.id, accountId: mainA.id, content: '顺便出个本子吧嘿嘿' });
+      Gg.continueFanwork(post.id, (e2, r2) => {
+        try {
+          if (e2) throw new Error('追更失败：' + (e2.error || e2.stage));
+          const afterMedia = Fx.getPost(post.id, sbQsIsle);
+          if ((afterMedia.fanwork.chapters || []).length !== 2) throw new Error('章节没追加');
+          const ch2 = afterMedia.fanwork.chapters[1];
+          if ((ch2.paras || []).length !== 2) throw new Error('追更也要自然段');
+          if (!ch2.heard || ch2.heard.length !== 1) throw new Error('作者采纳的留言没记下来：' + JSON.stringify(ch2.heard));
+          if (String(afterMedia.content).indexOf('第二节') < 0) throw new Error('正文没把新一节接上去');
+          /* 两条留言都在 prompt 里，但只有一条被采纳 —— 证明是「作者自己挑」不是「全听」 */
+          const morePrompt = String((sent[sent.length - 1] || []).map((m) => m.content).join(' '));
+          if (morePrompt.indexOf('表白') < 0 || morePrompt.indexOf('本子') < 0) throw new Error('读者留言没进追更 prompt');
+          if (morePrompt.indexOf('可以一条都不听') < 0) throw new Error('prompt 没写清作者可以不全听');
+          Gg._setTransport((msgs, cb) => cb(null, qsSeedJson));   /* 还原，别污染别的测试 */
+          res({ 代笔: '3 段成篇', 追更: '2 节 · 听 1 条/共 2 条' });
+        } catch (e) { res(Promise.reject(e)); }
+      });
+    } catch (e) { res(Promise.reject(e)); }
+  });
+}));
+
 console.log('\n--- page:群声 Batch C（转发 / 分享卡 / 回来源岛）---');
 
 t('forum-share 出口齐全', () => {
@@ -15406,8 +15508,11 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    ⚠️ v214（2026-10-09）：以身入局整体验收批（style.css 换皮组 + 三页 onShow rebuild
      + page-yr-play 幽灵 pending 修复），基准随批 v213 → v214。
    ⚠️ v215（2026-10-09）：以身入局 3B 收尾批（book-core 悬浮球数据层/局印干预/
-     自动档/结算封档 + page-yr-play 面板与循环），基准随批 v214 → v215。 */
-const EXPECTED_SW_CACHE = 'sleepy-v215';
+     自动档/结算封档 + page-yr-play 面板与循环），基准随批 v214 → v215。
+   ⚠️ v216（2026-10-09）：群声返修批（详情页滚动层 / 返回键去重与错误态补返回 /
+     单楼匿名 / 生成纪律去 char 中心化 / 同人代笔与追更 + updatePost 白名单），
+     基准随批 v215 → v216。 */
+const EXPECTED_SW_CACHE = 'sleepy-v216';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
