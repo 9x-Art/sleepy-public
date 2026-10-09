@@ -57,7 +57,10 @@
       '.yb-back{display:block;width:100%;margin-top:8px;padding:10px;border:1px dashed var(--wj-line);border-radius:8px;',
       'background:transparent;color:var(--wj-dim);font-size:11.5px;cursor:pointer}',
       '.yb-kv{display:flex;justify-content:space-between;font-size:11.5px;line-height:2;color:var(--wj-dim)}',
-      '.yb-kv b{color:var(--wj-text);font-weight:500}'
+      '.yb-kv b{color:var(--wj-text);font-weight:500}',
+      '.yb-cover{display:block;width:100%;max-height:150px;object-fit:cover;border-radius:6px;border:1px solid var(--wj-line);margin-top:8px}',
+      '.yb-cover-acts{display:flex;gap:8px;margin-top:8px}',
+      '.yb-cover-acts .yb-back{margin-top:0;flex:1}'
     ].join('');
     document.head.appendChild(st);
   }
@@ -198,6 +201,45 @@
 
       /* ③ 建档确认 */
       body.appendChild(stepBadge(3, '建档确认'));
+
+      /* 场景图（可选）：photos.pick 通道（手机相册/file input）→ media 落盘 */
+      var cover = h('div', 'yb-card');
+      cover.appendChild(h('b', null, '本书场景图'));
+      (function renderCover() {
+        cover.querySelectorAll('.yb-cover,.yb-cover-acts,.yb-cover-empty').forEach(function (e) { e.remove(); });
+        if (!box.coverRef) {
+          var empty = h('p', 'yb-cover-empty', '还没贴。贴一张当这本书的门面（可选）。');
+          empty.style.margin = '0';
+          cover.appendChild(empty);
+        } else {
+          var img = h('img', 'yb-cover');
+          img.alt = '本书场景图';
+          Sleepy.media.url(box.coverRef).then(function (u) { img.src = u; }, function () {});
+          cover.appendChild(img);
+        }
+        var acts = h('div', 'yb-cover-acts');
+        var pick = h('button', 'yb-back', box.coverRef ? '换一张' : '+ 从相册选一张');
+        pick.addEventListener('click', function () {
+          Sleepy.photos.pick({ multiple: false, title: '选场景图' }).then(function (recs) {
+            if (!recs || !recs.length) return;
+            box = B().setCover(boxId, recs[0].mediaId, sid);
+            Sleepy.toast('场景图贴好了。');
+            renderCover();
+          });
+        });
+        acts.appendChild(pick);
+        if (box.coverRef) {
+          var tear = h('button', 'yb-back', '撕掉');
+          tear.addEventListener('click', function () {
+            box = B().setCover(boxId, null, sid);
+            renderCover();
+          });
+          acts.appendChild(tear);
+        }
+        cover.appendChild(acts);
+      })();
+      body.appendChild(cover);
+
       var w = h('div', 'yb-card');
       w.appendChild(h('b', null, box.title));
       w.appendChild(h('p', null, '局内演练 · 档案编号 ' + box.id.slice(-6).toUpperCase()));

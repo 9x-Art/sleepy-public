@@ -162,6 +162,24 @@
     return runs.length ? runs[runs.length - 1] : null;
   }
 
+  /* 场景图（封面）：建档时贴，随时可换/可撕。mediaId 走 photos.pick 通道。 */
+  function setCover(boxId, mediaId, sandboxId) {
+    if (!lockedSandboxId && !sandboxId) throw new Error('book: setCover 必须带 sandboxId 或先 lockSandbox');
+    var sid = sandboxId || lockedSandboxId;
+    var all = store.get('bookBoxes') || [];
+    var hit = false;
+    all.forEach(function (b) {
+      if (b && b.sandboxId === sid && b.id === boxId) {
+        b.coverRef = mediaId || null;
+        b.updatedAt = new Date().toISOString();
+        hit = true;
+      }
+    });
+    if (!hit) throw new Error('book: 找不到档案盒 ' + boxId);
+    store.set('bookBoxes', all);
+    return getBox(boxId, sid);
+  }
+
   /* ---------- 身份（下一局身份；进局建档时抄到运行记录上锁死） ---------- */
 
   var IDENTITIES = [
@@ -197,6 +215,7 @@
     getBox: getBox,
     startRun: startRun,
     getRunByBox: getRunByBox,
+    setCover: setCover,
     DRILL_BOX_ID: DRILL_BOX_ID,
     IDENTITIES: IDENTITIES,
     getIdentity: getIdentity,
