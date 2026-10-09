@@ -1,17 +1,18 @@
 /* ============================================================
-   page-yishenruju.js — 「以身入局」App · 档案架大厅（P0 第一刀）
+   page-yishenruju.js — 「以身入局」App · 档案架大厅（P0）
 
    《以身入局》：char 是局里员工，user 是老板或亲自入局，
    进入一本已经存在的故事世界执行委托。方案见
    docs/方案-以身入局-v1-P0-P3施工计划.md（§五~§九 已全部拍板）。
 
-   本批（P0 第一刀）只做：档案架大厅 + 下一局身份选择 +
+   本页：档案架大厅 + 下一局身份选择（环形牌台，照领局牌 Demo v2
+   的 coverflow 口径移植：拖拽/箭头/圆点，中央即所选）+
    数据层接线（book-core.js）。演练世界的「领局牌 → 建档 →
    入世游玩」在下一批接——盒子上明写「下一批开放建档」，
    不冒充可用。
 
-   视觉：帷境夜色（style.css 的 --wj-* 全套变量直接复用），
-   档案盒 = 深夜书脊 + 纸签 + 盖戳。
+   视觉：帷境夜色。页面 chrome（顶栏/底色）走 style.css 的
+   .page[data-page="yishenruju"] 换皮组；这里只写 .yr- 部件。
    数据：一律走 Sleepy.book（book-core.js），本文件不做裸 store 读写。
    ============================================================ */
 (function (global) {
@@ -37,7 +38,6 @@
   }
 
   /* ------------------------------ 样式 ------------------------------ */
-  /* 只用 style.css 已有的 --wj-* 变量（帷境夜色），不另造色板。 */
   var STYLE_ID = 'yr-book-style';
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -45,7 +45,6 @@
     st.id = STYLE_ID;
     st.textContent = [
       '.yr-root{display:flex;flex-direction:column;height:100%;overflow:hidden;',
-      'background:radial-gradient(circle at 55% 0,var(--wj-night-3) 0,var(--wj-night-2) 34%,var(--wj-night) 76%);',
       'color:var(--wj-text);font-size:14px}',
       '.yr-root::-webkit-scrollbar{width:0}',
 
@@ -61,25 +60,60 @@
       /* 滚动主体 */
       '.yr-room{flex:1;overflow-y:auto;padding:2px 16px 26px;-webkit-overflow-scrolling:touch}',
 
-      /* 身份区 */
       '.yr-eyebrow{font-size:9px;letter-spacing:.3em;color:var(--wj-dimmer);text-transform:uppercase;margin:14px 2px 8px}',
+
+      /* ---- 环形牌台（照领局牌 Demo v2 口径移植） ---- */
+      '.yr-stage{position:relative;height:300px;margin:4px 0 0;perspective:1150px;perspective-origin:50% 44%;',
+      'touch-action:pan-y;user-select:none;-webkit-user-select:none}',
+      '.yr-ring{position:absolute;inset:0;transform-style:preserve-3d}',
+      '.yr-card{position:absolute;left:50%;top:10px;width:186px;height:238px;margin-left:-93px;padding:0;overflow:hidden;text-align:center;',
+      'border:1px solid rgba(213,202,182,.3);border-radius:3px;color:#e8eef8;cursor:pointer;',
+      'background:linear-gradient(158deg,#3d5167 0%,#22364c 52%,#151f30 100%);',
+      'box-shadow:0 20px 44px rgba(3,7,16,.5),inset 0 0 0 1px rgba(211,220,238,.06);',
+      'transition:transform .42s cubic-bezier(.22,.84,.3,1),opacity .42s,box-shadow .3s;will-change:transform;font-family:inherit}',
+      '.yr-dragging .yr-card{transition:none}',
+      '.yr-card[data-i="1"]{background:linear-gradient(158deg,#2b4053 0%,#1b2d41 54%,#121c2c 100%)}',
+      '.yr-card[data-i="2"]{background:linear-gradient(158deg,#4c3842 0%,#2e2129 56%,#161018 100%)}',
+      '.yr-card:before{content:"";position:absolute;inset:9px;pointer-events:none;border:1px solid rgba(213,202,182,.17)}',
+      '.yr-card:after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;',
+      'background:linear-gradient(104deg,transparent 28%,rgba(236,230,218,.14) 47%,transparent 64%)}',
+      '.yr-card.center{border-color:rgba(236,230,218,.62);',
+      'box-shadow:0 26px 58px rgba(3,7,16,.58),0 0 0 1px rgba(236,230,218,.14),inset 0 0 36px rgba(189,201,222,.07)}',
+      '.yr-c-top{position:relative;z-index:2;padding:16px 0 0;font-size:8px;letter-spacing:.3em;color:rgba(170,184,206,.5)}',
+      '.yr-glyph{position:relative;z-index:2;display:block;margin:22px 0 0;font-family:var(--ff-serif);font-size:44px;font-weight:500;color:var(--wj-silver);line-height:1}',
+      '.yr-glass{position:relative;z-index:2;display:block;margin:16px 26px 0;height:1px;background:linear-gradient(90deg,transparent,rgba(213,202,182,.35),transparent)}',
+      '.yr-c-name{position:relative;z-index:2;margin-top:14px;font-family:var(--ff-serif);font-size:16px;font-weight:500;letter-spacing:.12em;color:#e8eef8}',
+      '.yr-c-name small{display:block;margin-top:4px;font-size:9.5px;letter-spacing:.1em;color:rgba(170,184,206,.75)}',
+      '.yr-c-code{position:absolute;z-index:2;left:0;right:0;bottom:14px;font-size:8px;letter-spacing:.28em;color:rgba(170,184,206,.5)}',
+
+      /* 牌台下：圆点 + 箭头 + 明细 + 定牌 */
+      '.yr-stage-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:6px}',
+      '.yr-nav-btn{border:1px solid var(--wj-line);background:transparent;color:var(--wj-silver);width:34px;height:26px;border-radius:4px;cursor:pointer;font-size:12px}',
+      '.yr-nav-btn[disabled]{opacity:.35;cursor:default}',
+      '.yr-dots{display:flex;gap:7px;align-items:center}',
+      '.yr-dot{width:6px;height:6px;border-radius:50%;border:0;padding:0;background:rgba(199,210,228,.28);cursor:pointer}',
+      '.yr-dot.on{background:var(--wj-silver)}',
+      '.yr-motto{margin:12px 2px 0;font-size:12px;line-height:1.75;color:var(--wj-dim);min-height:40px}',
+      '.yr-motto b{color:var(--wj-text);font-weight:500}',
+      '.yr-take{display:block;width:100%;margin-top:10px;padding:12px;border:1px solid rgba(236,230,218,.4);border-radius:6px;',
+      'background:rgba(255,255,255,.05);color:var(--wj-text);font-family:var(--ff-serif);font-size:14px;letter-spacing:.22em;cursor:pointer}',
+      '.yr-take:active{background:rgba(255,255,255,.1)}',
+
+      /* 已定身份卡 */
       '.yr-id-now{border:1px solid var(--wj-line);background:rgba(255,255,255,.03);border-radius:8px;padding:12px 14px}',
       '.yr-id-now b{font-family:var(--ff-serif);font-weight:500;font-size:15px;color:var(--wj-text);display:block;margin-bottom:4px}',
       '.yr-id-now p{margin:0;font-size:11.5px;line-height:1.7;color:var(--wj-dim)}',
-      '.yr-id-opts{display:flex;flex-direction:column;gap:8px}',
-      '.yr-id-opt{text-align:left;border:1px solid var(--wj-line);background:rgba(255,255,255,.02);border-radius:8px;padding:11px 13px;color:var(--wj-text);cursor:pointer;transition:border-color .15s}',
-      '.yr-id-opt:active{border-color:var(--wj-silver)}',
-      '.yr-id-opt b{display:block;font-family:var(--ff-serif);font-weight:500;font-size:13.5px;margin-bottom:3px}',
-      '.yr-id-opt span{font-size:11px;line-height:1.65;color:var(--wj-dim)}',
+      '.yr-again{margin-top:8px;width:100%;padding:10px;border:1px dashed var(--wj-line);border-radius:8px;',
+      'background:transparent;color:var(--wj-dim);font-size:11.5px;cursor:pointer}',
 
       /* 档案架 */
-      '.yr-shelf{margin-top:16px}',
+      '.yr-shelf{margin-top:18px}',
       '.yr-shelf-note{font-size:9px;letter-spacing:.26em;color:var(--wj-dimmer);padding:0 2px 7px}',
-      '.yr-rail{border-top:1px solid var(--wj-line);border-bottom:7px solid rgba(39,57,87,.9);padding:10px 2px 0;display:flex;gap:10px;overflow-x:auto;min-height:118px}',
+      '.yr-rail{display:flex;gap:10px;overflow-x:auto;min-height:118px;padding-bottom:4px;scroll-snap-type:x mandatory}',
       '.yr-rail::-webkit-scrollbar{height:0}',
 
       /* 档案盒 */
-      '.yr-box{flex:0 0 auto;width:128px;background:linear-gradient(180deg,var(--wj-night-3),var(--wj-night-2));',
+      '.yr-box{flex:0 0 auto;width:132px;scroll-snap-align:start;background:linear-gradient(180deg,var(--wj-night-3),var(--wj-night-2));',
       'border:1px solid var(--wj-line);border-radius:4px 7px 2px 2px;padding:10px 9px 9px;display:flex;flex-direction:column;cursor:pointer;position:relative}',
       '.yr-box:active{border-color:var(--wj-silver)}',
       '.yr-box[aria-disabled="true"]{opacity:.62;cursor:default}',
@@ -90,10 +124,153 @@
       '.yr-box-note{font-size:10px;line-height:1.6;color:var(--wj-dim);margin-top:5px}',
 
       '.yr-empty-shelf{font-size:11px;color:var(--wj-dimmer);padding:14px 2px;line-height:1.7}',
-
       '.yr-foot{padding:16px 4px 4px;font-size:10px;line-height:1.8;color:var(--wj-dimmer)}'
     ].join('');
     document.head.appendChild(st);
+  }
+
+  /* ------------------------------ 环形牌台 ------------------------------ */
+  /* 三枚身份牌：观（老板纯看）/ 随（老板亲自参与）/ 行（员工）。 */
+
+  var GLYPH = { 'boss-watch': '观', 'boss-join': '随', 'staff': '行' };
+  var CODE = { 'boss-watch': 'NO.01 · 观局', 'boss-join': 'NO.02 · 入局', 'staff': 'NO.03 · 当值' };
+
+  /* state：active=当前中央牌下标；virtual=拖拽中的连续位置 */
+  function ringWidget(ctx, sid, onDone) {
+    var seats = B().IDENTITIES;
+    var active = 0;
+    var virtual = 0;
+    var dragging = false;
+    var startX = 0;
+
+    var wrap = h('div');
+
+    var stage = h('div', 'yr-stage');
+    var ring = h('div', 'yr-ring');
+    seats.forEach(function (it, i) {
+      var card = h('button', 'yr-card');
+      card.setAttribute('data-i', String(i));
+      card.setAttribute('aria-label', it.name);
+      card.appendChild(h('div', 'yr-c-top', '以身入局 · 局牌'));
+      card.appendChild(h('b', 'yr-glyph', GLYPH[it.key] || '局'));
+      card.appendChild(h('i', 'yr-glass'));
+      var name = h('div', 'yr-c-name', it.name);
+      name.appendChild(h('small', null, it.key === 'staff' ? '局印认老板，不认你' : '局印特权'));
+      card.appendChild(name);
+      card.appendChild(h('div', 'yr-c-code', CODE[it.key] || ''));
+      ring.appendChild(card);
+    });
+    stage.appendChild(ring);
+    wrap.appendChild(stage);
+
+    var nav = h('div', 'yr-stage-nav');
+    var prev = h('button', 'yr-nav-btn', '‹');
+    var dots = h('div', 'yr-dots');
+    var dotEls = seats.map(function (_, i) {
+      var d = h('button', 'yr-dot');
+      d.setAttribute('aria-label', '第 ' + (i + 1) + ' 枚');
+      d.addEventListener('click', function () { active = i; virtual = i; layout(); renderDetail(); });
+      dots.appendChild(d);
+      return d;
+    });
+    var next = h('button', 'yr-nav-btn', '›');
+    nav.appendChild(prev); nav.appendChild(dots); nav.appendChild(next);
+    wrap.appendChild(nav);
+
+    var motto = h('p', 'yr-motto');
+    wrap.appendChild(motto);
+    var take = h('button', 'yr-take', '定下这一枚');
+    wrap.appendChild(take);
+
+    var cardEls = [...ring.querySelectorAll('.yr-card')];
+    var justDragged = false;   /* 拖完松手落在牌上的 click 要忽略，不然刚转过去的牌又被点回去 */
+    function narrow() { return ctx.body.clientWidth < 380; }
+
+    function layout() {
+      var gapX = narrow() ? 96 : 118;
+      var depth = narrow() ? 110 : 140;
+      cardEls.forEach(function (el, i) {
+        var off = i - virtual, abs = Math.abs(off);
+        el.style.transform =
+          'translateX(' + (off * gapX) + 'px) ' +
+          'translateZ(' + (-abs * depth) + 'px) ' +
+          'rotateY(' + (off * -34) + 'deg) ' +
+          'scale(' + (1 - abs * 0.08) + ')';
+        el.style.opacity = String(Math.max(0, 1 - abs * 0.3));
+        el.style.zIndex = String(100 - Math.round(abs * 10));
+        el.classList.toggle('center', abs < 0.5);
+        el.style.pointerEvents = abs > 2.4 ? 'none' : '';
+      });
+    }
+
+    function renderDetail() {
+      var it = seats[active];
+      motto.innerHTML = '';
+      motto.appendChild(h('b', null, it.name + ' —— '));
+      motto.appendChild(document.createTextNode(it.desc));
+      dotEls.forEach(function (d, i) { d.classList.toggle('on', i === active); });
+      prev.disabled = active === 0;
+      next.disabled = active === seats.length - 1;
+    }
+
+    function snap() {
+      virtual = active;
+      stage.classList.remove('yr-dragging');
+      layout();
+      renderDetail();
+    }
+
+    prev.addEventListener('click', function () { if (active > 0) { active--; snap(); } });
+    next.addEventListener('click', function () { if (active < seats.length - 1) { active++; snap(); } });
+    cardEls.forEach(function (el, i) {
+      el.addEventListener('click', function () {
+        if (justDragged) return;
+        /* 非中央的牌点一下 = 把它转到中央（跟 Demo 一致） */
+        if (i !== active) { active = i; snap(); }
+      });
+    });
+
+    stage.addEventListener('pointerdown', function (e) {
+      dragging = true; startX = e.clientX;
+      stage.classList.add('yr-dragging');
+      if (stage.setPointerCapture) { try { stage.setPointerCapture(e.pointerId); } catch (err) {} }
+    });
+    stage.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      var step = narrow() ? 96 : 118;
+      virtual = Math.max(0, Math.min(seats.length - 1, (dragBase()) - dx / step));
+      layout();
+    });
+    var baseAtDrag = 0;
+    function dragBase() { return baseAtDrag; }
+    stage.addEventListener('pointerdown', function (e) { baseAtDrag = active; virtual = active; }, true);
+    stage.addEventListener('pointerup', function (e) {
+      if (!dragging) return;
+      dragging = false;
+      var dx = e.clientX - startX;
+      if (Math.abs(dx) > 10) {
+        justDragged = true;
+        setTimeout(function () { justDragged = false; }, 0);
+      }
+      var step = narrow() ? 96 : 118;
+      if (Math.abs(dx) > 30) {
+        active = Math.max(0, Math.min(seats.length - 1, baseAtDrag + (dx < 0 ? 1 : -1)));
+      }
+      snap();
+    });
+    stage.addEventListener('pointercancel', function () { dragging = false; snap(); });
+
+    take.addEventListener('click', function () {
+      var it = seats[active];
+      B().setIdentity(sid, it.key);
+      Sleepy.toast('身份定了：' + it.name + '。进局后不可再换。');
+      onDone();
+    });
+
+    layout();
+    renderDetail();
+    return wrap;
   }
 
   /* ------------------------------ 渲染 ------------------------------ */
@@ -109,9 +286,7 @@
       card.appendChild(h('p', null, hit ? hit.desc : ''));
       wrap.appendChild(card);
       /* 还没开局，身份可以换；一旦有进行中的任务就锁死（下一批在开局时抄进运行记录）。 */
-      var again = h('button', 'yr-id-opt', '');
-      again.style.marginTop = '8px';
-      again.appendChild(h('span', null, '还没开局，换一个身份'));
+      var again = h('button', 'yr-again', '还没开局，换一个身份');
       again.addEventListener('click', function () {
         var s = B().getMap('bookSettingsBySandbox', sid) || {};
         delete s.identity;
@@ -120,19 +295,7 @@
       });
       wrap.appendChild(again);
     } else {
-      var opts = h('div', 'yr-id-opts');
-      B().IDENTITIES.forEach(function (it) {
-        var b = h('button', 'yr-id-opt');
-        b.appendChild(h('b', null, it.name));
-        b.appendChild(h('span', null, it.desc));
-        b.addEventListener('click', function () {
-          B().setIdentity(sid, it.key);
-          Sleepy.toast('身份定了：' + it.name + '。进局后不可再换。');
-          render(ctx, sid);
-        });
-        opts.appendChild(b);
-      });
-      wrap.appendChild(opts);
+      wrap.appendChild(ringWidget(ctx, sid, function () { render(ctx, sid); }));
     }
     return wrap;
   }

@@ -11794,6 +11794,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
    所以它不在 .page 里面：变量只定义在 .page 上的话，弹层拿到的是空值，
    面板会变成一块透明玻璃（真机截图抓到的）。 */
 .page[data-page^="wj-"],
+.page[data-page="yishenruju"],
 .wj-sheet,
 /* 以身入局（page-yishenruju）也走帷境夜色：加进同一选择器组共用一份
    色板，不另抄一份防漂移（施工卡-以身入局-P0）。 */
@@ -11818,7 +11819,8 @@ button.cal-ev:active{background:var(--g-glass-2);}
   --wj-green:#9db5a8;
 }
 
-.page[data-page^="wj-"]{
+.page[data-page^="wj-"],
+.page[data-page="yishenruju"]{
   --bg:#16203a;
   --bg-2:rgba(255,255,255,.07);
   --bg-3:rgba(255,255,255,.11);
