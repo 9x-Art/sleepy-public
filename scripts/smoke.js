@@ -3274,8 +3274,47 @@ t('以身入局：开局落库 + 身份按世界锁死（startRun 真跑）', ()
   } catch (e) {
     throw e;
   }
+
   /* 不删夹具岛：smoke 每轮独立实例无跨轮污染；purgeSandbox 是异步门禁，
      拉进来反而把断言搅成异步。 */
+});
+t('以身入局：入世轮管线（注入四块 / 判定剥离 / 写回纪律）', () => {
+  const Bk = S.book;
+  /* 注入结构：席位/世界/判定格式三块齐；行动轮含「在局外观测」 */
+  const fakeRun = { id: 'r', identity: 'boss-watch', seat: { name: '借宿的旅人' }, anomaly: 12, progress: 22, logs: [] };
+  const msg = Bk.buildBookMessages(fakeRun, { title: '局内演练' }, Bk.getWorld('drill'), { words: 'short' }, null);
+  const sys = msg[0].content, usr = msg[1].content;
+  ['席位与身份', '世界状态', '异常度: 12 / 100', '占位: 借宿的旅人', '<判定>', '异常度 +N'].forEach((k) => {
+    if (sys.indexOf(k) < 0) throw new Error('注入缺「' + k + '」');
+  });
+  if (usr.indexOf('在局外观测') < 0) throw new Error('行动轮应声明 user 未出面');
+  if (sys.indexOf('不超过 180 字') < 0) throw new Error('字数档没进注入');
+
+  /* 剥离：正文/判定分开；只升不降（负增量按 0）；缺块=无变化 */
+  const raw = '雾港的灯晃了一下。\n<判定>\n权限: 擦边 / 异常度 +3\n进度: 第一章 22% → 30%\n</判定>';
+  const v = Bk.parseVerdict(raw);
+  if (v.narrative.indexOf('灯晃') < 0 || v.anomalyDelta !== 3 || v.progress !== 30) {
+    throw new Error('判定解析不对：' + JSON.stringify(v));
+  }
+  /* 负异常度增量在解析层就驳回；降进度由写回层守卫（下面 applyVerdict 验） */
+  const neg = Bk.parseVerdict('正文。<判定>权限: 正常 / 异常度 -5\n进度: 第一章 10% → 5%</判定>');
+  if (neg.anomalyDelta !== 0) {
+    throw new Error('负异常度增量应被驳回：' + JSON.stringify(neg));
+  }
+  const noV = Bk.parseVerdict('只有正文，没有判定块。');
+  if (noV.verdictText !== null || noV.narrative.indexOf('只有正文') < 0) throw new Error('无判定块应整体按无变化');
+
+  /* 写回：异常度累计、进度只进不退、日志成条 */
+  const run = { id: 'r2', identity: 'boss-watch', seat: { name: '借宿的旅人' }, anomaly: 12, progress: 22, logs: [] };
+  Bk.applyVerdict(run, v, null);
+  if (run.anomaly !== 15 || run.progress !== 30 || run.logs.length !== 1) {
+    throw new Error('写回不对：' + JSON.stringify(run));
+  }
+  Bk.applyVerdict(run, neg, null);
+  if (run.anomaly !== 15 || run.progress !== 30 || run.logs.length !== 2) {
+    throw new Error('无变化轮不应动状态：' + JSON.stringify(run));
+  }
+  return { 注入: '四块+判定格式', 剥离: true, 写回: '异常度累计/进度只进不退' };
 });
 t('格子都在 4×6 的网格范围内', () => {
   const d = S.desktop.defaultDesktop();
@@ -15287,7 +15326,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      wj 分享卡断链修复（page-wj-curtain）、**新增 schedule-gen.js**、
      calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
      基准随批 v204 → v205。 */
-const EXPECTED_SW_CACHE = 'sleepy-v212';
+const EXPECTED_SW_CACHE = 'sleepy-v213';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

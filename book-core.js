@@ -146,7 +146,10 @@
       identity: identity,             /* b 层：员工/老板（锁死） */
       seat: seat || null,             /* c 层：穿书占位身份 */
       status: 'ongoing',
-      logs: [],                       /* 行动日志（第三刀接） */
+      world: 'drill',
+      anomaly: 0,                     /* 异常度（只升不降） */
+      progress: 0,                    /* 章节进度 % */
+      logs: [],                       /* 行动日志（行动轮/在场轮共用） */
       volume: { chapters: [], notes: [] },  /* 卷宗（分栏，§9.3） */
       startedAt: now, endedAt: null
     }, lockedSandboxId);
@@ -178,6 +181,134 @@
     if (!hit) throw new Error('book: 找不到档案盒 ' + boxId);
     store.set('bookBoxes', all);
     return getBox(boxId, sid);
+  }
+
+  /* ============================== 第三刀：入世轮核心 ============================== */
+
+  /* 演练世界状态种子（世界数据批次会换成正式世界包；结构即协议 §一） */
+  var DRILL_WORLD = {
+    key: 'drill',
+    title: '局内演练 · 雾港灯站',
+    chapter: '第一章',
+    place: '雾港灯站',
+    brief: '海雾常年不散的小港。守灯人陈婆托人把一只邮包送上旧宅，谁也不知道旧宅里住着谁。',
+    npcs: [
+      { name: '陈婆', stance: '照本', fact: '守着灯站，等一封没寄出去的回信', known: '灯站的公开传闻、往来船只' }
+    ]
+  };
+
+  /* 演练委托（单一出处：建档页与游玩页共用） */
+  var DRILL_BRIEF = {
+    requester: '守灯人 陈婆',
+    requesterSecret: '表面愿望是把邮包送上旧宅；真愿望是确认旧宅里还有人等她回信。',
+    publicGoal: '三天内把邮包交到旧宅收信人手里。',
+    hiddenGoal: '弄清楚陈婆为什么不敢亲自去。',
+    restriction: '不得向世界角色透露「局」的存在。',
+    reward: '基础 30 能量点（结算批次入账）'
+  };
+
+  function getWorld(key) {
+    return key === 'drill' ? DRILL_WORLD : null;
+  }
+
+  /* 每轮字数档 → 提示词要求 */
+  var WORDS = { short: '不超过 180 字', standard: '300 字左右', long: '500 字左右' };
+
+  /* 协议四块注入（方案 §5.1：一轮=一次调用，叙事与判定同往返）。
+     input=null 表示行动轮（user 在局外观测，模型推进 char 行动）。 */
+  function buildBookMessages(run, box, world, settings, input) {
+    if (!run || !box) throw new Error('book: buildBookMessages 缺 run/box');
+    world = world || DRILL_WORLD;
+    settings = settings || {};
+    var words = WORDS[settings.words] || WORDS.standard;
+    var idn = IDENTITIES.filter(function (x) { return x.key === run.identity; })[0];
+    var seat = run.seat || { name: '未定' };
+    var brief = DRILL_BRIEF;
+    var recent = (run.logs || []).slice(-3).map(function (l) { return l.text; });
+
+    var system = [
+      '你是「以身入局」的叙事者兼裁判。用第三人称写这个世界发生的事，',
+      '不许替老板（user）决定言行。世界、规则与状态如下：',
+      '',
+      '【席位与身份】',
+      '席位: ' + (idn ? idn.name : run.identity),
+      '占位: ' + seat.name,
+      '身份知情范围: ' + (seat.known || '该占位的公开见闻'),
+      '身份不知情范围: ' + (seat.unknown || '内情、委托者真实身份、局的存在'),
+      '',
+      '【世界状态】',
+      '世界: ' + world.title,
+      '章节进度: ' + world.chapter + ' ' + (run.progress || 0) + '%',
+      '异常度: ' + (run.anomaly || 0) + ' / 100（只升不降；60 触发身份作废）',
+      '在场人物: ' + world.npcs.map(function (n) { return n.name + '(' + n.stance + ')'; }).join(', '),
+      '',
+      '【在场人物档案】'
+    ].concat(world.npcs.map(function (n) {
+      return n.name + ' / 当前态: ' + n.stance + '\n  既定事实: ' + n.fact + '\n  原文声音: ' + (n.voice || n.known);
+    })).concat([
+      '',
+      '【委托】明面目标: ' + brief.publicGoal + ' 暗线: ' + brief.hiddenGoal + ' 限制: ' + brief.restriction,
+      recent.length ? '【前情】\n' + recent.join('\n') : '【前情】开局，尚未发生任何事。',
+      '',
+      '【输出格式】先写正文叙事（' + words + '），',
+      '正文之后另起一行输出判定块，格式严格如下（无变化的行写「无」，不许省略行）：',
+      '<判定>',
+      '权限: 正常|擦边|越界 / 异常度 +N（N 为 0/1/3/6 的增量）',
+      '进度: ' + world.chapter + ' X% → Y%',
+      '</判定>',
+      '硬越界（提到局/原著/结局）一律记 +6 且当轮就有世界反应。'
+    ]).join('\n');
+
+    var user = input
+      ? '【本轮】user 以「' + (idn ? idn.name : run.identity) + '」的占位言行：\n' + input +
+        '\n\n写出世界的回应（含在场人物反应），末尾按格式给判定块。'
+      : '【本轮】user 在局外观测，没有出面。推进 ' +
+        (run.charName || '局内员工') + ' 的行动与心理，末尾按格式给判定块。';
+
+    return [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ];
+  }
+
+  /* 剥判定块：正文与判定分开返回。没有判定块 = 判定全无变化（正文照收）。 */
+  function parseVerdict(text) {
+    var s = String(text || '');
+    var m = s.match(/<判定>([\s\S]*?)(<\/判定>|$)/);
+    var narrative = m ? s.slice(0, m.index).trim() : s.trim();
+    var v = { narrative: narrative, anomalyDelta: 0, progress: null, verdictText: null };
+    if (!m) return v;
+    v.verdictText = m[1].trim();
+    var am = v.verdictText.match(/异常度\s*([+−-]?\s*\d+)/);
+    if (am) {
+      var n = parseInt(am[1].replace(/[−-]/, '-').replace(/\s/g, ''), 10);
+      if (!isNaN(n) && n > 0) v.anomalyDelta = n;   /* 只升不降：负增量按 0 处理 */
+    }
+    var pm = v.verdictText.match(/→\s*(\d+)\s*%/);
+    if (pm) {
+      var p = parseInt(pm[1], 10);
+      if (!isNaN(p)) v.progress = Math.max(0, Math.min(100, p));
+    }
+    return v;
+  }
+
+  /* 写回：给 run 打补丁（调用方负责持久化）。返回新增的日志条目。 */
+  function applyVerdict(run, v, input) {
+    run.anomaly = Math.min(100, (run.anomaly || 0) + (v.anomalyDelta || 0));
+    if (v.progress !== null && v.progress > (run.progress || 0)) run.progress = v.progress;
+    var entry = {
+      n: (run.logs || []).length + 1,
+      at: new Date().toISOString(),
+      input: input || null,
+      text: v.narrative,
+      anomalyDelta: v.anomalyDelta || 0,
+      anomaly: run.anomaly,
+      progress: run.progress || 0,
+      verdictText: v.verdictText
+    };
+    run.logs = run.logs || [];
+    run.logs.push(entry);
+    return entry;
   }
 
   /* ---------- 身份（下一局身份；进局建档时抄到运行记录上锁死） ---------- */
@@ -216,6 +347,13 @@
     startRun: startRun,
     getRunByBox: getRunByBox,
     setCover: setCover,
+    DRILL_WORLD: DRILL_WORLD,
+    DRILL_BRIEF: DRILL_BRIEF,
+    getWorld: getWorld,
+    WORDS: WORDS,
+    buildBookMessages: buildBookMessages,
+    parseVerdict: parseVerdict,
+    applyVerdict: applyVerdict,
     DRILL_BOX_ID: DRILL_BOX_ID,
     IDENTITIES: IDENTITIES,
     getIdentity: getIdentity,

@@ -136,7 +136,8 @@
     { key: 'diary',     label: '日记代笔' },
     { key: 'offline',   label: '线下模式' },
     { key: 'talife',    label: 'TA 自主生活推进' },
-    { key: 'director',  label: '生图想画面（导演）' }
+    { key: 'director',  label: '生图想画面（导演）' },
+    { key: 'book',      label: '以身入局（入世轮 / 行动轮）' }
   ];
 
   function featureLabel(key) {

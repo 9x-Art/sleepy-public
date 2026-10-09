@@ -76,14 +76,6 @@
       desc: '占位身份。问话名正言顺，但你问得越深，别人越会问你。' }
   ];
 
-  var DRILL_BRIEF = {
-    requester: '守灯人 陈婆',
-    requesterSecret: '表面愿望是把邮包送上旧宅；真愿望是确认旧宅里还有人等她回信。',
-    publicGoal: '三天内把邮包交到旧宅收信人手里。',
-    hiddenGoal: '弄清楚陈婆为什么不敢亲自去。',
-    restriction: '不得向世界角色透露「局」的存在。',
-    reward: '基础 30 能量点（结算批次入账）'
-  };
 
   function identityName(key) {
     var hit = B().IDENTITIES.filter(function (x) { return x.key === key; })[0];
@@ -102,10 +94,16 @@
     c.appendChild(h('div', 'yb-kv', [h('span', null, '开局时间'), h('b', null, (run.startedAt || '').replace('T', ' ').slice(0, 16))]));
     wrap.appendChild(c);
     wrap.appendChild(h('p', 'yr-motto',
-      '行动日志从下一刀开始记：每走一步，对白、心理与判定都会写进这局的卷宗。'));
+      '进世界吧：每走一步，对白、心理与判定都会写进这局的卷宗。'));
     var back = h('button', 'yb-back', '← 回档案架');
     back.addEventListener('click', function () { Sleepy.nav.open('yishenruju', { sandboxId: sid }); });
     wrap.appendChild(back);
+    /* 开局后直进世界（游玩页在 page-yr-play.js） */
+    var go = h('button', 'yb-open', '进 入 世 界');
+    go.addEventListener('click', function () {
+      Sleepy.nav.open('yr-play', { boxId: box.id, sandboxId: sid });
+    });
+    wrap.appendChild(go);
     return wrap;
   }
 
@@ -243,10 +241,10 @@
       var w = h('div', 'yb-card');
       w.appendChild(h('b', null, box.title));
       w.appendChild(h('p', null, '局内演练 · 档案编号 ' + box.id.slice(-6).toUpperCase()));
-      w.appendChild(h('p', null, '委托者：' + DRILL_BRIEF.requester + '。' + DRILL_BRIEF.requesterSecret));
-      w.appendChild(h('p', null, '明面目标：' + DRILL_BRIEF.publicGoal));
-      w.appendChild(h('p', null, '暗线：' + DRILL_BRIEF.hiddenGoal));
-      w.appendChild(h('p', null, '限制：' + DRILL_BRIEF.restriction + ' 报酬：' + DRILL_BRIEF.reward));
+      w.appendChild(h('p', null, '委托者：' + B().DRILL_BRIEF.requester + '。' + B().DRILL_BRIEF.requesterSecret));
+      w.appendChild(h('p', null, '明面目标：' + B().DRILL_BRIEF.publicGoal));
+      w.appendChild(h('p', null, '暗线：' + B().DRILL_BRIEF.hiddenGoal));
+      w.appendChild(h('p', null, '限制：' + B().DRILL_BRIEF.restriction + ' 报酬：' + B().DRILL_BRIEF.reward));
       w.appendChild(h('span', 'yb-tag', '局内演练'));
       body.appendChild(w);
 

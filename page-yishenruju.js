@@ -342,8 +342,12 @@
         Sleepy.toast('这一格等世界包定稿再上架。');
         return;
       }
-      /* 演练盒 → 领局牌建档页（page-yr-board.js） */
-      Sleepy.nav.open('yr-board', { boxId: box.id, sandboxId: sid });
+      /* 演练盒 → 进行中直进游玩页；未开局进建档页 */
+      if (box.status === 'ongoing') {
+        Sleepy.nav.open('yr-play', { boxId: box.id, sandboxId: sid });
+      } else {
+        Sleepy.nav.open('yr-board', { boxId: box.id, sandboxId: sid });
+      }
     });
     return el;
   }
