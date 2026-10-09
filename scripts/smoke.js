@@ -15258,7 +15258,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      wj 分享卡断链修复（page-wj-curtain）、**新增 schedule-gen.js**、
      calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
      基准随批 v204 → v205。 */
-const EXPECTED_SW_CACHE = 'sleepy-v209';
+const EXPECTED_SW_CACHE = 'sleepy-v210';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

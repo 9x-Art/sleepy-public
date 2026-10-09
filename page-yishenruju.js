@@ -106,22 +106,41 @@
       '.yr-again{margin-top:8px;width:100%;padding:10px;border:1px dashed var(--wj-line);border-radius:8px;',
       'background:transparent;color:var(--wj-dim);font-size:11.5px;cursor:pointer}',
 
-      /* 档案架 */
+      /* 档案架 · 第一层（竖书脊书架，照档案架 Demo v3 口径移植） */
       '.yr-shelf{margin-top:18px}',
       '.yr-shelf-note{font-size:9px;letter-spacing:.26em;color:var(--wj-dimmer);padding:0 2px 7px}',
-      '.yr-rail{display:flex;gap:10px;overflow-x:auto;min-height:118px;padding-bottom:4px;scroll-snap-type:x mandatory}',
+      '.yr-rail{display:flex;align-items:flex-end;gap:7px;overflow-x:auto;padding:20px 2px 0;',
+      'background:linear-gradient(180deg,rgba(5,10,20,.34),transparent 40%);scroll-snap-type:x proximity}',
       '.yr-rail::-webkit-scrollbar{height:0}',
+      '.yr-board{height:7px;background:linear-gradient(180deg,var(--wj-night-3),#1a2840);box-shadow:inset 0 1px 0 rgba(189,201,222,.2);border-radius:1px}',
 
-      /* 档案盒 */
-      '.yr-box{flex:0 0 auto;width:132px;scroll-snap-align:start;background:linear-gradient(180deg,var(--wj-night-3),var(--wj-night-2));',
-      'border:1px solid var(--wj-line);border-radius:4px 7px 2px 2px;padding:10px 9px 9px;display:flex;flex-direction:column;cursor:pointer;position:relative}',
-      '.yr-box:active{border-color:var(--wj-silver)}',
-      '.yr-box[aria-disabled="true"]{opacity:.62;cursor:default}',
-      '.yr-box-title{font-family:var(--ff-serif);font-size:13px;font-weight:500;color:var(--wj-text);line-height:1.4;flex:1;padding-right:36px}',
-      '.yr-box-meta{font-size:9px;color:var(--wj-dimmer);letter-spacing:.08em;margin-top:7px}',
-      '.yr-stamp{position:absolute;top:7px;right:7px;font-size:8.5px;letter-spacing:.14em;color:var(--wj-wine-lite);',
-      'border:1px solid rgba(138,95,107,.65);border-radius:2px;padding:1px 4px;transform:rotate(-6deg)}',
-      '.yr-box-note{font-size:10px;line-height:1.6;color:var(--wj-dim);margin-top:5px}',
+      /* 竖档案盒（书脊）：62×218 立在架上，竖排书脊字 + 纸签顶 + 圆扣手 */
+      '.yr-box{position:relative;flex:0 0 auto;width:60px;height:214px;padding:7px 4px 0;text-align:center;cursor:pointer;scroll-snap-align:start;',
+      'transition:transform .22s ease,box-shadow .22s ease;',
+      'box-shadow:2px 0 0 rgba(0,0,0,.2),0 12px 22px rgba(3,7,16,.4);font-family:inherit}',
+      '.yr-box:active{transform:translateY(-10px)}',
+      '.yr-box[aria-disabled="true"]{opacity:.72;cursor:default}',
+      '.yr-box.paper{background:linear-gradient(90deg,#b0a48d 0 4px,#d5cab6 4px 52px,#b0a48d 52px 100%)}',
+      '.yr-box.night{background:linear-gradient(90deg,#16233a 0 4px,#2a3d5c 4px 52px,#16233a 52px 100%)}',
+      '.yr-box.wine{background:linear-gradient(90deg,#563a43 0 4px,#8a5f6b 4px 52px,#563a43 52px 100%)}',
+      '.yr-box-top{height:26px;margin-bottom:6px;padding:4px 2px;overflow:hidden;',
+      'background:var(--wj-paper);border:1px solid rgba(40,41,35,.22);',
+      'color:#6f6b62;font-size:7px;line-height:1.3;letter-spacing:.04em}',
+      '.yr-spine{height:128px;display:grid;place-items:center;background:var(--wj-paper);border:1px solid rgba(40,41,35,.22)}',
+      '.yr-spine b{writing-mode:vertical-rl;text-orientation:upright;font-family:var(--ff-serif);',
+      'font-size:12.5px;font-weight:500;letter-spacing:.16em;color:var(--wj-ink)}',
+      '.yr-hole{width:14px;height:14px;margin:12px auto 0;border-radius:50%;',
+      'background:rgba(5,9,18,.52);box-shadow:inset 0 1px 2px rgba(0,0,0,.6)}',
+      '.yr-code{position:absolute;left:0;right:0;bottom:4px;font-size:7px;letter-spacing:.1em;color:rgba(40,41,35,.5)}',
+      '.yr-seal{position:absolute;left:-7px;right:-7px;top:96px;padding:3px 0;transform:rotate(-7deg);z-index:2;',
+      'background:rgba(236,230,218,.94);border:1px dashed var(--wj-wine);',
+      'font-size:9px;letter-spacing:.3em;color:var(--wj-wine)}',
+      '.yr-box.empty{background:transparent;border:1px dashed rgba(211,220,238,.24);box-shadow:none}',
+      '.yr-box.empty .yr-spine{background:transparent;border-style:dashed;border-color:rgba(211,220,238,.2)}',
+      '.yr-box.empty .yr-spine b{color:#7f8da3;font-size:11px}',
+      '.yr-box.empty .yr-box-top{background:transparent;border-style:dashed;border-color:rgba(211,220,238,.2);color:#6e7b90}',
+      '.yr-box.empty .yr-hole{opacity:.3}',
+      '.yr-box.empty .yr-code{color:rgba(199,210,228,.5)}',
 
       '.yr-empty-shelf{font-size:11px;color:var(--wj-dimmer);padding:14px 2px;line-height:1.7}',
       '.yr-foot{padding:16px 4px 4px;font-size:10px;line-height:1.8;color:var(--wj-dimmer)}'
@@ -279,20 +298,24 @@
     var wrap = h('section');
     wrap.appendChild(h('div', 'yr-eyebrow', '下一局身份'));
     var cur = B().getIdentity(sid);
+    function backToRing() {
+      var s = B().getMap('bookSettingsBySandbox', sid) || {};
+      delete s.identity;
+      B().setMap('bookSettingsBySandbox', sid, s);
+      render(ctx, sid);
+    }
     if (cur) {
       var hit = B().IDENTITIES.filter(function (x) { return x.key === cur; })[0];
-      var card = h('div', 'yr-id-now');
+      var card = h('button', 'yr-id-now');
+      card.style.cursor = 'pointer';
       card.appendChild(h('b', null, hit ? hit.name : cur));
-      card.appendChild(h('p', null, hit ? hit.desc : ''));
+      card.appendChild(h('p', null, (hit ? hit.desc : '') + ' 点这张卡，回牌台换一个。'));
+      /* 整卡可点（虚线小按钮太不起眼，用户反馈「点不回去」） */
+      card.addEventListener('click', backToRing);
       wrap.appendChild(card);
       /* 还没开局，身份可以换；一旦有进行中的任务就锁死（下一批在开局时抄进运行记录）。 */
-      var again = h('button', 'yr-again', '还没开局，换一个身份');
-      again.addEventListener('click', function () {
-        var s = B().getMap('bookSettingsBySandbox', sid) || {};
-        delete s.identity;
-        B().setMap('bookSettingsBySandbox', sid, s);
-        render(ctx, sid);
-      });
+      var again = h('button', 'yr-again', '↺ 回牌台换身份');
+      again.addEventListener('click', backToRing);
       wrap.appendChild(again);
     } else {
       wrap.appendChild(ringWidget(ctx, sid, function () { render(ctx, sid); }));
@@ -300,15 +323,15 @@
     return wrap;
   }
 
-  function boxCard(ctx, sid, box) {
-    var el = h('div', 'yr-box');
+  function boxCard(ctx, sid, box, idx) {
+    /* 竖书脊档案盒：配色轮换（纸/夜/酒），空位画虚线盒 */
+    var el = h('button', 'yr-box' + (box.enterable ? [' night', ' wine', ' paper'][idx % 3] : ' empty'));
     if (!box.enterable) el.setAttribute('aria-disabled', 'true');
-    el.appendChild(h('span', 'yr-stamp', box.stamp));
-    el.appendChild(h('div', 'yr-box-title', box.title));
-    el.appendChild(h('div', 'yr-box-note', box.note));
-    el.appendChild(h('div', 'yr-box-meta',
-      box.status === 'empty' ? '空位' : (box.status === 'ongoing' ? '进行中' :
-        box.status === 'closed' ? '已结案' : '封存')));
+    el.appendChild(h('div', 'yr-box-top', box.enterable ? '以身入局<br>世界档案' : '空位<br>待上架'));
+    el.appendChild(h('div', 'yr-spine', h('b', null, box.title)));
+    el.appendChild(h('div', 'yr-hole'));
+    if (box.enterable) el.appendChild(h('div', 'yr-code', box.stamp + ' · 局内'));
+    if (box.stamp && box.stamp !== '已结案') el.appendChild(h('div', 'yr-seal', box.stamp));
     el.addEventListener('click', function () {
       if (!box.enterable) {
         Sleepy.toast('这一格等世界包定稿再上架。');
@@ -350,8 +373,9 @@
     var shelfA = h('section', 'yr-shelf');
     shelfA.appendChild(h('div', 'yr-shelf-note', '第一层 · 已建档世界'));
     var railA = h('div', 'yr-rail');
-    boxes.forEach(function (b) { railA.appendChild(boxCard(ctx, sid, b)); });
+    boxes.forEach(function (b, i) { railA.appendChild(boxCard(ctx, sid, b, i)); });
     shelfA.appendChild(railA);
+    shelfA.appendChild(h('div', 'yr-board'));
     room.appendChild(shelfA);
 
     /* 档案架 · 第二层（封存） */
