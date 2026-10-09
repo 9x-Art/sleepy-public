@@ -377,6 +377,10 @@
                      是按 sbId 切的映射键，走下面「带 sbId 的键」那条路。 */
                   'forumAccounts', 'forumBoards', 'forumPosts', 'forumComments',
                   'forumReposts', 'forumFollows', 'forumLikes', 'forumCollections',
+                  /* 以身入局（book-core.js，施工卡-以身入局-P0）：
+                     档案盒 / 任务运行 tagScope 盖岛章，删房跟着清；
+                     bookSettingsBySandbox 是映射键，走下面映射键那条路。 */
+                  'bookBoxes', 'bookRuns',
                   'forumNotifications', 'forumShares', 'forumShareReceipts',
                   'forumDrafts', 'forumKnowledge'];
 
@@ -456,7 +460,8 @@
 
     /* 群声的按岛映射键（forum-core.js）：键名是 sbId、值是对象，
        同上面幽灵岛那套道理 —— 删房不清会留下幽灵岛的设置 / 论坛身份。 */
-    ['forumSettingsBySandbox', 'selectedForumAccountBySandbox'].forEach(function (mk) {
+    ['forumSettingsBySandbox', 'selectedForumAccountBySandbox',
+     'bookSettingsBySandbox'].forEach(function (mk) {
       var m = store.get(mk);
       if (m && has(m, id)) {
         delete m[id];

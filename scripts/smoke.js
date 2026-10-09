@@ -3206,6 +3206,48 @@ t('每个 App 格子都指向真实注册的页面', () => {
   }
   return { App格子数: d.pages.flat().filter((c) => c.type === 'app').length, 全部有页面: true };
 });
+/* ---------- 以身入局（book-core.js，施工卡-以身入局-P0 第一刀） ---------- */
+t('以身入局：数据层挂载 + 加载顺序（book-core 在页面前求值）', () => {
+  const html2 = require('fs').readFileSync('index.html', 'utf8');
+  const iCore = html2.indexOf('src="book-core.js"');
+  const iPage = html2.indexOf('src="page-yishenruju.js"');
+  if (iCore < 0 || iPage < 0 || iCore > iPage) {
+    throw new Error('index.html 里 book-core.js 必须存在且排在 page-yishenruju.js 之前');
+  }
+  if (!S.book || typeof S.book.ensureBoxes !== 'function' ||
+      typeof S.book.setIdentity !== 'function') {
+    throw new Error('Sleepy.book 没挂上（book-core.js 求值失败或导出面缺函数）');
+  }
+  return { 挂载: true, 顺序: 'book-core → page-yishenruju' };
+});
+t('以身入局：删房名单与映射键清理已登记', () => {
+  const coreSrc = require('fs').readFileSync('core.js', 'utf8');
+  const storeSrc = require('fs').readFileSync('store.js', 'utf8');
+  /* 硬写字符串（不引 S.book 常量）：名单漏了会积幽灵岛数据 */
+  ['bookBoxes', 'bookRuns'].forEach((k) => {
+    if (coreSrc.indexOf("'" + k + "'") < 0) throw new Error('core.js 删房 scoped 名单缺 ' + k);
+    if (storeSrc.indexOf(k + ':') < 0) throw new Error('store.js 默认键缺 ' + k);
+  });
+  if (coreSrc.indexOf("'bookSettingsBySandbox'") < 0) {
+    throw new Error('core.js 映射键清理缺 bookSettingsBySandbox');
+  }
+  if (storeSrc.indexOf('bookSettingsBySandbox') < 0) {
+    throw new Error('store.js 默认映射键缺 bookSettingsBySandbox');
+  }
+  return { scoped: ['bookBoxes', 'bookRuns'], map: 'bookSettingsBySandbox' };
+});
+t('以身入局：记忆隔离红线（数据层不碰角色记忆通道）', () => {
+  const bookSrc = require('fs').readFileSync('book-core.js', 'utf8')
+    /* 先剥块注释再查 —— 头注释里写着「不进 memory-vec」这类说明，
+       不剥的话判据会扫到说明自己（假红）。 */
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  /* 结构性判据：book-core.js 的读写只走登记键（BOOK_KEYS/BOOK_MAP_KEYS），
+     不得引用角色记忆模块或键。判据串只在本断言里，不会扫到自己。 */
+  const banned = ['memoryVec', 'memory-vec', "'memories'", '"memories"', 'memories:', 'pushMemory'];
+  const hit = banned.filter((s) => bookSrc.indexOf(s) >= 0);
+  if (hit.length) throw new Error('book-core.js 引用了角色记忆通道：' + hit.join(','));
+  return { 通道: '仅 bookBoxes/bookRuns/bookSettingsBySandbox', 隔离: true };
+});
 t('格子都在 4×6 的网格范围内', () => {
   const d = S.desktop.defaultDesktop();
   const out = [];
@@ -15216,7 +15258,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      wj 分享卡断链修复（page-wj-curtain）、**新增 schedule-gen.js**、
      calendar.js AUTH_VIA +schedule_switch、index.html 加载列表 +1 ——
      基准随批 v204 → v205。 */
-const EXPECTED_SW_CACHE = 'sleepy-v207';
+const EXPECTED_SW_CACHE = 'sleepy-v208';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
