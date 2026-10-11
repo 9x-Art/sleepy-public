@@ -15583,8 +15583,12 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    ⚠️ v227（2026-10-11）：CACHE 补跳——v223 之后工作区连改四批运行时脚本
      （仓库批 ?v=224 / 以身入局 v225、v226）但 CACHE 没跟着 +1，装着旧 SW
      的设备 ignoreSearch 命中旧条目、首次加载新旧脚本混装（无痕好普通窗怪）。
-     v223 → v227 一跳到当前。 */
-const EXPECTED_SW_CACHE = 'sleepy-v227';
+     v223 → v227 一跳到当前。
+   ⚠️ v228（2026-10-11 下午）：以身入局塌页修复——ensureHomeStyle 部件规则
+     YR_PAGES + ' .yr-top' 后代空格只粘最后选择器，页面本体命中报头规则
+     （position:relative / height:1px）→ 整页塌成 10px 小白框。改 yrSel() 逐页接后缀。
+     基准随批 v227 → v228。 */
+const EXPECTED_SW_CACHE = 'sleepy-v228';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

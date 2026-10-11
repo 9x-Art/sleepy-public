@@ -154,6 +154,14 @@
   var HOME_STYLE_ID = 'yr-home-style';
   var YR_PAGES = '.page[data-page="yishenruju"],' +
     '.page[data-page="yr-board"],.page[data-page="yr-play"]';
+  /* ⚠️ 部件规则必须用 yrSel() 拼 —— 直接写 YR_PAGES + ' .yr-top' 是踩过的坑：
+     逗号分隔的选择器列表里，后代空格**只粘在最后一个选择器上**，
+     拼出来 = `.page[yrA],.page[yrB],.page[yrC] .yr-top` —— 前两页是
+     「页面本体直接命中」，报头的 position/bottom/height 会糊到 .page 上，
+     inset:0 被干掉 → 整页塌成顶部一条 10px 的小白框（2026-10-11 线上抓到）。 */
+  function yrSel(suffix) {
+    return YR_PAGES.split(',').map(function (s) { return s + ' ' + suffix; }).join(',');
+  }
   function ensureHomeStyle() {
     if (document.getElementById(HOME_STYLE_ID)) return;
     var st = document.createElement('style');
@@ -170,36 +178,36 @@
       '--g-glass:rgba(244,240,231,.92);--g-glass-2:rgba(244,240,231,.96);',
       '--g-glass-line:rgba(43,38,32,.16);--g-glass-edge:rgba(43,38,32,.24);}',
       /* 色板整体换暖：var 只在组件上生效，这里在页级把 --wj-* 重定义 */
-      YR_PAGES + ' .yr-root{color:#2b2620;',
+      yrSel('.yr-root') + '{color:#2b2620;',
       '--wj-night:#efe9db;--wj-night-2:#e5dcc8;--wj-night-3:#d8cdb4;',
       '--wj-line:rgba(43,38,32,.18);--wj-line-soft:rgba(43,38,32,.1);',
       '--wj-text:#2b2620;--wj-dim:#6f675c;--wj-dimmer:#948b7d;',
       '--wj-silver:#3f3a32;--wj-wine:#a63b32;--wj-wine-lite:#c86f66;',
       '--wj-paper:#faf7f0;--wj-paper-2:#ece5d4;--wj-ink:#2b2620;--wj-green:#315d68;}',
       /* 顶栏：报头式双细杠压底 */
-      YR_PAGES + ' .yr-top{border-bottom:2px solid #1c1a17;padding-bottom:10px;position:relative;}',
-      YR_PAGES + ' .yr-top:after{content:"";position:absolute;left:18px;right:18px;bottom:-5px;height:1px;background:#1c1a17;}',
-      YR_PAGES + ' .yr-mark{border-color:rgba(43,38,32,.55);}',
-      YR_PAGES + ' .yr-mark:after{border-left-color:rgba(43,38,32,.7);}',
+      yrSel('.yr-top') + '{border-bottom:2px solid #1c1a17;padding-bottom:10px;position:relative;}',
+      yrSel('.yr-top:after') + '{content:"";position:absolute;left:18px;right:18px;bottom:-5px;height:1px;background:#1c1a17;}',
+      yrSel('.yr-mark') + '{border-color:rgba(43,38,32,.55);}',
+      yrSel('.yr-mark:after') + '{border-left-color:rgba(43,38,32,.7);}',
       /* 眉标：黑底反白小条 —— 群声的撞色块 */
-      YR_PAGES + ' .yr-eyebrow{display:inline-block;padding:3px 10px 2px;background:#1c1a17;color:#f4f0e7;border-radius:2px;}',
-      YR_PAGES + ' .yr-shelf-note{display:inline-block;padding:3px 10px 2px;background:#1c1a17;color:#f4f0e7;border-radius:2px;margin-left:2px;}',
-      YR_PAGES + ' .yr-rail{background:linear-gradient(180deg,rgba(43,38,32,.09),transparent 42%);}',
-      YR_PAGES + ' .yr-id-now{background:rgba(255,255,255,.62);}',
-      YR_PAGES + ' .yr-empty-shelf{color:#948b7d;}',
+      yrSel('.yr-eyebrow') + '{display:inline-block;padding:3px 10px 2px;background:#1c1a17;color:#f4f0e7;border-radius:2px;}',
+      yrSel('.yr-shelf-note') + '{display:inline-block;padding:3px 10px 2px;background:#1c1a17;color:#f4f0e7;border-radius:2px;margin-left:2px;}',
+      yrSel('.yr-rail') + '{background:linear-gradient(180deg,rgba(43,38,32,.09),transparent 42%);}',
+      yrSel('.yr-id-now') + '{background:rgba(255,255,255,.62);}',
+      yrSel('.yr-empty-shelf') + '{color:#948b7d;}',
       /* 导入入口行 */
-      YR_PAGES + ' .yr-shelf-head{display:flex;align-items:center;gap:10px;}',
-      YR_PAGES + ' .yr-import-btn{margin-left:auto;border:1px solid #1c1a17;background:transparent;color:#2b2620;',
+      yrSel('.yr-shelf-head') + '{display:flex;align-items:center;gap:10px;}',
+      yrSel('.yr-import-btn') + '{margin-left:auto;border:1px solid #1c1a17;background:transparent;color:#2b2620;',
       'font-size:10px;letter-spacing:.18em;padding:4px 10px;border-radius:2px;cursor:pointer;font-family:inherit;}',
       /* 帷境部件里写死的深色半透明面，在纸面上换成白瓷面 */
-      YR_PAGES + ' .yb-card,' + YR_PAGES + ' .yp-entry,' + YR_PAGES + ' .yp-bubble{background:rgba(255,255,255,.6);}',
-      YR_PAGES + ' .yb-open{border-color:#1c1a17;background:rgba(255,255,255,.08);color:#2b2620;}',
-      YR_PAGES + ' .yb-open:active{background:rgba(28,26,23,.12);}',
+      yrSel('.yb-card') + ',' + yrSel('.yp-entry') + ',' + yrSel('.yp-bubble') + '{background:rgba(255,255,255,.6);}',
+      yrSel('.yb-open') + '{border-color:#1c1a17;background:rgba(255,255,255,.08);color:#2b2620;}',
+      yrSel('.yb-open:active') + '{background:rgba(28,26,23,.12);}',
       /* 游玩页钉底的操作条 / 圆球条：原 rgba(5,10,20,.34) 深纱在纸面上
          会变成「深底配深字」，统一换成白瓷条 + 墨线 */
-      YR_PAGES + ' .yp-act,' + YR_PAGES + ' .yp-balls{background:rgba(250,247,240,.94);}',
-      YR_PAGES + ' .yp-act{border-top:1px solid rgba(43,38,32,.18);}',
-      YR_PAGES + ' .yp-row input,.yp-row button,' + YR_PAGES + ' .yp-ball{background:rgba(255,255,255,.72);}'
+      yrSel('.yp-act') + ',' + yrSel('.yp-balls') + '{background:rgba(250,247,240,.94);}',
+      yrSel('.yp-act') + '{border-top:1px solid rgba(43,38,32,.18);}',
+      yrSel('.yp-row input') + ',' + yrSel('.yp-row button') + ',' + yrSel('.yp-ball') + '{background:rgba(255,255,255,.72);}'
     ].join('');
     document.head.appendChild(st);
   }
