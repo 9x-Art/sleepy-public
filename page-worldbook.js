@@ -504,6 +504,8 @@
         var list = getBooks();
         listWrap.innerHTML = '';
 
+        /* 暗铺书（sealed）：列表正常显示（🔒标），条目目录可见、条目内容锁，
+           注入照常生效 —— 2026-10-11 用户口径「只显示到条目目录」。 */
         if (!list.length) {
           var empty = h('div', 'contact-empty');
           empty.appendChild(h('p', 'contact-empty-text', '还没有世界书'));
@@ -516,10 +518,11 @@
         list.forEach(function (b) {
           var card = h('div', 'contact-card' + (b.enabled === false ? ' is-off' : ''));
 
-          card.appendChild(h('span', 'contact-av', (b.name || '?').charAt(0)));
+          card.appendChild(h('span', 'contact-av', b.sealed ? '🔒' : (b.name || '?').charAt(0)));
           var main = h('div', 'contact-main');
-          main.appendChild(h('div', 'contact-name', b.name || '未命名'));
-          main.appendChild(h('div', 'contact-line', bookSummary(b)));
+          main.appendChild(h('div', 'contact-name', (b.sealed ? '🔒 ' : '') + (b.name || '未命名')));
+          main.appendChild(h('div', 'contact-line',
+            b.sealed ? '暗铺书 · 条目开关随便拨，内容看不见' : bookSummary(b)));
           card.appendChild(main);
 
           /* 开关直接反映这本书开还是关，点了立刻生效并落盘 */
@@ -542,7 +545,8 @@
   });
 
   function exportAllBooks(ctx) {
-    var list = getBooks();
+    /* 暗铺书不导出 —— 作者锁起来的内容不能从这里二次泄露 */
+    var list = getBooks().filter(function (b) { return !b.sealed; });
     if (!list.length) {
       ctx.toast('还没有世界书可以导出', 'warn');
       return;
@@ -597,18 +601,27 @@
       var listWrap = h('div', 'contact-list');
       body.appendChild(listWrap);
 
-      var fab = h('button', 'fab-btn', '+');
-      fab.type = 'button';
-      fab.title = '新增条目';
-      fab.addEventListener('click', function () {
-        ctx.open('worldbook-entry-edit', { bookId: bookId, id: '' });
-      });
-      body.appendChild(fab);
-
-      ctx.setActions([
-        { label: '导入', svg: ICON_IMPORT, onClick: function () { importEntriesFile(ctx, bookId); } },
-        { label: '导出这本', svg: ICON_EXPORT, onClick: function () { exportOneBook(ctx, bookId); } }
-      ]);
+      /* 暗铺书：目录可见 + 条目开关可操作，但内容锁（不能增删改导） */
+      var sealedBook = !!book().sealed;
+      if (!sealedBook) {
+        var fab = h('button', 'fab-btn', '+');
+        fab.type = 'button';
+        fab.title = '新增条目';
+        fab.addEventListener('click', function () {
+          ctx.open('worldbook-entry-edit', { bookId: bookId, id: '' });
+        });
+        body.appendChild(fab);
+        ctx.setActions([
+          { label: '导入', svg: ICON_IMPORT, onClick: function () { importEntriesFile(ctx, bookId); } },
+          { label: '导出这本', svg: ICON_EXPORT, onClick: function () { exportOneBook(ctx, bookId); } }
+        ]);
+      } else {
+        ctx.setActions([
+          { label: '导出这本', onClick: function () {
+              ctx.toast('暗铺书的内容是作者锁起来的，导不出', 'warn');
+            } }
+        ]);
+      }
 
       function rebuild() {
         var cur = book();
@@ -629,7 +642,9 @@
           card.appendChild(h('span', 'contact-av', it.enabled === false ? '✕' : '✓'));
           var main = h('div', 'contact-main');
           main.appendChild(h('div', 'contact-name', it.name || '未命名'));
-          main.appendChild(h('div', 'contact-line', summaryOf(it)));
+          /* 暗铺书：条目名给看（目录），内容锁死 —— summary 不出关键词 */
+          main.appendChild(h('div', 'contact-line',
+            sealedBook ? '内容上锁 · 开关随便拨' : summaryOf(it)));
           card.appendChild(main);
 
           card.appendChild(miniSwitch(it.enabled !== false, function (on) {
@@ -642,9 +657,15 @@
             card.classList.toggle('is-off', !on);
           }));
 
-          card.addEventListener('click', function () {
-            ctx.open('worldbook-entry-edit', { bookId: bookId, id: it.id });
-          });
+          if (!sealedBook) {
+            card.addEventListener('click', function () {
+              ctx.open('worldbook-entry-edit', { bookId: bookId, id: it.id });
+            });
+          } else {
+            card.addEventListener('click', function () {
+              ctx.toast('这条的内容作者锁起来了 —— 开关随便拨，原文看不见', 'warn');
+            });
+          }
           listWrap.appendChild(card);
         });
       }

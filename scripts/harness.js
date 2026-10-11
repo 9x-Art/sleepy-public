@@ -95,6 +95,10 @@ function makeDom() {
     var el = {
       tagName: String(tag || 'div').toUpperCase(),
       children: [], childNodes: [], style: style, dataset: {},
+      /* input/select 语义（同 smoke.js 桩） */
+      value: '',
+      options: [],
+      selectedIndex: -1,
       parentNode: null,
       _text: '', _html: '', _attrs: {},
       classList: {

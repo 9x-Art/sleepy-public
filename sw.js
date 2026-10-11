@@ -602,7 +602,71 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v228';
+var CACHE = 'sleepy-v234';
+
+/* v234（2026-10-11 晚 8：55 返修批三）——
+   · **白字根因**：style.css 把帷境夜色板（--wj-text:#eef2f8）直接挂在
+     .yr-root 上、盖掉纸皮页级暖板 → yr 三页整树浅字。夜色板组收窄回
+     .page[wj-] + .wj-sheet 专属，yr 三页全靠 home-style 纸皮暖板；
+   · yr-board：右下角「边缘框」= .yb-back 基础 width:100% 进 .yb-nav flex
+     行不缩 → 把 .yb-open 挤出屏右缘。nav/cover-acts 里的 yb-back 补
+     width:auto；「开局」改**直接进 yr-play**（不再弹回第一步）；
+     委托/暗线/限制等重点改酒红标签（.yb-key）；
+   · 御膳房：报头 30px→22px 收小 + 左侧加「‹」小返回钮（crumb 页同样带），
+     删每页「← 退出御膳房」条；DEMO_ITEMS 示例件整块删除，公共铺面空时
+     显示空态文案。
+   → 必须跳版本：style.css / page-yr-board.js / page-repo.js 都变了。 */
+
+/* v233（2026-10-11 晚 8：10 返修批二）——
+   · 御膳房全 App 退出按钮（每页报头上方「← 退出御膳房」）；
+   · 以身入局：**撤门面/手机壳**——点开直接档案架全屏；纸皮下白字全改墨
+     （yr-take/yr-motto/yr-card/报头）；滚动条藏掉；无岛占位页也套纸皮；
+   · yr-board：选定身份/局牌后**自动进下一步**；
+   · yr-play：局内手机面板改**小手机造型**（280 宽圆角壳+听筒条）；
+   · 铺面：删「部署 Worker 后换真件」提示句；示例件标注 TODO 部署后删。
+   → 必须跳版本：page-yishenruju.js / page-yr-board.js / page-yr-play.js / page-repo.js。 */
+
+/* v232（2026-10-11 晚 7：50 返修批）——
+   · 以身入局：主页改「门面」（全宽 hero + 📱手机按钮），点手机才进小手机壳
+     （.phone-mode 才套壳），手机内可「收起」回门面；
+   · 开炉：sheet 改**完整页面 repo-publish**，同学录式表单（rp-field 标签+下划线）、
+     封面 URL（替代头像 URL，cover 列上 worker）、发布预览卡（实时）、领取条件三选
+     可取消（「不设」并入取消语义）、门牌码可选+白话说明；
+   · 板块：直进公开铺面对应货架（不再弹门牌 toast）；
+   · 铺面：rp-shelf 层板视觉 + DEMO_ITEMS 示例件（无服务端/空态垫底，带示例标）；
+   · 字号整体调大（14.5 基准）。
+   → 必须跳版本：page-yishenruju.js / page-repo.js / repo-core.js / worker / index.html。 */
+
+/* v231（2026-10-11 晚 7 半）：**席间开张 + 群声关注补全**——
+   · worker：comments/condition_met 表 + items.likes 列（自动迁移）；
+     /item/:id/like、/comments(GET/POST)、/condition?device=、/inbox(X-Repo-Token)；
+   · repo-core：deviceId/likeItem/listComments/postComment/checkCondition/myInbox；
+   · 详情页：♡点赞 + 席间（说一句/尝后感列表）+ 领取条件真校验（服务端没连上先放行）；
+   · repo-inbox 真数据：我名下件收到的席间消息 + 未读数 + 「都看过了」；
+   · 群声关注补全：forum-core isFollowing/toggleFollow/followsOf（forumFollows 数组键，
+     按岛隔离）+ getHomeFeed follow 流真数据（本地过滤）+ postCard/作者主页关注按钮；
+   → 必须跳版本：worker/repo-worker.js / repo-core.js / page-repo.js / forum-core.js /
+     page-qunsheng.js / scripts/smoke.js 都变了。 */
+
+/* v230（2026-10-11 晚 7）：**Worker v2 + 作品详情页**——
+   · worker/repo-worker.js：/public-shelf（免门牌公共铺面，type/q/sort）、/item/:id/meta
+     （包外元数据不含包体）、publish 存新列（summary/access/condition/visible/updated_at）、
+     visible=1 的件免门牌下载；老库首请求自动 ALTER 补列（幂等）；
+   · repo-core：publicShelf/itemMeta；pack* 带 visible；
+   · 首页重构：公共铺面卡流（最新/热门 chips + 板块/搜索过滤）+ 暗铺门牌货架（下移保留）；
+     点击公共件 → repo-item 详情页（大头卡/作者的话/领取条件/权限说明/打包带走，backbar 无底栏）；
+   · 开炉向导：勾「同步到公共铺面」→ manifest.visible；
+   → 必须跳版本：worker/repo-worker.js / repo-core.js / page-repo.js / index.html 都变了。 */
+
+/* v229（2026-10-11 下午 4）：**仓库改名「御膳房」+ 底栏/我的 改版**——
+   · 五位底栏：首页 / 板块 / ＋开炉（中央凸起墨钮，点击弹发布向导） / 消息（占位） / 我的；
+     原「我的发布」并入「我的」，门牌收进「我的 → 暗铺门牌」；
+   · 「我的」装修：资料加简介、头衔可**佩戴**（worn 态墨底反白，席间/作者主页将展示）、
+     我的件管理（上架/下架/重新导入）；
+   · 板块 = 六类型分区（皮相/世界书/咒文/整岛/局中世界/妆造），P0 数据仍走门牌货架；
+   · 桌面 p3-repo label 仓库→御膳房（LAYOUT 25）；
+   · 权限口径定案：明厨（全公开）/ 暗铺（需授权码），条目级上锁 —— 发布向导 P1 改。
+   → 必须跳版本：page-repo.js / page-desktop.js / index.html / scripts/smoke.js 都变了。 */
 
 /* v228（2026-10-11 下午）：**以身入局塌页修复（线上真机抓到）**——
    ensureHomeStyle 的部件规则直接写 YR_PAGES + ' .yr-top'：选择器列表里

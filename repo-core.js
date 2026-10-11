@@ -59,8 +59,29 @@
       v: 1, type: 'char', gate: opts.gate || '',
       title: (c.name || '未命名角色'),
       author: opts.author || '', lock: 'open', version: 1,
+      cover: opts.cover || '',
+      visible: !!opts.visible,
       items: [{ kind: 'char', lock: 'open', name: c.name || '', url: opts.avatarUrl || '',
         data: cleanChar(c, opts.avatarUrl) }]
+    };
+  }
+
+  /* 食单单件：只带一本世界书（2026-10-11 用户：世界书要能单独上传）。
+     个人书挂靠的角色不在下载者设备上 → 导入时转全局书。 */
+  function packWorldbook(wbId, opts) {
+    opts = opts || {};
+    var wb = (store.get('worldbooks') || []).filter(function (w) {
+      return w && w.id === wbId;
+    })[0];
+    if (!wb) throw new Error('找不到这本世界书');
+    return {
+      v: 1, type: 'worldbook', gate: opts.gate || '',
+      title: wb.name || '未命名世界书',
+      author: opts.author || '', lock: 'open', version: 1,
+      cover: opts.cover || '',
+      visible: !!opts.visible,
+      items: [{ kind: 'worldbook', lock: 'open', name: wb.name || '世界书', url: '',
+        data: JSON.parse(JSON.stringify(wb)) }]
     };
   }
 
@@ -85,6 +106,7 @@
     if (parts.worldbook !== false) {
       (store.get('worldbooks') || []).forEach(function (wb) {
         if (!wb) return;
+        if (wb.sealed) return;   /* 暗铺书不二次传播（作者锁起来的内容） */
         /* 只带这座岛相关的：全局书 + 挂岛上角色的个人书 */
         var related = !wb.characterId ||
           sb.charIds.indexOf(wb.characterId) >= 0;
@@ -113,8 +135,145 @@
       v: 1, type: 'island', gate: opts.gate || '',
       title: opts.title || (sb.name || '未命名岛') + ' · 整岛包',
       author: opts.author || '', lock: 'open', version: 1,
+      cover: opts.cover || '',
+      visible: !!opts.visible,
       items: items
     };
+  }
+
+  /* ---------------- 明厨 / 暗铺（2026-10-11 条目级锁 v2 语义） ----------------
+     明厨 = 条目公开。暗铺两档：
+     · 暗号留空 → **可用不可看**：混淆锁（内置 key），导入后自动解开并打
+       hidden 标 —— 世界书照常注入但列表里看不见、美化照常生效但样式代码
+       不给看；包文件里也没有明文。
+     · 填了暗号 → **需对暗号**：用暗号派生锁，导入时对上才能用（作者定向分享）。
+     角色件没有「可用不可看」档（人设落在本地 store，编辑页看得到 = 名存实亡），
+     暗铺角色一律 needCode。强度口径：防白嫖/防顺手翻包，不防定向攻击。 */
+  var HIDDEN_KEY = 'yushanfang-hidden-v1';
+  function keyStream(secret, len) {
+    var seed = 0x811c9dc5;
+    var s = String(secret || '');
+    for (var i = 0; i < s.length; i++) {
+      seed ^= s.charCodeAt(i);
+      seed = (seed * 0x01000193) >>> 0;
+    }
+    var out = new Uint8Array(len);
+    var x = seed || 1;
+    for (var j = 0; j < len; j++) {
+      x ^= x << 13; x >>>= 0;
+      x ^= x >> 17;
+      x ^= x << 5; x >>>= 0;
+      out[j] = x & 0xff;
+    }
+    return out;
+  }
+  function b64FromBytes(bytes) {
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  function bytesFromB64(b64) {
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  /* 手写 UTF-8 编解码：smoke 的 vm 沙箱没有 TextEncoder/TextDecoder */
+  function utf8Encode(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.codePointAt(i);
+      if (c > 0xffff) i++;
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return new Uint8Array(out);
+  }
+  function utf8Decode(bytes) {
+    var out = '';
+    for (var i = 0; i < bytes.length;) {
+      var b = bytes[i];
+      if (b < 0x80) { out += String.fromCharCode(b); i++; }
+      else if (b < 0xe0) { out += String.fromCharCode(((b & 31) << 6) | (bytes[i + 1] & 63)); i += 2; }
+      else if (b < 0xf0) {
+        out += String.fromCharCode(((b & 15) << 12) | ((bytes[i + 1] & 63) << 6) | (bytes[i + 2] & 63)); i += 3;
+      } else {
+        var cp = ((b & 7) << 18) | ((bytes[i + 1] & 63) << 12) | ((bytes[i + 2] & 63) << 6) | (bytes[i + 3] & 63);
+        out += String.fromCharCode(cp); i += 4;
+      }
+    }
+    return out;
+  }
+  function xorBytes(bytes, secret) {
+    var ks = keyStream(secret, bytes.length);
+    var out = new Uint8Array(bytes.length);
+    for (var i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ ks[i];
+    return out;
+  }
+  function lockItem(item, secret) {
+    if (item.lock === 'locked' || item.enc) return;
+    var plain = utf8Encode(JSON.stringify(item.data || {}));
+    item.enc = b64FromBytes(xorBytes(plain, secret));
+    delete item.data;
+    if (item.url) { item._url = item.url; delete item.url; }  /* 头像 URL 也一起藏 */
+    item.lock = 'locked';
+  }
+  function unlockItem(item, secret) {
+    if (item.lock !== 'locked' || !item.enc) return true;
+    try {
+      var plain = xorBytes(bytesFromB64(item.enc), secret);
+      item.data = JSON.parse(utf8Decode(plain));
+      delete item.enc;
+      if (item._url) { item.url = item._url; delete item._url; }
+      item.lock = 'open';
+      return true;
+    } catch (e) { return false; }
+  }
+  /* 发布前上锁：lockedIdx = 要上锁的 items 下标数组；secret 可空 ——
+     空 = 可用不可看（混淆锁），填了 = 需对暗号。所有件同一口径
+     （2026-10-11 用户：角色「干脆就给看」，靠领取条件约束）。
+     condition = 领取条件（'none'|'repo'|'like'|'comment'），落 manifest.condition，
+     详情页/领取时展示；实际校验等席间（评论/repo）开张后生效。 */
+  function applyLocks(manifest, lockedIdx, secret, condition) {
+    if (!lockedIdx.length) { manifest.access = 'open'; manifest.lock = 'open'; return manifest; }
+    var needCode = !!secret;
+    lockedIdx.forEach(function (i) {
+      var it = manifest.items[i];
+      if (!it) return;
+      if (needCode) it.needCode = true;
+      else delete it.needCode;
+      lockItem(it, needCode ? secret : HIDDEN_KEY);
+    });
+    var anyNeedCode = manifest.items.some(function (it) { return it.needCode; });
+    manifest.access = anyNeedCode ? 'gated' : 'sealed';
+    manifest.lock = anyNeedCode ? 'gated' : 'sealed';
+    manifest.condition = condition || 'none';
+    if (needCode) {
+      manifest.secretHash = keyStream(secret, 8).reduce(function (a, b) {
+        return a + (b < 16 ? '0' : '') + b.toString(16);
+      }, '');
+    }
+    return manifest;
+  }
+  /* 导入前解锁：混淆件自动解开（打 wasHidden 标），暗号件要 secret 才解。
+     返回解开件数。 */
+  function unlockItems(manifest, secret) {
+    var n = 0;
+    manifest.items.forEach(function (it) {
+      if (it.lock !== 'locked' || !it.enc) return;
+      if (it.needCode) {
+        if (secret && unlockItem(it, secret)) n++;
+      } else if (unlockItem(it, HIDDEN_KEY)) {
+        it.wasHidden = true;
+        n++;
+      }
+    });
+    return n;
+  }
+  function lockedCount(manifest) {
+    return manifest.items.filter(function (it) { return it.lock === 'locked'; }).length;
   }
 
   /* ---------------- 发布 / 下载 ---------------- */
@@ -158,6 +317,94 @@
     global.fetch(b + '/shelf?gate=' + encodeURIComponent(code))
       .then(function (r) { return r.json(); }).then(cb,
         function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
+  }
+
+  /* 公共铺面（免门牌；v2）：params = { type, q, sort }，sort: latest|hot */
+  function publicShelf(params, cb) {
+    params = params || {};
+    var qs = [];
+    if (params.type) qs.push('type=' + encodeURIComponent(params.type));
+    if (params.q) qs.push('q=' + encodeURIComponent(params.q));
+    if (params.sort) qs.push('sort=' + encodeURIComponent(params.sort));
+    global.fetch(base() + '/public-shelf' + (qs.length ? '?' + qs.join('&') : ''), {
+      method: 'GET'
+    }).then(function (r) { return r.json(); }).then(cb,
+      function (e) { cb({ ok: false, message: '公共铺面还没开张：' + ((e && e.message) || e) }); });
+  }
+
+  /* 作品详情元数据（包外信息，不含包体内容；v2） */
+  function itemMeta(id, gate, cb) {
+    var qs = gate ? '?gate=' + encodeURIComponent(gate) : '';
+    global.fetch(base() + '/item/' + encodeURIComponent(id) + '/meta' + qs, {
+      method: 'GET'
+    }).then(function (r) { return r.json(); }).then(cb,
+      function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
+  }
+
+  /* ---------------- 席间（评论/尝后感/点赞，v2.1） ---------------- */
+
+  /* 设备号：点赞去重 + 领取条件记账的匿名凭证（设备级，不进岛章） */
+  function deviceId() {
+    var id = get('repoDeviceId', '');
+    if (!id) {
+      id = newId('dv');
+      set('repoDeviceId', id);
+    }
+    return id;
+  }
+  function likedIds() { return get('repoLikedIds', []); }
+
+  function likeItem(id, cb) {
+    if (likedIds().indexOf(id) >= 0) { cb({ ok: false, message: '赞过了 —— 一个设备一票' }); return; }
+    global.fetch(base() + '/item/' + encodeURIComponent(id) + '/like', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    }).then(function (r) { return r.json(); }).then(function (r) {
+      if (r.ok) {
+        var list = likedIds();
+        list.push(id);
+        set('repoLikedIds', list.slice(-200));
+      }
+      cb(r);
+    }, function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
+  }
+
+  function listComments(id, cb) {
+    global.fetch(base() + '/item/' + encodeURIComponent(id) + '/comments', {
+      method: 'GET'
+    }).then(function (r) { return r.json(); }).then(cb,
+      function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
+  }
+
+  /* kind: 'comment'（席间说一句）| 'repo'（尝后感） */
+  function postComment(id, kind, body, cb) {
+    var c = cfg();
+    global.fetch(base() + '/item/' + encodeURIComponent(id) + '/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: (c.profile && c.profile.name) || '无名食客',
+        body: body, kind: kind, device: deviceId()
+      })
+    }).then(function (r) { return r.json(); }).then(cb,
+      function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
+  }
+
+  function checkCondition(id, cb) {
+    global.fetch(base() + '/item/' + encodeURIComponent(id) + '/condition?device=' +
+      encodeURIComponent(deviceId()), {
+      method: 'GET'
+    }).then(function (r) { return r.json(); }).then(cb,
+      function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
+  }
+
+  /* 作者席间消息（我名下件收到的评论/尝后感；v2.1） */
+  function myInbox(cb) {
+    var token = (get('repoToken', {}) || {}).token || '';
+    if (!token) { cb({ ok: true, comments: [], likesTotal: 0 }); return; }
+    global.fetch(base() + '/inbox', {
+      method: 'GET', headers: { 'X-Repo-Token': token }
+    }).then(function (r) { return r.json(); }).then(cb,
+      function (e) { cb({ ok: false, message: '网络不通：' + ((e && e.message) || e) }); });
   }
 
   function downloadItem(id, gate, cb) {
@@ -223,6 +470,33 @@
       message: charIds.length ? '角色进了「' + sb.name + '」' : (errors[0] || '没导出东西') });
   }
 
+  /* 食单导入：世界书单件落库。挂靠角色不在本机 → 转全局书并说明。 */
+  function importWorldbook(manifest, cb) {
+    var added = [];
+    var errs = [];
+    manifest.items.forEach(function (it) {
+      if (it.kind !== 'worldbook' || !it.data) return;
+      try {
+        var wb = JSON.parse(JSON.stringify(it.data));
+        wb.id = newId('wb');
+        if (it.wasHidden) wb.sealed = true;   /* 暗铺书：目录可见+条目内容锁，注入照常 */
+        if (wb.characterId && !core.findChar(wb.characterId)) {
+          /* 原挂靠角色不在这台设备 → 转全局书（个人书归挂靠本体的规矩不能破） */
+          delete wb.characterId;
+          wb.scope = 'global';
+        }
+        var wbs = store.get('worldbooks') || [];
+        wbs.push(wb);
+        store.set('worldbooks', wbs);
+        added.push(wb.name || '未命名世界书');
+      } catch (e) { errs.push(String(e.message || e)); }
+    });
+    cb({ ok: added.length > 0,
+      message: added.length
+        ? '《' + added.join('》《') + '》进了世界书' + (errs.length ? '（有件没导上）' : '')
+        : (errs[0] || '包里没有能导的世界书') });
+  }
+
   /* 整岛包：生成新岛。choices: { theme:'mine'|'pack', worldbook:'mine'|'pack', book:'pack' } */
   function importIsland(manifest, choices, cb) {
     choices = choices || {};
@@ -253,6 +527,7 @@
         if (it.kind !== 'worldbook' || !it.data) return;
         var wb = JSON.parse(JSON.stringify(it.data));
         wb.id = newId('wb');
+        if (it.wasHidden) wb.sealed = true;   /* 暗铺书：目录可见+条目内容锁，注入照常 */
         if (wb.characterId && charMap[wb.characterId]) wb.characterId = charMap[wb.characterId];
         else if (wb.scope === 'personal') return;   /* 挂靠的角色没进包 → 跳过个人书 */
         wbs.push(wb);
@@ -286,7 +561,11 @@
 
     if (choices.theme === 'pack') {
       manifest.items.forEach(function (it) {
-        if (it.kind === 'theme' && it.data) store.set('appearance', it.data);
+        if (it.kind === 'theme' && it.data) {
+          var ap = it.data;
+          if (it.wasHidden) ap.sealedCss = true;   /* 暗铺美化：生效但样式代码不给看 */
+          store.set('appearance', ap);
+        }
       });
     }
 
@@ -310,8 +589,22 @@
       set('repoMine', list.slice(-200));
     },
     packChar: packChar,
+    packWorldbook: packWorldbook,
     packIsland: packIsland,
+    importWorldbook: importWorldbook,
+    applyLocks: applyLocks,
+    unlockItems: unlockItems,
+    lockedCount: lockedCount,
     publish: publish,
+    publicShelf: publicShelf,
+    itemMeta: itemMeta,
+    deviceId: deviceId,
+    likedIds: likedIds,
+    likeItem: likeItem,
+    listComments: listComments,
+    postComment: postComment,
+    checkCondition: checkCondition,
+    myInbox: myInbox,
     verifyGate: verifyGate,
     shelf: shelf,
     downloadItem: downloadItem,

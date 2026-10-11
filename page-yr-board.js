@@ -36,6 +36,14 @@
     return el;
   }
 
+  /* 重点标签：酒红强调（2026-10-11 用户：纸面上重点处要用别的颜色） */
+  function keyLine(label, val) {
+    var p = h('p');
+    p.appendChild(h('b', 'yb-key', label + '：'));
+    p.appendChild(document.createTextNode(val));
+    return p;
+  }
+
   /* ------------------------------ 样式（本页特有 .yb-） ------------------------------ */
   var STYLE_ID = 'yr-board-style';
   function ensureStyle() {
@@ -45,6 +53,7 @@
     st.textContent = [
       '.yb-card{border:1px solid var(--wj-line);background:rgba(255,255,255,.03);border-radius:8px;padding:12px 14px;margin-top:10px}',
       '.yb-card b{font-family:var(--ff-serif);font-weight:500;font-size:14.5px;color:var(--wj-text);display:block;margin-bottom:5px}',
+      '.yb-key{color:var(--wj-wine);font-weight:500}',
       '.yb-card p{margin:0 0 6px;font-size:11.5px;line-height:1.75;color:var(--wj-dim)}',
       '.yb-card p:last-child{margin-bottom:0}',
       '.yb-tag{display:inline-block;margin-right:6px;padding:1px 6px;border:1px solid rgba(138,95,107,.6);border-radius:2px;',
@@ -60,15 +69,18 @@
       '.yb-kv b{color:var(--wj-text);font-weight:500}',
       '.yb-cover{display:block;width:100%;max-height:150px;object-fit:cover;border-radius:6px;border:1px solid var(--wj-line);margin-top:8px}',
       '.yb-cover-acts{display:flex;gap:8px;margin-top:8px}',
-      '.yb-cover-acts .yb-back{margin-top:0;flex:1}',
+      '.yb-cover-acts .yb-back{margin-top:0;flex:1;width:auto;min-width:0}',
       /* ---- 2026-10-10 三步拆独立页：进度点 + 步间导航 + 多张场景 ---- */
       '.yb-dots{display:flex;gap:6px;margin:10px 2px 2px;flex-wrap:wrap}',
       '.yb-dot{font-size:9.5px;letter-spacing:.12em;color:var(--wj-dimmer);padding:3px 9px;border:1px solid var(--wj-line);border-radius:999px}',
       '.yb-dot.on{background:#1c1a17;color:#f4f0e7;border-color:#1c1a17}',
       '.yb-dot.done{color:var(--wj-text)}',
       '.yb-nav{display:flex;gap:8px;margin-top:14px}',
-      '.yb-nav .yb-back{margin-top:0;flex:0 0 auto;padding:12px 16px}',
-      '.yb-nav .yb-open{margin-top:0;flex:1}',
+      /* ⚠️ width:auto 必须带上：.yb-back 基础是 width:100%，进 flex 行后
+         不缩（shrink:0）→ 占满整行把旁边的钮挤出屏幕右缘（2026-10-11
+         真机抓到：右下角「边缘框」= 被挤出的 yb-open 左边框）。 */
+      '.yb-nav .yb-back{margin-top:0;flex:0 0 auto;width:auto;padding:12px 16px}',
+      '.yb-nav .yb-open{margin-top:0;flex:1;width:auto;min-width:0}',
       '.yb-scenes{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}',
       '.yb-scene{position:relative;border:1px solid var(--wj-line);border-radius:6px;overflow:hidden}',
       '.yb-scene .yb-cover{margin-top:0;border:0;border-radius:0;width:100%;height:96px;object-fit:cover;display:block}',
@@ -181,7 +193,9 @@
     room.appendChild(h('div', 'yr-top', h('div', 'yr-brand', [h('span', 'yr-mark'), h('span', null, box.title)])));
 
     var existing = B().getRunByBox(boxId, sid);
-    if (existing) {
+    /* 演练盒重走三步（2026-10-11 用户：演练每次点都从领局牌开始，
+       不吃「本局已开」锁卡）——正式世界维持已开即进。 */
+    if (existing && box.source !== 'drill') {
       room.appendChild(renderRunCard(ctx, sid, box, existing));
       root.appendChild(room);
       ctx.body.appendChild(root);
@@ -293,7 +307,9 @@
       if (st.step === 1) {
         body.appendChild(stepBadge(1, '局内身份'));
         body.appendChild(identityCard());
-        if (!box.identity) {
+        /* 演练盒重走三步（v229）：即使已刻过身份也出环 —— 换一枚=重开一局；
+           正式世界保持「定了就不出环」。 */
+        if (!box.identity || box.source === 'drill') {
           body.appendChild(Sleepy.yrRing({
             cards: B().IDENTITIES.map(function (it) {
               var g = { 'boss-watch': '观', 'boss-join': '随', 'staff': '行' }[it.key] || '局';
@@ -306,6 +322,7 @@
             onTake: function (i) {
               st.identity = B().IDENTITIES[i].key;
               Sleepy.toast('这个世界就认它了：' + B().IDENTITIES[i].name);
+              st.step = 2;   /* 2026-10-11 用户：选定后直接进下一步页面 */
               renderStep();
             }
           }));
@@ -331,6 +348,7 @@
           onTake: function (i) {
             st.seat = DRILL_SEATS[i];
             Sleepy.toast('领牌：' + st.seat.name);
+            st.step = 3;   /* 选定后直接进下一步页面 */
             renderStep();
           }
         }));
@@ -395,10 +413,10 @@
         var w = h('div', 'yb-card');
         w.appendChild(h('b', null, box.title));
         w.appendChild(h('p', null, '局内演练 · 档案编号 ' + box.id.slice(-6).toUpperCase()));
-        w.appendChild(h('p', null, '委托者：' + B().DRILL_BRIEF.requester + '。' + B().DRILL_BRIEF.requesterSecret));
-        w.appendChild(h('p', null, '明面目标：' + B().DRILL_BRIEF.publicGoal));
-        w.appendChild(h('p', null, '暗线：' + B().DRILL_BRIEF.hiddenGoal));
-        w.appendChild(h('p', null, '限制：' + B().DRILL_BRIEF.restriction + ' 报酬：' + B().DRILL_BRIEF.reward));
+        w.appendChild(keyLine('委托者', B().DRILL_BRIEF.requester + '。' + B().DRILL_BRIEF.requesterSecret));
+        w.appendChild(keyLine('明面目标', B().DRILL_BRIEF.publicGoal));
+        w.appendChild(keyLine('暗线', B().DRILL_BRIEF.hiddenGoal));
+        w.appendChild(keyLine('限制', B().DRILL_BRIEF.restriction + '　报酬：' + B().DRILL_BRIEF.reward));
         w.appendChild(h('span', 'yb-tag', '局内演练'));
         body.appendChild(w);
       }
@@ -413,8 +431,9 @@
         if (!st.identity) { Sleepy.toast('先把第 1 步的局内身份定了。', 'err'); return; }
         if (!st.seat) { Sleepy.toast('先在第 2 步领一枚穿书占位的局牌。', 'err'); return; }
         var r = B().startRun(boxId, st.identity, st.seat);
-        Sleepy.toast(r.existed ? '这局早就开着呢，接着走。' : '局开了。卷宗从这一刻开始记。');
-        render(ctx);
+        Sleepy.toast(r.existed ? '这局早开着了，接着走。' : '局开了。卷宗从这一刻开始记。');
+        /* 开局即进世界，不再回到领局牌第一步（2026-10-11 用户：点开局又回第一步） */
+        Sleepy.nav.open('yr-play', { boxId: box.id, sandboxId: sid });
       });
       body.appendChild(open);
 

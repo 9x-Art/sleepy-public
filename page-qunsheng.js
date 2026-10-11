@@ -236,6 +236,10 @@
       '.qs-err{margin:30px 22px;padding:22px;border:1px solid var(--line);border-radius:14px;text-align:center}',
       '.qs-err-t{font-size:15px;font-weight:600;margin-bottom:8px}',
       '.qs-err-d{font-size:12px;color:var(--muted);line-height:1.9}',
+      /* 关注按钮（2026-10-11 关注补全） */
+      '.qs-follow{border:1px solid var(--line);background:none;border-radius:999px;color:var(--ink);',
+      'font-size:10px;padding:5px 12px;cursor:pointer;font-family:inherit;flex:0 0 auto;}',
+      '.qs-follow.on{background:var(--paper);color:var(--muted);border-style:dashed;}',
       /* 返回条：一级页顶部那行小返回 */
       '.qs-backbar{padding:8px 14px 0;background:rgba(244,240,231,.96)}',
       '.qs-backbtn{border:0;background:none;color:var(--muted);font-size:12px;padding:4px 0}',
@@ -484,6 +488,20 @@
     }
     if (pa.anonymous) meta.appendChild(h('span', 'qs-tag', '匿名'));
     else if (TYPE_LABEL[post.postType]) meta.appendChild(h('span', 'qs-tag', TYPE_LABEL[post.postType]));
+    /* 关注按钮（2026-10-11 关注补全）：非匿名 + 不是我自己的账号 */
+    var meAcc = F().getSelectedForumAccount(fx.sandboxId);
+    if (!pa.anonymous && (!meAcc || meAcc.id !== pa.accountId)) {
+      var followBtn = h('button', 'qs-follow' + (F().isFollowing(fx.sandboxId, pa.accountId) ? ' on' : ''),
+        F().isFollowing(fx.sandboxId, pa.accountId) ? '已关注' : '+ 关注');
+      followBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var r = F().toggleFollow(fx.sandboxId, pa.accountId);
+        followBtn.textContent = r.on ? '已关注' : '+ 关注';
+        followBtn.className = 'qs-follow' + (r.on ? ' on' : '');
+        Sleepy.toast(r.on ? '关注了 ' + pa.displayName : '取关了 ' + pa.displayName);
+      });
+      meta.appendChild(followBtn);
+    }
     card.appendChild(meta);
 
     if (post.title) card.appendChild(h('h3', null, post.title));
@@ -1908,6 +1926,21 @@
     hb.appendChild(h('div', 'qs-me-bio',
       (acc.bio || '这位岛民话不多。') + ' · @' + acc.handle));
     head.appendChild(hb);
+    /* 关注按钮（2026-10-11 关注补全）：不能关注自己 */
+    var meAcc = F().getSelectedForumAccount(fx.sandboxId);
+    if (!meAcc || meAcc.id !== acc.id) {
+      var fbtn = h('button', 'qs-follow' + (F().isFollowing(fx.sandboxId, acc.id) ? ' on' : ''),
+        F().isFollowing(fx.sandboxId, acc.id) ? '已关注' : '+ 关注');
+      fbtn.style.marginLeft = 'auto';
+      fbtn.style.flex = '0 0 auto';
+      fbtn.addEventListener('click', function () {
+        var r = F().toggleFollow(fx.sandboxId, acc.id);
+        fbtn.textContent = r.on ? '已关注' : '+ 关注';
+        fbtn.className = 'qs-follow' + (r.on ? ' on' : '');
+        Sleepy.toast(r.on ? '关注了 ' + acc.displayName : '取关了 ' + acc.displayName);
+      });
+      head.appendChild(fbtn);
+    }
     main.appendChild(head);
 
     /* 公开统计：访客视角，只数 active 帖（本人私有数据不进这里） */

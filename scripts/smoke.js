@@ -48,6 +48,11 @@ function makeEl(tag) {
   const el = {
     tagName: String(tag || 'div').toUpperCase(),
     children: [], childNodes: [], style, dataset: {},
+    /* input/select 语义：value 默认空串、select 有 options/selectedIndex
+       （真浏览器如此；桩缺了会让 input.value.trim() 报 undefined —— 2026-10-11 踩过） */
+    value: '',
+    options: [],
+    selectedIndex: -1,
     /* parentNode 必须存在：`x.parentNode.removeChild(x)` 是极常见的写法，
        桩里缺这个字段会把「真实浏览器里一定有」的东西变成 TypeError，
        全页渲染冒烟就会误报成页面炸了（2026-09-21 踩过）。 */
@@ -1259,9 +1264,9 @@ t('forum 新键进 store 默认值并随 exportAll 带走', () => {
   return 'ok';
 });
 
-t('桌面「群声」格就位（p3-qunsheng / v23 / 专属图标）', () => {
+t('桌面「群声」格就位（p3-qunsheng / v22 起真入口 / 专属图标）', () => {
   const d = S.desktop.defaultDesktop();
-  if (d.version !== 24) throw new Error('户型版本不对(24=仓库批)：' + d.version);
+  if (d.version !== 25) throw new Error('户型版本不对(25=御膳房改名批)：' + d.version);
   const cell = d.pages[3].filter((c) => c.i === 'p3-qunsheng')[0];
   if (!cell) throw new Error('第 3 屏找不到 p3-qunsheng');
   if (cell.app !== 'qunsheng' || cell.type !== 'app') throw new Error('格子不是群声真入口');
@@ -1310,6 +1315,95 @@ t('仓库门牌解析：链接 ?g= 与裸口令都抠得出来', () => {
   return '三路 + 空态';
 });
 
+t('明厨/暗铺条目锁：上锁后 data 不在包文本里，对暗号原样解回，错暗号解不开', () => {
+  const sb = S.core.createSandbox('isle', '暗铺测试岛');
+  S.core.setSandboxChars(sb.id, [m1]);
+  const m = S.repo.packIsland(sb.id, { title: '暗铺测试', author: 'smoke' });
+  const charIdxs = m.items.map((it, i) => (it.kind === 'char' ? i : -1)).filter((i) => i >= 0);
+  if (!charIdxs.length) throw new Error('夹具没有角色件');
+  const plain = JSON.stringify(m.items[charIdxs[0]].data);
+  S.repo.applyLocks(m, [charIdxs[0]], '夜宵是这个点的暗号');
+  /* 上锁后：包文本里不许再出现角色明文（判据落包文本，取名字一个字以上） */
+  const lockedItem = m.items[charIdxs[0]];
+  if (lockedItem.lock !== 'locked' || !lockedItem.enc || lockedItem.data) {
+    throw new Error('上锁后 data 没删干净');
+  }
+  if (JSON.stringify(m).indexOf(plain) >= 0) throw new Error('明文还在包文本里');
+  if (m.access !== 'gated') throw new Error('整件 access 应记 gated');
+  /* 错暗号：解不开，data 依旧缺席 */
+  if (S.repo.unlockItems(m, '错的暗号') !== 0) throw new Error('错暗号不该解开');
+  if (m.items[charIdxs[0]].data) throw new Error('错暗号却解出了 data');
+  /* 对暗号：原样解回 */
+  if (S.repo.unlockItems(m, '夜宵是这个点的暗号') !== 1) throw new Error('对暗号没解开');
+  if (JSON.stringify(m.items[charIdxs[0]].data) !== plain) throw new Error('解回的内容和原件不一致');
+  return { 暗铺: charIdxs.length, 往返: true };
+});
+
+t('暗铺导入：不对暗号只带明厨件，导入循环不炸', () => {
+  const sb = S.core.createSandbox('isle', '暗铺导入测试岛');
+  S.core.setSandboxChars(sb.id, [m1]);
+  const m = S.repo.packIsland(sb.id, { title: '暗铺导入', author: 'smoke' });
+  const charIdxs = m.items.map((it, i) => (it.kind === 'char' ? i : -1)).filter((i) => i >= 0);
+  S.repo.applyLocks(m, charIdxs, '暗号X');
+  /* 不对暗号直接导入：暗件被跳过（无 data），不抛错；落岛取名走 meta */
+  let r1 = null;
+  S.repo.importIsland(m, { worldbook: 'mine', theme: 'mine' }, (r) => { r1 = r; });
+  if (!r1 || !r1.ok) throw new Error('跳过暗件后导入应该照常 ok：' + JSON.stringify(r1));
+  const newIsle1 = S.core.findSandbox(r1.sandboxId);
+  if (newIsle1.charIds.length !== 0) throw new Error('暗号没对上却把暗件角色导进来了');
+  /* 对上暗号再导：角色全回来 */
+  S.repo.unlockItems(m, '暗号X');
+  let r2 = null;
+  S.repo.importIsland(m, { worldbook: 'mine', theme: 'mine' }, (r) => { r2 = r; });
+  if (!r2 || !r2.ok) throw new Error('解锁后导入应 ok');
+  const newIsle2 = S.core.findSandbox(r2.sandboxId);
+  if (newIsle2.charIds.length !== charIdxs.length) {
+    throw new Error('解锁后角色没全回来：' + newIsle2.charIds.length + '/' + charIdxs.length);
+  }
+  return { 明厨导入: 'ok', 解锁导入: newIsle2.charIds.length + ' 角色' };
+});
+
+t('暗铺 v3 语义：空暗号 = 可用不可看（sealed），世界书目录可见+内容锁，角色干脆给看，领取条件落包', () => {
+  /* 世界书：空暗号上锁 → sealed，无暗号自动解开 + wasHidden → wb.sealed */
+  const wbList = S.store.get('worldbooks') || [];
+  wbList.push({ id: 'wb-seal-t', name: '暗铺测试书', scope: 'global', entries: [{ id: 'e1', name: 'x', keys: ['x'], content: '机密原文' }] });
+  S.store.set('worldbooks', wbList);
+  const m = S.repo.packWorldbook('wb-seal-t', { author: 'smoke' });
+  S.repo.applyLocks(m, [0], '', 'comment');
+  if (m.access !== 'sealed') throw new Error('空暗号应记 sealed，实际 ' + m.access);
+  if (m.items[0].needCode) throw new Error('空暗号不该标 needCode');
+  if (m.condition !== 'comment') throw new Error('领取条件没落包：' + m.condition);
+  if (JSON.stringify(m).indexOf('机密原文') >= 0) throw new Error('明文还在包文本里');
+  const n = S.repo.unlockItems(m, '');
+  if (n !== 1 || !m.items[0].wasHidden || !m.items[0].data) throw new Error('可用不可看件没自动解开');
+  let r = null;
+  S.repo.importWorldbook(m, (x) => { r = x; });
+  if (!r || !r.ok) throw new Error('暗铺书导入失败');
+  const back = (S.store.get('worldbooks') || []).filter((w) => w.name === '暗铺测试书' && w.id !== 'wb-seal-t')[0];
+  if (!back || !back.sealed) throw new Error('暗铺书没打 sealed 标');
+  if (!back.entries[0].content) throw new Error('sealed 书的条目内容应该保留（注入要用）');
+  /* packIsland 不二次传播暗铺书 */
+  S.store.set('worldbooks', (S.store.get('worldbooks') || []).filter((w) => w.id !== 'wb-seal-t'));
+  const sb2 = S.core.createSandbox('isle', '暗铺不传播测试岛');
+  S.core.setSandboxChars(sb2.id, [m1]);
+  const m2 = S.repo.packIsland(sb2.id, { title: '传播测试', author: 'smoke' });
+  if (m2.items.some((it) => it.kind === 'worldbook' && it.name === '暗铺测试书')) {
+    throw new Error('暗铺书被二次打包了');
+  }
+  /* 角色件：干脆给看 —— 空暗号 = sealed 正常导入（不再强制对暗号） */
+  const mc = S.repo.packChar(m1, { author: 'smoke' });
+  S.repo.applyLocks(mc, [0], '', 'repo');
+  if (mc.items[0].needCode) throw new Error('角色件不该强制 needCode 了');
+  if (mc.condition !== 'repo') throw new Error('角色领取条件没落包');
+  if (S.repo.unlockItems(mc, '') !== 1) throw new Error('角色 sealed 件应自动解开');
+  /* 填了暗号 = needCode 仍成立 */
+  const mc2 = S.repo.packChar(m1, { author: 'smoke' });
+  S.repo.applyLocks(mc2, [0], '对暗号', 'none');
+  if (!mc2.items[0].needCode || mc2.access !== 'gated') throw new Error('填暗号应记 needCode/gated');
+  if (S.repo.unlockItems(mc2, '') !== 0) throw new Error('gated 件不该被空暗号解开');
+  if (S.repo.unlockItems(mc2, '对暗号') !== 1) throw new Error('对上暗号应解开');
+  return { sealed: '自动解+wb.sealed', 角色: '给看+条件', 暗号件: 'needCode', 传播: '已挡' };
+});
 /* 专用岛：下面几条测试自己的沙盘，不碰前面 sbIsle / sbArch */
 const sbQsIsle = S.core.createSandbox('isle', '群声测试孤岛').id;
 S.core.setSandboxChars(sbQsIsle, [m1]);
@@ -1323,6 +1417,35 @@ t('resolveContext：显式 sandboxId 优先 + 孤岛恰好 1 位主要 char', ()
   if (fx.sandboxKind !== 'isle') throw new Error('kind 不对：' + fx.sandboxKind);
   if (fx.primaryCharIds.length !== 1) throw new Error('孤岛主要 char 数不对');
   return { 社区: fx.sandboxName, 主要char: fx.primaryCharIds.length, 街坊: fx.residentNpcIds.length };
+});
+
+t('群声关注（2026-10-11 补全）：toggle 往返 / follow 流只出关注账号的帖', () => {
+  const F = S.forum;
+  S.forum.unlockContext();
+  const fx = S.forum.resolveContext(sbQsIsle);
+  S.forum.ensureSeed(sbQsIsle);   /* 先播种身份，才有别人可关注 */
+  const meAcc = F.getSelectedForumAccount(sbQsIsle);
+  const others = F.scopedForum('forumAccounts', sbQsIsle)
+    .filter((a) => a.id !== (meAcc && meAcc.id));
+  if (!others.length) throw new Error('夹具没有别的账号可关注');
+  const target = others[0];
+  if (F.isFollowing(sbQsIsle, target.id)) F.toggleFollow(sbQsIsle, target.id);
+  const on = F.toggleFollow(sbQsIsle, target.id);
+  if (!on.on) throw new Error('关注没成功');
+  if (!F.isFollowing(sbQsIsle, target.id)) throw new Error('isFollowing 没跟上');
+  /* 关注流：只出 target 的 active 帖 */
+  const feed = F.getHomeFeed('follow', null, 50, sbQsIsle);
+  const bad = feed.items.filter((p) => p.authorAccountId !== target.id);
+  if (bad.length) throw new Error('关注流混进了没关注的账号的帖');
+  /* 取关往返 */
+  const off = F.toggleFollow(sbQsIsle, target.id);
+  if (off.on) throw new Error('取关没成功');
+  if (F.isFollowing(sbQsIsle, target.id)) throw new Error('取关后 isFollowing 还在');
+  /* 关注流按岛隔离：别的岛不受影响 */
+  const otherSb = S.core.createSandbox('isle', '关注隔离测试岛').id;
+  S.core.setSandboxChars(otherSb, [m1]);
+  if (F.isFollowing(otherSb, target.id)) throw new Error('关注关系跨岛串了');
+  return { 关注: target.displayName.slice(0, 6), 流: feed.items.length + ' 帖', 隔离: true };
 });
 
 t('resolveContext：伪造 sandboxId 进错误态，不静默落第一间房', () => {
@@ -3416,11 +3539,28 @@ t('以身入局：开局落库 + 身份按世界锁死（startRun 真跑）', ()
       throw new Error('档案盒没被刻身份/没变进行中：' + JSON.stringify(box));
     }
     let locked = false;
+    /* v229 口径：身份锁死只管**正式世界** —— 演练盒（source:'drill'）
+       重走三步可换身份重开。所以先把夹具盒改成正式口径再验锁。 */
+    const formal = S.book.scoped('bookBoxes', sb.id);
+    formal.forEach((b) => { if (b && b.id === drill.id) b.source = 'builtin'; });
+    S.book.put('bookBoxes', formal);
     try { S.book.startRun(drill.id, 'staff', { name: '新来的帮工' }); } catch (e) { locked = true; }
     if (!locked) throw new Error('换身份开局没被拦（身份应按世界锁死）');
     const r2 = S.book.startRun(drill.id, 'boss-watch', { name: '借宿的旅人' });
     if (!r2.existed) throw new Error('同身份重复开局应返回 existed（幂等续接）');
-    return { run: run.id.slice(-6), 身份: 'boss-watch', 锁死: true, 幂等: true };
+    /* v229：演练盒重走三步 —— 换身份不拦、旧局就地收档、新局落库 */
+    const drillAgain = S.book.scoped('bookBoxes', sb.id);
+    drillAgain.forEach((b) => { if (b && b.id === drill.id) b.source = 'drill'; });
+    S.book.put('bookBoxes', drillAgain);
+    const r3 = S.book.startRun(drill.id, 'staff', { name: '新来的帮工' });
+    if (r3.existed) throw new Error('演练盒换身份应重开新局，不是续接旧局');
+    const runsNow = S.book.scoped('bookRuns', sb.id).filter((r) => r.boxId === drill.id);
+    const oldRun = runsNow.filter((r) => r.id === run.id)[0];
+    if (!oldRun || oldRun.status !== 'ended') throw new Error('演练盒重开没把旧局收档');
+    if (!r3.run || r3.run.status !== 'ongoing' || r3.run.identity !== 'staff') {
+      throw new Error('演练盒新局没落对：' + JSON.stringify(r3.run));
+    }
+    return { run: run.id.slice(-6), 身份: 'boss-watch', 锁死: true, 幂等: true, 演练重开: true };
   } catch (e) {
     throw e;
   }
@@ -5387,22 +5527,23 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
    版本 23（2026-10-08）：「组件商城」空壳改成「以身入局」真入口
    （p3-yishenruju / type app / app yishenruju），收窄成
    「外观仍 blank」+「组件商城位已换成以身入局」。 */
-t('第 3 屏外观位已换成「仓库」真入口，组件商城位→以身入局，钱包位→小岛指南，贴纸位→群声，主屏入口不动', () => {
+t('第 3 屏外观位已换成「御膳房」真入口，组件商城位→以身入局，钱包位→小岛指南，贴纸位→群声，主屏入口不动', () => {
   const d = S.desktop.defaultDesktop();
   /* 版本 24（2026-10-10 用户点名）：外观空壳位（主屏 p1-look 已有同功能
-     入口）换成仓库真入口 —— 格子 id 语义变了，p3-look → p3-repo。 */
+     入口）换成仓库真入口 —— 格子 id 语义变了，p3-look → p3-repo。
+     版本 25（2026-10-11）：App 改名「御膳房」，label 跟改（id/app 不动）。 */
   const repo = d.pages[3].filter((c) => c.i === 'p3-repo')[0];
-  if (!repo || repo.type !== 'app') throw new Error('p3-repo 应是仓库真入口，实际 ' + (repo && repo.type));
-  if (repo.app !== 'repo' || repo.label !== '仓库')
-    throw new Error('p3-repo 应是 app/repo/仓库，实际 ' + JSON.stringify(repo));
-  if (repo.x !== 3 || repo.y !== 5) throw new Error('仓库坐标应为原外观位 (3,5)，实际 ' + repo.x + ',' + repo.y);
+  if (!repo || repo.type !== 'app') throw new Error('p3-repo 应是御膳房真入口，实际 ' + (repo && repo.type));
+  if (repo.app !== 'repo' || repo.label !== '御膳房')
+    throw new Error('p3-repo 应是 app/repo/御膳房，实际 ' + JSON.stringify(repo));
+  if (repo.x !== 3 || repo.y !== 5) throw new Error('御膳房坐标应为原外观位 (3,5)，实际 ' + repo.x + ',' + repo.y);
   if (!S.desktop.ICONS.repo) throw new Error('repo 没有自己的图标条目');
   /* 组件商城位 → 以身入局真入口 */
   const ru = d.pages[3].filter((c) => c.i === 'p3-yishenruju')[0];
   if (!ru) throw new Error('第 3 屏找不到 p3-yishenruju（以身入局）那一格');
   if (ru.type !== 'app' || ru.app !== 'yishenruju' || ru.label !== '以身入局')
     throw new Error('p3-yishenruju 应是 以身入局 真入口，实际 ' + JSON.stringify(ru));
-  if (S.desktop.LAYOUT_VERSION !== 24) throw new Error('户型版本应为 24，实际 ' + S.desktop.LAYOUT_VERSION);
+  if (S.desktop.LAYOUT_VERSION !== 25) throw new Error('户型版本应为 25，实际 ' + S.desktop.LAYOUT_VERSION);
   /* 钱包位 → 小岛指南真入口 */
   const g = d.pages[3].find((c) => c.i === 'p3-guide');
   if (!g) throw new Error('第 3 屏找不到 p3-guide（小岛指南）那一格');
@@ -15587,8 +15728,19 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    ⚠️ v228（2026-10-11 下午）：以身入局塌页修复——ensureHomeStyle 部件规则
      YR_PAGES + ' .yr-top' 后代空格只粘最后选择器，页面本体命中报头规则
      （position:relative / height:1px）→ 整页塌成 10px 小白框。改 yrSel() 逐页接后缀。
-     基准随批 v227 → v228。 */
-const EXPECTED_SW_CACHE = 'sleepy-v228';
+     基准随批 v227 → v228。
+   ⚠️ v229（2026-10-11 下午 4）：仓库改名「御膳房」+ 五位底栏（首页/板块/＋开炉/消息/我的，
+     门牌收进我的，头衔可佩戴）+ 桌面 p3-repo label 改御膳房（LAYOUT 25）。
+     基准随批 v228 → v229。
+   ⚠️ v230（2026-10-11 晚 7）：Worker v2（/public-shelf + /item/:id/meta + 新列自动迁移）
+     + repo-item 详情页注册 + 首页公共铺面重构。基准随批 v229 → v230。
+   ⚠️ v231（2026-10-11 晚 7 半）：席间开张（comments/likes/condition 端点+详情页真校验+inbox）
+     + 群声关注补全（forumFollows 数组键 + follow 流真数据 + 关注按钮）。基准随批 v230 → v231。
+   ⚠️ v232（2026-10-11 晚 7：50）：以身入局门面/手机两态 + 开炉完整页 + 封面 cover 列
+     + 板块公开直进 + 铺面 demo 件/层板 + 字号调大。基准随批 v231 → v232。
+   ⚠️ v233（2026-10-11 晚 8：10）：撤门面（档案架直接全屏）+ 纸皮白字改墨 + yr-board
+     选定自动下一步 + 局内手机小手机造型 + 御膳房全页退出按钮。基准随批 v232 → v233。 */
+const EXPECTED_SW_CACHE = 'sleepy-v234';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

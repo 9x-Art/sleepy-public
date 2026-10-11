@@ -250,8 +250,11 @@
     组件商城在主屏 p1-store 已有完整入口，这格从版本 19 起就是空壳，正好接新 App。
     语义变了所以换格子 id（同版本 20/22 那条规矩）。「以身入局」首版是诚实占位页
     （page-yishenruju.js，点开显示「这一页还没贴好」），等定好玩法再填真实功能；
-    不冒充完成。LAYOUT_VERSION +1。 */
-  var LAYOUT_VERSION = 24;
+    不冒充完成。LAYOUT_VERSION +1。
+
+    版本 25（2026-10-11）：仓库 App 改名「御膳房」—— p3-repo 格 label
+    跟着改（id/app 不动），LAYOUT_VERSION +1 强制把老存档的 label 迁过来。 */
+  var LAYOUT_VERSION = 25;
 
   function defaultDesktop() {
     return {
@@ -367,7 +370,7 @@
              「第三屏有个外观 app 是空的，把仓库放那里」。
              语义变了换格子 id（同版本 20/22 规矩）：p3-look → p3-repo。
              仓库 = 设定打包分享（方案-设定仓库-v1；page-repo.js / repo-core.js / worker/）。 */
-          { i: 'p3-repo', type: 'app', app: 'repo', x: 3, y: 5, w: 1, h: 1, label: '仓库' },
+          { i: 'p3-repo', type: 'app', app: 'repo', x: 3, y: 5, w: 1, h: 1, label: '御膳房' },
           /* 版本 23（2026-10-08）：(x4,y5) 这格从「组件商城」空壳换成「以身入局」真入口
              （type 'app' / app 'yishenruju' / 格子 id p3-yishenruju）。组件商城在主屏 p1-store
              已有完整入口，这格从版本 19 起就是空壳。语义变了换格子 id（同版本 20/22 规矩）。 */

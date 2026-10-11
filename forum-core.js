@@ -782,11 +782,42 @@
   /* ------------------------------ 信息流 ------------------------------ */
 
   /* mode: 'mixed' | 'follow' | 'latest'。首页首轮必须有稳定「最新」分页（§B-4）。
-     follow 流 Batch B 恒空（关注是后续批），返回空数组即空态。 */
+     follow 流（2026-10-11 关注补全）：只出我关注的账号的帖子（本地数据本地过滤），
+     关注关系设备级（forumFollows 按 sandboxId 分组，键 = 被关注的论坛账号 id）。 */
+  function followsOf(sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    return (store.get('forumFollows') || [])
+      .filter(function (r) { return r && r.sandboxId === sid; })
+      .map(function (r) { return r.accountId; });
+  }
+  function isFollowing(sandboxId, accountId) {
+    return followsOf(sandboxId).indexOf(accountId) >= 0;
+  }
+  /* forumFollows 注册键是数组格式：[{id, sandboxId, accountId, createdAt}] */
+  function toggleFollow(sandboxId, accountId) {
+    var sid = sandboxId || lockedSandboxId;
+    var list = store.get('forumFollows') || [];
+    var hit = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].sandboxId === sid && list[i].accountId === accountId) { hit = list[i]; break; }
+    }
+    if (hit) {
+      list = list.filter(function (r) { return r !== hit; });
+      store.set('forumFollows', list);
+      return { on: false };
+    }
+    list.push({ id: uid('fw'), sandboxId: sid, accountId: accountId, createdAt: Date.now() });
+    store.set('forumFollows', list);
+    return { on: true };
+  }
   function getHomeFeed(mode, cursor, limit, sandboxId) {
     var sid = sandboxId || lockedSandboxId;
     var posts = scopedForum('forumPosts', sid).filter(function (p) { return p.status === 'active'; });
-    if (mode === 'follow') return { items: [], nextCursor: null, hasMore: false };
+    if (mode === 'follow') {
+      var follows = followsOf(sid);
+      var mine = posts.filter(function (p) { return follows.indexOf(p.authorAccountId) >= 0; });
+      return pageOf(mine, cursor, limit || 12);
+    }
     return pageOf(posts, cursor, limit || 12);
   }
 
@@ -855,6 +886,9 @@
     countOf: countOf,
     repostCount: repostCount,
     getHomeFeed: getHomeFeed,
+    isFollowing: isFollowing,
+    toggleFollow: toggleFollow,
+    followsOf: followsOf,
     pageOf: pageOf,
     notify: notify,
     listNotifications: listNotifications,

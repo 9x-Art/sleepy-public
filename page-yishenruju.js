@@ -94,6 +94,14 @@
       '.yr-dot.on{background:var(--wj-silver)}',
       '.yr-motto{margin:12px 2px 0;font-size:12px;line-height:1.75;color:var(--wj-dim);min-height:40px}',
       '.yr-motto b{color:var(--wj-text);font-weight:500}',
+      /* 纸皮下按钮/说明文字一律墨色（2026-10-11 用户：白字看不清） */
+      yrSel('.yr-take') + '{color:#2b2620;border-color:rgba(43,38,32,.5);background:rgba(255,255,255,.55);}',
+      yrSel('.yr-motto') + '{color:#4a4438;}',
+      yrSel('.yr-card') + '{color:#2b2620;}',
+      yrSel('.yr-card p') + '{color:#4a4438;}',
+      /* 全屏页滚动条藏掉（#phone 外的桌面全屏也有） */
+      yrSel(' *') + '{scrollbar-width:none;}',
+      yrSel(' *::-webkit-scrollbar') + '{width:0;height:0;display:none;}',
       '.yr-take{display:block;width:100%;margin-top:10px;padding:12px;border:1px solid rgba(236,230,218,.4);border-radius:6px;',
       'background:rgba(255,255,255,.05);color:var(--wj-text);font-family:var(--ff-serif);font-size:14px;letter-spacing:.22em;cursor:pointer}',
       '.yr-take:active{background:rgba(255,255,255,.1)}',
@@ -172,21 +180,29 @@
          + --bg:#16203a），是 2026-10-10 换纸皮前的旧决定。纸皮要在级联上压住它，
          必须 ① background 用 !important 盖掉那条 radial-gradient；② 玻璃层
          --g-glass/--g-glass-2 也改成正不透明的纸色，否则内层 .app-body/卡片会画成
-         半透明白玻璃盖在纸底上（真机实测：rgba(255,255,255,.72) 大片灰白、不是纸）。 */
-      YR_PAGES + '{background:#f4f0e7 !important;',
+         半透明白玻璃盖在纸底上（真机实测：rgba(255,255,255,.72) 大片灰白、不是纸）。
+         ③ --wj-* 暖板必须定义在**页面级**：yr-play 的根节点是 .yp-root 不是
+         .yr-root，只挂 .yr-root 时游玩页整棵树拿不到暖板、仍是夜色近白字，
+         压在纸上就是「字体不适配」（2026-10-11 线上抓到）。
+         页面自身用深一档纸色当「桌面」，中间 .page-inner 是居中的小手机（下条）。 */
+      YR_PAGES + '{background:#e6dfd0 !important;',
       '--bg:#f4f0e7;--text:#2b2620;--text-dim:rgba(43,38,32,.6);--surface-solid:#f4f0e7;',
       '--g-glass:rgba(244,240,231,.92);--g-glass-2:rgba(244,240,231,.96);',
-      '--g-glass-line:rgba(43,38,32,.16);--g-glass-edge:rgba(43,38,32,.24);}',
-      /* 色板整体换暖：var 只在组件上生效，这里在页级把 --wj-* 重定义 */
-      yrSel('.yr-root') + '{color:#2b2620;',
+      '--g-glass-line:rgba(43,38,32,.16);--g-glass-edge:rgba(43,38,32,.24);',
       '--wj-night:#efe9db;--wj-night-2:#e5dcc8;--wj-night-3:#d8cdb4;',
       '--wj-line:rgba(43,38,32,.18);--wj-line-soft:rgba(43,38,32,.1);',
       '--wj-text:#2b2620;--wj-dim:#6f675c;--wj-dimmer:#948b7d;',
       '--wj-silver:#3f3a32;--wj-wine:#a63b32;--wj-wine-lite:#c86f66;',
       '--wj-paper:#faf7f0;--wj-paper-2:#ece5d4;--wj-ink:#2b2620;--wj-green:#315d68;}',
-      /* 顶栏：报头式双细杠压底 */
-      yrSel('.yr-top') + '{border-bottom:2px solid #1c1a17;padding-bottom:10px;position:relative;}',
-      yrSel('.yr-top:after') + '{content:"";position:absolute;left:18px;right:18px;bottom:-5px;height:1px;background:#1c1a17;}',
+      /* 色板已在页级给全树，这里只补 .yr-root 的文字色 */
+      yrSel('.yr-root') + '{color:#2b2620;}',
+      /* 顶栏：单细线压底（2026-10-11 用户：「有两个黑线」——
+         报头双细杠和壳头叠在一起显乱，收敛成一条） */
+      yrSel('.yr-top') + '{border-bottom:1px solid rgba(43,38,32,.45);padding-bottom:10px;}',
+      /* 报头文字强制墨色（2026-10-11 用户：白字看不清） */
+      yrSel('.yr-brand') + '{color:#2b2620;}',
+      yrSel('.yr-energy') + '{color:#6f675c;}',
+      yrSel('.yr-energy strong') + '{color:#2b2620;}',
       yrSel('.yr-mark') + '{border-color:rgba(43,38,32,.55);}',
       yrSel('.yr-mark:after') + '{border-left-color:rgba(43,38,32,.7);}',
       /* 眉标：黑底反白小条 —— 群声的撞色块 */
@@ -207,7 +223,20 @@
          会变成「深底配深字」，统一换成白瓷条 + 墨线 */
       yrSel('.yp-act') + ',' + yrSel('.yp-balls') + '{background:rgba(250,247,240,.94);}',
       yrSel('.yp-act') + '{border-top:1px solid rgba(43,38,32,.18);}',
-      yrSel('.yp-row input') + ',' + yrSel('.yp-row button') + ',' + yrSel('.yp-ball') + '{background:rgba(255,255,255,.72);}'
+      yrSel('.yp-row input') + ',' + yrSel('.yp-row button') + ',' + yrSel('.yp-ball') + '{background:rgba(255,255,255,.72);}',
+      /* 纸面对比度体系（2026-10-11 用户：「字体不适配」）：
+         主动作 = 墨底反白（群声撞色），次动作 = 白瓷 + 墨边，弱动作 = 暖灰。
+         原来的 rgba(255,255,255,.05) 底在纸上等于透明，浅字全糊。 */
+      yrSel('.yp-send') + '{background:#1c1a17;border:0;color:#f4f0e7;}',
+      yrSel('.yp-send[disabled]') + '{opacity:.4;}',
+      yrSel('.yp-act .yp-send + .yp-send') + '{background:rgba(255,255,255,.72);border:1px solid #1c1a17;color:#2b2620;}',
+      yrSel('.yp-sub') + '{color:#6f675c;}',
+      yrSel('.yp-input') + '{background:rgba(255,255,255,.72);border-color:rgba(43,38,32,.35);color:#2b2620;}',
+      yrSel('.yp-input::placeholder') + '{color:#948b7d;}',
+      yrSel('.yp-goal') + '{background:rgba(255,255,255,.62);border:1px solid rgba(43,38,32,.28);',
+      'border-left:3px solid #1c1a17;border-radius:8px;color:#2b2620;padding:8px 10px;}',
+      yrSel('.yp-sealnote') + '{color:#a63b32;border-left-color:#a63b32;}',
+      yrSel('.yp-scene-bar') + '{background:rgba(28,26,23,.62);}'
     ].join('');
     document.head.appendChild(st);
   }
@@ -355,7 +384,8 @@
   /* ------------------------------ 渲染 ------------------------------ */
 
   function boxCard(ctx, sid, box, idx) {
-    /* 竖书脊档案盒：配色轮换（纸/夜/酒），空位画虚线盒 */
+    /* 竖书脊档案盒：恢复原配色轮换（纸/夜/酒）—— 2026-10-11 用户：
+       不要按来源改白底，书脊保持原色，演练/TXT 靠「戳」区分就够了。 */
     var el = h('button', 'yr-box' + (box.enterable ? [' night', ' wine', ' paper'][idx % 3] : ' empty'));
     if (!box.enterable) el.setAttribute('aria-disabled', 'true');
     var top = h('div', 'yr-box-top');
@@ -372,8 +402,9 @@
         Sleepy.toast('这一格等世界包定稿再上架。');
         return;
       }
-      /* 演练盒 → 进行中直进游玩页；未开局进建档页 */
-      if (box.status === 'ongoing') {
+      /* 演练盒（2026-10-11 用户：演练要重走三步）永远先进领局牌页；
+         其他已开局的盒直进游玩页，未开局的进建档页。 */
+      if (box.status === 'ongoing' && box.source !== 'drill') {
         Sleepy.nav.open('yr-play', { boxId: box.id, sandboxId: sid });
       } else {
         Sleepy.nav.open('yr-board', { boxId: box.id, sandboxId: sid });
@@ -382,6 +413,8 @@
     return el;
   }
 
+  /* 2026-10-11 晚定稿：点开直接是**档案架全屏页面**（无门面无手机壳）——
+     「手机」是游玩页（yr-play）里的局内手机，点开弹一个小手机样子的面板。 */
   function render(ctx, sid) {
     ctx.setTitle('以身入局');
     ctx.setActions([]);
@@ -466,6 +499,8 @@
       ctx.setTitle('以身入局');
       ctx.setActions([]);
       ctx.body.innerHTML = '';
+      ensureStyle();
+      ensureHomeStyle();   /* 纸皮在无岛占位页也要套（不然夜色底白字看不清） */
       ctx.body.appendChild(h('p', 'ph-entry-lead', '先进入一座岛，局里才有你的档案架。'));
       return;
     }

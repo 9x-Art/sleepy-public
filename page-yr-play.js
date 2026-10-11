@@ -54,8 +54,8 @@
     st.id = STYLE_ID;
     st.textContent = [
       '.yp-root{display:flex;flex-direction:column;height:100%;overflow:hidden;color:var(--wj-text);font-size:14px}',
-      '.yp-deck{flex:0 0 auto;padding:10px 16px 8px;border-bottom:1px solid var(--wj-line);',
-      'background:rgba(5,10,20,.34)}',
+      '.yp-deck{flex:0 0 auto;padding:10px 16px 8px;border-bottom:2px solid #1c1a17;',
+      'background:#f7f3e8}',
       '.yp-goal{font-family:var(--ff-serif);font-size:13px;font-weight:500;color:var(--wj-text);line-height:1.5}',
       '.yp-meters{display:flex;gap:14px;margin-top:6px;font-size:9.5px;letter-spacing:.14em;color:var(--wj-dimmer)}',
       '.yp-meters b{color:var(--wj-silver);font-weight:500;letter-spacing:.04em}',
@@ -118,18 +118,44 @@
       '.yp-stat b{color:var(--wj-silver);font-weight:500}',
       '.yp-score{font-size:13px;color:var(--wj-text);line-height:2}',
 
-      /* 设置抽屉 */
-      '.yp-sheet{position:fixed;inset:0;z-index:60;background:rgba(3,7,14,.62);display:flex;align-items:flex-end;justify-content:center}',
+      /* 设置抽屉（2026-10-11 装修：底贴 → **居中卡片**，纸面白瓷） */
+      '.yp-sheet{position:fixed;inset:0;z-index:60;background:rgba(28,26,23,.45);display:flex;align-items:center;justify-content:center}',
       '.yp-sheet[hidden]{display:none}',
-      '.yp-panel{width:100%;max-width:430px;background:#101a30;border:1px solid var(--wj-line);border-bottom:0;',
-      'border-radius:14px 14px 0 0;padding:16px 18px 20px;max-height:70vh;overflow-y:auto}',
-      '.yp-panel h3{margin:0 0 10px;font-family:var(--ff-serif);font-weight:500;font-size:15px;color:var(--wj-text);letter-spacing:.1em}',
-      '.yp-opt{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--wj-line);border-radius:8px;',
-      'margin-top:7px;cursor:pointer;color:var(--wj-text);font-size:12.5px;background:rgba(255,255,255,.02)}',
-      '.yp-opt.on{border-color:var(--wj-silver)}',
-      '.yp-opt small{color:var(--wj-dimmer);margin-left:auto;font-size:10px}',
-      '.yp-close{margin-top:12px;width:100%;padding:10px;border:1px dashed var(--wj-line);border-radius:8px;',
-      'background:transparent;color:var(--wj-dim);font-size:11.5px;cursor:pointer}'
+      '.yp-panel{width:min(340px,88%);background:#f4f0e7;border:1px solid rgba(43,38,32,.4);',
+      'border-radius:14px;padding:16px 18px 20px;max-height:72vh;overflow-y:auto;',
+      'box-shadow:0 24px 60px rgba(43,38,32,.35)}',
+      '.yp-panel h3{margin:0 0 10px;font-family:var(--ff-serif);font-weight:500;font-size:15px;color:#2b2620;letter-spacing:.1em}',
+      /* 局内手机：小手机造型壳（宽 280 竖长、圆角壳、顶部听筒条） */
+      '.yp-panel.yp-phone{width:min(280px,80%);border-radius:26px;border-width:2px;padding-top:26px;position:relative;}',
+      '.yp-phone-notch{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:64px;height:7px;',
+      'border-radius:99px;background:rgba(43,38,32,.35);}',
+      '.yp-panel.yp-phone h3{margin-top:4px;text-align:center;}',
+      '.yp-opt{display:flex;align-items:center;gap:9px;padding:11px 12px;border:0;border-radius:8px;',
+      'margin-top:2px;cursor:pointer;color:#2b2620;font-size:12.5px;background:transparent}',
+      '.yp-opt.on{background:#1c1a17;color:#f4f0e7}',
+      '.yp-opt.on small{color:rgba(244,240,231,.72)}',
+      '.yp-opt small{color:#6f675c;margin-left:auto;font-size:10px}',
+      '.yp-close{margin-top:12px;width:100%;padding:10px;border:0;border-radius:8px;',
+      'background:transparent;color:#6f675c;font-size:11.5px;cursor:pointer;text-decoration:underline dotted}',
+
+      /* ☰ 右侧栏（2026-10-11：替代悬浮球三件套 —— 点开右侧滑出，套装三项） */
+      '.yp-rail{position:fixed;inset:0;z-index:60;background:rgba(28,26,23,.45);display:flex;justify-content:flex-end}',
+      '.yp-rail-panel{width:min(300px,84%);height:100%;background:#f4f0e7;border-left:1px solid #1c1a17;',
+      'box-shadow:-18px 0 44px rgba(43,38,32,.3);padding:18px 16px;overflow-y:auto;',
+      'animation:ypRailIn .18s ease-out}',
+      '@keyframes ypRailIn{from{transform:translateX(36%);opacity:.4}to{transform:none;opacity:1}}',
+      '.yp-rail-title{font-family:var(--ff-serif);font-size:15px;letter-spacing:.12em;color:#2b2620;',
+      'padding-bottom:10px;border-bottom:2px solid #1c1a17;position:relative}',
+      '.yp-rail-title:after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:1px;background:#1c1a17}',
+      '.yp-rail-item{display:flex;align-items:center;gap:12px;width:100%;padding:13px 12px;margin-top:9px;',
+      'border:1px solid rgba(43,38,32,.35);border-radius:10px;background:rgba(255,255,255,.6);',
+      'color:#2b2620;font-family:inherit;font-size:13px;cursor:pointer;text-align:left}',
+      '.yp-rail-item b{font-family:var(--ff-serif);font-weight:500;font-size:16px;line-height:1}',
+      '.yp-rail-item small{margin-left:auto;font-size:9.5px;letter-spacing:.14em;color:#6f675c}',
+      '.yp-rail-item:active{background:rgba(28,26,23,.08)}',
+      '.yp-rail-item.dim{opacity:.35;cursor:not-allowed}',
+      '.yp-rail-item.badge{border-color:#a63b32;box-shadow:0 0 0 1px #a63b32}',
+      '.yp-rail-note{font-size:10.5px;color:#948b7d;line-height:1.8;margin-top:12px}'
     ].join('');
     document.head.appendChild(st);
   }
@@ -297,10 +323,12 @@
     var sid = (ctx.params && ctx.params.sandboxId) || (Sleepy.core.activeSandbox() || {}).id || null;
     var boxId = ctx.params && ctx.params.boxId;
     ctx.setTitle('入世');
-    ctx.setActions([{
-      label: '设置',
-      onClick: function () { openSettings(ctx, sid, boxId, function () { render(ctx); }); }
-    }]);
+    ctx.setActions([
+      { label: '局中口袋', svg: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4.5 7h15M4.5 12h15M4.5 17h15"/></svg>',
+        onClick: function () { openRailDrawer(ctx, sid, boxId); } },
+      { label: '设置',
+        onClick: function () { openSettings(ctx, sid, boxId, function () { render(ctx); }); } }
+    ]);
     ctx.body.innerHTML = '';
     ensureStyle();
     if (Sleepy.yrHomeStyle) Sleepy.yrHomeStyle();   /* 纸面撞色皮（yishenruju 同一份） */
@@ -326,9 +354,6 @@
 
     var root = h('div', 'yp-root');
     renderDeck(root, run, box);
-
-    /* 悬浮球三件套（按身份换装，方案 §5.3） */
-    renderBalls(root, ctx, sid, box, run);
 
     /* 行动日志 */
     var logEl = h('div', 'yp-log');
@@ -415,7 +440,39 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  /* ------------------------------ 悬浮球三件套（§5.3） ------------------------------ */
+  /* ☰ 右侧栏（2026-10-11 装修：替代悬浮球三件套 —— 用户点名
+     「点击三条横线出来右侧栏，三个选项」，面板要居中像真手机）。
+     三项仍按身份换装（ballDefs 的 A/B 套），局印徽标/置灰逻辑原样保留。 */
+  function openRailDrawer(ctx, sid, boxId) {
+    var box = B().getBox(boxId, sid);
+    var run = box && B().getRunByBox(box.id, sid);
+    if (!box || !run) { Sleepy.toast('这局已经结了。'); return; }
+    var rail = h('div', 'yp-rail');
+    var panel = h('div', 'yp-rail-panel');
+    panel.appendChild(h('div', 'yp-rail-title', '局中口袋'));
+    panel.appendChild(h('div', 'yr-eyebrow', identityName(run.identity) + ' 随身三件'));
+    ballDefs(run).forEach(function (d) {
+      var badge = d.k === 'seal' && !d.dim && B().pendingInterventions(run).length > 0;
+      var item = h('button', 'yp-rail-item' + (d.dim ? ' dim' : '') + (badge ? ' badge' : ''));
+      item.appendChild(h('b', null, d.glyph));
+      item.appendChild(h('span', null, d.label));
+      item.appendChild(h('small', null, badge ? '有传话' : (d.readonly ? '只读' : '')));
+      item.addEventListener('click', function () {
+        if (d.dim) { Sleepy.toast('局印认老板，员工的你只能看着。'); return; }
+        rail.remove();
+        openBallPanel(ctx, sid, box, d.k, d.readonly);
+      });
+      panel.appendChild(item);
+    });
+    panel.appendChild(h('p', 'yp-rail-note',
+      '点一项打开居中的面板；写进世界的传话会并进下一轮。'));
+    var close = h('button', 'yp-close', '收起');
+    close.addEventListener('click', function () { rail.remove(); });
+    panel.appendChild(close);
+    rail.addEventListener('click', function (e) { if (e.target === rail) rail.remove(); });
+    rail.appendChild(panel);
+    ctx.body.appendChild(rail);
+  }
 
   function ballDefs(run) {
     if (run.identity === 'boss-watch') {
@@ -434,22 +491,6 @@
     ];
   }
 
-  function renderBalls(root, ctx, sid, box, run) {
-    var row = h('div', 'yp-balls');
-    ballDefs(run).forEach(function (d) {
-      var badge = d.k === 'seal' && !d.dim && B().pendingInterventions(run).length > 0;
-      var b = h('button', 'yp-ball' + (d.dim ? ' dim' : '') + (badge ? ' badge' : ''));
-      b.appendChild(h('span', null, d.glyph));
-      b.appendChild(h('small', null, d.label));
-      b.addEventListener('click', function () {
-        if (d.dim) { Sleepy.toast('局印认老板，员工的你只能看着。'); return; }
-        openBallPanel(ctx, sid, box, d.k, d.readonly);
-      });
-      row.appendChild(b);
-    });
-    root.appendChild(row);
-  }
-
   function openBallPanel(ctx, sid, box, kind, readonly) {
     var run = B().getRunByBox(box.id, sid);
     if (!run) { Sleepy.toast('这局已经结了。'); return; }
@@ -460,6 +501,9 @@
     var world = B().worldFor(box, run);
 
     if (kind === 'phone') {
+      /* 局内手机：面板做成小手机样子（2026-10-11 用户：弹一个手机样子的） */
+      panel.classList.add('yp-phone');
+      panel.appendChild(h('div', 'yp-phone-notch'));
       panel.appendChild(h('h3', null, '手机 · 局内系统'));
       /* v221：导入世界读档案盒上的委托；演练世界照旧读内置委托 */
       var brief = (box.source === 'txt')

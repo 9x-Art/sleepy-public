@@ -195,11 +195,11 @@
      —— 三处消费方都在本行之后加载，运行时才调用。 -->
 <script src="forum-share.js" defer></script>
 <script src="page-qunsheng.js" defer></script>
-<!-- 仓库 App（page-repo.js）：设定打包分享。数据层 repo-core.js 必须在前 ——
+<!-- 御膳房 App（原仓库，page-repo.js）：设定打包分享。数据层 repo-core.js 必须在前 ——
      page-repo 求值时只是注册页面，运行时才调 Sleepy.repo，但保持先数据后
      页面的顺序（与 forum-core → page-qunsheng 同口径）。 -->
-<script src="repo-core.js" defer></script>
-<script src="page-repo.js?v=224" defer></script>
+<script src="repo-core.js?v=234" defer></script>
+<script src="page-repo.js?v=234" defer></script>
 <!-- 聊天 App 容器（4 Tab：消息 / 通讯录 / 朋友圈 / 我）。
      它是壳，内容由 page-chat（消息）、page-moments（朋友圈）、
      page-switch（我）各自提供，所以必须排在它们后面。
@@ -225,7 +225,7 @@
 <script src="page-workshop.js" defer></script>
 <!-- 以身入局（施工卡-以身入局-P0）：数据层在页面前求值 -->
 <script src="book-core.js" defer></script>
-<script src="page-yishenruju.js?v=228" defer></script>
+<script src="page-yishenruju.js?v=234" defer></script>
 <script src="page-yr-board.js" defer></script>
 <script src="page-yr-play.js" defer></script>
 

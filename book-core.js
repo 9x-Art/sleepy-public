@@ -124,16 +124,29 @@
     if (!box.enterable) throw new Error('book: 不可进入的盒子');
     var hit = IDENTITIES.filter(function (x) { return x.key === identity; })[0];
     if (!hit) throw new Error('book: 未知身份 ' + identity);
+    var now = new Date().toISOString();
     if (box.identity && box.identity !== identity) {
-      throw new Error('book: 这个世界已定过身份（' + box.identity + '），不可再改');
+      /* 演练盒重走三步（2026-10-11 用户：演练每次点都从领局牌开始）——
+         换身份=收旧局重开；正式世界身份仍锁死（本世界定一次）。 */
+      if (box.source !== 'drill') {
+        throw new Error('book: 这个世界已定过身份（' + box.identity + '），不可再改');
+      }
+      box.identity = identity;
     }
     if (box.status === 'ongoing') {
       var running = scoped('bookRuns', lockedSandboxId)
         .filter(function (r) { return r.boxId === boxId && r.status === 'ongoing'; })[0];
-      if (running) return { run: running, existed: true };
+      if (running) {
+        if (box.source !== 'drill') return { run: running, existed: true };
+        /* 演练盒重开：旧局就地收档（演练数据随时可弃，方案 §7.2 口径） */
+        var runsAll = store.get('bookRuns') || [];
+        runsAll.forEach(function (r) {
+          if (r && r.id === running.id) { r.status = 'ended'; r.endedAt = now; }
+        });
+        store.set('bookRuns', runsAll);
+      }
     }
 
-    var now = new Date().toISOString();
     /* v221：导入世界（source:'txt'）的运行记录带改动账本与 NPC 当前态；
        chapterIdx 按委托指定的起始章对齐。 */
     var worldKey = 'drill';
