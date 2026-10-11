@@ -84,6 +84,8 @@
       '.qs-post{padding:17px 0 15px;border-bottom:1px solid var(--line);cursor:pointer}',
       '.qs-meta{display:flex;align-items:flex-start;gap:10px}',
       '.qs-avatar{width:35px;height:35px;flex:0 0 auto;border:1px solid var(--ink);display:grid;place-items:center;background:#d6e0dc;font-family:Georgia,serif;font-weight:700;transform:rotate(-2deg)}',
+      /* v218：char 用自己头像时贴图盖住字母脸（core.setAvatarBg 加 has-img） */
+      '.qs-avatar.has-img,.qs-mini.has-img{color:transparent;background-size:cover;background-position:center;}',
       '.qs-who{font-size:13px;font-weight:800}',
       '.qs-sub{margin-top:2px;color:var(--muted);font-size:10px}',
       '.qs-tag{margin-left:auto;border:1px solid var(--line);padding:2px 6px;color:var(--muted);font-size:9px;flex:0 0 auto}',
@@ -270,7 +272,25 @@
       '.qs-main{padding:18px 18px 22px;}',
       '.qs-meta-row{padding:14px 2px;font-size:13px;}',
       '.qs-meta-row span{font-size:11px;}',
-      '.qs-notice{font-size:11.5px;}'
+      '.qs-notice{font-size:11.5px;}',
+      /* 论坛身份改名/头像（v218） */
+      '.qs-id-row{display:flex;gap:8px;align-items:stretch;}',
+      '.qs-id-row .qs-identity-option{flex:1;}',
+      '.qs-id-edit{border:1px solid var(--line);background:none;border-radius:8px;font-size:10px;color:var(--muted);padding:0 10px;cursor:pointer;font-family:inherit;}',
+      '.qs-id-editor{padding:12px 2px 10px;border-bottom:1px solid var(--line);}',
+      '.qs-id-fields{display:flex;gap:8px;}',
+      '.qs-id-input{flex:1;border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit;color:#2b2620;}',
+      '.qs-id-glyph{flex:0 0 52px;width:52px;text-align:center;}',
+      '.qs-id-colors{display:flex;gap:7px;margin-top:10px;}',
+      '.qs-id-colors button{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;}',
+      '.qs-id-colors button.on{border-color:#2b2620;}',
+      '.qs-id-save{margin-top:10px;border:0;border-radius:6px;background:#315d68;color:#f4f0e7;font-size:11px;padding:6px 16px;cursor:pointer;font-family:inherit;}',
+      /* ---- 2026-10-10 用户反馈：壳头别再挂「群声」title ——
+         群声各页自带报刊报头/顶栏 crumb（板块名就在那），默认玻璃壳头
+         （app.js 372 行拿 def.title 填的「群声」）整条藏掉，缝也不占高。
+         返回键页内自有 qs-backbar，不依赖壳头的 back-btn。 */
+      '.page[data-page^="qunsheng"] .app-head{display:none;}',
+      '.page[data-page^="qunsheng"] .page-inner{padding-top:calc(env(safe-area-inset-top) + 10px);}'
     ].join('');
     document.head.appendChild(st);
   }
@@ -278,6 +298,25 @@
   /* ------------------------------ 工具 ------------------------------ */
 
   var KIND_LABEL = { isle: '孤岛', archipelago: '群岛' };
+
+  /* v218：char 的脸 —— 非匿名的 char 身份贴他自己的头像（core.setAvatarBg，
+     和聊天/朋友圈同一张「微信头像」）；匿名身份保持字母脸（匿）。
+     pa 是 publicAuthorOf / publicAuthorOfComment 的公开投影，非匿名时带
+     ownerType / ownerEntityId。贴图是异步的，has-img 类由 setAvatarBg 自己加。 */
+  function paintFace(el, pa) {
+    if (!el || !pa || pa.anonymous) return;
+    if (pa.ownerType === 'char' && pa.ownerEntityId &&
+        Sleepy.core && Sleepy.core.setAvatarBg && Sleepy.core.findChar) {
+      var rec = Sleepy.core.findChar(pa.ownerEntityId);
+      if (rec) Sleepy.core.setAvatarBg(el, rec);
+    }
+  }
+
+  /* 论坛账号记录（forumAccounts 行）→ 能贴图的投影（作者主页/通知用） */
+  function faceOfAccount(acc) {
+    return acc ? { anonymous: false, ownerType: acc.ownerType,
+      ownerEntityId: acc.ownerEntityId } : null;
+  }
 
   /* 返回条：一级页（首页/板块/消息/我的）也要能回桌面 ——
      项目壳头被我按页藏了，返回键得自己长出来（user 2026-10-07 点名）。 */
@@ -418,7 +457,9 @@
 
     var card = h('article', 'qs-post');
     var meta = h('div', 'qs-meta');
-    meta.appendChild(h('div', 'qs-avatar', pa.avatarChar));
+    var av = h('div', 'qs-avatar', pa.avatarChar);
+    paintFace(av, pa);
+    meta.appendChild(av);
     var whoBox = h('div');
     whoBox.appendChild(h('div', 'qs-who', pa.displayName));
     var subLine = h('div', 'qs-sub',
@@ -644,7 +685,9 @@
     var pa = F().publicAuthorOf(post, post.authorAccountId, fx.sandboxId);
     var detail = h('article', 'qs-detail');
     var meta = h('div', 'qs-meta');
-    meta.appendChild(h('div', 'qs-avatar', pa.avatarChar));
+    var dav = h('div', 'qs-avatar', pa.avatarChar);
+    paintFace(dav, pa);
+    meta.appendChild(dav);
     var whoBox = h('div');
     whoBox.appendChild(h('div', 'qs-who', pa.displayName));
     whoBox.appendChild(h('div', 'qs-sub', fmtTime(post.createdAt) + ' · ' + fx.sandboxName));
@@ -833,7 +876,9 @@
       var children = comments.filter(function (x) { return x.rootCommentId === c.id && x.parentId; });
       var el = h('article', 'qs-comment');
       var cm = h('div', 'qs-cmain');
-      cm.appendChild(h('div', 'qs-mini', cpa.avatarChar));
+      var cav = h('div', 'qs-mini', cpa.avatarChar);
+      paintFace(cav, cpa);
+      cm.appendChild(cav);
       var cc = h('div', 'qs-ccontent');
       var cw = h('div', 'qs-cwho');
       cw.appendChild(document.createTextNode(cpa.displayName));
@@ -992,7 +1037,9 @@
     var identity = h('div', 'qs-identity-card');
     function identityNode(acc) {
       var n = h('div', 'qs-identity-card');
-      n.appendChild(h('div', 'qs-avatar', acc ? acc.displayName.charAt(0) : '我'));
+      var nav = h('div', 'qs-avatar', acc ? acc.displayName.charAt(0) : '我');
+      paintFace(nav, faceOfAccount(acc));
+      n.appendChild(nav);
       var copy = h('div', 'qs-identity-copy');
       copy.appendChild(h('small', null, '当前论坛身份 · ' + fx.sandboxName));
       copy.appendChild(h('b', null, acc ? acc.displayName : '还没有论坛身份'));
@@ -1427,7 +1474,7 @@
 
     root.appendChild(backBar());
     var head = h('div', 'qs-me-head');
-    head.appendChild(h('div', 'qs-avatar', me ? me.displayName.charAt(0) : '我'));
+    head.appendChild(h('div', 'qs-avatar', me ? avChar(me) : '我'));
     var hb = h('div');
     hb.appendChild(h('div', 'qs-me-name', me ? me.displayName : '还没有论坛身份'));
     hb.appendChild(h('div', 'qs-me-bio', '当前社区 · ' + fx.sandboxName +
@@ -1450,9 +1497,17 @@
     if (!owned.length) {
       main.appendChild(h('div', 'qs-empty', '还没有身份。返回首页点「催更」初始化社区。'));
     }
+    /* v218：身份可改名 / 换头像（forum-core.updateAccountProfile，只认 user 自己的）。
+       头像 = 头像字 + 底色；头像字留空回落名字首字。 */
+    function avChar(a) {
+      return (a && a.avatarGlyph) ? a.avatarGlyph : ((a && a.displayName) || '友').charAt(0);
+    }
+    var ID_COLORS = ['#d8cec0', '#d6e0dc', '#e2d7c4', '#c9d8c5',
+      '#d8c9d4', '#c5cfdd', '#e0d2b4', '#cdb7a8'];
     owned.forEach(function (a) {
+      var row = h('div', 'qs-id-row');
       var opt = h('button', 'qs-identity-option' + (me && me.id === a.id ? ' sel' : ''));
-      opt.appendChild(h('div', 'qs-mini', a.displayName.charAt(0)));
+      opt.appendChild(h('div', 'qs-mini', avChar(a)));
       var txt = h('div');
       txt.appendChild(h('b', null, a.displayName));
       txt.appendChild(h('small', null, a.accountType === 'main' ? '主账号（默认马甲）' : '小号'));
@@ -1463,7 +1518,52 @@
         if (!r.ok) { Sleepy.toast(r.message); return; }
         rebuild();
       });
-      main.appendChild(opt);
+      row.appendChild(opt);
+      var editBtn = h('button', 'qs-id-edit', '改名/头像');
+      editBtn.type = 'button';
+      row.appendChild(editBtn);
+      main.appendChild(row);
+
+      var ed = null;
+      editBtn.addEventListener('click', function () {
+        if (ed) { ed.parentNode.removeChild(ed); ed = null; return; }
+        ed = h('div', 'qs-id-editor');
+        var nameIn = h('input', 'qs-id-input');
+        nameIn.maxLength = 12; nameIn.value = a.displayName || ''; nameIn.placeholder = '论坛名字';
+        var glyphIn = h('input', 'qs-id-input qs-id-glyph');
+        glyphIn.maxLength = 2; glyphIn.value = a.avatarGlyph || ''; glyphIn.placeholder = '字';
+        glyphIn.title = '头像上的字，留空用名字第一个字';
+        var nameWrap = h('div', 'qs-id-fields');
+        nameWrap.appendChild(nameIn); nameWrap.appendChild(glyphIn);
+        ed.appendChild(nameWrap);
+        var curColor = a.avatarColor || ID_COLORS[0];
+        var sw = h('div', 'qs-id-colors');
+        ID_COLORS.forEach(function (c) {
+          var b = h('button');
+          b.type = 'button';
+          b.style.background = c;
+          if (c === curColor) b.classList.add('on');
+          b.addEventListener('click', function () {
+            curColor = c;
+            [...sw.children].forEach(function (x) { x.classList.remove('on'); });
+            b.classList.add('on');
+          });
+          sw.appendChild(b);
+        });
+        ed.appendChild(sw);
+        var save = h('button', 'qs-id-save', '保存');
+        save.type = 'button';
+        save.addEventListener('click', function () {
+          var r = F().updateAccountProfile(a.id, {
+            displayName: nameIn.value, avatarColor: curColor, avatarGlyph: glyphIn.value
+          });
+          if (!r.ok) { Sleepy.toast(r.message || '没存上'); return; }
+          Sleepy.toast('改好了', 'ok');
+          rebuild();
+        });
+        ed.appendChild(save);
+        main.insertBefore(ed, row.nextSibling);
+      });
     });
 
     main.appendChild(h('div', 'qs-group-label', '我的帖子'));
@@ -1800,7 +1900,9 @@
     var main = h('main', 'qs-main');
 
     var head = h('div', 'qs-me-head');
-    head.appendChild(h('div', 'qs-avatar', acc.displayName.charAt(0)));
+    var aav = h('div', 'qs-avatar', acc.avatarGlyph || acc.displayName.charAt(0));
+    paintFace(aav, faceOfAccount(acc));
+    head.appendChild(aav);
     var hb = h('div');
     hb.appendChild(h('div', 'qs-me-name', acc.displayName));
     hb.appendChild(h('div', 'qs-me-bio',

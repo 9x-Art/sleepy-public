@@ -125,8 +125,14 @@ function checkLoads() {
   var pages = fs.readdirSync(ROOT).filter(function (f) {
     return /^page-.*\.js$/.test(f);
   });
+  /* 引用的脚本可能带版本 query（?v=xxx，缓存破冰），先剥掉再比对 */
+  var re = /<script[^>]+src=["']([^"']+)["']/g;
+  var m;
+  var refs = [];
+  while ((m = re.exec(html))) refs.push(m[1]);
+  var loadedBase = refs.map(function (r) { return r.split('?')[0]; });
   var missing = pages.filter(function (f) {
-    return html.indexOf('"' + f + '"') < 0 && html.indexOf("'" + f + "'") < 0;
+    return loadedBase.indexOf(f) < 0;
   });
 
   if (missing.length) {
@@ -135,12 +141,8 @@ function checkLoads() {
     ok(pages.length + ' 个 page-*.js 全部已加载');
   }
 
-  /* 反向检查：HTML 引用的文件是不是真的存在 */
-  var refs = [];
-  var re = /<script[^>]+src=["']([^"']+)["']/g;
-  var m;
-  while ((m = re.exec(html))) refs.push(m[1]);
-  var gone = refs.filter(function (r) { return !exists(r); });
+  /* 反向检查：HTML 引用的文件是不是真的存在（同样忽略版本 query） */
+  var gone = refs.filter(function (r) { return !exists(r.split('?')[0]); });
   if (gone.length) bad('index.html 引用了不存在的文件：' + gone.join(', '));
   else ok(refs.length + ' 个 script 引用都存在');
 

@@ -60,6 +60,13 @@
       '.yp-meters{display:flex;gap:14px;margin-top:6px;font-size:9.5px;letter-spacing:.14em;color:var(--wj-dimmer)}',
       '.yp-meters b{color:var(--wj-silver);font-weight:500;letter-spacing:.04em}',
       '.yp-meters .hot b{color:var(--wj-wine-lite)}',
+      /* ★ v219 场景切换条（多张场景图手动切换） */
+      '.yp-scene{position:relative;margin:0 0 8px;border:1px solid var(--wj-line);border-radius:8px;overflow:hidden}',
+      '.yp-scene-img{display:block;width:100%;height:110px;object-fit:cover}',
+      '.yp-scene-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:14px;',
+      'padding:4px 8px;background:rgba(28,26,23,.55)}',
+      '.yp-scene-btn{border:0;background:none;color:#f4f0e7;font-size:15px;cursor:pointer;padding:0 6px;font-family:inherit}',
+      '.yp-scene-n{font-size:9.5px;letter-spacing:.14em;color:#f4f0e7}',
 
       /* 行动日志 */
       '.yp-log{flex:1;overflow-y:auto;padding:14px 16px;-webkit-overflow-scrolling:touch}',
@@ -138,7 +145,7 @@
     B().setMap('bookSettingsBySandbox', sid, s);
   }
 
-  function openSettings(ctx, sid, onChange) {
+  function openSettings(ctx, sid, boxId, onChange) {
     var s = getSettings(sid);
     var sheet = h('div', 'yp-sheet');
     var panel = h('div', 'yp-panel');
@@ -152,7 +159,7 @@
       o.appendChild(h('small', null, B().WORDS[k].replace(/字$/, '')));
       o.addEventListener('click', function () {
         setSetting(sid, 'words', k);
-        sheet.remove(); openSettings(ctx, sid, onChange);
+        sheet.remove(); openSettings(ctx, sid, boxId, onChange);
       });
       panel.appendChild(o);
     });
@@ -173,7 +180,7 @@
       o.appendChild(h('small', null, c.note || ''));
       o.addEventListener('click', function () {
         setSetting(sid, 'connLabel', c.label);
-        sheet.remove(); openSettings(ctx, sid, onChange);
+        sheet.remove(); openSettings(ctx, sid, boxId, onChange);
       });
       panel.appendChild(o);
     });
@@ -185,10 +192,29 @@
       o.appendChild(h('small', null, n === 3 ? '默认' : ''));
       o.addEventListener('click', function () {
         setSetting(sid, 'autoRounds', n);
-        sheet.remove(); openSettings(ctx, sid, onChange);
+        sheet.remove(); openSettings(ctx, sid, boxId, onChange);
       });
       panel.appendChild(o);
     });
+
+    /* v221 手动封禁（方案 v1.2 出口之四）：把这个世界封进第二层书架。
+       两次点按确认（第一次只变文字，不弹窗）。 */
+    panel.appendChild(h('div', 'yr-eyebrow', '危险区'));
+    var sealBtn = h('button', 'yp-opt');
+    sealBtn.appendChild(h('span', null, '封存这个世界'));
+    sealBtn.appendChild(h('small', null, '本局作废，档案盒盖上「已封存」进第二层'));
+    sealBtn.addEventListener('click', function () {
+      if (sealBtn.dataset.armed !== '1') {
+        sealBtn.dataset.armed = '1';
+        sealBtn.querySelector('span').textContent = '再点一次，确认封存';
+        return;
+      }
+      sheet.remove();
+      var bx = B().sealBox(boxId, '老板手动封存');
+      Sleepy.toast('《' + bx.title + '》已封存，躺在档案架第二层。');
+      if (onChange) onChange();
+    });
+    panel.appendChild(sealBtn);
 
     var close = h('button', 'yp-close', '收起');
     close.addEventListener('click', function () { sheet.remove(); if (onChange) onChange(); });
@@ -209,9 +235,35 @@
     return hit ? hit.name : key;
   }
 
-  function renderDeck(root, run) {
+  function renderDeck(root, run, box) {
     var deck = h('div', 'yp-deck');
-    deck.appendChild(h('div', 'yp-goal', '明面目标：' + B().DRILL_BRIEF.publicGoal));
+    /* ★ v219 场景切换（用户：故事是发展的，场景是动态的 —— 本批先给
+       手动切换；「剧情自动换景」等世界包批次接）。box.sceneRefs 顺序切换。 */
+    var refs = (box && box.sceneRefs) || (box && box.coverRef ? [box.coverRef] : []);
+    if (refs.length) {
+      var sc = h('div', 'yp-scene');
+      var img = h('img', 'yp-scene-img');
+      img.alt = '当前场景';
+      var idx = 0;
+      function paint() {
+        Sleepy.media.url(refs[idx]).then(function (u) { img.src = u; }, function () {});
+        lab.textContent = (idx + 1) + ' / ' + refs.length;
+      }
+      var lab = h('span', 'yp-scene-n', '');
+      var prevB = h('button', 'yp-scene-btn', '‹');
+      var nextB = h('button', 'yp-scene-btn', '›');
+      prevB.type = 'button'; nextB.type = 'button';
+      prevB.addEventListener('click', function () { idx = (idx - 1 + refs.length) % refs.length; paint(); });
+      nextB.addEventListener('click', function () { idx = (idx + 1) % refs.length; paint(); });
+      var bar = h('div', 'yp-scene-bar');
+      bar.appendChild(prevB); bar.appendChild(lab); bar.appendChild(nextB);
+      sc.appendChild(img); sc.appendChild(bar);
+      paint();
+      deck.appendChild(sc);
+    }
+    var goalText = (box && box.source === 'txt' && box.commission && box.commission.text)
+      ? box.commission.text : B().DRILL_BRIEF.publicGoal;
+    deck.appendChild(h('div', 'yp-goal', '明面目标：' + goalText));
     var meters = h('div', 'yp-meters');
     meters.appendChild(h('span', null, ['异常度 ', h('b', null, String(run.anomaly || 0))]));
     var pm = h('span', null, ['进度 ', h('b', null, (run.progress || 0) + '%')]);
@@ -247,10 +299,11 @@
     ctx.setTitle('入世');
     ctx.setActions([{
       label: '设置',
-      onClick: function () { openSettings(ctx, sid, function () { render(ctx); }); }
+      onClick: function () { openSettings(ctx, sid, boxId, function () { render(ctx); }); }
     }]);
     ctx.body.innerHTML = '';
     ensureStyle();
+    if (Sleepy.yrHomeStyle) Sleepy.yrHomeStyle();   /* 纸面撞色皮（yishenruju 同一份） */
     ctx.rebuild = function () { render(ctx); };
     if (!sid || !boxId) {
       ctx.body.appendChild(h('p', 'ph-entry-lead', '从建档页开局后才有可玩的世界。'));
@@ -269,10 +322,10 @@
       ctx.body.appendChild(h('p', 'ph-entry-lead', '这局还没开。回建档页开局吧。'));
       return;
     }
-    var world = B().getWorld(run.world) || B().DRILL_WORLD;
+    var world = B().worldFor(box, run);
 
     var root = h('div', 'yp-root');
-    renderDeck(root, run);
+    renderDeck(root, run, box);
 
     /* 悬浮球三件套（按身份换装，方案 §5.3） */
     renderBalls(root, ctx, sid, box, run);
@@ -404,11 +457,18 @@
     var panel = h('div', 'yp-panel');
     function refresh() { sheet.remove(); render(ctx); }
     function refreshStay() { sheet.remove(); render(ctx); openBallPanel(ctx, sid, box, kind, readonly); }
-    var world = B().getWorld(run.world) || B().DRILL_WORLD;
+    var world = B().worldFor(box, run);
 
     if (kind === 'phone') {
       panel.appendChild(h('h3', null, '手机 · 局内系统'));
-      var brief = B().DRILL_BRIEF;
+      /* v221：导入世界读档案盒上的委托；演练世界照旧读内置委托 */
+      var brief = (box.source === 'txt')
+        ? {
+            requester: (box.commission && box.commission.requester) || '委托者（局外）',
+            publicGoal: (box.commission && box.commission.text) || '按档案员预读的建议执行',
+            restriction: (box.commission && box.commission.restriction) || '不得向世界角色透露「局」的存在'
+          }
+        : B().DRILL_BRIEF;
       [['委托人', brief.requester], ['明面目标', brief.publicGoal],
        ['守则', brief.restriction], ['同档', world.npcs.map(function (n) { return n.name; }).join('、')]]
         .forEach(function (p) {
@@ -550,10 +610,21 @@
 
     settleBtn('请一段结算叙述（一次调用）', function () {
       var settings = getSettings(sid);
+      /* v221：导入世界的委托来自档案盒；结算四样口径（方案 v1.2）——
+         委托者真愿望满意度 / 世界受益 / char 满意度 / 完成度。 */
+      var isTxt = box.source === 'txt';
+      var goal = isTxt ? ((box.commission || {}).text || '') : B().DRILL_BRIEF.publicGoal;
       var messages = [
-        { role: 'system', content: '你是「以身入局」的叙事者。任务刚结束，写一段结算叙述：委托者的评价、局内角色的感想、一句评级包装。只写叙述，不写判定块，不许编造数字。' },
-        { role: 'user', content: '【任务档案】\n明面目标: ' + B().DRILL_BRIEF.publicGoal +
+        { role: 'system', content: '你是「以身入局」的叙事者。任务刚结束，写一段结算叙述。' +
+          (isTxt ? '这是导入世界：委托者站在世界之外收卷 —— 叙述要覆盖四样：' +
+            '委托者的真愿望满足了多少（可以比委托做得更好，那是加分）、这些改变对世界本身是福是祸、' +
+            '局内角色（char）自己的感受、以及一句完成度包装。' : '委托者的评价、局内角色的感想、一句评级包装。') +
+          '只写叙述，不写判定块，不许编造数字。' },
+        { role: 'user', content: '【任务档案】\n明面目标: ' + goal +
           '\n完成度: ' + scores.completion + '%  异常度: ' + (run.anomaly || 0) +
+          (isTxt && (run.divergences || []).length
+            ? '\n已发生的改变:\n' + run.divergences.map(function (d) { return '- 关于' + d.about + '：' + d.change; }).join('\n')
+            : '') +
           '\n共 ' + (run.logs || []).length + ' 轮，老板传话 ' + (run.interventions || []).length + ' 条。\n篇幅 ' + (B().WORDS[settings.words] || B().WORDS.standard) + '。' }
       ];
       callModel(settings, messages, function (text) {
@@ -638,8 +709,8 @@
        一进来重读 store 里的最新记录，done/fail 也各自重读，全程只认 store。 */
     run = B().getRunByBox(box.id, sid) || run;
     var settings = getSettings(sid);
-    var messages = B().buildBookMessages(run, box, B().getWorld(run.world), settings, input);
-    var world = B().getWorld(run.world) || B().DRILL_WORLD;
+    var messages = B().buildBookMessages(run, box, B().worldFor(box, run), settings, input);
+    var world = B().worldFor(box, run);
 
     run.logs = run.logs || [];
     run.logs.push({
@@ -661,12 +732,18 @@
       /* 本轮注入里带上的传话：成功后标记已用，日志条带局印批注（§六-3） */
       var sealTexts = B().pendingInterventions(live).map(function (i) { return i.text; });
       var entry = B().applyVerdict(live, v, input);
+      /* v221 导入世界：改动账本 + NPC 当前态 + 章节推进（进度程序按章算） */
+      if (live.world && live.world.indexOf('txt:') === 0) {
+        B().applyTxtVerdict(live, v, box);
+        var w2 = B().worldFor(box, live);
+        live.chapter = w2.chapter;
+      }
       if (sealTexts.length) {
         entry.sealNote = sealTexts.join('；');
         B().consumeInterventions(live);
       }
       live.world = live.world || 'drill';
-      live.chapter = world.chapter;
+      if (!(live.world && live.world.indexOf('txt:') === 0)) live.chapter = world.chapter;
       persistRun(live);
       if (live.anomaly >= 60) Sleepy.toast('异常度 ' + live.anomaly + ' —— 世界开始正式查你。', 'err');
       if (onOk) onOk(entry);

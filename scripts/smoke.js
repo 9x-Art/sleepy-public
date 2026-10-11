@@ -266,7 +266,12 @@ function scriptOrder() {
   const re = /<script\s+src="([^"]+)"[^>]*><\/script>/g;
   const out = [];
   let m;
-  while ((m = re.exec(html))) out.push(m[1]);
+  while ((m = re.exec(html))) {
+    /* 允许脚本引用带版本 query（?v=xxx）做缓存破冰：
+       冒烟只验文件存在与加载顺序，query 串在本地不存在真实文件，
+       必须剥掉再拼路径，否则会误报「文件不存在」（2026-10-11 加 ?v 破缓存后踩到）。 */
+    out.push(m[1].split('?')[0]);
+  }
   return out;
 }
 
@@ -1229,11 +1234,13 @@ console.log('\n--- page:群声（公共论坛 · 施工卡-群声-v1 Batch A）-
    Batch A 只交付：App 壳 + 显式 sandboxId 上下文 + 存储键与删岛登记。 */
 ok('群声 App 已注册且有 render', !!S.registered().qunsheng);
 
-t('forum 数据层出口齐全（13 张表 + 2 个映射键）', () => {
+t('forum 数据层出口齐全（13 张表 + 3 个映射键，v218 +forumAnonPoolMigrated）', () => {
   const F = S.forum;
   if (!F) throw new Error('Sleepy.forum 缺失');
   if (F.KEYS.length !== 13) throw new Error('forum 键数不对：' + F.KEYS.length);
-  if (F.MAP_KEYS.length !== 2) throw new Error('forum 映射键数不对：' + F.MAP_KEYS.length);
+  /* v218 起是 3 个：forumSettingsBySandbox / selectedForumAccountBySandbox /
+     forumAnonPoolMigrated（匿名池迁移的一次性标记） */
+  if (F.MAP_KEYS.length !== 3) throw new Error('forum 映射键数不对：' + F.MAP_KEYS.length);
   ['resolveContext', 'unlockContext', 'scopedForum', 'putForum', 'tagScope',
    'getForumMap', 'setForumMap', 'pageOf'].forEach((k) => {
     if (typeof F[k] !== 'function') throw new Error('缺出口 ' + k);
@@ -1248,12 +1255,13 @@ t('forum 新键进 store 默认值并随 exportAll 带走', () => {
   });
   if (typeof data.forumSettingsBySandbox !== 'object') throw new Error('导出缺 forumSettingsBySandbox');
   if (typeof data.selectedForumAccountBySandbox !== 'object') throw new Error('导出缺 selectedForumAccountBySandbox');
+  if (typeof data.forumAnonPoolMigrated !== 'object') throw new Error('导出缺 forumAnonPoolMigrated');
   return 'ok';
 });
 
 t('桌面「群声」格就位（p3-qunsheng / v23 / 专属图标）', () => {
   const d = S.desktop.defaultDesktop();
-  if (d.version !== 23) throw new Error('户型版本不对：' + d.version);
+  if (d.version !== 24) throw new Error('户型版本不对(24=仓库批)：' + d.version);
   const cell = d.pages[3].filter((c) => c.i === 'p3-qunsheng')[0];
   if (!cell) throw new Error('第 3 屏找不到 p3-qunsheng');
   if (cell.app !== 'qunsheng' || cell.type !== 'app') throw new Error('格子不是群声真入口');
@@ -1262,6 +1270,44 @@ t('桌面「群声」格就位（p3-qunsheng / v23 / 专属图标）', () => {
   const gone = d.pages[3].filter((c) => c.i === 'p3-stickers').length;
   if (gone) throw new Error('旧 p3-stickers 格还在');
   return { 格子: cell.i, app: cell.app, 图标: typeof S.desktop.icon('qunsheng') };
+});
+
+/* ---------------- 设定仓库 P0（方案-设定仓库-v1） ---------------- */
+
+ok('仓库 App 已注册 + 桌面真入口 + 图标', (() => {
+  if (!S.registered().repo) throw new Error('repo 页面没注册');
+  const d = S.desktop.defaultDesktop();
+  const cell = d.pages[3].filter((c) => c.i === 'p3-repo')[0];
+  if (!cell || cell.app !== 'repo' || cell.type !== 'app') throw new Error('第 3 屏找不到 p3-repo 真入口');
+  if (!S.desktop.ICONS.repo) throw new Error('repo 没有自己的图标条目');
+  return 'ok';
+}));
+
+t('仓库打包隐私红线：整岛包不带聊天/照片/马甲/API（结构性判据）', () => {
+  const sb = S.core.createSandbox('isle', '仓库隐私测试岛');
+  S.core.setSandboxChars(sb.id, [m1]);
+  S.book.lockSandbox(sb.id);
+  const manifest = S.repo.packIsland(sb.id, { title: '隐私测试', author: 'smoke' });
+  const text = JSON.stringify(manifest);
+  /* 判据串只在本断言里出现（本文件会被自身扫到的是「判据自己」——
+     所以逐条以「manifest 里不该出现的键/字段」落点在**包文本**上） */
+  ['"masks"', '"maskIds"', 'apiKey', 'baseUrl', '"chats"', '"moments"', '"photos"',
+   '"diary"', '"messages"'].forEach((bad) => {
+    if (text.indexOf(bad) >= 0) throw new Error('整岛包混进了 ' + bad);
+  });
+  const kinds = manifest.items.map((i) => i.kind);
+  if (!kinds.includes('char')) throw new Error('整岛包没带上角色');
+  if (!kinds.includes('meta')) throw new Error('整岛包没带岛元信息');
+  return { 类型: manifest.type, 件数: manifest.items.length };
+});
+
+t('仓库门牌解析：链接 ?g= 与裸口令都抠得出来', () => {
+  const p = S.repo.parseGateText;
+  if (p('https://x.pages.dev/repo/?g=ab12cd34') !== 'ab12cd34') throw new Error('链接没抠出');
+  if (p('【睡岛货架】xx 的仓库 · 门牌 zz99yy · https://x/?g=zz99yy') !== 'zz99yy') throw new Error('文本混排没抠出');
+  if (p('口令单独发：qq8ww7') !== 'qq8ww7') throw new Error('裸口令没抠出');
+  if (p('') !== '') throw new Error('空串应返回空');
+  return '三路 + 空态';
 });
 
 /* 专用岛：下面几条测试自己的沙盘，不碰前面 sbIsle / sbArch */
@@ -3311,8 +3357,10 @@ t('每个 App 格子都指向真实注册的页面', () => {
 /* ---------- 以身入局（book-core.js，施工卡-以身入局-P0 第一刀） ---------- */
 t('以身入局：数据层挂载 + 加载顺序（book-core 在页面前求值）', () => {
   const html2 = require('fs').readFileSync('index.html', 'utf8');
-  const iCore = html2.indexOf('src="book-core.js"');
-  const iPage = html2.indexOf('src="page-yishenruju.js"');
+  /* src 里可能带 ?v= 缓存戳（2026-10-10 仓库批起 index.html 开始顶 ?v=），
+     断言按前缀匹配，不许写死版本号 —— 写死就得每批跟着改。 */
+  const iCore = html2.indexOf('src="book-core.js');
+  const iPage = html2.indexOf('src="page-yishenruju.js');
   if (iCore < 0 || iPage < 0 || iCore > iPage) {
     throw new Error('index.html 里 book-core.js 必须存在且排在 page-yishenruju.js 之前');
   }
@@ -5339,18 +5387,22 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
    版本 23（2026-10-08）：「组件商城」空壳改成「以身入局」真入口
    （p3-yishenruju / type app / app yishenruju），收窄成
    「外观仍 blank」+「组件商城位已换成以身入局」。 */
-t('第 3 屏外观仍空壳，组件商城位已换成「以身入局」真入口，钱包位→小岛指南，贴纸位→群声，主屏入口不动', () => {
+t('第 3 屏外观位已换成「仓库」真入口，组件商城位→以身入局，钱包位→小岛指南，贴纸位→群声，主屏入口不动', () => {
   const d = S.desktop.defaultDesktop();
-  /* 外观那份空壳还在（主屏 p1-look 已有同功能入口） */
-  const look = d.pages[3].filter((c) => c.i === 'p3-look')[0];
-  if (!look || look.type !== 'blank') throw new Error('p3-look 应仍是空壳，实际 ' + (look && look.type));
-  if (!look.label) throw new Error('p3-look 丢了 label（编辑模式里认不出格子）');
+  /* 版本 24（2026-10-10 用户点名）：外观空壳位（主屏 p1-look 已有同功能
+     入口）换成仓库真入口 —— 格子 id 语义变了，p3-look → p3-repo。 */
+  const repo = d.pages[3].filter((c) => c.i === 'p3-repo')[0];
+  if (!repo || repo.type !== 'app') throw new Error('p3-repo 应是仓库真入口，实际 ' + (repo && repo.type));
+  if (repo.app !== 'repo' || repo.label !== '仓库')
+    throw new Error('p3-repo 应是 app/repo/仓库，实际 ' + JSON.stringify(repo));
+  if (repo.x !== 3 || repo.y !== 5) throw new Error('仓库坐标应为原外观位 (3,5)，实际 ' + repo.x + ',' + repo.y);
+  if (!S.desktop.ICONS.repo) throw new Error('repo 没有自己的图标条目');
   /* 组件商城位 → 以身入局真入口 */
   const ru = d.pages[3].filter((c) => c.i === 'p3-yishenruju')[0];
   if (!ru) throw new Error('第 3 屏找不到 p3-yishenruju（以身入局）那一格');
   if (ru.type !== 'app' || ru.app !== 'yishenruju' || ru.label !== '以身入局')
     throw new Error('p3-yishenruju 应是 以身入局 真入口，实际 ' + JSON.stringify(ru));
-  if (S.desktop.LAYOUT_VERSION !== 23) throw new Error('户型版本应为 23，实际 ' + S.desktop.LAYOUT_VERSION);
+  if (S.desktop.LAYOUT_VERSION !== 24) throw new Error('户型版本应为 24，实际 ' + S.desktop.LAYOUT_VERSION);
   /* 钱包位 → 小岛指南真入口 */
   const g = d.pages[3].find((c) => c.i === 'p3-guide');
   if (!g) throw new Error('第 3 屏找不到 p3-guide（小岛指南）那一格');
@@ -5381,7 +5433,7 @@ t('第 3 屏外观仍空壳，组件商城位已换成「以身入局」真入�
   if (!p1look || p1look.type !== 'app' || p1look.app !== 'appearance') {
     throw new Error('主屏的外观入口（p1-look）不能跟着变空壳');
   }
-  return { 空壳剩: [look.label], 以身入局: ru.label, 小岛指南: g.label, 群声: qs.label };
+  return { 仓库: repo.label, 以身入局: ru.label, 小岛指南: g.label, 群声: qs.label };
 });
 
 t('外观：三套主题的变量覆盖都写了，字号/动效都接得上', () => {
@@ -15511,8 +15563,28 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      自动档/结算封档 + page-yr-play 面板与循环），基准随批 v214 → v215。
    ⚠️ v216（2026-10-09）：群声返修批（详情页滚动层 / 返回键去重与错误态补返回 /
      单楼匿名 / 生成纪律去 char 中心化 / 同人代笔与追更 + updatePost 白名单），
-     基准随批 v215 → v216。 */
-const EXPECTED_SW_CACHE = 'sleepy-v216';
+     基准随批 v215 → v216。
+   ⚠️ v217（2026-10-10）：用户四点反馈批（群声壳头隐藏 / 查手机首页+单 App
+     刷新与 APP_FOCUS_ASK / 挂件灯留言折行与字号回推 / 以身入局纸面撞色
+     + 悬浮球身份），基准随批 v216 → v217。
+   ⚠️ v218（2026-10-10 晚）：群声匿名归属修复（匿名池号 + 迁移）/ 论坛身份
+     改名头像（updateAccountProfile）/ 以身入局首页拆悬浮球 + 封存层真书架，
+     基准随批 v217 → v218。
+   ⚠️ v219（2026-10-10 晚 2）：群声 char 头像 + yr-board 三步拆独立页 +
+     多场景（setScenes/sceneRefs）+ 三页全面纸面撞色 + TXT 导入第一版
+     （yr-import / bookImports / createBoxFromImport），基准随批 v218 → v219。
+   ⚠️ v220（2026-10-10 晚 3）：yr-box-top 顶签 <br> 改 innerHTML（h() 是
+     textContent，<br> 显示成文字），基准随批 v219 → v220。
+   ⚠️ v221（2026-10-10 晚 4）：导入世界游玩接线（worldFor/applyTxtVerdict/
+     patchBox/sealBox + buildBookMessages txt 四件套分支 + 预读升级出
+     剧情地图与建议卡 + yr-play 接线与手动封禁），基准随批 v220 → v221。
+   ⚠️ v222（2026-10-10 晚 5）：设定仓库 P0（worker/repo-core/page-repo
+     + 桌面 p3-repo 真入口 LAYOUT 24），基准随批 v221 → v222。
+   ⚠️ v227（2026-10-11）：CACHE 补跳——v223 之后工作区连改四批运行时脚本
+     （仓库批 ?v=224 / 以身入局 v225、v226）但 CACHE 没跟着 +1，装着旧 SW
+     的设备 ignoreSearch 命中旧条目、首次加载新旧脚本混装（无痕好普通窗怪）。
+     v223 → v227 一跳到当前。 */
+const EXPECTED_SW_CACHE = 'sleepy-v227';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

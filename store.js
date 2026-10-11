@@ -278,11 +278,13 @@
     forumKnowledge: [],         /* 论坛认知（观察者 × 公开身份，五档状态） */
     forumSettingsBySandbox: {},          /* { [sandboxId]: 设置 } */
     selectedForumAccountBySandbox: {},   /* { [sandboxId]: 当前论坛身份 } 切岛独立恢复 */
+    forumAnonPoolMigrated: {},           /* { [sandboxId]: 匿名池迁移标记 } v218 一次性 */
 
     /* 以身入局（book-core.js / 施工卡-以身入局-P0）：
        档案盒 / 任务运行按岛章隔离（tagScope），删房跟着清；
        身份与设置是按 sbId 切的映射键，走 core.js 映射键清理那条路。 */
     bookBoxes: [],                       /* 档案盒 { id, sandboxId, title, source, status, stamp, coverRef, note, updatedAt } */
+    bookImports: [],                     /* TXT 导入原文+章节（v219，与盒 importId 绑定，随岛走） */
     bookRuns: [],                        /* 任务运行 { id, sandboxId, boxId, identity, status, logs, volume, startedAt, endedAt } */
     bookSettingsBySandbox: {},           /* { [sandboxId]: { identity, seededAt } } */
 

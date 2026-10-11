@@ -145,7 +145,11 @@
   function resolveSeedAuthor(fx, raw, ctx, list) {
     var s = String(raw || '').trim();
     if (s === '@anon') {
-      return { accountId: ctx.userMainId, anonymous: true };       /* 匿名树洞：借 user 主号发，公开层只露别名 */
+      /* v218：匿名不再借 user 主号 —— 「我的帖子」按 authorAccountId 过滤，
+         借主号 = 别人的匿名内容全挂到 user 头上。改借匿名池号
+         （forum-core ensureSeed ⑤ 建的 ownerEntityId='anon-pool'）。 */
+      var pool = findAccountByOwner(fx, 'anon-pool', list);
+      return { accountId: pool ? pool.id : ctx.userMainId, anonymous: true };
     }
     var charRaw = s.indexOf('char:') === 0 ? s.slice(5).trim() : '';
     var charAnon = charRaw.slice(-5) === '@anon';

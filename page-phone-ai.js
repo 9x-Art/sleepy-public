@@ -94,6 +94,46 @@
     real: '请按输出协议产出初始生活底片（数量从少）。'
   };
 
+  /* ★ 2026-10-10 用户反馈：每个 App 页面要能单独刷新，且每页用**新的提示词**
+     （首页右上角的「刷新」走整体结算 phoneLife 原卡；各 App 页里的刷新
+     只产出这个 App 的 deltas —— 限定范围写在 [FOCUS]，本体协议卡不变）。
+     每页的「新提示词」= 共同协议卡 + 该 App 的专属指令 + 已有条目防重复。 */
+  var APP_FOCUS_ASK = {
+    messages: '这次**只更新「消息」App**：他和合法联系人的幕后交流（一来一回）、或一条没发出去的草稿。deltas 里其他 App 一律不要出现。',
+    taobao:   '这次**只更新「淘宝」App**：新下单的东西 / 既有订单状态往前推一步 / 收藏 / 加购。deltas 里其他 App 一律不要出现。',
+    health:   '这次**只更新「健康打卡」App**：最近一天的三餐零食、运动计划与实际、他自己的短评。deltas 里其他 App 一律不要出现。',
+    notes:    '这次**只更新「备忘录」App**：他随手记下的一条备忘（可以带 folder）。deltas 里其他 App 一律不要出现。',
+    browser:  '这次**只更新「浏览器」App**：一次搜索或一个收藏。deltas 里其他 App 一律不要出现。'
+  };
+
+  /* 单 App 已有条目的简表（防重复 —— 模型看不到库，只能喂给它） */
+  function existingBrief(ph, appKey) {
+    var out = [];
+    if (appKey === 'messages') {
+      phone.derivedMsgs(ph.id).slice(0, 8).forEach(function (m) {
+        out.push('- ' + (m.kind === 'draft' ? '草稿：' : '与' + (m.withName || '?') + '：') +
+          (((m.lines || [])[0] || {}).text || '').slice(0, 30));
+      });
+    } else if (appKey === 'browser') {
+      phone.listBrowser(ph.id).slice(0, 8).forEach(function (x) {
+        out.push('- ' + (x.kind === 'bookmark' ? '收藏：' : '搜索：') + x.query);
+      });
+    } else if (appKey === 'notes') {
+      phone.listNotes(ph.id).slice(0, 8).forEach(function (x) {
+        out.push('- ' + (x.title || String(x.content || '').slice(0, 30)));
+      });
+    } else if (appKey === 'health') {
+      phone.listHealth(ph.id).slice(0, 4).forEach(function (x) {
+        out.push('- ' + (x.day || '一天') + '：' + ((x.meals || [])[0] || {}).text);
+      });
+    } else if (appKey === 'taobao') {
+      phone.listShop(ph.id).slice(0, 8).forEach(function (x) {
+        out.push('- ' + x.title + '（' + x.status + '）');
+      });
+    }
+    return out;
+  }
+
   function contactsOf(sbId, charId) {
     var out = [];
     try {
@@ -137,6 +177,7 @@
     var sys = [Sleepy.promptEngine.cardBody('phoneLife')];
     if (char.content) sys.push('[CHARACTER]\n' + char.content + '\n[/CHARACTER]');
     if (opts.mode === 'bootstrap') sys.push('[MODE]\nbootstrap —— 初始生活底片，一生一次，遵守卡内「初始底片模式」一节。');
+    if (opts.appOnly) sys.push('[MODE]\napp-refresh —— 手动单 App 刷新：只允许产出 [FOCUS] 指定 App 的 deltas，其余 App 一律为空。');
 
     var contacts = contactsOf(sbId, char.id);
     var user = [];
@@ -153,9 +194,19 @@
     if (recent.length) user.push('[RECENT]\n最近的互动（只做语境参考）：\n' + recent.join('\n'));
     var from = opts.from ? new Date(opts.from).toLocaleString('zh-CN') : '角色创建以来';
     user.push('[RANGE]\n结算时间段：' + from + ' ～ 现在。只生成这段时间里合理发生的事。');
-    user.push(opts.mode === 'bootstrap'
-      ? (BOOTSTRAP_ASK[opts.level] || BOOTSTRAP_ASK.light)
-      : '请按输出协议结算这段时间的生活（没有合理内容就返回空 deltas）。');
+    if (opts.appOnly) {
+      user.push('[FOCUS]\n' + (APP_FOCUS_ASK[opts.appOnly] || ''));
+      var exist = existingBrief(ph, opts.appOnly);
+      if (exist.length) {
+        user.push('[EXIST]\n' + (APP_LABEL_OF[opts.appOnly] || opts.appOnly) +
+          '里已有的条目（不要重复，要新的东西）：\n' + exist.join('\n'));
+      }
+      user.push('请按输出协议产出这个 App 的新内容（最多 3 条 deltas；没有合理的就返回空 deltas）。');
+    } else {
+      user.push(opts.mode === 'bootstrap'
+        ? (BOOTSTRAP_ASK[opts.level] || BOOTSTRAP_ASK.light)
+        : '请按输出协议结算这段时间的生活（没有合理内容就返回空 deltas）。');
+    }
 
     return [
       { role: 'system', content: sys.join('\n\n') },
@@ -166,6 +217,21 @@
   /* ---------------------------- 结算 ---------------------------- */
 
   var running = {};
+
+  /* App 页刷新用的中文名（[EXIST] 提示行） */
+  var APP_LABEL_OF = {
+    messages: '消息', taobao: '淘宝', health: '健康打卡', notes: '备忘录', browser: '浏览器'
+  };
+
+  /* ★ 2026-10-10 单 App 手动刷新（App 页右上角按钮）：
+     复用 settle 的链路（同协议卡、同校验、同落库），只是提示词换成
+     「只出这个 App」。appKey 只认官方五个；工坊自定义 App 不接刷新。 */
+  function refreshApp(sbId, charId, appKey) {
+    if (!APP_FOCUS_ASK[appKey]) {
+      return Promise.resolve({ ok: false, error: '这个 App 还不支持单独刷新' });
+    }
+    return settle(sbId, charId, { appOnly: appKey });
+  }
 
   function settle(sbId, charId, opts) {
     opts = opts || {};
@@ -182,6 +248,7 @@
     var messages = buildMessages(sbId, ph, char, {
       mode: opts.mode,
       level: opts.level,          /* 底片档位（light / rich），别在这儿丢掉 */
+      appOnly: opts.appOnly,      /* 单 App 刷新（各 App 页的刷新按钮） */
       from: opts.mode === 'bootstrap' ? null : from
     });
     var runId = 'run_' + Date.now().toString(36);
@@ -302,6 +369,8 @@
     candFor: candFor,
     parseSettlementJson: parseSettlementJson,
     settle: settle,
+    refreshApp: refreshApp,
+    APP_FOCUS_ASK: APP_FOCUS_ASK,
     bootstrapPhone: bootstrapPhone,
     caughtReaction: caughtReaction,
     gateFor: function (charId) { return phone.gateFor(charId); },

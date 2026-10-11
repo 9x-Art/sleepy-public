@@ -602,7 +602,115 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v216';
+var CACHE = 'sleepy-v227';
+
+/* v227（2026-10-11）：**CACHE 补跳**——工作区在 v223 之后连改了四批运行时脚本
+   （仓库批 index.html ?v=224、以身入局 v225/v226 换装与 TXT 导入等，
+   index.html 已把 page-yishenruju.js / page-desktop.js / page-repo.js
+   的 ?v= 顶上去），但 CACHE 没跟着 +1——违反「改运行时脚本必须 CACHE +1」。
+   后果：装着旧 SW 的设备上，fetch 处理器 caches.match(req,{ignoreSearch:true})
+   会把带新 ?v= 的请求**无视查询串**命中旧缓存条目，先回旧文件再后台更新
+   （stale-while-revalidate），首次加载就是新旧脚本混装 —— 表现为「无痕好、
+   普通窗口怪」「刷新几次行为不一致」这类幽灵症状。v223→v227 一跳到当前。
+   → 必须跳版本：index.html / page-yishenruju.js / page-desktop.js /
+     page-yr-board.js / page-yr-play.js / book-core.js / store.js / app.js 都变了。 */
+
+/* v223（2026-10-10 晚 6）：**仓库上线批**——
+   · Worker 已部署：D1 + KV（R2 需 Dashboard 手动开通 → 换 KV 存包体，
+     repo-worker 下载口做 R2/KV 双兼容），线上地址烤进 repo-core
+     DEFAULT_BASE，页面上的地址填写框删除；
+   · 首个门牌「meiguan / 安乐的试吃铺」已建（线上 /shelf 验证通过）；
+   · 仓库 App 底部四 tab（货架/我的/门牌/我）+「我」板块：昵称/头像 URL
+     资料（发布自动预填）+ 头衔墙（本地推导开炉掌柜/尝过一口，
+     甜度系虚线占位待 P1）；外观空壳位 (3,5) 换仓库真入口（LAYOUT 24）。
+   → 必须跳版本：repo-core.js / page-repo.js / page-desktop.js 都变了。 */
+
+/* v222（2026-10-10 晚 5）：**设定仓库 P0（方案-设定仓库-v1）**——
+   · 新增 worker/（repo-worker.js + wrangler.toml + schema.sql）：D1 索引/
+     门牌 + R2 包体，端点 publish/shelf/item/gate/search/下架；单件 5MB；
+     作者令牌首发布时签发。**部署要 wrangler deploy + d1 create**（不走
+     GitHub HTTPS），仓库地址在仓库 App「我的」里填；
+   · 新增 repo-core.js（Sleepy.repo，设备级键 repo*）：打包（角色卡/整岛包，
+     媒体一律 URL 制，聊天/朋友圈/日记/照片/马甲/API 不进包）、发布/货架/
+     下载、门牌校验与链接解析（?g= 短码）、导入（角色卡进当前岛；整岛包
+     生成新岛——角色/以身入局档案全带，世界书/美化向导可选「用我的/带包里的」）；
+   · 新增 page-repo.js 仓库 App（货架/我的/门牌三板块 + 发布向导 + 导入
+     向导 + 深链 ?g= 识别 + 粘贴识别 + 链接复制）；index.html 加载 +2；
+   · page-desktop：第 4 屏 p3-repo 仓库真入口（ICONS.repo 收纳箱），
+     LAYOUT_VERSION 23→24；smoke 户型基准同步。
+   → 必须跳版本：repo-core.js / page-repo.js / page-desktop.js /
+     index.html 都变了。 */
+
+/* v221（2026-10-10 晚 4）：**导入世界入世游玩接线（方案 v1.2 施工）**——
+   · book-core：startRun 支持 txt 盒（run.world='txt:<boxId>'，chapterIdx 按起始章
+     对齐，带 divergences 改动账本 + npcStates）；worldFor 组装当轮世界对象
+     （原事实 + 改动账本 + NPC 当前态 + 当前章原文）；applyTxtVerdict（改变/
+     反应/推进 三行判定落账本，进度程序按章算）；patchBox（白名单字段）；
+     sealBox（手动封禁出口）；
+   · buildBookMessages txt 分支：四件套注入（席位 / 剧情地图 / 改动账本 /
+     当前章原文节选 2600 字 / 前情）+ 世界角色铁律（无人知道原剧情与委托）+
+     委托者站局外口径；判定块新增 改变/反应/推进 三行；
+   · yr-import 预读协议升级：brief/npcs[{name,role,fact}]/places/
+     nodes[{at,event,mutable}]/suggest{requester,publicGoal,hiddenGoal,
+     restriction,why}——剧情地图 + NPC 档案 + 委托建议卡一次生成；
+   · yr-board 第 3 步：导入世界显示委托卡 + 建议卡（采用/换人重提，
+     reSuggest 不重读全书只重出建议）；txt 盒开局放行；
+   · yr-play：世界与委托全部走 txt 适配（deck 目标/手机面板/结算叙述四样
+     口径：委托者真愿望满意度/世界受益/char 满意度/完成度）；设置面板加
+     「封存这个世界」（两次点按确认，sealBox 盖「已封存」进第二层书架）。
+   → 必须跳版本：book-core.js / page-yr-board.js / page-yr-play.js 都变了。 */
+
+/* v220（2026-10-10 晚 3）：**档案盒顶签 <br> 修复**——h() 第三参是
+   textContent，'以身入局<br>世界档案' 里的 <br> 原样显示成文字；
+   yr-box-top 改走 innerHTML（空位签同修）。真机走查（大厅/建档三步/
+   游玩/导入四页全流程）通过。
+   → 必须跳版本：page-yishenruju.js 变了。 */
+
+/* v219（2026-10-10 晚 2）：**群声 char 头像 + 以身入局第二轮回炉**——
+   · 群声：char 非匿名身份贴自己的「微信头像」（core.setAvatarBg 同源，
+     qs-avatar/qs-mini 加 has-img 盖字母脸；匿名仍匿名脸）。作者主页/通知同接；
+   · yr-board：领局牌三步拆成独立页（进度点 + 上一步/下一步，照建群走法）；
+     场景图支持多张（book-core 新增 setScenes：box.sceneRefs，coverRef 同步第一张）；
+   · 全部换纸面撞色：ensureHomeStyle 推广到 yishenruju / yr-board / yr-play
+     三页（Sleepy.yrHomeStyle），帷境深纱部件换白瓷面；
+   · TXT 导入（需求清单 §十 第一版）：新页面 yr-import（page-yr-board.js 内）
+     —— 选 txt / UTF-8↔GB18030 切换+乱码提示 / 章节切分（第X章正则，兜底按长度）/
+     章节名可改 / 选起始章 / 手填委托与扮演角色 / 一次轻量 AI 预读（简介+人物+地点，
+     失败不阻塞）→ createBoxFromImport 上架；原文落 bookImports（store/core 登记）；
+     入世游玩接导入世界 = 下一批（开局按钮如实提示，不冒充可用）；
+   · yr-play：顶部场景条（多张手动 ‹ › 切换；剧情自动换景等世界包批次）。
+   → 必须跳版本：page-qunsheng.js / page-yr-board.js / page-yr-play.js /
+     page-yishenruju.js / book-core.js / store.js / core.js 都变了。 */
+
+/* v218（2026-10-10 晚）：**群声归属修复 + 论坛身份编辑 + 以身入局首页回炉**——
+   · 群声归属 bug：生成链匿名树洞以前「借 user 主号发」（resolveSeedAuthor '@anon'），
+     「我的帖子/回复」按 authorAccountId 过滤 → 别人的匿名内容全挂到 user 头上。
+     改借匿名池号（forum-core ensureSeed ⑤，ownerType='anon'，永不出现在身份列表）；
+     一次性迁移把历史借主号的匿名帖/匿名回复划给池号（map 标记 forumAnonPoolMigrated）；
+   · 论坛身份编辑：「我的」页每个身份加「改名/头像」——名字（12 字内）+
+     头像字 + 8 色底；forum-core 新增 updateAccountProfile（只认 user 自己的）；
+     publicAuthorOf 头像字支持 avatarGlyph；
+   · 以身入局首页回炉（用户：不要悬浮球、不要底部说明）：悬浮球与相关
+     CSS 整体拆除；封存层从一句空话改成真书架（没货摆三只虚线空位）。
+   → 必须跳版本：forum-core.js / forum-gen.js / page-qunsheng.js /
+     page-yishenruju.js / store.js / core.js（删岛映射键名单）都变了。 */
+
+/* v217（2026-10-10）：**用户四点反馈批**——
+   · 群声：默认玻璃壳头（def.title 的「群声」）整条藏掉 —— 各页自带
+     报刊报头/crumb，板块名就在那，壳头重复还占高（page-qunsheng.js）；
+   · 查手机：桌面右上角刷新（一次整体结算 phoneLife 原卡，跨 App 出内容）
+     + 每个 App 页头独立刷新（page-phone-ai.js 新增 refreshApp / APP_FOCUS_ASK：
+     同协议卡 + [FOCUS] 该 App 专属指令 + [EXIST] 已有条目防重复，
+     官方五 App 各一份新提示词；page-phone.js 按钮接线，style.css .ph-refresh）；
+   · 挂件灯：留言字太小 —— vendor/acrylic-lamp-core.js paintCard 只按 \n
+     分行，40 字留言被压一行硬缩到几像素；新增 wrapLines 按宽逐字折行 +
+     按行数回推字号（vendor/lamp 副本同步）；
+   · 以身入局：档案架大厅换装 —— 群声同族纸面 #f4f0e7 + 墨色撞色
+     （眉标/层标黑底反白小条、报头双细杠），yr-board/yr-play 仍帷境夜色；
+     三个身份从环形牌台改成悬浮球（一颗「局」球点开三颗身份球
+     观/随/行，球下挂名；没有可进世界时整簇不出现）。
+   → 必须跳版本：page-qunsheng.js / page-phone.js / page-phone-ai.js /
+     style.css / page-yishenruju.js / vendor/acrylic-lamp-core.js 都变了。 */
 
 /* v216（2026-10-09）：**群声 v216 返修批（用户六条点名）**——
    · 帖子详情页：主楼/动作条/回复列表以前直接平铺在没有 overflow 的 .qs-root 里，

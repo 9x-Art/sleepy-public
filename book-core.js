@@ -21,7 +21,7 @@
   var core = Sleepy.core;
   var store = Sleepy.store;
 
-  var BOOK_KEYS = ['bookBoxes', 'bookRuns'];
+  var BOOK_KEYS = ['bookBoxes', 'bookRuns', 'bookImports'];
   var BOOK_MAP_KEYS = ['bookSettingsBySandbox'];
 
   var lockedSandboxId = null;
@@ -134,6 +134,22 @@
     }
 
     var now = new Date().toISOString();
+    /* v221：导入世界（source:'txt'）的运行记录带改动账本与 NPC 当前态；
+       chapterIdx 按委托指定的起始章对齐。 */
+    var worldKey = 'drill';
+    var chapterIdx = 0;
+    if (box.source === 'txt') {
+      worldKey = 'txt:' + boxId;
+      var imp = (store.get('bookImports') || []).filter(function (r) {
+        return r && r.sandboxId === lockedSandboxId && r.id === box.importId;
+      })[0];
+      if (imp && box.commission && box.commission.startChapter) {
+        var ci = (imp.chapters || []).findIndex(function (c) {
+          return c.title === box.commission.startChapter;
+        });
+        if (ci >= 0) chapterIdx = ci;
+      }
+    }
     box.identity = identity;          /* 刻死 */
     box.status = 'ongoing';
     box.updatedAt = now;
@@ -146,7 +162,10 @@
       identity: identity,             /* b 层：员工/老板（锁死） */
       seat: seat || null,             /* c 层：穿书占位身份 */
       status: 'ongoing',
-      world: 'drill',
+      world: worldKey,
+      chapterIdx: chapterIdx,         /* txt 世界：当前章下标（drill 恒 0） */
+      divergences: [],                /* 改动账本（v221）：已发生的对原书的改变 */
+      npcStates: {},                  /* NPC 当前态（v221）：判定写回，按名存 */
       anomaly: 0,                     /* 异常度（只升不降） */
       progress: 0,                    /* 章节进度 % */
       logs: [],                       /* 行动日志（行动轮/在场轮共用） */
@@ -190,6 +209,78 @@
     return getBox(boxId, sid);
   }
 
+  /* ★ v219 场景图多张（用户：故事是发展的，场景是动态的）：
+     box.sceneRefs = [mediaId]（顺序即场景顺序），coverRef 永远同步成第一张
+     —— 老代码（游玩页封面等）不用改。传 [] = 清空。 */
+  function setScenes(boxId, mediaIds, sandboxId) {
+    if (!lockedSandboxId && !sandboxId) throw new Error('book: setScenes 必须带 sandboxId 或先 lockSandbox');
+    var sid = sandboxId || lockedSandboxId;
+    var list = (Array.isArray(mediaIds) ? mediaIds : []).filter(function (x) { return !!x; });
+    var all = store.get('bookBoxes') || [];
+    var hit = false;
+    all.forEach(function (b) {
+      if (b && b.sandboxId === sid && b.id === boxId) {
+        b.sceneRefs = list;
+        b.coverRef = list[0] || null;
+        b.updatedAt = new Date().toISOString();
+        hit = true;
+      }
+    });
+    if (!hit) throw new Error('book: 找不到档案盒 ' + boxId);
+    store.set('bookBoxes', all);
+    return getBox(boxId, sid);
+  }
+
+  /* ---------- TXT 导入（需求清单 §十 第一版） ----------
+     user 导入自己的书 → 章节切分 → 选起始章 + 手动委托/扮演角色 → 上架成
+     可进的档案盒。原始文本与章节落 bookImports（与盒 id 绑定，删盒不删文本，
+     「重新上架」还能用）。第一版**不做**整本自动分析（需求清单 §十）——
+     只有建档时一次轻量 AI 预读（提炼简介/主要人物，失败不阻塞）。 */
+  function createBoxFromImport(sid, o) {
+    if (!sid) throw new Error('book: createBoxFromImport 必须带 sandboxId');
+    var now = new Date().toISOString();
+    var rec = tagScope({
+      id: uid('book-box'),
+      title: String(o.title || '未命名世界').slice(0, 40),
+      source: 'txt', status: 'empty', stamp: '导入', enterable: true,
+      note: String(o.note || '').slice(0, 200),
+      coverRef: null, sceneRefs: [],
+      importId: o.importId || null,           /* bookImports 里的原始文本 */
+      commission: o.commission || null,       /* { text, roleNote, startChapter } */
+      summary: o.summary || null,             /* AI 预读 { brief, npcs, places } 或 null */
+      createdAt: now, updatedAt: now
+    }, sid);
+    var all = store.get('bookBoxes') || [];
+    all.push(rec);
+    store.set('bookBoxes', all);
+    return rec;
+  }
+
+  function putImport(rec) {
+    var all = store.get('bookImports') || [];
+    var idx = -1;
+    for (var i = 0; i < all.length; i++) {
+      if (all[i] && all[i].id === rec.id) { idx = i; break; }
+    }
+    if (idx >= 0) all[idx] = rec; else all.push(rec);
+    store.set('bookImports', all);
+    return rec;
+  }
+
+  function getImport(importId, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    return (store.get('bookImports') || []).filter(function (r) {
+      return r && r.id === importId && (!sid || r.sandboxId === sid);
+    })[0] || null;
+  }
+
+  function listImports(sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    return (store.get('bookImports') || []).filter(function (r) {
+      return r && (!sid || r.sandboxId === sid);
+    }).sort(function (a, b) { return b.createdAt < a.createdAt ? -1 : 1; });
+  }
+
   /* ============================== 第三刀：入世轮核心 ============================== */
 
   /* 演练世界状态种子（世界数据批次会换成正式世界包；结构即协议 §一） */
@@ -218,6 +309,133 @@
     return key === 'drill' ? DRILL_WORLD : null;
   }
 
+  /* ---------- v221 · 导入世界（txt）适配层 ---------- */
+
+  /* 组装 txt 世界的「当轮世界对象」：原事实 + 改动账本 + NPC 当前态。
+     每轮现算（不落库），数据全部来自 box.summary（预读地图）、
+     run.divergences（账本）、run.npcStates（判定写回）。 */
+  function worldFor(box, run) {
+    if (!run) return DRILL_WORLD;
+    if (run.world === 'drill' || !box || box.source !== 'txt') {
+      return getWorld(run.world) || DRILL_WORLD;
+    }
+    var imp = getImport(box.importId, box.sandboxId);
+    var chapters = (imp && imp.chapters) || [];
+    var idx = Math.max(0, Math.min(chapters.length - 1, run.chapterIdx || 0));
+    var sum = box.summary || {};
+    var dvs = run.divergences || [];
+    var st = run.npcStates || {};
+    var npcs = (sum.npcs || []).map(function (n) {
+      var name = typeof n === 'string' ? n : (n.name || '?');
+      var fact = typeof n === 'string' ? '' : (n.fact || '');
+      var mine = dvs.filter(function (d) { return d && d.about === name; });
+      return {
+        name: name,
+        role: typeof n === 'object' && n.role ? n.role : '',
+        stance: st[name] || '原作进行时',
+        fact: fact,
+        /* 世界角色不知道「原剧情」，只知道自己经历过的事：
+           原事实 + 被波及的改动，就是 TA 的全部记忆。 */
+        known: fact + (mine.length ? '（此后发生：' + mine.map(function (d) { return d.change; }).join('；') + '）' : '')
+      };
+    });
+    var chapter = chapters[idx] || { title: '起始', text: '' };
+    return {
+      key: run.world, _txt: true,
+      title: box.title,
+      chapter: chapter.title,
+      place: (sum.places && sum.places[0]) || '书中世界',
+      brief: sum.brief || box.note || '',
+      npcs: npcs,
+      nodes: sum.nodes || [],
+      chapterText: String(chapter.text || ''),
+      chapterTotal: chapters.length
+    };
+  }
+
+  /* txt 判定扩展：改动账本 + NPC 当前态 + 章节推进（进度由程序按章算）。
+     chapters 从 bookImports 取（调用方是 yr-play）。 */
+  function applyTxtVerdict(run, v, box) {
+    var changed = 0;
+    (v.worldChanges || []).forEach(function (wc) {
+      if (!wc || !wc.about || !wc.change) return;
+      run.divergences = run.divergences || [];
+      run.divergences.push({ about: String(wc.about).slice(0, 20),
+        change: String(wc.change).slice(0, 120), at: (run.logs || []).length });
+      changed++;
+    });
+    Object.keys(v.npcReactions || {}).forEach(function (name) {
+      var s = String(v.npcReactions[name] || '').trim();
+      if (!s) return;
+      run.npcStates = run.npcStates || {};
+      run.npcStates[String(name).slice(0, 20)] = s.slice(0, 60);
+      changed++;
+    });
+    if (v.chapterReached) {
+      var imp = getImport(box.importId, box.sandboxId);
+      var chapters = (imp && imp.chapters) || [];
+      var idx = -1;
+      for (var i = 0; i < chapters.length; i++) {
+        if (chapters[i].title === v.chapterReached) { idx = i; break; }
+      }
+      /* 只许向后推进（模型说「回到第 1 章」不算数） */
+      if (idx > (run.chapterIdx || 0)) {
+        run.chapterIdx = idx;
+        run.progress = chapters.length
+          ? Math.min(100, Math.round((idx + 1) / chapters.length * 100)) : run.progress;
+        changed++;
+      }
+    }
+    return changed;
+  }
+
+  /* 建档后补改档案盒（v221）：委托建议卡「采用」、预读补充等。
+     白名单字段，防止把 status/identity 这类状态机字段从后门改掉。 */
+  function patchBox(boxId, fields, sandboxId) {
+    if (!lockedSandboxId && !sandboxId) throw new Error('book: patchBox 必须带 sandboxId 或先 lockSandbox');
+    var sid = sandboxId || lockedSandboxId;
+    var ALLOWED = ['commission', 'summary', 'note', 'sceneRefs', 'coverRef'];
+    var all = store.get('bookBoxes') || [];
+    var hit = false;
+    all.forEach(function (b) {
+      if (b && b.sandboxId === sid && b.id === boxId) {
+        Object.keys(fields || {}).forEach(function (k) {
+          if (ALLOWED.indexOf(k) >= 0) b[k] = fields[k];
+        });
+        b.updatedAt = new Date().toISOString();
+        hit = true;
+      }
+    });
+    if (!hit) throw new Error('book: 找不到档案盒 ' + boxId);
+    store.set('bookBoxes', all);
+    return getBox(boxId, sid);
+  }
+
+  /* 手动封禁（方案 v1.2 出口之四）：run 封存 + 盒盖「已封存」戳 → 第二层书架。 */
+  function sealBox(boxId, reason) {
+    if (!lockedSandboxId) throw new Error('book: sealBox 必须先 lockSandbox');
+    var now = new Date().toISOString();
+    var runs = store.get('bookRuns') || [];
+    runs.forEach(function (r) {
+      if (r && r.sandboxId === lockedSandboxId && r.boxId === boxId && r.status === 'ongoing') {
+        r.status = 'sealed';
+        r.endedAt = now;
+        r.sealReason = String(reason || '').slice(0, 60);
+      }
+    });
+    store.set('bookRuns', runs);
+    var all = store.get('bookBoxes') || [];
+    all.forEach(function (b) {
+      if (b && b.sandboxId === lockedSandboxId && b.id === boxId) {
+        b.status = 'sealed';
+        b.stamp = '已封存';
+        b.updatedAt = now;
+      }
+    });
+    store.set('bookBoxes', all);
+    return getBox(boxId, lockedSandboxId);
+  }
+
   /* 每轮字数档 → 提示词要求 */
   var WORDS = { short: '不超过 180 字', standard: '300 字左右', long: '500 字左右' };
 
@@ -230,7 +448,14 @@
     var words = WORDS[settings.words] || WORDS.standard;
     var idn = IDENTITIES.filter(function (x) { return x.key === run.identity; })[0];
     var seat = run.seat || { name: '未定' };
-    var brief = DRILL_BRIEF;
+    var isTxt = !!(world && world._txt);            /* v221：导入世界 */
+    var commission = box.commission || {};
+    var brief = isTxt ? {
+      requester: commission.requester || '委托者（局外）',
+      publicGoal: commission.text || '按档案员预读的建议执行',
+      hiddenGoal: commission.hiddenGoal || '（委托者的真愿望在结算时才揭晓评价）',
+      restriction: commission.restriction || '不得向世界角色透露「局」的存在'
+    } : DRILL_BRIEF;
     var recent = (run.logs || []).slice(-3).map(function (l) { return l.text; });
 
     var system = [
@@ -250,21 +475,67 @@
       '在场人物: ' + world.npcs.map(function (n) { return n.name + '(' + n.stance + ')'; }).join(', '),
       '',
       '【在场人物档案】'
-    ].concat(world.npcs.map(function (n) {
+    ].concat(world.npcs.length ? world.npcs.map(function (n) {
       return n.name + ' / 当前态: ' + n.stance + '\n  既定事实: ' + n.fact + '\n  原文声音: ' + (n.voice || n.known);
-    })).concat([
+    }) : ['（预读没认出主要人物 —— 按当前章原文里出现的人物即兴立档，他们不知道任何「剧情以外」的事。）']);
+
+    if (isTxt) {
+      /* v221 四件套：原事实(档案) / 改动账本 / 当前章原文 / 前情(recent) */
+      system = system.concat([
+        '',
+        '【这本书】（user 与 char 从书外来，任务是走进这个故事执行委托）',
+        '这是《' + world.title + '》的第 ' + world.chapter + ' 章。你写的一切必须与下面的原文衔接：',
+        '文风、人物口吻、既定事实以原文为准 —— 原文没写到的才由你续写。'
+      ]);
+      if (world.nodes && world.nodes.length) {
+        system = system.concat(['', '【剧情地图】（预读的关键事件锚点）'].concat(
+          world.nodes.map(function (n) {
+            return '- ' + (n.at || '?') + '：' + (n.event || '') + (n.mutable === false ? '（原作固定）' : '（可被改变）');
+          })));
+      }
+      var dvs = run.divergences || [];
+      system = system.concat(['',
+        '【已发生的改变】（改动账本 —— 世界已经变成这样，NPC 只知道经历过的事）',
+        dvs.length ? dvs.map(function (d) { return '- 关于 ' + d.about + '：' + d.change; }).join('\n')
+                   : '（还没有。你与委托就是要来改变这本书的 —— 改变是任务本体，放心写。）',
+        '',
+        '【世界角色铁律】世界里的所有人（包括与委托者同名的人，如果有）都不知道：',
+        '原剧情的走向、「委托」的存在、你们来自世界之外。他们只知道自己经历过的事，',
+        '行为从经历出发往后推。']);
+      if (world.chapterText) {
+        system = system.concat(['',
+          '【当前章原文节选】',
+          String(world.chapterText).slice(0, 2600) + (world.chapterText.length > 2600 ? '……' : '')]);
+      }
+    }
+
+    system = system.concat([
       '',
-      '【委托】明面目标: ' + brief.publicGoal + ' 暗线: ' + brief.hiddenGoal + ' 限制: ' + brief.restriction,
+      '【委托】委托者站在世界之外（相当于未来的某人委托你们回到过去），',
+      '局中任何人都不知道委托的存在。明面目标: ' + brief.publicGoal +
+        ' 暗线: ' + brief.hiddenGoal + ' 限制: ' + brief.restriction,
       recent.length ? '【前情】\n' + recent.join('\n') : '【前情】开局，尚未发生任何事。',
       '',
       '【输出格式】先写正文叙事（' + words + '），',
       '正文之后另起一行输出判定块，格式严格如下（无变化的行写「无」，不许省略行）：',
       '<判定>',
-      '权限: 正常|擦边|越界 / 异常度 +N（N 为 0/1/3/6 的增量）',
-      '进度: ' + world.chapter + ' X% → Y%',
+      '权限: 正常|擦边|越界 / 异常度 +N（N 为 0/1/3/6 的增量）'
+    ]);
+    if (isTxt) {
+      system = system.concat([
+        '改变: 无 | 关于:人物名 / 改变:一句话（这轮对原书造成的、会影响后续的改变；没有就写无）',
+        '反应: 无 | 人物名 → 新当前态（一句话；哪些人物因为这轮的言行更新了态度/认知）',
+        '推进: 无 | 章节标题（故事推进到的章节标题，必须与下面原文的章节名一致；没推进就写无）'
+      ]);
+    } else {
+      system = system.concat([
+        '进度: ' + world.chapter + ' X% → Y%'
+      ]);
+    }
+    system = system.concat([
       '</判定>',
       '硬越界（提到局/原著/结局）一律记 +6 且当轮就有世界反应。'
-    ]).join('\n');
+    ]);
 
     var sealNotes = (run.interventions || []).filter(function (i) { return i && !i.used && i.text; });
     if (sealNotes.length) {
@@ -281,17 +552,19 @@
         (run.charName || '局内员工') + ' 的行动与心理，末尾按格式给判定块。';
 
     return [
-      { role: 'system', content: system },
+      { role: 'system', content: system.join('\n') },
       { role: 'user', content: user }
     ];
   }
 
-  /* 剥判定块：正文与判定分开返回。没有判定块 = 判定全无变化（正文照收）。 */
+  /* 剥判定块：正文与判定分开返回。没有判定块 = 判定全无变化（正文照收）。
+     v221：txt 世界多解析「改变 / 反应 / 推进」三行（容错：有则给，无则空）。 */
   function parseVerdict(text) {
     var s = String(text || '');
     var m = s.match(/<判定>([\s\S]*?)(<\/判定>|$)/);
     var narrative = m ? s.slice(0, m.index).trim() : s.trim();
-    var v = { narrative: narrative, anomalyDelta: 0, progress: null, verdictText: null };
+    var v = { narrative: narrative, anomalyDelta: 0, progress: null, verdictText: null,
+      worldChanges: [], npcReactions: {}, chapterReached: null };
     if (!m) return v;
     v.verdictText = m[1].trim();
     var am = v.verdictText.match(/异常度\s*([+−-]?\s*\d+)/);
@@ -304,6 +577,27 @@
       var p = parseInt(pm[1], 10);
       if (!isNaN(p)) v.progress = Math.max(0, Math.min(100, p));
     }
+    /* 改变: 关于:名字 / 改变:内容 —— 容错两种写法（带「关于:」前缀或裸「名字 → 内容」） */
+    var cm = v.verdictText.match(/改变[:：]\s*([^\n]+)/);
+    if (cm && !/^\s*无\s*$/.test(cm[1])) {
+      var seg = cm[1].split('/');
+      if (seg.length >= 2) {
+        var about = (seg[0].match(/关于[:：]?\s*(.*)/) || [])[1] || seg[0];
+        v.worldChanges.push({ about: about.trim(), change: seg.slice(1).join('/').replace(/^\s*改变[:：]?\s*/, '').trim() });
+      } else {
+        var pair = cm[1].split(/→/);
+        if (pair.length >= 2) v.worldChanges.push({ about: pair[0].trim(), change: pair.slice(1).join('→').trim() });
+      }
+    }
+    /* 反应: 名字 → 新当前态（可多行） */
+    var rre = /反应[:：]\s*([^\n→]+?)\s*→\s*([^\n]+)/g, rm;
+    while ((rm = rre.exec(v.verdictText)) !== null) {
+      if (/^\s*无\s*$/.test(rm[1])) continue;
+      v.npcReactions[rm[1].trim()] = rm[2].trim();
+    }
+    /* 推进: 章节标题 */
+    var gm = v.verdictText.match(/推进[:：]\s*([^\n]+)/);
+    if (gm && !/^\s*无\s*$/.test(gm[1])) v.chapterReached = gm[1].trim();
     return v;
   }
 
@@ -445,6 +739,15 @@
     getRunByBox: getRunByBox,
     getLastRunByBox: getLastRunByBox,
     setCover: setCover,
+    setScenes: setScenes,
+    createBoxFromImport: createBoxFromImport,
+    putImport: putImport,
+    getImport: getImport,
+    listImports: listImports,
+    worldFor: worldFor,
+    applyTxtVerdict: applyTxtVerdict,
+    patchBox: patchBox,
+    sealBox: sealBox,
     DRILL_WORLD: DRILL_WORLD,
     DRILL_BRIEF: DRILL_BRIEF,
     getWorld: getWorld,

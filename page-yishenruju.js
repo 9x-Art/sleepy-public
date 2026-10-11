@@ -39,8 +39,7 @@
 
   /* ------------------------------ 样式 ------------------------------ */
   var STYLE_ID = 'yr-book-style';
-  function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) return;
+  function ensureStyle() {    if (document.getElementById(STYLE_ID)) return;
     var st = document.createElement('style');
     st.id = STYLE_ID;
     st.textContent = [
@@ -147,6 +146,65 @@
     ].join('');
     document.head.appendChild(st);
   }
+
+  /* ---- 2026-10-10 换装（用户反馈：颜色不太行，想要群声那种
+     纸面 + 深色撞色的质感；晚一轮确认「以身入局全部换」）----
+     yishenruju / yr-board / yr-play 三页共用这一份纸面撞色皮；
+     style.css 的帷境换皮组保留（别的 wj 页还走夜色），这里整体压过去。 */
+  var HOME_STYLE_ID = 'yr-home-style';
+  var YR_PAGES = '.page[data-page="yishenruju"],' +
+    '.page[data-page="yr-board"],.page[data-page="yr-play"]';
+  function ensureHomeStyle() {
+    if (document.getElementById(HOME_STYLE_ID)) return;
+    var st = document.createElement('style');
+    st.id = HOME_STYLE_ID;
+    st.textContent = [
+      /* 纸面底 + 墨色文字（群声的报纸底 #f4f0e7 一族）。
+         注意：style.css 11841 这一组还把这三页设成帷境夜色（深蓝径向渐变底
+         + --bg:#16203a），是 2026-10-10 换纸皮前的旧决定。纸皮要在级联上压住它，
+         必须 ① background 用 !important 盖掉那条 radial-gradient；② 玻璃层
+         --g-glass/--g-glass-2 也改成正不透明的纸色，否则内层 .app-body/卡片会画成
+         半透明白玻璃盖在纸底上（真机实测：rgba(255,255,255,.72) 大片灰白、不是纸）。 */
+      YR_PAGES + '{background:#f4f0e7 !important;',
+      '--bg:#f4f0e7;--text:#2b2620;--text-dim:rgba(43,38,32,.6);--surface-solid:#f4f0e7;',
+      '--g-glass:rgba(244,240,231,.92);--g-glass-2:rgba(244,240,231,.96);',
+      '--g-glass-line:rgba(43,38,32,.16);--g-glass-edge:rgba(43,38,32,.24);}',
+      /* 色板整体换暖：var 只在组件上生效，这里在页级把 --wj-* 重定义 */
+      YR_PAGES + ' .yr-root{color:#2b2620;',
+      '--wj-night:#efe9db;--wj-night-2:#e5dcc8;--wj-night-3:#d8cdb4;',
+      '--wj-line:rgba(43,38,32,.18);--wj-line-soft:rgba(43,38,32,.1);',
+      '--wj-text:#2b2620;--wj-dim:#6f675c;--wj-dimmer:#948b7d;',
+      '--wj-silver:#3f3a32;--wj-wine:#a63b32;--wj-wine-lite:#c86f66;',
+      '--wj-paper:#faf7f0;--wj-paper-2:#ece5d4;--wj-ink:#2b2620;--wj-green:#315d68;}',
+      /* 顶栏：报头式双细杠压底 */
+      YR_PAGES + ' .yr-top{border-bottom:2px solid #1c1a17;padding-bottom:10px;position:relative;}',
+      YR_PAGES + ' .yr-top:after{content:"";position:absolute;left:18px;right:18px;bottom:-5px;height:1px;background:#1c1a17;}',
+      YR_PAGES + ' .yr-mark{border-color:rgba(43,38,32,.55);}',
+      YR_PAGES + ' .yr-mark:after{border-left-color:rgba(43,38,32,.7);}',
+      /* 眉标：黑底反白小条 —— 群声的撞色块 */
+      YR_PAGES + ' .yr-eyebrow{display:inline-block;padding:3px 10px 2px;background:#1c1a17;color:#f4f0e7;border-radius:2px;}',
+      YR_PAGES + ' .yr-shelf-note{display:inline-block;padding:3px 10px 2px;background:#1c1a17;color:#f4f0e7;border-radius:2px;margin-left:2px;}',
+      YR_PAGES + ' .yr-rail{background:linear-gradient(180deg,rgba(43,38,32,.09),transparent 42%);}',
+      YR_PAGES + ' .yr-id-now{background:rgba(255,255,255,.62);}',
+      YR_PAGES + ' .yr-empty-shelf{color:#948b7d;}',
+      /* 导入入口行 */
+      YR_PAGES + ' .yr-shelf-head{display:flex;align-items:center;gap:10px;}',
+      YR_PAGES + ' .yr-import-btn{margin-left:auto;border:1px solid #1c1a17;background:transparent;color:#2b2620;',
+      'font-size:10px;letter-spacing:.18em;padding:4px 10px;border-radius:2px;cursor:pointer;font-family:inherit;}',
+      /* 帷境部件里写死的深色半透明面，在纸面上换成白瓷面 */
+      YR_PAGES + ' .yb-card,' + YR_PAGES + ' .yp-entry,' + YR_PAGES + ' .yp-bubble{background:rgba(255,255,255,.6);}',
+      YR_PAGES + ' .yb-open{border-color:#1c1a17;background:rgba(255,255,255,.08);color:#2b2620;}',
+      YR_PAGES + ' .yb-open:active{background:rgba(28,26,23,.12);}',
+      /* 游玩页钉底的操作条 / 圆球条：原 rgba(5,10,20,.34) 深纱在纸面上
+         会变成「深底配深字」，统一换成白瓷条 + 墨线 */
+      YR_PAGES + ' .yp-act,' + YR_PAGES + ' .yp-balls{background:rgba(250,247,240,.94);}',
+      YR_PAGES + ' .yp-act{border-top:1px solid rgba(43,38,32,.18);}',
+      YR_PAGES + ' .yp-row input,.yp-row button,' + YR_PAGES + ' .yp-ball{background:rgba(255,255,255,.72);}'
+    ].join('');
+    document.head.appendChild(st);
+  }
+  /* yr-board / yr-play 也调用（同一份 style id，注入一次全局生效） */
+  Sleepy.yrHomeStyle = ensureHomeStyle;
 
   /* ------------------------------ 环形牌台（通用） ------------------------------ */
   /* 照领局牌 Demo v2 口径移植：coverflow 三维透视 + 拖拽/箭头/圆点。
@@ -286,53 +344,17 @@
 
   /* ------------------------------ 渲染 ------------------------------ */
 
-  function renderIdentity(ctx, sid) {
-    var wrap = h('section');
-    wrap.appendChild(h('div', 'yr-eyebrow', '下一局身份'));
-    var cur = B().getIdentity(sid);
-    function backToRing() {
-      var s = B().getMap('bookSettingsBySandbox', sid) || {};
-      delete s.identity;
-      B().setMap('bookSettingsBySandbox', sid, s);
-      render(ctx, sid);
-    }
-    if (cur) {
-      var hit = B().IDENTITIES.filter(function (x) { return x.key === cur; })[0];
-      var card = h('button', 'yr-id-now');
-      card.style.cursor = 'pointer';
-      card.appendChild(h('b', null, hit ? hit.name : cur));
-      card.appendChild(h('p', null, (hit ? hit.desc : '') + ' 点这张卡，回牌台换一个（只影响还没定身份的世界）。'));
-      /* 整卡可点（虚线小按钮太不起眼，用户反馈「点不回去」） */
-      card.addEventListener('click', backToRing);
-      wrap.appendChild(card);
-      var again = h('button', 'yr-again', '↺ 回牌台换默认身份');
-      again.addEventListener('click', backToRing);
-      wrap.appendChild(again);
-    } else {
-      wrap.appendChild(yrRing({
-        cards: B().IDENTITIES.map(function (it) {
-          var g = { 'boss-watch': '观', 'boss-join': '随', 'staff': '行' }[it.key] || '局';
-          var code = { 'boss-watch': 'NO.01 · 观局', 'boss-join': 'NO.02 · 入局', 'staff': 'NO.03 · 当值' }[it.key] || '';
-          var sub = it.key === 'staff' ? '局印认老板，不认你' : '局印特权';
-          return { glyph: g, name: it.name, sub: sub, code: code, desc: it.desc };
-        }),
-        takeText: '定下这一枚',
-        onTake: function (i) {
-          var it = B().IDENTITIES[i];
-          B().setIdentity(sid, it.key);
-          Sleepy.toast('默认身份定了：' + it.name + '。每个世界建档时各自定死。');
-          render(ctx, sid);
-        }
-      }));
-    }
-    return wrap;
-  }
+  /* ------------------------------ 渲染 ------------------------------ */
 
   function boxCard(ctx, sid, box, idx) {
     /* 竖书脊档案盒：配色轮换（纸/夜/酒），空位画虚线盒 */
     var el = h('button', 'yr-box' + (box.enterable ? [' night', ' wine', ' paper'][idx % 3] : ' empty'));
     if (!box.enterable) el.setAttribute('aria-disabled', 'true');
-    el.appendChild(h('div', 'yr-box-top', box.enterable ? '以身入局<br>世界档案' : '空位<br>待上架'));
+    var top = h('div', 'yr-box-top');
+    /* 两行签：<br> 必须走 innerHTML —— h() 的第三参是 textContent，
+       字符串里的 <br> 会原样显示成文字（真机抓过）。 */
+    top.innerHTML = box.enterable ? '以身入局<br>世界档案' : '空位<br>待上架';
+    el.appendChild(top);
     el.appendChild(h('div', 'yr-spine', h('b', null, box.title)));
     el.appendChild(h('div', 'yr-hole'));
     if (box.enterable) el.appendChild(h('div', 'yr-code', box.stamp + ' · 局内'));
@@ -357,6 +379,7 @@
     ctx.setActions([]);
     ctx.body.innerHTML = '';
     ensureStyle();
+    ensureHomeStyle();
 
     var root = h('div', 'yr-root');
     var room = h('div', 'yr-room');
@@ -365,7 +388,7 @@
     var top = h('div', 'yr-top');
     var brand = h('div', 'yr-brand');
     brand.appendChild(h('span', 'yr-mark'));
-    brand.appendChild(h('span', null, '档案架'));
+    brand.appendChild(h('span', null, '以身入局 · 档案架'));
     top.appendChild(brand);
     var energy = h('div', 'yr-energy');
     energy.appendChild(h('small', null, '能量'));
@@ -374,27 +397,55 @@
     top.appendChild(energy);
     root.appendChild(top);
 
-    /* 身份 */
-    room.appendChild(renderIdentity(ctx, sid));
-
     /* 档案架 · 第一层 */
     var boxes = B().ensureBoxes(sid);
     var shelfA = h('section', 'yr-shelf');
-    shelfA.appendChild(h('div', 'yr-shelf-note', '第一层 · 已建档世界'));
+    var headRow = h('div', 'yr-shelf-head');
+    headRow.appendChild(h('div', 'yr-eyebrow', '第一层 · 已建档世界'));
+    /* ★ v219 TXT 导入入口（需求清单 §十：user 导入自己的书上架成新世界） */
+    var imp = h('button', 'yr-import-btn', '+ 导入 TXT');
+    imp.type = 'button';
+    imp.addEventListener('click', function () {
+      Sleepy.nav.open('yr-import', { sandboxId: sid });
+    });
+    headRow.appendChild(imp);
+    shelfA.appendChild(headRow);
     var railA = h('div', 'yr-rail');
     boxes.forEach(function (b, i) { railA.appendChild(boxCard(ctx, sid, b, i)); });
     shelfA.appendChild(railA);
     shelfA.appendChild(h('div', 'yr-board'));
     room.appendChild(shelfA);
 
-    /* 档案架 · 第二层（封存） */
+    /* 档案架 · 第二层（封存）—— 2026-10-10 用户反馈：封存也是一排书架，
+       不是一句空话。封存盒（status='sealed' / 已结案戳）立上来，没货摆空位。 */
+    var sealed = boxes.filter(function (b) {
+      return b.status === 'sealed' || b.stamp === '已结案';
+    });
     var shelfB = h('section', 'yr-shelf');
-    shelfB.appendChild(h('div', 'yr-shelf-note', '第二层 · 封存'));
-    shelfB.appendChild(h('div', 'yr-empty-shelf', '还没有封存的档案。\n异常度涨到 60 的世界会躺到这一层来。'));
+    shelfB.appendChild(h('div', 'yr-eyebrow', '第二层 · 封存'));
+    var railB = h('div', 'yr-rail');
+    if (!sealed.length) {
+      for (var ei = 0; ei < 3; ei++) {
+        var empty = h('button', 'yr-box empty');
+        empty.type = 'button';
+        empty.setAttribute('aria-disabled', 'true');
+        var etop = h('div', 'yr-box-top');
+        etop.innerHTML = '空位<br>待封存';
+        empty.appendChild(etop);
+        empty.appendChild(h('div', 'yr-spine', h('b', null, '—')));
+        empty.appendChild(h('div', 'yr-hole'));
+        empty.addEventListener('click', function () {
+          Sleepy.toast('异常度涨到 60 的世界会躺到这一层来。');
+        });
+        railB.appendChild(empty);
+      }
+    } else {
+      sealed.forEach(function (b, i) { railB.appendChild(boxCard(ctx, sid, b, i)); });
+    }
+    shelfB.appendChild(railB);
+    shelfB.appendChild(h('div', 'yr-board'));
     room.appendChild(shelfB);
 
-    room.appendChild(h('div', 'yr-foot',
-      '进局前选好身份，开局后不可再换。每一步都会自动写进卷宗，退出再进来接着走。'));
     root.appendChild(room);
     ctx.body.appendChild(root);
   }

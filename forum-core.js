@@ -35,7 +35,9 @@
     'forumDrafts', 'forumKnowledge'
   ];
 
-  var FORUM_MAP_KEYS = ['forumSettingsBySandbox', 'selectedForumAccountBySandbox'];
+  var FORUM_MAP_KEYS = ['forumSettingsBySandbox', 'selectedForumAccountBySandbox',
+    /* v218：匿名池迁移的一次性标记（按岛记 moved 数，防重复迁移） */
+    'forumAnonPoolMigrated'];
 
   /* ------------------------------ 小工具 ------------------------------ */
 
@@ -227,6 +229,62 @@
       created.boards++;
     });
 
+    /* ⑤ 匿名池账号（v218 修「别人的匿名帖挂到我头上」）：
+       以前生成链的匿名树洞借 user 主号发（forum-gen resolveSeedAuthor '@anon'），
+       而「我的帖子/回复」按 authorAccountId 过滤 —— 借主号 = 借出一次挂名一次。
+       匿名一律改借这个 ownerType='anon' 的池号：谁也不拥有，listOwnedForumAccounts
+       只认 ownerType='user'，它永远不会出现在「论坛身份」列表里。 */
+    var pool = accounts.filter(function (a) {
+      return a.sandboxId === sid && a.ownerEntityId === 'anon-pool';
+    })[0];
+    if (!pool) {
+      pool = tagScope({
+        id: uid('fa'), ownerEntityId: 'anon-pool', ownerType: 'anon',
+        accountType: 'anon', displayName: '匿名',
+        handle: 'a_' + strHash(sid + ':anon'),
+        avatarColor: '#cfc8ba', bio: '', status: 'active',
+        createdAt: nowIso(), updatedAt: nowIso()
+      }, sid);
+      accounts.push(pool);
+      created.accounts++;
+    }
+
+    /* ⑥ 一次性迁移（v218）：历史上借主号的匿名内容划给池号。
+       判据 = 匿名帖 authorAccountId===user 主号，或匿名帖的楼主回复 /
+       单楼匿名回复 authorAccountId===user 主号 —— 正常署名内容一个不动。
+       ⚠️ user 自己在发帖页选「单帖匿名」的老帖子也会被划走：老数据没有
+       「这条是谁操作发的」标记，分不开；范围只有匿名那一小撮。 */
+    if (!getForumMap('forumAnonPoolMigrated', sid)) {
+      var mainAcc = accounts.filter(function (a) {
+        return a.sandboxId === sid && a.ownerType === 'user' && a.accountType === 'main';
+      })[0];
+      if (mainAcc && pool) {
+        var mPosts = store.get('forumPosts') || [];
+        var mComments = store.get('forumComments') || [];
+        var moved = 0;
+        var anonPostIds = {};
+        mPosts.forEach(function (p) {
+          if (!p || p.sandboxId !== sid) return;
+          if (p.authorDisplayMode === 'anonymous') {
+            if (p.authorAccountId === mainAcc.id) {
+              p.authorAccountId = pool.id; p.updatedAt = nowIso(); moved++;
+            }
+            anonPostIds[p.id] = 1;
+          }
+        });
+        mComments.forEach(function (c) {
+          if (!c || c.sandboxId !== sid) return;
+          if (c.authorAccountId === mainAcc.id &&
+              (c.anonymous === true || (c.isPostAuthor && anonPostIds[c.postId]))) {
+            c.authorAccountId = pool.id; c.updatedAt = nowIso(); moved++;
+          }
+        });
+        putForum('forumPosts', mPosts);
+        putForum('forumComments', mComments);
+        setForumMap('forumAnonPoolMigrated', sid, { at: nowIso(), moved: moved });
+      }
+    }
+
     if (created.accounts) putForum('forumAccounts', accounts);
     if (created.boards) putForum('forumBoards', boards);
     return { ok: true, created: created };
@@ -317,12 +375,41 @@
       ownerEntityId: acc ? acc.ownerEntityId : null,
       ownerType: acc ? acc.ownerType : null,
       displayName: acc ? acc.displayName : '已注销账号',
-      avatarChar: acc ? (acc.displayName || '友').charAt(0) : '友',
+      /* avatarGlyph：论坛身份编辑里用户自选的头像字（v218），没设就落名字首字 */
+      avatarChar: acc ? (acc.avatarGlyph || (acc.displayName || '友').charAt(0)) : '友',
       avatarColor: acc ? (acc.avatarColor || '#d6e0dc') : '#d6e0dc'
     };
   }
 
   /* ------------------------------ 帖子 / 回复 CRUD ------------------------------ */
+
+  /* v218：论坛身份改名 / 换头像。只允许 user 自己的身份（ownerType==='user'）；
+     char / NPC / 居民的脸是岛内的脸，不归这里改。avatarGlyph 空串 = 回落名字首字。 */
+  function updateAccountProfile(accountId, fields) {
+    var sid = lockedSandboxId;
+    if (!sid) return { ok: false, message: '没有当前岛' };
+    var list = store.get('forumAccounts') || [];
+    var hit = null;
+    list.forEach(function (a) {
+      if (a && a.sandboxId === sid && a.id === accountId) hit = a;
+    });
+    if (!hit) return { ok: false, message: '找不到这个身份' };
+    if (hit.ownerType !== 'user') return { ok: false, message: '只能改自己的论坛身份' };
+    var f = fields || {};
+    if (typeof f.displayName === 'string') {
+      var dn = f.displayName.trim().slice(0, 12);
+      if (dn) hit.displayName = dn;
+    }
+    if (typeof f.avatarColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(f.avatarColor)) {
+      hit.avatarColor = f.avatarColor;
+    }
+    if (typeof f.avatarGlyph === 'string') {
+      hit.avatarGlyph = f.avatarGlyph.trim().slice(0, 2);
+    }
+    hit.updatedAt = nowIso();
+    putForum('forumAccounts', list);
+    return { ok: true, account: hit };
+  }
 
   /* 创建帖子。opt: { sandboxId, boardId, accountId, anonymous, postType,
      title, content, visibility, allowRepost } */
@@ -757,6 +844,7 @@
     publicAuthorOfComment: publicAuthorOfComment,
     createPost: createPost,
     updatePost: updatePost,
+    updateAccountProfile: updateAccountProfile,
     getPost: getPost,
     getBoard: getBoard,
     listComments: listComments,

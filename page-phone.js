@@ -919,6 +919,30 @@
         hero.appendChild(h('h1', 'ph-hero-t', greet));
         hero.appendChild(h('p', 'ph-hero-s',
           livePlan ? '他最近在准备：' + livePlan.title : dateStr() + ' · 手机就放在那里'));
+
+        /* ★ 2026-10-10 首页右上角「刷新」：一次整体结算（原本的 phoneLife
+           协议卡），产出跨 App 的几页内容 —— 各 App 页里还有各自的刷新。 */
+        var refresh = h('button', 'ph-refresh');
+        refresh.type = 'button';
+        refresh.setAttribute('aria-label', '刷新他的生活');
+        refresh.innerHTML = ic('<path d="M20 11.5a8 8 0 1 1-2.3-5.8"/><path d="M20 4.5v5.5h-5.5"/>');
+        refresh.addEventListener('click', function () {
+          if (!Sleepy.phoneAI) { ctx.toast('生成链还没加载', 'err'); return; }
+          refresh.disabled = true;
+          refresh.classList.add('is-spin');
+          ctx.toast('正在翻他最近的生活…', 'ok');
+          Sleepy.phoneAI.settle(sb.id, ownerId).then(function (r) {
+            paint();
+            if (r.ok && r.stat && r.stat.applied > 0) {
+              ctx.toast('他的生活往前走了一点（' + r.stat.applied + ' 条新痕迹）', 'ok');
+            } else if (r.ok) {
+              ctx.toast('这段日子没什么新事情发生', 'ok');
+            } else {
+              ctx.toast(r.reason || r.error || '没刷新出来', 'warn');
+            }
+          });
+        });
+        hero.appendChild(refresh);
         root.appendChild(hero);
 
         /* 组件行：左 = 进行中的计划（真实 charPlan），右 = 与你的最近聊天 */
@@ -1070,6 +1094,32 @@
           curView && curView.kind === 'real' ? chatNameOf(curView.chat) :
           curView ? (curView.item.kind === 'draft' ? '草稿' : '幕后交流') :
           curInst ? curInst.templateName : APP_LABEL[curApp] || ''));
+        /* ★ 2026-10-10 App 页右上角刷新：单 App 专属提示词
+           （phoneLife 协议卡 + [FOCUS] 该 App 的指令 + [EXIST] 防重复）。
+           只在列表层给（进了会话详情/自定义 App 不给）。 */
+        if (!curView && !curInst && curApp && PHONE_APPS.indexOf(curApp) >= 0) {
+          var appRefresh = h('button', 'ph-refresh ph-refresh-app');
+          appRefresh.type = 'button';
+          appRefresh.setAttribute('aria-label', '刷新「' + (APP_LABEL[curApp] || '') + '」');
+          appRefresh.innerHTML = ic('<path d="M20 11.5a8 8 0 1 1-2.3-5.8"/><path d="M20 4.5v5.5h-5.5"/>');
+          appRefresh.addEventListener('click', function () {
+            if (!Sleepy.phoneAI || !Sleepy.phoneAI.refreshApp) { ctx.toast('生成链还没加载', 'err'); return; }
+            appRefresh.disabled = true;
+            appRefresh.classList.add('is-spin');
+            ctx.toast('正在写「' + (APP_LABEL[curApp] || '') + '」的新动静…', 'ok');
+            Sleepy.phoneAI.refreshApp(sb.id, ownerId, curApp).then(function (r) {
+              paint();
+              if (r.ok && r.stat && r.stat.applied > 0) {
+                ctx.toast('「' + (APP_LABEL[curApp] || '') + '」多了 ' + r.stat.applied + ' 条', 'ok');
+              } else if (r.ok) {
+                ctx.toast('这里暂时没有新动静', 'ok');
+              } else {
+                ctx.toast(r.reason || r.error || '没刷新出来', 'warn');
+              }
+            });
+          });
+          head.appendChild(appRefresh);
+        }
         root.appendChild(head);
 
         if (curInst) paintCustomApp(root, curInst);

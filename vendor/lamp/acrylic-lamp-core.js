@@ -177,6 +177,25 @@ function drawHandBlock(ctx, lines, cx, cy, maxW, size, color, rnd, gap) {
   return s;
 }
 
+/* ★ 2026-10-10 留言字太小（用户反馈）：原来 paintCard 只按 \n 分行，
+   40 字留言被压成一整行再硬缩到卡宽 —— 字缩到几像素根本看不清。
+   这里按 maxW 把长行逐字折行（卡面全是中文短句，逐字折就够），
+   调用方折完若行数太多，再按可用高度回推字号 —— 宁可字略小也要整段
+   放下，但不会再出现 5px 的蚂蚁字。 */
+function wrapLines(ctx, lines, maxW, size) {
+  const out = [];
+  lines.forEach((raw) => {
+    let cur = '';
+    for (const ch of raw) {
+      const test = cur + ch;
+      if (cur && measureLine(ctx, test, size) > maxW) { out.push(cur); cur = ch; }
+      else cur = test;
+    }
+    if (cur) out.push(cur);
+  });
+  return out;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    手绘涂鸦图案库
    每个函数签名统一：(ctx, cx, cy, s, tone)
@@ -951,7 +970,12 @@ function paintCard(card, seed, img, hi) {
       drawHandBlock(ctx, lines, cx, pad + sh * 0.835, sw * 0.86, 32, tone.ink, rnd, 1.34);
     }
   } else if (lines.length) {
-    drawHandBlock(ctx, lines, cx, H / 2 + 4, sw * 0.84, 38, tone.ink, rnd, 1.46);
+    /* ★ 2026-10-10 留言字太小：先按 38 号逐字折行，再按行数回推字号 ——
+       板面可用高度取 H*0.78（上下留白），gap 1.46 与原来一致。 */
+    const maxW = sw * 0.84, gap = 1.46;
+    const wrapped = wrapLines(ctx, lines, maxW, 38);
+    const s = Math.min(38, (H * 0.78) / (wrapped.length * gap));
+    drawHandBlock(ctx, wrapped, cx, H / 2 + 4, maxW, s, tone.ink, rnd, gap);
   }
 
   /* 3b) 底部三颗渐隐的小点：整张卡不填满才透气，但也不能空 */

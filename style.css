@@ -10589,6 +10589,22 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
   background:rgba(255,255,255,.6);color:#3B342A;font-size:20px;line-height:1;
 }
 .ph-app-title{font-size:16px;font-weight:600;}
+
+/* 查手机刷新按钮（2026-10-10 用户反馈）：桌面右上角一次整体结算，
+   各 App 页页头一个单 App 刷新（每页各自的新提示词，见 page-phone-ai.js）。 */
+.ph-hero{position:relative;}
+.ph-refresh{
+  position:absolute;top:0;right:2px;width:34px;height:34px;
+  border:0;border-radius:50%;cursor:pointer;
+  background:rgba(255,255,255,.55);color:#3B342A;
+  display:grid;place-items:center;padding:0;
+}
+.ph-refresh svg{width:17px;height:17px;}
+.ph-refresh:active{transform:scale(.92);}
+.ph-refresh.is-spin svg{animation:ph-spin .9s linear infinite;}
+.ph-refresh[disabled]{opacity:.5;pointer-events:none;}
+@keyframes ph-spin{to{transform:rotate(360deg);}}
+.ph-app-head .ph-refresh{position:static;margin-left:auto;width:30px;height:30px;}
 .ph-empty{flex:1;display:flex;align-items:center;justify-content:center;}
 .ph-empty-t{text-align:center;font-size:13px;opacity:.55;padding:40px 20px;}
 
@@ -15502,6 +15518,10 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
    ============================================================ */
 
 .legal-mask{
+  position:fixed;          /* 必须 fixed 覆盖整屏：启动期 offset parent(#phone)
+                              高度为 0，absolute+inset:0 会算出 0×0 隐形遮罩，
+                              但居中卡片内容照常渲染、压在桌面拦截点击（点图标没反应）。 */
+  inset:0;
   align-items:center;
   z-index:96;              /* 高于 .dl-mask(80)：协议必须盖住任何已开的浮层 */
   -webkit-backdrop-filter:blur(3px) saturate(1.05);
