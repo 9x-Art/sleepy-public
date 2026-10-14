@@ -1327,13 +1327,21 @@
       var text = (ta.value || '').trim();
       if (!text) { Sleepy.toast('总得写点什么'); return; }
       send.disabled = true;
-      RP().postComment(itemId, kind, text, function (r) {
+      /* ★ 2026-10-12 P0：同步抛错到不了 callback，按钮会永久灰
+         （曾经的 cfg() ReferenceError 就是这么把席间入口卡死的）。
+         包一层 —— 任何同步异常也恢复按钮，失败可重发。 */
+      try {
+        RP().postComment(itemId, kind, text, function (r) {
+          send.disabled = false;
+          if (!r.ok) { Sleepy.toast(r.message || '没发出去', 'err'); return; }
+          sheet.remove();
+          Sleepy.toast('发到席间了，谢谢投喂~', 'ok');
+          ctx.rebuild();
+        });
+      } catch (e) {
         send.disabled = false;
-        if (!r.ok) { Sleepy.toast(r.message || '没发出去', 'err'); return; }
-        sheet.remove();
-        Sleepy.toast('发到席间了，谢谢投喂~', 'ok');
-        ctx.rebuild();
-      });
+        Sleepy.toast('没发出去', 'err');
+      }
     });
     panel.appendChild(send);
     var close = h('button', 'rp-btn ghost', '先不写');
@@ -1421,6 +1429,18 @@
         cc.appendChild(condState);
         root.appendChild(cc);
         RP().checkCondition(id, function (cr) {
+          /* 点赞型（2026-10-12 P1-2 修）：服务端没有账号体系、恒回 met:false，
+             「我赞过」本来就是设备本地记的（repoLikedIds）—— 判定也用本地，
+             否则「点赞才能领」的件永远领不到。 */
+          if (it.condition === 'like') {
+            var liked = RP().likedIds().indexOf(id) >= 0;
+            conditionMet = liked;
+            condState.textContent = liked
+              ? '✓ 条件已满足 —— 可以打包带走了'
+              : '还没完成：点个赞（上面 ♡ 那个按钮）就能领';
+            paintGo();
+            return;
+          }
           condState.textContent = (cr.ok && cr.met)
             ? '✓ 条件已满足 —— 可以打包带走了'
             : '还没完成：' + (COND_TXT[it.condition] || it.condition) +
@@ -1470,13 +1490,20 @@
         var text = (talkInput.value || '').trim();
         if (!text) { Sleepy.toast('先写点什么'); return; }
         talkSend.disabled = true;
-        RP().postComment(id, 'comment', text, function (r) {
+        /* ★ 2026-10-12 P0：同步抛错也恢复按钮（同席间弹层那处），
+           失败可重发，不永久灰。 */
+        try {
+          RP().postComment(id, 'comment', text, function (r) {
+            talkSend.disabled = false;
+            if (!r.ok) { Sleepy.toast(r.message || '没发出去', 'err'); return; }
+            talkInput.value = '';
+            Sleepy.toast('说到席间了', 'ok');
+            paintTalk();
+          });
+        } catch (e) {
           talkSend.disabled = false;
-          if (!r.ok) { Sleepy.toast(r.message || '没发出去', 'err'); return; }
-          talkInput.value = '';
-          Sleepy.toast('说到席间了', 'ok');
-          paintTalk();
-        });
+          Sleepy.toast('没发出去', 'err');
+        }
       });
       talkCard.appendChild(talkSend);
       var talkList = h('div');

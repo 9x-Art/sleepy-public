@@ -141,8 +141,29 @@
     return list;
   }
 
+  /* 全局引用计数（2026-10-12 P1-3 修）：这个 mediaId 除「要删的那份」之外
+     还有没有别的消费者 —— 聊天消息（**所有聊天、跨岛**，media 本体是
+     设备级的不分岛）+ 相册其余记录。有引用就绝不删 blob，否则聊天里
+     那张图会变成「找不到了」。except: { msgId, phId } 排除自己。 */
+  function mediaReferenced(mediaId, except) {
+    if (!mediaId) return false;
+    var opt = except || {};
+    var chats = store.get('chats') || [];
+    for (var i = 0; i < chats.length; i++) {
+      var ms = (chats[i] && chats[i].messages) || [];
+      for (var j = 0; j < ms.length; j++) {
+        var m = ms[j];
+        if (m && m.mediaId === mediaId && (!opt.msgId || m.id !== opt.msgId)) return true;
+      }
+    }
+    var ph = allFull().filter(function (p) { return p && p.mediaId === mediaId; });
+    if (opt.phId) ph = ph.filter(function (p) { return p.id !== opt.phId; });
+    return ph.length > 0;
+  }
+
   /* 删一条记录，**顺手把 IDB 里的本体也删掉** ——
-     只删记录的话 blob 会留在库里变成永远拿不回来的垃圾（占配额、看不见）。 */
+     只删记录的话 blob 会留在库里变成永远拿不回来的垃圾（占配额、看不见）。
+     删本体前查全局引用（P1-3）：聊天还在引的图只删相册记录，blob 留着。 */
   function remove(id) {
     var list = allFull();
     var hit = null;
@@ -151,7 +172,7 @@
       return true;
     });
     save(keep);
-    if (hit && hit.mediaId && Sleepy.media) {
+    if (hit && hit.mediaId && Sleepy.media && !mediaReferenced(hit.mediaId, { phId: id })) {
       Sleepy.media.remove(hit.mediaId).catch(function () { /* 删不掉就算了，不影响记录已删 */ });
     }
   }
@@ -350,6 +371,7 @@
     srcOf: srcOf,
     add: add,
     remove: remove,
+    mediaReferenced: mediaReferenced,
     removeByMedia: removeByMedia,
     currentOwnerCharId: currentOwnerCharId,
     update: update,

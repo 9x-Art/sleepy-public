@@ -654,12 +654,29 @@
 
   /* 留言卡排在前面（先到先挑好挂点），空板垫在后头补数。
      __note 是给落款浮层用的元数据 —— core 的 setCards 原样存 def，
-     onFocus 回调里能原样拿回来。 */
+     onFocus 回调里能原样拿回来。
+     ★ 2026-10-12 同句重复悬挂修复（用户报：「选了一句话，上中下三层
+     各自有个卡片带着同一句」）：
+       核心按 defs[n % defs.length] 把 def 数组往 **36 个挂点**
+       （CFG.rings 四层 count 6+8+10+12）上轮着挂 —— 数组不补齐时，
+       1 条留言 + 5 张空板 = 6 个 def，同一条留言会被挂 36/6=6 次，
+       四层里每层都能看见它。补齐到 36 之后 % 运算恒等，
+       每条留言只占一个挂点，空板循环填剩下的（空板没有文字，
+       重复不重复看不出来）。
+     ⚠️ 36 = 核心 CFG.rings 各层 count 之和 —— 改核心挂点数必须同步这里，
+       冒烟里有对应断言（同 SW 缓存基准，是刻意的人工确认点）。 */
+  var LAMP_SLOTS = 36;
+
   function lampCards() {
     var cards = [];
     var notes = lampNoteList();
-    for (var i = 0; i < notes.length; i++) {
-      var n = notes[i];
+    /* 超员（LAMP_NOTES_MAX=60 > 36）时只挂得下 36 条：**新留的先把旧的
+       挤下灯**（store 里仍在，商城灯面板可删）—— 否则第 37 条起永远
+       上不了灯，用户留了却看不见。 */
+    var shown = notes.length > LAMP_SLOTS
+      ? notes.slice(notes.length - LAMP_SLOTS) : notes;
+    for (var i = 0; i < shown.length; i++) {
+      var n = shown[i];
       cards.push({
         text: n.text + '\n——' + (n.by || '我'),
         art: 'text',
@@ -667,7 +684,9 @@
         __note: { id: n.id, by: n.by || '我', ts: n.ts }
       });
     }
-    for (var j = 0; j < LAMP_CARDS.length; j++) cards.push(LAMP_CARDS[j]);
+    for (var j = 0; cards.length < LAMP_SLOTS; j++) {
+      cards.push(LAMP_CARDS[j % LAMP_CARDS.length]);
+    }
     return cards;
   }
 
@@ -704,6 +723,12 @@
       if (!note || !note.text) return null;
       var text = String(note.text).replace(/\s+/g, ' ').trim();
       if (!text) return null;
+      /* ★ 2026-10-12：'||' 是聊天气泡的分段协议（prompt-engine
+         splitBubbles）—— 任何入口把带分隔符的整串送进来（长按整条 /
+         [灯:] 标签里写了 ||），卡面上都会读出「句一||句二」这种分割符。
+         换成换行：一句话一行，paintCard 本来就按 \n 分行，正好这么读。
+         放在压空白之后 —— 压空白会把 \n 也抹掉，顺序不能反。 */
+      text = text.split('||').join('\n');
       if (text.length > 40) text = text.slice(0, 39) + '…';
       var list = store.get(LAMP_NOTES_KEY) || [];
       var rec = core.tagScope({
@@ -3245,7 +3270,12 @@
       sanitize: sanitizeTpl,
       scope: scopeCss,
       substitute: substituteVars
-    }
+    },
+
+    /* 挂件灯的卡片装配（留言 + 空板补数到 36 个挂点）—— 冒烟要核
+       「一条留言只挂一个挂点、不四层重复」，不导出的话测试只能抄一份
+       装配逻辑，那就成了判据与被测物各一份（假绿）。 */
+    lampCards: lampCards
   };
 
   /* 首页是基底页，不走页面栈，它的 render 必须有人主动调一次

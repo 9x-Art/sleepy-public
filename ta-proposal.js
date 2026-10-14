@@ -48,7 +48,9 @@
 
   var KINDS = ['item_update', 'follow_update', 'promise_review', 'npc_event', 'impact_review', 'contact_candidate'];
   var OPERATIONS = ['add', 'update', 'resolve', 'flag_review'];
-  var STATUSES = ['pending', 'accepted', 'rejected', 'expired', 'failed'];
+  /* 'failed' 已摘（2026-10-12 P2 清理）：全库无写入方，终态失败走
+     「接受失败回执」不在提案状态机里（提案本身只到 expired 为止）。 */
+  var STATUSES = ['pending', 'accepted', 'rejected', 'expired'];
 
   /* 高影响关键词：命中 → extra.highImpact，接受需二次确认，不自动成立 */
   var HIGH_IMPACT_RE = /(死|去世|病危|重伤|车祸|结婚|离婚|怀孕|分手|前任|葬礼| crime|暴力|创伤)/;
@@ -257,17 +259,8 @@
     return { ok: true, saved: batch.accepted.length, failed: batch.failures.length, duplicate: batch.duplicate };
   }
 
-  /* requestId 幂等：同请求且同指纹的提案已存在 → 不再落 */
-  function hasRequestFp(requestId, fp) {
-    var sid = core.scopeId ? core.scopeId() : null;
-    if (!sid || !requestId) return false;
-    var hit = false;
-    core.scoped(arr(store.get(KEYS.proposals))).forEach(function (p) {
-      if (hit || !p) return;
-      if (p.requestId === requestId && p.fp === fp) hit = true;
-    });
-    return hit;
-  }
+  /* hasRequestFp 已摘（2026-10-12 P2 清理）：导出全库无调用方，
+     requestId 幂等实际由 saveProposals 的 fp 去重承担（单一实现，别留双轨）。 */
 
   /* ---------------------------- 审核落库 ---------------------------- */
 
@@ -523,7 +516,6 @@
     validateOne: validateOne,
     validateBatch: validateBatch,
     saveProposals: saveProposals,
-    hasRequestFp: hasRequestFp,
     acceptProposal: acceptProposal,
     rejectProposal: rejectProposal,
     rejectAll: rejectAll,

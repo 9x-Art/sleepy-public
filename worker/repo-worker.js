@@ -121,8 +121,13 @@ export default {
       }
 
       /* ---- GET /item/:id/meta 作品详情元数据（v2 新增）----
-         只回包外信息（不含 items 内容/密文），公共件免门牌。 */
-      m = p.match(/^\/item\/([\w-]+)\/meta$/);
+         只回包外信息（不含 items 内容/密文），公共件免门牌。
+         ⚠️ m 必须在这里**声明一次**：ES module 恒严格模式，未声明赋值直接
+         ReferenceError —— 2026-10-12 实测这一行漏了 let，从本行起到文件尾
+         的所有路由（publish/like/comments/condition/inbox/unpublish/meta/
+         download）全部 500 'm is not defined'，一次 DB 调用都没走到。
+         后面 6 处 `m = p.match(...)` 同作用域复用这个声明。 */
+      let m = p.match(/^\/item\/([\w-]+)\/meta$/);
       if (m && request.method === 'GET') {
         await ensureSchema(env);
         const row = await env.DB.prepare(
@@ -277,7 +282,7 @@ export default {
         await env.STORE.put(bodyKey, bodyText);
         await env.DB.prepare(
           'INSERT INTO items (id, gate, type, title, author, cover, lock, access, condition, summary, visible, version, size, downloads, created_at, updated_at, body_key, author_id, status) ' +
-          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,1)')
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,1)')
           .bind(id, gate, String(meta.type), String(meta.title).slice(0, 60),
             String(meta.author || '无名作者').slice(0, 30),
             String(meta.cover || '').slice(0, 1000),

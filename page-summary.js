@@ -397,7 +397,10 @@
 
     var sysParts = [Sleepy.promptEngine.cardBody('summary')];
     var ch = Sleepy.core.findChar(charId);
-    if (ch && ch.content) sysParts.push('[CHARACTER]\n' + ch.content + '\n[/CHARACTER]');
+    /* 人设唯一出口 compileCharacter（分层+红线并集），不再裸 content（勘察 P1） */
+    var personaBlock = (ch && Sleepy.promptEngine.compileCharacter)
+      ? Sleepy.promptEngine.compileCharacter(charId) : '';
+    if (personaBlock) sysParts.push(personaBlock);
 
     var userParts = [];
     userParts.push('[SOURCE_RANGE]\n下面是自上次整理以来的新聊天记录（'

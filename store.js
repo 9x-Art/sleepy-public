@@ -273,8 +273,8 @@
     forumCollections: [],       /* 收藏（默认私有） */
     forumNotifications: [],     /* 论坛通知（持久化，不碰 msgcenter 的内存层） */
     forumShares: [],            /* 定向分享记录（单聊 / 群聊 / 朋友圈） */
-    forumShareReceipts: [],     /* 分享回执（送达 / 打开 / 已回应，只存状态不存正文） */
-    forumDrafts: [],            /* 草稿箱 */
+    /* forumShareReceipts / forumDrafts 已摘（2026-10-12 P2 死键清理）：
+       回执实际盖在 forumShares.openedAt、草稿从未接线 —— 全库零读写。 */
     forumKnowledge: [],         /* 论坛认知（观察者 × 公开身份，五档状态） */
     forumSettingsBySandbox: {},          /* { [sandboxId]: 设置 } */
     selectedForumAccountBySandbox: {},   /* { [sandboxId]: 当前论坛身份 } 切岛独立恢复 */

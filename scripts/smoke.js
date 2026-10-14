@@ -561,6 +561,92 @@ ok('删房之后 activeSandboxId 被清空，不会指着一间不存在的房',
 ok('删房之后 findSandbox 查不到，但别的房还在',
   S.core.findSandbox(sbArch) === null && !!S.core.findSandbox(sbIsle));
 
+t('删房名单差集（2026-10-12 数据卫生批）：动态单键与 byChar 映射跟着删房走', () => {
+  /* 判据全部从**落库回读**，不引实现常量。repo* 三键是设备级，刻意不清。 */
+  const sbA = S.core.createSandbox('isle', '卫生批-要删的房').id;
+  const sbB = S.core.createSandbox('isle', '卫生批-要留的房').id;
+  S.core.setActiveSandbox(sbA);
+  const chA = S.core.upsertChar({ name: '卫生批甲', kind: 'main' }).id;
+  S.core.setActiveSandbox(sbB);
+  const chB = S.core.upsertChar({ name: '卫生批乙', kind: 'main' }).id;
+
+  /* 动态单键：A 房的该清，B 房的必须活 */
+  S.store.set('charMem:' + chA, { entries: [] });
+  S.store.set('charState:' + chA, { feelings: [] });
+  S.store.set('openLoops:' + chA, { items: [] });
+  S.store.set('attentionInbox:' + chA, { items: [] });
+  S.store.set('relationIntent:' + chA, { intent: {} });
+  S.store.set('proactiveState:' + chA, { lastAt: 1 });
+  S.store.set('phoneRawFail:' + chA, { mode: 'x' });
+  S.store.set('charMem:' + chB, { entries: ['B 的记忆档案'] });
+  /* 会话/群宿主键 */
+  S.store.set('chats', (S.store.get('chats') || []).concat([
+    { id: 'c_hy-a', sandboxId: sbA, name: 'A 房会话', messages: [] },
+    { id: 'c_hy-b', sandboxId: sbB, name: 'B 房会话', messages: [] },
+  ]));
+  S.store.set('groups', (S.store.get('groups') || []).concat([
+    { id: 'g_hy-a', sandboxId: sbA, name: 'A 房群' },
+    { id: 'g_hy-b', sandboxId: sbB, name: 'B 房群' },
+  ]));
+  S.store.set('sumCursor:c_hy-a', 5);
+  S.store.set('sumRawFail:c_hy-a', { why: 'x' });
+  S.store.set('sumCursor:c_hy-b', 7);
+  S.store.set('groupInner:g_hy-a', { x: 1 });
+  S.store.set('groupPending:g_hy-a', []);
+  S.store.set('sumCursor:g:g_hy-a', 3);
+  S.store.set('sumRawFail:g:g_hy-a', { why: 'x' });
+  S.store.set('groupInner:g_hy-b', { x: 2 });
+  /* byChar 映射：A 的条目删、B 的留 */
+  S.store.set('memoryIsland', { name: '星屿', type: 'solo', byChar: {} });
+  S.store.set('memoryIsland', {
+    name: '星屿', type: 'solo',
+    byChar: (function () { const o = {}; o[chA] = { on: true }; o[chB] = { on: false }; return o; })(),
+  });
+  S.store.set('charSettings', { byChar: (function () { const o = {}; o[chA] = {}; o[chB] = {}; return o; })() });
+  S.store.set('charVoice', { byChar: (function () { const o = {}; o[chA] = {}; o[chB] = {}; return o; })() });
+  /* 设备级键（repo 域）：删房绝不能碰 */
+  S.store.set('repoDeviceId', 'dv-hy-test');
+  /* 数组表三张（盖岛章）：A 的记录走、B 的留 */
+  S.store.set('dropEvents', [
+    { id: 'dp-a', sandboxId: sbA }, { id: 'dp-b', sandboxId: sbB }]);
+  S.store.set('momentPending', [
+    { id: 'mp-a', sandboxId: sbA }, { id: 'mp-b', sandboxId: sbB }]);
+  S.store.set('momentWall', [
+    { id: 'mw-a', sandboxId: sbA }, { id: 'mw-b', sandboxId: sbB }]);
+
+  const r = S.core._purgeSync.sandbox(sbA);
+  if (!r.ok) throw new Error(r.message);
+  const gone = (k) => S.store.get(k) === null || S.store.get(k) === undefined;
+  ['charMem:' + chA, 'charState:' + chA, 'openLoops:' + chA, 'attentionInbox:' + chA,
+   'relationIntent:' + chA, 'proactiveState:' + chA, 'phoneRawFail:' + chA,
+   'sumCursor:c_hy-a', 'sumRawFail:c_hy-a',
+   'groupInner:g_hy-a', 'groupPending:g_hy-a', 'sumCursor:g:g_hy-a', 'sumRawFail:g:g_hy-a',
+  ].forEach((k) => { if (!gone(k)) throw new Error('A 房动态键没清：' + k); });
+  if (S.store.get('charMem:' + chB) === null) throw new Error('B 房的 charMem 被误删');
+  if (S.store.get('sumCursor:c_hy-b') !== 7) throw new Error('B 房会话游标被误删');
+  if (S.store.get('groupInner:g_hy-b') === null) throw new Error('B 房群内键被误删');
+  if (S.store.get('repoDeviceId') !== 'dv-hy-test') throw new Error('设备级 repoDeviceId 被误删');
+  const mi = S.store.get('memoryIsland');
+  if (!mi.byChar[chB] || mi.byChar[chA]) throw new Error('memoryIsland.byChar 幽灵过滤不对');
+  ['charSettings', 'charVoice'].forEach((mk) => {
+    const m = S.store.get(mk);
+    if (m.byChar[chA] || !m.byChar[chB]) throw new Error(mk + '.byChar 幽灵过滤不对');
+  });
+  const arrLeft = (k) => (S.store.get(k) || []).map((x) => x.sandboxId);
+  ['dropEvents', 'momentPending', 'momentWall'].forEach((k) => {
+    const ids = arrLeft(k);
+    if (ids.indexOf(sbA) >= 0) throw new Error(k + ' 的 A 房记录没清');
+    if (ids.indexOf(sbB) < 0) throw new Error(k + ' 的 B 房记录被误删');
+  });
+  /* 静态护栏：repo* 设备级键不许混进删房名单 */
+  const coreSrc = require('fs').readFileSync('core.js', 'utf8');
+  const listSeg = coreSrc.slice(coreSrc.indexOf("var scoped = ['chats'"), coreSrc.indexOf('];', coreSrc.indexOf("var scoped = ['chats'")));
+  ['repoDeviceId', 'repoLikedIds', 'repoInboxSeen'].forEach((k) => {
+    if (listSeg.indexOf(k) >= 0) throw new Error('设备级键混进删房名单：' + k);
+  });
+  return { 动态键: 'A 清 B 留', byChar: '三张映射过滤', repo设备级: '未碰', 数组表: '3 张盖章清' };
+});
+
 console.log('\n--- core:关系文字与「我」的 NPC ---');
 
 t('setRelation / relationOf 往返一致', () => {
@@ -663,6 +749,45 @@ t('skin() 按角色出皮肤数据', () => {
   return { name: sk.name, mood: sk.mood, battery: sk.battery };
 });
 t('ICONS / icon() 可用', () => ({ 图标数: Object.keys(S.desktop.ICONS).length, svg: typeof S.desktop.icon('idcard') }));
+
+console.log('\n--- desktop:挂件灯留言去重（2026-10-12 用户反馈批）---');
+t('灯上留言：一条只挂一个挂点，不再四层重复', () => {
+  /* 走真实写路径：lampNotes.add（落库 + 盖岛章），再核**装配产物**
+     lampCards()。不直接拼 lampNotes 数组 —— 那测的是夹具不是链路。
+     背景：核心按 defs[n % defs.length] 往 36 个挂点（CFG.rings 四层
+     6+8+10+12）轮挂，数组不补齐时 1 条留言 + 5 空板 = 6 个 def，
+     同一条话会在四层里各挂一遍（用户报「上中下三层各自带同一句」）。 */
+  S.store.set('lampNotes', []);                       // 清掉别处遗留
+  const a = S.lampNotes.add({ text: '今天也想早点休息', by: '阿玥', src: 'chat' });
+  const b = S.lampNotes.add({ text: '记得多喝水呀', by: '阿玥', src: 'chat' });
+  if (!a || !b) throw new Error('留言没写进去');
+  const cards = S.desktop.lampCards();
+  /* ① 补齐到 36 个挂点 —— % 轮挂恒等，每条留言只出现一次。
+     ⚠️ 36 = 核心 CFG.rings 各层 count 之和，是刻意的人工确认点
+     （同 SW 缓存基准）：改核心挂点数必须同步这里和 smoke。 */
+  if (cards.length !== 36) throw new Error('卡片没补齐到 36：' + cards.length);
+  /* ② 两条留言各出现一次（卡面文本 = 正文 + 落款行） */
+  const hitA = cards.filter((c) => String(c.text || '').indexOf('今天也想早点休息') >= 0).length;
+  const hitB = cards.filter((c) => String(c.text || '').indexOf('记得多喝水呀') >= 0).length;
+  if (hitA !== 1 || hitB !== 1) throw new Error('同句重复悬挂：A×' + hitA + ' B×' + hitB);
+  /* ③ 剩下 34 张都是空板（补数板没有文字，循环重复看不出来） */
+  const blank = cards.filter((c) => !String(c.text || '').trim()).length;
+  if (blank !== 34) throw new Error('空板补数不对：' + blank);
+  /* ④ 超员（LAMP_NOTES_MAX=60 > 36）取最新 36 条：最老的下灯，
+     store 里仍在（商城灯面板可删），最新的必须上灯。 */
+  S.store.set('lampNotes', []);
+  for (let i = 1; i <= 38; i++) {
+    S.lampNotes.add({ text: (i === 1 ? '最老第一条' : i === 38 ? '最新第三十八条' : '中间第' + i + '条'), by: '阿玥', src: 'chat' });
+  }
+  const cards2 = S.desktop.lampCards();
+  const old1 = cards2.filter((c) => String(c.text || '').indexOf('最老第一条') >= 0).length;
+  const new38 = cards2.filter((c) => String(c.text || '').indexOf('最新第三十八条') >= 0).length;
+  if (cards2.length !== 36 || old1 !== 0 || new38 !== 1) {
+    throw new Error('超员口径错：总数' + cards2.length + ' 最老×' + old1 + ' 最新×' + new38);
+  }
+  S.store.set('lampNotes', []);                       // 收尾：别污染后面的用例
+  return { 挂点: cards.length, 留言各一次: [hitA, hitB], 空板: blank, 超员后最新在灯: new38 };
+});
 
 console.log('\n--- page:注册情况 ---');
 t('已注册页面（Sleepy.registered()）', () => {
@@ -1239,10 +1364,15 @@ console.log('\n--- page:群声（公共论坛 · 施工卡-群声-v1 Batch A）-
    Batch A 只交付：App 壳 + 显式 sandboxId 上下文 + 存储键与删岛登记。 */
 ok('群声 App 已注册且有 render', !!S.registered().qunsheng);
 
-t('forum 数据层出口齐全（13 张表 + 3 个映射键，v218 +forumAnonPoolMigrated）', () => {
+t('forum 数据层出口齐全（11 张表 + 3 个映射键；v218 +forumAnonPoolMigrated，2026-10-12 摘两个死键）', () => {
   const F = S.forum;
   if (!F) throw new Error('Sleepy.forum 缺失');
-  if (F.KEYS.length !== 13) throw new Error('forum 键数不对：' + F.KEYS.length);
+  /* 2026-10-12 P2 死键清理：forumShareReceipts（回执实落 forumShares.openedAt）
+     / forumDrafts（从未接线）摘除，13 → 11。 */
+  if (F.KEYS.length !== 11) throw new Error('forum 键数不对：' + F.KEYS.length);
+  if (F.KEYS.indexOf('forumShareReceipts') >= 0 || F.KEYS.indexOf('forumDrafts') >= 0) {
+    throw new Error('死键又回来了');
+  }
   /* v218 起是 3 个：forumSettingsBySandbox / selectedForumAccountBySandbox /
      forumAnonPoolMigrated（匿名池迁移的一次性标记） */
   if (F.MAP_KEYS.length !== 3) throw new Error('forum 映射键数不对：' + F.MAP_KEYS.length);
@@ -1403,6 +1533,69 @@ t('暗铺 v3 语义：空暗号 = 可用不可看（sealed），世界书目录�
   if (S.repo.unlockItems(mc2, '') !== 0) throw new Error('gated 件不该被空暗号解开');
   if (S.repo.unlockItems(mc2, '对暗号') !== 1) throw new Error('对上暗号应解开');
   return { sealed: '自动解+wb.sealed', 角色: '给看+条件', 暗号件: 'needCode', 传播: '已挡' };
+});
+
+/* ============================================================
+   P0 三修回归（2026-10-12 数据链路核查批）：
+   ① worker publish INSERT 列值对齐（node:sqlite 真跑回放）
+   ② repo-core.postComment 不再调未定义 cfg()（行为级：stub fetch 真调用）
+   ③ 线上槽注册 vs assembleOnline dispatch 全量 parity（防「注册了没接」复发）
+   三条断言都做过负向验证：对 HEAD 修复前版本逐条真红过一次才收。
+   ============================================================ */
+t('P0 回归：publish INSERT 列值对齐（node:sqlite 回放，不改一字）', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  /* 基表 = worker/schema.sql（建索引语句在内存库无意义，剥掉防排序抖动） */
+  db.exec(fs.readFileSync(path.join(ROOT, 'worker/schema.sql'), 'utf8')
+    .replace(/CREATE INDEX[^\n]*\n/g, ''));
+  /* ALTER 补列直接从 repo-worker.js 的 ensureSchema 里提取，不手抄 */
+  const wk = fs.readFileSync(path.join(ROOT, 'worker/repo-worker.js'), 'utf8');
+  const colsSeg = wk.slice(wk.indexOf('const cols = ['), wk.indexOf('];', wk.indexOf('const cols = [')));
+  const alters = [...colsSeg.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  if (alters.length < 5) throw new Error('ensureSchema ALTER 列表没取到（锚点变了）');
+  for (const sql of alters) { try { db.exec(sql); } catch (e) { /* 列已存在 */ } }
+  db.prepare('INSERT INTO gates (code,name,created_at) VALUES (?,?,?)').run('g-smoke', '冒烟货架', 1);
+  db.prepare('INSERT INTO authors (id,token,created_at) VALUES (?,?,?)').run('a-smoke', 'tok', 1);
+  /* SQL 与 bind 全部从源码原文提取，测的就是装配产物 */
+  const i = wk.indexOf('INSERT INTO items') - 1;
+  const j = wk.indexOf('.bind(', i);
+  const lits = [];
+  const re = /'((?:[^'\\]|\\.)*)'/g; let mm;
+  while ((mm = re.exec(wk.slice(i, j))) !== null) if (mm[1].trim() !== '+') lits.push(mm[1]);
+  const sql = lits.join('');
+  const meta = { type: 'char', title: '冒烟件', author: '阿玥', cover: '', lock: 'open',
+    access: 'open', condition: 'comment', summary: '简介', visible: true, version: 2 };
+  const binds = ['rp-smoke123456', 'g-smoke', String(meta.type), String(meta.title).slice(0, 60),
+    String(meta.author || '无名作者').slice(0, 30), String(meta.cover || '').slice(0, 1000),
+    String(meta.lock || 'open'), String(meta.access || 'open'), String(meta.condition || 'none'),
+    String(meta.summary || '').slice(0, 4000), meta.visible ? 1 : 0, Number(meta.version) || 1,
+    12, Date.now(), Date.now(), 'b/rp-smoke123456.json', 'a-smoke'];
+  db.prepare(sql).run(...binds); /* 占位符/bind/列数任何一处不齐，prepare/run 直接抛 */
+  const row = db.prepare('SELECT * FROM items WHERE id = ?').get('rp-smoke123456');
+  if (!row || row.status !== 1 || row.downloads !== 0) throw new Error('publish INSERT 回放落库不对：' + JSON.stringify(row));
+  if (row.body_key !== 'b/rp-smoke123456.json' || row.author_id !== 'a-smoke') throw new Error('body_key/author_id 没落对列');
+  /* 顺带护栏：meta 路由的 m 声明（旧版漏 let 导致全路由 500 的那处） */
+  if (wk.indexOf('let m = p.match(/^') < 0) {
+    throw new Error('worker meta 路由的 m 没用 let 声明（严格模式下全路由 500）');
+  }
+  return { 回放: 'INSERT 落库 19 列全对位', m声明: 'let 已补' };
+});
+
+t('P0 回归：线上槽注册 vs assembleOnline dispatch 全量 parity', () => {
+  const pe = fs.readFileSync(path.join(ROOT, 'prompt-engine.js'), 'utf8');
+  const regStart = pe.indexOf('var ONLINE_SLOTS');
+  const reg = pe.slice(regStart, pe.indexOf('];', regStart));
+  const ids = [...reg.matchAll(/id:\s*'(\w+)'/g)].map((m) => m[1]);
+  if (ids.length < 25) throw new Error('ONLINE_SLOTS 没取全（锚点变了）：' + ids.length);
+  const body = pe.slice(pe.indexOf('function assembleOnline'), pe.indexOf('var OFFLINE_SLOTS'));
+  const missing = ids.filter((id) => body.indexOf("case '" + id + "':") < 0);
+  if (missing.length) throw new Error('注册了但没有 dispatch case 的槽（模型收不到说明书）：' + missing.join(','));
+  /* lamptag/slowmail 显式点名（本批修复主角，防将来被摘） */
+  for (const id of ['lamptag', 'slowmail']) {
+    if (ids.indexOf(id) < 0) throw new Error(id + ' 槽注册被摘了');
+    if (body.indexOf("cardBody('" + id + "')") < 0) throw new Error(id + ' 没走 cardBody 装配');
+  }
+  return { 线上槽: ids.length, dispatch: '全部有 case', 新修: 'lamptag+slowmail' };
 });
 /* 专用岛：下面几条测试自己的沙盘，不碰前面 sbIsle / sbArch */
 const sbQsIsle = S.core.createSandbox('isle', '群声测试孤岛').id;
@@ -1681,6 +1874,43 @@ t('forumGen 解析失败：不写 seeded、可重试', () => new Promise((res) =
       S.core._purgeSync.sandbox(sb);
       res('ok');
     });
+  });
+}));
+
+t('forumGen 默认 transport：maxTokens 覆盖 3000 + feature forum（真 API 截断回归）', () => new Promise((res) => {
+  /* 2026-10-14 真 API 验证复现：群声多帖 JSON 超默认 1024 被截断 → 解析失败。
+     修复 = defaultTransport 咽喉补 ov.maxTokens:3000；本用例锁住该参数不被回退。 */
+  const sb = S.core.createSandbox('isle', '群声参数覆盖岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  S.forumGen._setTransport(null);   /* 清掉测试桩 → 走生产 defaultTransport */
+  const prevRunChat = S.api.runChat;
+  let captured = null;
+  S.api.runChat = (messages, handlers, useStream, ov) => {
+    captured = { useStream: useStream, ov: ov };
+    handlers.onDone(null, qsSeedJson);
+    return null;
+  };
+  S.forumGen.ensureSeedContent(sb, (err) => {
+    S.api.runChat = prevRunChat;
+    /* 恢复后续用例共用的测试桩（与上方种子段同一行为） */
+    S.forumGen._setTransport((msgs, cb) => {
+      qsSeedTransportCalls.n++;
+      if (qsSeedErr.stage !== 'none') { cb(qsSeedErr); return; }
+      cb(null, qsSeedJson);
+    });
+    try {
+      if (err) throw new Error('种子失败：' + err.error);
+      if (!captured) throw new Error('api.runChat 没被调到');
+      if (captured.useStream !== false) throw new Error('群声不该走流式');
+      if (!captured.ov || captured.ov.feature !== 'forum') throw new Error('ov.feature 丢了');
+      if (captured.ov.maxTokens !== 3000) throw new Error('maxTokens 覆盖丢了：' + JSON.stringify(captured.ov));
+      S.core._purgeSync.sandbox(sb);
+      res('ok · ov={feature:forum,maxTokens:3000}');
+    } catch (e) {
+      S.core._purgeSync.sandbox(sb);
+      throw e;
+    }
   });
 }));
 
@@ -4451,6 +4681,32 @@ t('K03f 既有块不被顶掉：群协议/成员/时间/内心注记/编号禁�
     S.store.set('groupInner:' + k03f.gid, JSON.parse(before) || {});
     k03fRestore();
   }
+});
+
+/* P0-3 回归（2026-10-12 施工单）：lamptag/slowmail 两槽注册了但 assembleOnline
+   switch 漏 case，引擎开时模型收不到 [灯:]/[慢递:] 说明书（旧路径反而有，倒挂）。
+   判据落在**装配产物**上：说明书正文各恰好一次。正文识别串硬写（不许引
+   cardBody —— 两边一起变会假绿），且正文卡同时是文案口径，改文案必须连这里。 */
+t('P0-3 回归：引擎开时灯牌/慢递说明书各恰好一次，关卡闸真实生效', () => {
+  if (!S.promptEngine) throw new Error('promptEngine 未挂载');
+  const sys = k03eSys(S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: [] }));
+  /* 识别串来自 CARD_DEFAULTS.lamptag / .slowmail 正文首句（每张卡只出现一次） */
+  if (k03eCount(sys, '桌上有盏挂件灯') !== 1) throw new Error('灯牌说明书注入次数 ≠ 1：' + k03eCount(sys, '桌上有盏挂件灯'));
+  if (k03eCount(sys, '写慢递信') !== 1) throw new Error('慢递说明书注入次数 ≠ 1：' + k03eCount(sys, '写慢递信'));
+  /* 负向：关掉卡必须消失 —— 证明计数断言真能红（case 漏了就是 0） */
+  S.promptEngine.setCardEnabled('lamptag', false);
+  try {
+    const sys2 = k03eSys(S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: [] }));
+    if (k03eCount(sys2, '桌上有盏挂件灯') !== 0) throw new Error('关卡后灯牌还在（cardEnabled 闸没接上）');
+  } finally {
+    S.promptEngine.setCardEnabled('lamptag', true);
+  }
+  /* 旧路径与引擎路径互斥：旧路径在 page-chat.js 的 useEngine 关闭分支里，
+     这里只守「引擎侧不重复」——同一说明书全文在装配产物里只此一份 */
+  if (k03eCount(sys, S.promptEngine.cardBody('lamptag')) !== 1) {
+    throw new Error('灯牌卡正文整段出现次数 ≠ 1（疑似双路径重复注入）');
+  }
+  return { 灯牌: 1, 慢递: 1, 闸: '生效' };
 });
 
 t('ta 首页 v2 接线：taItems/taFollows 优先显示 + 幕后/详情页注册可开 + 仍零写入', () => {
@@ -15740,7 +15996,14 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      + 板块公开直进 + 铺面 demo 件/层板 + 字号调大。基准随批 v231 → v232。
    ⚠️ v233（2026-10-11 晚 8：10）：撤门面（档案架直接全屏）+ 纸皮白字改墨 + yr-board
      选定自动下一步 + 局内手机小手机造型 + 御膳房全页退出按钮。基准随批 v232 → v233。 */
-const EXPECTED_SW_CACHE = 'sleepy-v234';
+/* v235（2026-10-12）：挂件灯三点返修批（留言带 || 分割符 / 同句四层重复 /
+     卡面一行字数太少）—— page-chat.js（长按留灯改挂当前气泡）/ page-desktop.js
+     （lampCards 补齐 36 挂点 + || 兜底转换行 + 导出 lampCards）/
+     vendor/acrylic-lamp-core.js + vendor/lamp/acrylic-lamp-core.js +
+     vendor/lamp/acrylic-lamp.html（paintCard 自适应字号折行，html 源补回
+     2026-10-10 漏同步的折行修复，重建后三方一致）/ scripts/smoke.js。
+     基准随批 v234 → v235。 */
+const EXPECTED_SW_CACHE = 'sleepy-v238';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -16387,6 +16650,289 @@ t('日历第二轮：静态护栏 —— action.js 0 模型 / 0 网络 / 0 定�
   const seg = cal.slice(cal.indexOf('function requestCreateEvent'), cal.indexOf('function addEvent'));
   if (/ui\.|alert\(|confirm\(/.test(seg)) throw new Error('统一入口不许弹 UI');
   return { action: '干净', 统一入口: '不弹 UI' };
+});
+
+/* ============================================================
+   P0 回归批（2026-10-12 施工单）：御膳房 repo-worker + repo-core + page-repo
+   ------------------------------------------------------------
+   P0-1：publish INSERT 19 列 vs 16 占位符（必 500）+ 第 125 行 `m` 漏 let
+         （严格模式 ReferenceError，其后 9 路由全灭）。
+   P0-2：postComment 调未定义 cfg()（席间必炸 + 发送键永灰）。
+   负向注入证明断言能红：假 D1 的 INSERT 处理器在列/槽/绑定不齐时直接抛
+   —— 把 SQL 改回坏版本，publish 会 500，本用例红（冒烟护栏曾实测）。
+   ============================================================ */
+t('P0 回归：御膳房 worker 假 D1 全链路 —— publish 链 / 席间链 / 下架 / 负向', async () => {
+  const worker = (await import('../worker/repo-worker.js')).default;
+  if (!worker || typeof worker.fetch !== 'function') throw new Error('worker 导出面不对');
+
+  /* ---- 假 D1：INSERT 时按「列 / 槽 / 绑定」三方核对，不齐当场抛 ---- */
+  const T = {
+    items: [], comments: [], condition_met: [], authors: [],
+    gates: [{ code: 'g-smoke', name: '御膳房冒烟货架' }],
+  };
+  const splitTop = (s) => String(s).split(',').map((x) => x.trim()).filter(Boolean);
+  const like = (v, pat) => v != null && String(v).indexOf(String(pat).replace(/%/g, '')) >= 0;
+  function where(row, w, binds) {
+    let bi = 0;
+    const conds = String(w).split(/\s+AND\s+/i);
+    for (let cond of conds) {
+      cond = cond.trim();
+      if (cond.startsWith('(')) {
+        /* 括号 OR 组：只支持 `(col LIKE ? OR col LIKE ?)`（public-shelf/search） */
+        const parts = cond.slice(1, -1).split(/\s+OR\s+/i);
+        let hit = false;
+        for (const pt of parts) {
+          const m = pt.trim().match(/^(\w+)\s+LIKE\s+\?$/i);
+          if (m && like(row[m[1]], binds[bi++])) { hit = true; }
+        }
+        if (!hit) return false;
+        continue;
+      }
+      let m = cond.match(/^(\w+)\s*=\s*\?$/);
+      if (m) { if (String(row[m[1]]) !== String(binds[bi++])) return false; continue; }
+      m = cond.match(/^(\w+)\s*=\s*(\d+)$/);
+      if (m) { if (Number(row[m[1]]) !== Number(m[2])) return false; continue; }
+      m = cond.match(/^(\w+)\s+LIKE\s+\?$/i);
+      if (m) { if (!like(row[m[1]], binds[bi++])) return false; continue; }
+      throw new Error('假 D1 不认识这个条件：' + cond);
+    }
+    return true;
+  }
+  const DB = {
+    prepare(sql) {
+      const norm = String(sql).replace(/\s+/g, ' ').trim();
+      const api = {
+        bind(...binds) {
+          const bound = binds.slice();
+          return {
+            async run() {
+              /* INSERT：列数=槽数、'?' 取一个绑定、字面量原样，结尾绑定必须用尽 */
+              const mi = norm.match(/^INSERT (OR IGNORE )?INTO (\w+) \(([^)]*)\) VALUES \(([^)]*)\)$/i);
+              if (mi) {
+                const cols = splitTop(mi[3]);
+                const slots = splitTop(mi[4]);
+                if (cols.length !== slots.length) throw new Error(
+                  'SQL 列/槽数不齐：列 ' + cols.length + ' vs 槽 ' + slots.length + '（P0-1 的雷）');
+                let bi = 0;
+                const row = {};
+                for (let i = 0; i < slots.length; i++) {
+                  if (slots[i] === '?') row[cols[i]] = bound[bi++];
+                  else row[cols[i]] = Number(slots[i]);
+                }
+                if (bi !== bound.length) throw new Error(
+                  'SQL 绑定值没对齐：槽吃掉 ' + bi + '，实绑 ' + bound.length + '（P0-1 的雷）');
+                T[mi[2]].push(row);
+                return { success: true };
+              }
+              const mu = norm.match(/^UPDATE (\w+) SET (.+?) WHERE (.+)$/i);
+              if (mu) {
+                const set = mu[2], w = mu[3];
+                for (const row of T[mu[1]]) {
+                  if (!where(row, w, bound)) continue;
+                  const inc = set.match(/^(\w+) = \1 \+ (\d+)$/);
+                  if (inc) row[inc[1]] = Number(row[inc[1]] || 0) + Number(inc[2]);
+                  else {
+                    const m2 = set.match(/^(\w+) = (\d+)$/);
+                    if (m2) row[m2[1]] = Number(m2[2]);
+                    else throw new Error('假 D1 不认识这个 SET：' + set);
+                  }
+                }
+                return { success: true };
+              }
+              if (/^(ALTER|CREATE)/i.test(norm)) return { success: true };
+              throw new Error('假 D1 不认识这条写语句：' + norm);
+            },
+            async first() { return (await this.all()).results[0] || null; },
+            async all() {
+              const ms = norm.match(/^SELECT (.+?) FROM ([a-z_]+)\s*(.*)$/i);
+              if (!ms) throw new Error('假 D1 不认识这条查询：' + norm);
+              let rows, sel = ms[1];
+              const rest = ms[3] || '';
+              if (/JOIN items i ON/i.test(norm)) {
+                /* inbox：comments JOIN items，只取我名下件的席间消息 */
+                const aid = bound[0];
+                rows = T.comments
+                  .map((c) => { const it = T.items.find((x) => x.id === c.item_id); return it ? { c, it } : null; })
+                  .filter((p) => p && p.it.author_id === aid && p.c.status === 1 && p.it.status === 1)
+                  .map((p) => ({
+                    id: p.c.id, item_id: p.c.item_id, name: p.c.name, body: p.c.body,
+                    kind: p.c.kind, created_at: p.c.created_at, title: p.it.title,
+                  }));
+                rows.sort((a, b) => b.created_at - a.created_at);
+                return { results: rows };
+              }
+              if (/SUM\(/i.test(sel)) {
+                const w = rest.replace(/^WHERE\s+/i, '');
+                let total = 0;
+                for (const row of T[ms[2]]) if (where(row, w, bound)) total += Number(row.likes || 0);
+                return { results: [{ total }] };
+              }
+              const wMatch = rest.match(/^WHERE (.+?)(?: ORDER BY (.+?))?(?: LIMIT (\d+))?$/i);
+              rows = T[ms[2]].slice();
+              if (wMatch) {
+                rows = rows.filter((r) => where(r, wMatch[1], bound));
+                if (wMatch[2]) {
+                  const [k, dir] = wMatch[2].split(/\s+/);
+                  rows.sort((a, b) => (dir.toUpperCase() === 'DESC' ? b[k] - a[k] : a[k] - b[k]));
+                }
+                if (wMatch[3]) rows = rows.slice(0, Number(wMatch[3]));
+              }
+              const cols = splitTop(sel.replace(/^c\./, '').replace(/[ci]\./g, ''));
+              return { results: rows.map((r) => {
+                const o = {};
+                cols.forEach((c) => { if (c in r) o[c] = r[c]; });
+                return o;
+              }) };
+            },
+          };
+        },
+      };
+      /* 无 bind 直跑（ensureSchema 的 ALTER/CREATE） */
+      api.run = api.bind().run; api.first = api.bind().first; api.all = api.bind().all;
+      return api;
+    },
+  };
+  const STORE = {
+    _m: {},
+    async put(k, v) { this._m[k] = v; },
+    async get(k) { const v = this._m[k]; return v == null ? null : { body: v, text: async () => v }; },
+    async delete(k) { delete this._m[k]; },
+  };
+  const req = (p, o) => ({
+    url: 'https://repo.smoke.test' + p,
+    method: (o && o.method) || 'GET',
+    headers: { get: (h) => ((o && o.headers) || {})[h] || null },
+    json: async () => JSON.parse((o && o.body) || '{}'),
+    text: async () => (o && o.body) || '',
+  });
+  const env = { DB, STORE };
+
+  /* ---- 1. publish（首次，无 token）：ok + authorToken + 记录字段完整 ---- */
+  const manifest = {
+    title: '冒烟名帖', type: 'char', author: '阿玥', gate: 'g-smoke',
+    visible: true, condition: 'comment', summary: '冒烟夹具不外传',
+    items: [{ kind: 'char', name: '夹具角色' }],
+  };
+  const bodyText = JSON.stringify(manifest);
+  const r1 = await (await worker.fetch(req('/publish', { method: 'POST', body: bodyText }), env)).json();
+  if (!r1.ok) throw new Error('publish 失败：' + JSON.stringify(r1));
+  if (typeof r1.authorToken !== 'string' || r1.authorToken.length < 10) {
+    throw new Error('publish 没回 authorToken：' + JSON.stringify(r1));
+  }
+  if (!/^rp-/.test(r1.id)) throw new Error('id 口径不对：' + r1.id);
+  const row = T.items[0];
+  if (!row) throw new Error('items 没落行');
+  if (row.status !== 1 || Number(row.downloads) !== 0 || !row.author_id) {
+    throw new Error('记录字段不完整：' + JSON.stringify(row));
+  }
+  if (row.size !== bodyText.length || row.title !== '冒烟名帖' || Number(row.visible) !== 1 || row.condition !== 'comment') {
+    throw new Error('记录字段不对：' + JSON.stringify(row));
+  }
+  if (T.authors.length !== 1) throw new Error('authors 应 1 行，实 ' + T.authors.length);
+
+  /* ---- 2. meta 路由（原 `m` 漏 let 的断点，9 路由之首）---- */
+  const metaRes = await worker.fetch(req('/item/' + r1.id + '/meta'), env);
+  if (metaRes.status !== 200) throw new Error('meta 路由 500/4xx（m is not defined 又回来了？）：' + metaRes.status);
+  const meta1 = await metaRes.json();
+  if (!meta1.ok || meta1.meta.title !== '冒烟名帖' || Number(meta1.meta.downloads) !== 0) {
+    throw new Error('meta 内容不对：' + JSON.stringify(meta1));
+  }
+
+  /* ---- 3. public-shelf 能看到它 ---- */
+  const shelf = await (await worker.fetch(req('/public-shelf'), env)).json();
+  if (!shelf.ok || shelf.items.length !== 1) throw new Error('公共铺面没上架：' + JSON.stringify(shelf));
+
+  /* ---- 4. 负向：带有效 token、少传 title —— 明确业务错误，不落半条 ---- */
+  const bad = await (await worker.fetch(req('/publish', {
+    method: 'POST', headers: { 'X-Repo-Token': r1.authorToken },
+    body: JSON.stringify({ type: 'char', items: [] }),
+  }), env)).json();
+  if (bad.ok !== false || !bad.message) throw new Error('缺字段发布必须回明确业务错误：' + JSON.stringify(bad));
+  if (T.items.length !== 1) throw new Error('负向发布落了半条记录：' + T.items.length);
+  if (T.authors.length !== 1) throw new Error('负向发布不该新增作者行：' + T.authors.length);
+
+  /* ---- 5. 席间评论成功 + 领取条件记账（condition=comment）---- */
+  const cm = await (await worker.fetch(req('/item/' + r1.id + '/comments', {
+    method: 'POST', body: JSON.stringify({ name: '小甜豆', body: '火候正好', kind: 'comment', device: 'dev-smoke' }),
+  }), env)).json();
+  if (!cm.ok) throw new Error('评论失败：' + JSON.stringify(cm));
+  if (T.comments.length !== 1) throw new Error('评论没落行');
+  if (T.condition_met.length !== 1 || T.condition_met[0].device !== 'dev-smoke') {
+    throw new Error('领取条件没记账：' + JSON.stringify(T.condition_met));
+  }
+  const cond1 = await (await worker.fetch(req('/item/' + r1.id + '/condition?device=dev-smoke'), env)).json();
+  if (!cond1.ok || cond1.met !== true) throw new Error('评论后条件必须 met：' + JSON.stringify(cond1));
+
+  /* ---- 6. 负向：空评论 —— 400，不落行 ---- */
+  const empty = await (await worker.fetch(req('/item/' + r1.id + '/comments', {
+    method: 'POST', body: JSON.stringify({ name: 'x', body: '   ', kind: 'comment', device: 'dev-smoke' }),
+  }), env)).json();
+  if (empty.ok !== false || T.comments.length !== 1) throw new Error('空评论不该落行：' + JSON.stringify(empty));
+
+  /* ---- 7. 点赞 + inbox（作者令牌）---- */
+  const lk = await (await worker.fetch(req('/item/' + r1.id + '/like', { method: 'POST', body: '{}' }), env)).json();
+  if (!lk.ok || Number(T.items[0].likes) !== 1) throw new Error('点赞没记上：' + JSON.stringify(lk));
+  const inbox = await (await worker.fetch(req('/inbox', { headers: { 'X-Repo-Token': r1.authorToken } }), env)).json();
+  if (!inbox.ok || inbox.comments.length !== 1 || Number(inbox.likesTotal) !== 1) {
+    throw new Error('inbox 不对：' + JSON.stringify(inbox));
+  }
+  const inboxBad = await (await worker.fetch(req('/inbox'), env)).json();
+  if (inboxBad.ok !== false) throw new Error('无令牌 inbox 必须 401 拒');
+
+  /* ---- 8. 下架链：作者令牌撤回，包体清掉、meta 变不在架上 ---- */
+  const del = await (await worker.fetch(req('/item/' + r1.id, {
+    method: 'DELETE', headers: { 'X-Repo-Token': r1.authorToken },
+  }), env)).json();
+  if (!del.ok) throw new Error('下架失败：' + JSON.stringify(del));
+  if (T.items[0].status !== 0) throw new Error('下架后 status 应 0');
+  if (Object.keys(STORE._m).length !== 0) throw new Error('下架后包体该清掉：' + Object.keys(STORE._m));
+  const meta2 = await (await worker.fetch(req('/item/' + r1.id + '/meta'), env)).json();
+  if (meta2.ok !== false) throw new Error('下架后 meta 该 404：' + JSON.stringify(meta2));
+  return { publish: 'ok+token', 席间: '记账通', 点赞: 1, inbox: 1, 下架: '包体清零', 负向: '2/2 不落半条' };
+});
+
+t('P0-2 回归：repo-core.postComment 走通请求 —— 带铺子昵称、失败回 ok:false 可重发', async () => {
+  if (!S.repo || typeof S.repo.postComment !== 'function') throw new Error('S.repo.postComment 未导出');
+  S.store.set('repoCfg', { profile: { name: '冒烟铺主' } });
+  const calls = [];
+  const old = win.fetch;
+  win.fetch = function (url, opts) {
+    calls.push({ url: String(url), opts: opts });
+    return Promise.resolve({ json: async () => ({ ok: true, id: 'cm-smoke' }) });
+  };
+  try {
+    const r1 = await new Promise((res) => S.repo.postComment('rp-smoke', 'comment', '好吃', res));
+    if (!r1.ok) throw new Error('成功路径没通：' + JSON.stringify(r1));
+    if (calls.length !== 1) throw new Error('fetch 调用次数不对：' + calls.length);
+    const sent = JSON.parse(calls[0].opts.body);
+    if (sent.name !== '冒烟铺主') throw new Error('铺子昵称没带上（repoCfg.profile）：' + sent.name);
+    if (sent.body !== '好吃' || sent.kind !== 'comment') throw new Error('载荷不对：' + JSON.stringify(sent));
+    if (!sent.device) throw new Error('device 没带上（领取条件记账靠它）');
+    if (calls[0].url.indexOf('/item/rp-smoke/comments') < 0) throw new Error('URL 不对：' + calls[0].url);
+  } finally {
+    win.fetch = old; /* 恢复离线桩（reject）—— 下半段就是失败路径 */
+  }
+  /* 失败路径：离线桩 reject → 必须回 ok:false（不许把异常吞成成功）；
+     再调一次仍会走到 fetch（哪怕桩拒绝）= 没有卡死，可重发 */
+  const r2 = await new Promise((res) => S.repo.postComment('rp-smoke', 'comment', '再试一次', res));
+  if (r2.ok !== false) throw new Error('失败必须回 ok:false：' + JSON.stringify(r2));
+  return { 昵称: '带', 失败: 'ok:false 可重发' };
+});
+
+t('P0-2 静态护栏：席间两处发送点，同步异常也必须恢复按钮（不永久灰）', () => {
+  const src = require('fs').readFileSync(__dirname + '/../page-repo.js', 'utf8');
+  const needle = '.postComment(';
+  let idx = src.indexOf(needle), sites = 0;
+  while (idx >= 0) {
+    const seg = src.slice(idx, idx + 800);
+    if (!/catch \(e\) \{[\s\S]{0,120}?\.disabled = false/.test(seg)) {
+      throw new Error('第 ' + (sites + 1) + ' 处 postComment 调用没有「同步异常也恢复按钮」的 catch（发送键会永久灰）');
+    }
+    sites++;
+    idx = src.indexOf(needle, idx + 1);
+  }
+  if (sites !== 2) throw new Error('席间发送点应为 2 处（弹层 + 席间条），实到 ' + sites);
+  return { 发送点: sites, 兜底: 'catch 恢复按钮' };
 });
 
 if (asyncPending > 0) {

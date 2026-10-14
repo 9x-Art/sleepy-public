@@ -602,7 +602,70 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v234';
+var CACHE = 'sleepy-v238';
+
+/* v238（2026-10-14）：**人设链路统一出口批**（勘察-人设链路全量-2026-10-13）——
+   · prompt-engine.js：compileCharacter 分层重写（sub=补充层 root 在前、
+     红线并集、短字段逐项）+ c05 有效正文按 trim 判 + 空/双空诊断字段；
+   · page-chat.js：chatDiag 装配诊断状态机（新旧两分支接线 + reroll 同覆盖）
+     + 引擎关旧路径人设/协议修复 + 查岗画面导演改走 compileCharacter；
+   · 8 处绕过统一出口的链路全部改调 PE.compileCharacter（分层+红线并集）：
+     群聊 page-group-ai / 查手机 page-phone-ai（结算+被抓现行，删 800 截断）/
+     朋友圈 moments-ai（删 600 截断）/ 日历日程 schedule-gen（删 1200 截断）/
+     以身入局 book-core / ta ta-model / 日记 page-diary / 离线总结 page-offline /
+     线上整理 page-summary；
+   · forum-gen.js：defaultTransport 补 maxTokens:3000 —— 群声多帖 JSON 超
+     默认 1024 常被截断 → 解析失败（真 API 验证复现，gemini/glm 双验）；
+   · scripts/smoke.js：人设链路装配回归 + forumGen 参数覆盖回归（+500 行级）。
+   → 必须跳版本：上述全部运行时文件都变了。 */
+
+/* v237（2026-10-12）：**数据链路 P1+P2 修复批**（核查报告第二批）——
+   · page-chat.js：旧组装路径（引擎关）补 L4 向量召回注入 —— 此前
+     引擎一关「相关的过去」整层消失，prefetch 白跑；同步读 memoryVec.text，
+     没配/没召回不加空段（P1-1）；
+   · page-repo.js：点赞型领取条件改读本地 repoLikedIds —— 服务端无账号
+     体系恒 met:false，「点赞才能领」的件此前永远领不到（P1-2）；
+   · photos.js + page-chat.js：删图先查全局引用（photos.mediaReferenced，
+     扫全部聊天 + 相册记录），聊天还在引的 blob 不再被误删（P1-3）；
+   · store.js / core.js / forum-core.js：摘死键 forumShareReceipts /
+     forumDrafts（全库零读写，回执实落 forumShares.openedAt）；
+   · ta-proposal.js：摘无写入方的 'failed' 状态与无调用方的 hasRequestFp 导出；
+   · core.js：删房名单差集补齐 —— 三张盖章数组表（dropEvents/momentPending/
+     momentWall）进 scoped 名单；挂 char/chat/group id 的动态单键
+     （charMem:/charState:/openLoops:/attentionInbox:/relationIntent:/
+     proactiveState:/phoneRawFail:/sumCursor*:/sumRawFail*:/groupInner:/
+     groupPending:）趁宿主还在逐个 remove；memoryIsland/charSettings/
+     charVoice 三张 byChar 映射按 doomed 过滤。repo* 设备级键刻意不清；
+   · scripts/smoke.js：forum 键数 13→11、新增删房差集行为级断言。
+   → 必须跳版本：core.js / store.js / forum-core.js / ta-proposal.js /
+     page-chat.js / page-repo.js / photos.js / scripts/smoke.js 都变了。 */
+
+/* v236（2026-10-12）：**数据链路 P0 修复批**（施工单 v1 第一批）——
+   · repo-worker.js：第 125 行 `m` 补 `let`（严格模式 ReferenceError，
+     其后 9 路由全灭）；publish INSERT 列/槽/绑定三方对齐（19 列 =
+     17 绑定 + 字面量 0/1）—— 发布/席间/点赞/条件/inbox/下架全链路通；
+   · repo-core.js：postComment 的未定义 `cfg()` 改读 repoCfg（铺子昵称
+     生效）；page-repo.js 两处发送点包 try/catch，同步异常也恢复按钮；
+   · prompt-engine.js：assembleOnline 补 lamptag/slowmail 两个 case
+     （槽注册了但没接线，引擎开时模型收不到 [灯:]/[慢递:] 说明书）。
+   → 必须跳版本：repo-core.js / page-repo.js / prompt-engine.js / scripts/smoke.js
+     都变了（worker 不经 SW，同批带跳）。 */
+
+/* v235（2026-10-12）：**挂件灯三点返修批**（用户反馈）——
+   · 留言带「||」分割符：长按「留在灯上」原来送整条 '||' 拼起来的原文，
+     改成送**长按的那个气泡**（bubbleText(msg, idx)，page-chat）；
+     lampNotes.add 里再把 || 兜底转成换行（一句话一行，卡面按 \n 分行）；
+   · 同句四层重复：核心按 defs[n % defs.length] 往 36 个挂点轮挂，
+     1 条留言 + 5 空板会被挂 6 遍。lampCards() 补齐到 36 张 ——
+     每条留言只占一个挂点，空板循环补数；超 36 条取最新 36 条；
+   · 一行字数太少：paintCard 文字卡折行改**自适应字号**（从 40 往小试，
+     每个候选字号重新折行，块高放得下就用）—— 折行与落笔同一个字号，
+     行宽撑满；vendor/lamp 的 html 源一并补上 2026-10-10 漏同步的折行修复，
+     重建后两份 core 与 html 三方一致；
+   · page-desktop 导出 lampCards 供冒烟核「一条留言只挂一个挂点」。
+   → 必须跳版本：page-chat.js / page-desktop.js / vendor/acrylic-lamp-core.js /
+     vendor/lamp/acrylic-lamp-core.js / vendor/lamp/acrylic-lamp.html /
+     scripts/smoke.js 都变了。 */
 
 /* v234（2026-10-11 晚 8：55 返修批三）——
    · **白字根因**：style.css 把帷境夜色板（--wj-text:#eef2f8）直接挂在

@@ -134,7 +134,10 @@
      发动态和回评论都要它 —— 不然角色会变成「什么都不知道的复读机」。 */
   function baseSys(ch) {
     var out = ['你是「' + ch.name + '」。'];
-    if (ch.content) out.push(String(ch.content).slice(0, 600));
+    /* 人设唯一出口 compileCharacter；旧 slice(0,600) 截断已删（勘察 P0） */
+    var personaBlock = (Sleepy.promptEngine && Sleepy.promptEngine.compileCharacter)
+      ? Sleepy.promptEngine.compileCharacter(ch.id) : '';
+    if (personaBlock) out.push(personaBlock);
     /* 状态签名已下线（2026-09-29）—— 不再注入 */
     out.push('');
     out.push('现在是' + timeWord() + '。');

@@ -31,8 +31,8 @@
   var FORUM_KEYS = [
     'forumAccounts', 'forumBoards', 'forumPosts', 'forumComments',
     'forumReposts', 'forumFollows', 'forumLikes', 'forumCollections',
-    'forumNotifications', 'forumShares', 'forumShareReceipts',
-    'forumDrafts', 'forumKnowledge'
+    'forumNotifications', 'forumShares', 'forumKnowledge'
+    /* forumShareReceipts / forumDrafts 已摘（2026-10-12 P2 死键清理，见 store.js） */
   ];
 
   var FORUM_MAP_KEYS = ['forumSettingsBySandbox', 'selectedForumAccountBySandbox',

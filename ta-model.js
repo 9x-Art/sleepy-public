@@ -130,6 +130,21 @@
     };
   }
 
+  /* 角色卡唯一出口（勘察 P1）：三类提案都是模型替 char 推进/复核 TA 的生活，
+     不带人设就写不出「这个 TA」的生活。以 system 附块注入 compileCharacter
+     产物（分层+红线并集）；编译器不可用时保持纯 FORMAT_RULES 原样。 */
+  function personaOf(ctx) {
+    try {
+      if (Sleepy.promptEngine && Sleepy.promptEngine.compileCharacter && ctx && ctx.charId) {
+        return Sleepy.promptEngine.compileCharacter(ctx.charId) || '';
+      }
+    } catch (e) { /* 编译不可用就不注入 */ }
+    return '';
+  }
+  function sysWith(persona) {
+    return persona ? FORMAT_RULES + '\n\n' + persona : FORMAT_RULES;
+  }
+
   function buildReview(ctx) {
     var data = {
       world: worldBrief(ctx),
@@ -141,7 +156,7 @@
       task: '复核这些事项 / 关注 / 承诺：有进展的提出进展（item_update/follow_update），需要核实的提复核（promise_review，只更新 pendingWhy/evidence），没变化的不要提。'
     };
     return [
-      { role: 'system', content: FORMAT_RULES },
+      { role: 'system', content: sysWith(personaOf(ctx)) },
       { role: 'user', content: JSON.stringify(data) }
     ];
   }
@@ -160,7 +175,7 @@
       autonomous: '玩家已开启自主生活更新（advance 授权）。只允许低风险日常事件；NPC 自己发生的事不等于角色知道；角色知道不等于必然受影响。'
     };
     return [
-      { role: 'system', content: FORMAT_RULES },
+      { role: 'system', content: sysWith(personaOf(ctx)) },
       { role: 'user', content: JSON.stringify(data) }
     ];
   }
@@ -174,7 +189,7 @@
       task: '提出至多 3 个 NPC 候选：{proposals:[{kind:"contact_candidate", operation:"add", summary:"一句话人设", reason:"为什么 ta 的生活里会有这个人", extra:{candidateName:"名字", candidateRole:"身份"}}]}。候选只是草稿，不会自动成为正式人物。'
     };
     return [
-      { role: 'system', content: FORMAT_RULES },
+      { role: 'system', content: sysWith(personaOf(ctx)) },
       { role: 'user', content: JSON.stringify(data) }
     ];
   }

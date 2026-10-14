@@ -175,7 +175,9 @@
   function buildMessages(sbId, ph, char, opts) {
     opts = opts || {};
     var sys = [Sleepy.promptEngine.cardBody('phoneLife')];
-    if (char.content) sys.push('[CHARACTER]\n' + char.content + '\n[/CHARACTER]');
+    /* 人设唯一出口 compileCharacter（分层+红线并集），不再裸 content（勘察 P1） */
+    var personaBlock = Sleepy.promptEngine.compileCharacter(char.id);
+    if (personaBlock) sys.push(personaBlock);
     if (opts.mode === 'bootstrap') sys.push('[MODE]\nbootstrap —— 初始生活底片，一生一次，遵守卡内「初始底片模式」一节。');
     if (opts.appOnly) sys.push('[MODE]\napp-refresh —— 手动单 App 刷新：只允许产出 [FOCUS] 指定 App 的 deltas，其余 App 一律为空。');
 
@@ -351,7 +353,9 @@
       health: '你正停在「健康打卡」里'
     };
     var sys = [Sleepy.promptEngine.cardBody('phoneCaught')];
-    if (char.content) sys.push('[CHARACTER]\n' + String(char.content).slice(0, 800) + '\n[/CHARACTER]');
+    /* 人设唯一出口 compileCharacter；旧 slice(0,800) 截断已删（勘察 P0） */
+    var caughtPersona = Sleepy.promptEngine.compileCharacter(char.id);
+    if (caughtPersona) sys.push(caughtPersona);
     var user = ['[SCENE]\n你回到房间，发现 user 正拿着你的手机 —— ' +
       (WHERE_TXT[where] || WHERE_TXT.desktop) + '。'];
     var recent = recentContext(sbId, char.id);

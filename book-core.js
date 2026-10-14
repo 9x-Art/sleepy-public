@@ -471,6 +471,20 @@
     } : DRILL_BRIEF;
     var recent = (run.logs || []).slice(-3).map(function (l) { return l.text; });
 
+    /* 随行入局的 char（局里员工）人设，唯一出口 compileCharacter（勘察 P1）：
+       叙事者两个分支都可能代写 char 的行动与心理，以前却没有任何 char 人设，
+       且 run.charName 从未被赋值、恒落「局内员工」。这里按当前岛的活动角色
+       解析；取不到（演练/smoke/无角色）就保持原样。 */
+    var charPersona = '';
+    var charNameLive = run.charName || '';
+    try {
+      var pc = core.activeCharOnIsland ? core.activeCharOnIsland() : null;
+      if (pc && Sleepy.promptEngine && Sleepy.promptEngine.compileCharacter) {
+        charPersona = Sleepy.promptEngine.compileCharacter(pc.id) || '';
+        charNameLive = charNameLive || pc.name || '';
+      }
+    } catch (eP) { /* 取不到角色按无注入处理 */ }
+
     var system = [
       '你是「以身入局」的叙事者兼裁判。用第三人称写这个世界发生的事，',
       '不许替老板（user）决定言行。世界、规则与状态如下：',
@@ -491,6 +505,15 @@
     ].concat(world.npcs.length ? world.npcs.map(function (n) {
       return n.name + ' / 当前态: ' + n.stance + '\n  既定事实: ' + n.fact + '\n  原文声音: ' + (n.voice || n.known);
     }) : ['（预读没认出主要人物 —— 按当前章原文里出现的人物即兴立档，他们不知道任何「剧情以外」的事。）']);
+
+    if (charPersona) {
+      system = system.concat([
+        '',
+        '【随行入局者】（char，user 的同伴，从书外来、局里的员工 ——',
+        'TA 的言行与心理由你推进，但不许替老板 user 决定言行）',
+        charPersona
+      ]);
+    }
 
     if (isTxt) {
       /* v221 四件套：原事实(档案) / 改动账本 / 当前章原文 / 前情(recent) */
@@ -562,7 +585,7 @@
       ? '【本轮】user 以「' + (idn ? idn.name : run.identity) + '」的占位言行：\n' + input +
         '\n\n写出世界的回应（含在场人物反应），末尾按格式给判定块。'
       : '【本轮】user 在局外观测，没有出面。推进 ' +
-        (run.charName || '局内员工') + ' 的行动与心理，末尾按格式给判定块。';
+        (charNameLive || '局内员工') + ' 的行动与心理，末尾按格式给判定块。';
 
     return [
       { role: 'system', content: system.join('\n') },

@@ -274,7 +274,8 @@
 
     var sys = [
       '你是「' + ch.name + '」，现在要写今天的日记。',
-      ch.content ? '[CHARACTER]\n' + ch.content + '\n[/CHARACTER]' : '',
+      /* 人设唯一出口 compileCharacter（分层+红线并集），不再裸 content（勘察 P1） */
+      (Sleepy.promptEngine.compileCharacter ? Sleepy.promptEngine.compileCharacter(charId) : ''),
       '【写日记的要求】',
       '- 第一人称「我」，150~300 字',
       '- 语气、用词、关心的事都按角色设定来',

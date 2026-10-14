@@ -970,11 +970,23 @@ function paintCard(card, seed, img, hi) {
       drawHandBlock(ctx, lines, cx, pad + sh * 0.835, sw * 0.86, 32, tone.ink, rnd, 1.34);
     }
   } else if (lines.length) {
-    /* ★ 2026-10-10 留言字太小：先按 38 号逐字折行，再按行数回推字号 ——
-       板面可用高度取 H*0.78（上下留白），gap 1.46 与原来一致。 */
+    /* ★ 2026-10-12 一行字数太少（用户反馈：「一行就几个字，看得难受」）：
+       2026-10-10 那版先按 38 号折行、再按行数回推字号 —— 折行与落笔
+       用了两个字号：40 字留言被折成 ~4 字一行，字号回推到 23 以后每行
+       只占半个卡宽，读起来是一窄列小字。
+       现在从大字号往小试：每个候选字号都按 maxW 重新折行，块高
+       （行数 × gap × 字号）放得下就用它 —— 折行与落笔同一个字号，
+       行宽永远撑满，字号也是撑满前提下最大的那个。
+       起点 40：留言落款「——阿玥」这类 4 字行在 40 时刚好不折
+       （4×40×0.99=158 ≤ maxW=168），再大就把落款拆成两行。 */
     const maxW = sw * 0.84, gap = 1.46;
-    const wrapped = wrapLines(ctx, lines, maxW, 38);
-    const s = Math.min(38, (H * 0.78) / (wrapped.length * gap));
+    const avail = H * 0.78;                 // 板面可用高度（上下留白）
+    let s = 40;
+    let wrapped = wrapLines(ctx, lines, maxW, s);
+    while (s > 13 && wrapped.length * gap * s > avail) {
+      s -= 2;
+      wrapped = wrapLines(ctx, lines, maxW, s);
+    }
     drawHandBlock(ctx, wrapped, cx, H / 2 + 4, maxW, s, tone.ink, rnd, gap);
   }
 

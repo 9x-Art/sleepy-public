@@ -656,7 +656,10 @@
     var sysParts = [];
     sysParts.push(E.cardBody('summary'));
     var c = core.findChar(session.charId);
-    if (c && c.content) sysParts.push('[CHARACTER]\n' + c.content + '\n[/CHARACTER]');
+    /* 人设唯一出口 compileCharacter（分层+红线并集），不再裸 content（勘察 P1） */
+    var personaBlock = (c && Sleepy.promptEngine.compileCharacter)
+      ? Sleepy.promptEngine.compileCharacter(session.charId) : '';
+    if (personaBlock) sysParts.push(personaBlock);
 
     var messages = [
       { role: 'system', content: sysParts.filter(Boolean).join('\n\n') },

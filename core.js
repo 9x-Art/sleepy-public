@@ -381,8 +381,13 @@
                      档案盒 / 任务运行 tagScope 盖岛章，删房跟着清；
                      bookSettingsBySandbox 是映射键，走下面映射键那条路。 */
                   'bookBoxes', 'bookRuns', 'bookImports',
-                  'forumNotifications', 'forumShares', 'forumShareReceipts',
-                  'forumDrafts', 'forumKnowledge'];
+                  'forumNotifications', 'forumShares', 'forumKnowledge',
+                  /* 数据卫生批（2026-10-12 删房名单差集）：三张盖岛章的数组表，
+                     之前漏登记 —— dropEvents（掉马事件 core.js:1463 盖章）、
+                     momentPending（moments-ai 待回复队列 allPending 全量写）、
+                     momentWall（朋友圈壁纸，{sandboxId,...} 记录） */
+                  'dropEvents', 'momentPending', 'momentWall'];
+                  /* forumShareReceipts / forumDrafts 已摘（2026-10-12 P2 死键清理，见 store.js） */
 
     /* ⚠️ 顺序敏感：挂在**会话 id** 上的动态单键必须先清，再清 chats。
        键名里带的是 chatId（不是 sbId），所以 scoped() 和下面「带 sbId 的键」
@@ -398,6 +403,64 @@
         store.remove('htmlGameResult:' + ch.id);
       });
     }
+
+    /* 数据卫生批（2026-10-12 删房名单差集核查，docs/核查-数据链路-2026-10-12.md §四）：
+       挂在本房 char / chat / group id 上的**动态单键**。宿主记录马上会在
+       下面的 scoped 循环里被清，而这些键键名里只有宿主 id、没有 sbId，
+       scoped 名单永远抓不到 —— 必须趁宿主还在先把 id 收集齐，再逐个 remove。
+       repoDeviceId / repoLikedIds / repoInboxSeen 是**设备级**键（repo-core.js
+       开头注释明示不进岛章/删房名单），刻意不在这里清。 */
+    var doomedChars = {}, doomedRoots = {}, doomedChats = {}, doomedGroups = {};
+    arr(store.get('characters')).forEach(function (c) {
+      if (c && c.sandboxId === id && c.id) {
+        doomedChars[c.id] = 1;
+        var rt = rootOf(c.id);
+        if (rt && rt.id) doomedRoots[rt.id] = 1;
+      }
+    });
+    arr(store.get('chats')).forEach(function (ch) {
+      if (ch && ch.sandboxId === id && ch.id) doomedChats[ch.id] = 1;
+    });
+    arr(store.get('groups')).forEach(function (g) {
+      if (g && g.sandboxId === id && g.id) doomedGroups[g.id] = 1;
+    });
+    if (store.remove) {
+      var dynKeys = [];
+      Object.keys(doomedRoots).concat(Object.keys(doomedChars)).forEach(function (cid) {
+        ['charMem:', 'charState:', 'openLoops:', 'attentionInbox:',
+         'relationIntent:', 'proactiveState:', 'phoneRawFail:'].forEach(function (p) {
+          dynKeys.push(p + cid);
+        });
+      });
+      Object.keys(doomedChats).forEach(function (chId) {
+        dynKeys.push('sumRawFail:' + chId, 'sumCursor:' + chId);
+      });
+      Object.keys(doomedGroups).forEach(function (gid) {
+        dynKeys.push('groupInner:' + gid, 'groupPending:' + gid,
+                     'sumCursor:g:' + gid, 'sumRawFail:g:' + gid);
+      });
+      dynKeys.forEach(function (k) {
+        var v = store.get(k);
+        if (v !== null && v !== undefined) {
+          store.remove(k);
+          removed[k] = 1;
+        }
+      });
+    }
+
+    /* 挂在角色 id 上的三张 byChar 映射（memoryIsland / charSettings / charVoice）：
+       同下面 charAppearance.byChar 的幽灵过滤 —— 键名没有 sbId，
+       按「本房 doomed 的角色 id」删条目，别的岛/别的房不受影响。 */
+    ['memoryIsland', 'charSettings', 'charVoice'].forEach(function (mk) {
+      var m = store.get(mk);
+      var by = m && m.byChar;
+      if (!by || typeof by !== 'object') return;
+      var goneBy = 0;
+      for (var bk in by) {
+        if (has(by, bk) && (doomedRoots[bk] || doomedChars[bk])) { delete by[bk]; goneBy++; }
+      }
+      if (goneBy) { store.set(mk, m); removed[mk] = goneBy; }
+    });
 
     scoped.forEach(function (key) {
       var all = arr(store.get(key));

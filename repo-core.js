@@ -377,7 +377,13 @@
 
   /* kind: 'comment'（席间说一句）| 'repo'（尝后感） */
   function postComment(id, kind, body, cb) {
-    var c = cfg();
+    /* ★ 2026-10-12 P0 修：原来是 `var c = cfg()` —— 闭包里没有 cfg 这个
+       名字（导出面上的 cfg 是 api 对象的属性，不是函数内作用域），同步
+       ReferenceError，席间两个入口必炸、发送按钮永远灰。
+       配置入口与 base() 保持一致：repoCfg。profile.name 正是资料编辑器
+       存的「铺子昵称」（page-repo.js 的 profile/saveProfile 写
+       repoCfg.profile），修好即生效，不是兜底猜的。 */
+    var c = get('repoCfg', {}) || {};
     global.fetch(base() + '/item/' + encodeURIComponent(id) + '/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -1248,6 +1248,15 @@
      配置页把线下按「已实装」列出。留空数组保结构，以后真有新调用类型再填。 */
   var PENDING_TYPES = [];
 
+  /* 候选补丁 2026-10-13 收口注记：
+     本批曾在此放过 c05DefaultParts（默认卡 bubble/whisper 逐行拆分），
+     专为「心声开关关 ⇒ 剥掉 c05 心声段」的假设分支服务。产品口径收口：
+     心声随正常聊天回复带回、由 parseReply 拆分，c05 是唯一协议口径，
+     heartbeatAuto 是**遗留字段**（唯一消费者=旧路径的旧心声回退），
+     不据此改写/拆分 c05。剥除分支撤销 ⇒ 拆分函数随之删除（不留死代码）。
+     默认卡正文内没有气泡段引用心声、心声段不引用分泡（逐行核对过），
+     整卡注入即同时携带两个职责，无交叉残留。 */
+
   /* ============================ 卡片读写 ============================ */
 
   function cardBody(id) {
@@ -1529,16 +1538,79 @@
     return meta;
   }
 
+  /* 候选补丁 2026-10-13（b 修订版）：人物编译唯一入口。
+     分层语义（依据既有 UI 文案）：
+       · 本体（root）content = 人格依据，永远在前；
+       · 皮套（kind==='sub'）content = 当前账号对外补充（page-idcard.js:946-951
+         「这张脸对外是什么样、别人眼里的他是谁」），永远在后且标明性质；
+         本体正文为空时保留账号说明，但必须标注「不是完整本体人格」；
+       · 短字段逐项处理，不做整组回退：
+           speech   —— 账号表现：sub 优先，空则借本体；
+           gender / nationality —— 本体信息：root 优先，空才用 sub；
+           neverDo  —— 红线不做「优先替换」：本体红线永远保留；
+                      sub 的限制单独成行【账号补充限制】，两者同时在则并列标注；
+       · 只有明确 kind==='sub' 走分层；main / npc / 未知名保持既有语义，
+         不自动当 sub；
+       · 只读：不修改任何存储对象，本体映射不泄漏到公开身份（名字仍由 I01 报）。 */
   function compileCharacter(charId) {
     var c = core.findChar(charId);
     if (!c) return '';
-    var text = String(c.content || '').trim();
-    var meta = charMetaLines(c);
+    var kind = c.kind || 'main';
 
-    if (!text && !meta.length) return '';
-    return '[CHARACTER]\n' +
-      (meta.length ? meta.join('\n') + '\n\n' : '') +
-      text + '\n[/CHARACTER]';
+    if (kind !== 'sub') {
+      /* 既有语义原样：main / npc / 未知 kind */
+      var textMain = String(c.content || '').trim();
+      var metaMain = charMetaLines(c);
+      if (!textMain && !metaMain.length) return '';
+      return '[CHARACTER]\n' +
+        (metaMain.length ? metaMain.join('\n') + '\n\n' : '') +
+        textMain + '\n[/CHARACTER]';
+    }
+
+    var root = core.rootOf(charId);
+    var rootOk = !!(root && root.id !== c.id);   /* false = 父映射断裂（rootOf 返回 sub 自己） */
+    var subText = String(c.content || '').trim();
+    var rootText = rootOk ? String(root.content || '').trim() : '';
+
+    /* —— 短字段逐项（顺序即输出顺序）—— */
+    var head = [];
+    /* speech：账号表现优先 */
+    var speech = String(c.speech || '').trim() || (rootOk ? String(root.speech || '').trim() : '');
+    if (speech) head.push('说话与行为方式：' + speech);
+    /* gender / nationality：本体信息优先 */
+    var g = (rootOk && root.gender) ? root.gender : c.gender;
+    var nat = (rootOk ? String(root.nationality || '').trim() : '') || String(c.nationality || '').trim();
+    var who = [];
+    if (g === 'female') who.push('女');
+    if (g === 'male') who.push('男');
+    if (nat) who.push(nat + '人');
+    if (who.length) head.push('身份：' + who.join(' · '));
+    /* neverDo：并集，不静默替换。本体红线永远在；sub 的单独标注保留。 */
+    var ndRoot = rootOk ? String(root.neverDo || '').trim() : '';
+    var ndSub = String(c.neverDo || '').trim();
+    if (ndRoot) head.push('绝对不要做（本体红线）：' + ndRoot);
+    if (ndSub) head.push('账号补充限制（仅这张脸）：' + ndSub);
+
+    if (!rootText && !subText && !head.length) return '';
+
+    var out = '[CHARACTER]\n';
+    if (head.length) out += head.join('\n') + '\n\n';
+    if (rootText) {
+      out += rootText + '\n';
+      if (subText) {
+        out += '\n【当前账号对外补充】' + subText + '\n' +
+          '（与本体人设冲突时：人设事实以本体为准，外在表现以这张脸为准）\n';
+      }
+    } else if (subText) {
+      if (rootOk) {
+        /* 本体在但正文缺失：账号说明保留，但标明性质，不冒称完整本体人格 */
+        out += '【账号对外说明 · 本体人设缺失，以下不是完整本体人格】' + subText + '\n';
+      } else {
+        /* 父映射断裂 ≠ 本体缺失：只用这张脸自己的资料，不套缺失标注 */
+        out += subText + '\n';
+      }
+    }
+    return out + '[/CHARACTER]';
   }
 
   /* K02：user 马甲的一句话人设。空则整块省略（conditional）。 */
@@ -1933,6 +2005,7 @@
     var dev = v.developerMode === true;
     var slots = [];
     var system = [];
+    var protoUsed = '';   /* 候选补丁：c05 实际生效正文（'' = 协议未进 system） */
 
     /* 场景级选择：在**任何 pushSlot 之前**一次性求完全部校验与分配。
        下面的三个 case 只读取 btDec —— 不各自计算、不各自可能失败。 */
@@ -1977,6 +2050,12 @@
         case 'f1': pushSlot(def, btDec.ok ? btDec.f1Text : cardBody('f1')); break;
         case 'pat': pushSlot(def, cardBody('pat')); break;
         case 'msgrecall': pushSlot(def, cardBody('msgrecall')); break;
+        /* 灯牌 / 慢递信箱（2026-10-12 P0-3）：槽注册了但 switch 漏了 case，
+           引擎开时模型收不到 [灯:]/[慢递:] 说明书（旧路径反而有，倒挂）。
+           同 msgrecall 口径：kind:card + cardEnabled 闸，locked 卡正文常开。
+           旧路径（page-chat.js useEngine 关闭分支）与此互斥，无双注入。 */
+        case 'lamptag': pushSlot(def, cardBody('lamptag')); break;
+        case 'slowmail': pushSlot(def, cardBody('slowmail')); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
         case 'htmlgame': pushSlot(def, cardBody('htmlgame')); break;
@@ -2007,7 +2086,14 @@
             system.push({ role: 'system', content: cc.body });
           });
           break;
-        case 'c05': pushSlot(def, btDec.ok ? btDec.c05Text : cardBody('c05')); break;
+        case 'c05': {
+          /* 候选补丁 2026-10-13：把**实际生效**的协议正文带回给调用方，
+             供页面做「协议正文为空」诊断（文本判据，不靠 token 估算）。
+             空值统一在三元外兜一层：任一分支意外空值都不会被字符串化成 "undefined"。 */
+          protoUsed = String((btDec.ok ? btDec.c05Text : cardBody('c05')) || '');
+          pushSlot(def, protoUsed);
+          break;
+        }
         case 'history': {
           var histText = history.map(function (m) {
             return (m.role === 'user' ? 'user: ' : 'char: ') + (m.content || '');
@@ -2024,7 +2110,7 @@
       return { role: m.role, content: m.content };
     }));
 
-    return { messages: messages, slots: slots, behavior: btDiag };
+    return { messages: messages, slots: slots, behavior: btDiag, protocol: protoUsed };
   }
 
   /* ============================ 线下装配（F2） ============================

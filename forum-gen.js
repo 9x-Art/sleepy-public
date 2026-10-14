@@ -34,7 +34,10 @@
     Sleepy.api.runChat(messages, {
       onDone: function (cand, text) { cb(null, text); },
       onFail: function (cands, err) { cb(err || { stage: 'unknown', error: '生成失败' }); }
-    }, false, { feature: 'forum' });   /* 勾了「群声走副 API」→ 只轮询副 API（api.js） */
+      /* maxTokens 覆盖（2026-10-14）：群声产出是多帖+回复的大 JSON，
+         默认 1024 常截断 → 解析失败（真 API 验证复现）。max_tokens 是上限
+         不影响计费下限，给足余量；种子/增量/char 回应共用本咽喉。 */
+    }, false, { feature: 'forum', maxTokens: 3000 });   /* 勾了「群声走副 API」→ 只轮询副 API（api.js） */
   }
 
   function ask(messages, cb) {

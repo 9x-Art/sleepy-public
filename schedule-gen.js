@@ -57,7 +57,9 @@
     ].join('\n');
     var user = [
       '[今天] ' + input.dayLine + '（星期' + WEEK[input.weekday] + '）· 常驻：' + input.place,
-      '[角色卡]\n' + String(ch.content || '（没有更多设定）').slice(0, 1200),
+      /* persona = compileCharacter 产物（分层+红线并集），由 genForChar 传入；
+         旧 slice(0,1200) 截断只在没有编译器产物时兜底（勘察 P0） */
+      '[角色卡]\n' + (input.persona || String(ch.content || '（没有更多设定）').slice(0, 1200)),
       input.chatExcerpt ? '[近期聊天]\n' + input.chatExcerpt : '[近期聊天]\n（最近没聊过什么）',
       input.existing ? '[今天已有的安排（不要再排这些）]\n' + input.existing : ''
     ].filter(Boolean).join('\n\n');
@@ -144,6 +146,9 @@
 
     var input = {
       char: ch,
+      /* 人设唯一出口：编译产物传给纯函数 makeMessages（seam 不读全局） */
+      persona: (Sleepy.promptEngine && Sleepy.promptEngine.compileCharacter)
+        ? Sleepy.promptEngine.compileCharacter(ch.id) : '',
       dayLine: dayLine,
       weekday: d.getDay(),
       place: (function () {

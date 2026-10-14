@@ -1189,9 +1189,14 @@
           if (Sleepy.photos && Sleepy.photos.removeByMedia) {
             Sleepy.photos.removeByMedia(m.mediaId);
           }
-          var otherRef = c0.messages.some(function (x) {
-            return ids.indexOf(x.id) < 0 && x.mediaId === m.mediaId;
-          });
+          /* 全局引用判定（2026-10-12 P1-3 修）：以前只查本聊天 —— 相册或
+             别的聊天还引着同一张图时 blob 被误删，那边显示「找不到了」。
+             现在统一走 photos.mediaReferenced（扫全部聊天 + 相册记录）。 */
+          var otherRef = Sleepy.photos && Sleepy.photos.mediaReferenced
+            ? Sleepy.photos.mediaReferenced(m.mediaId, { msgId: m.id })
+            : c0.messages.some(function (x) {
+                return ids.indexOf(x.id) < 0 && x.mediaId === m.mediaId;
+              });
           if (!otherRef) {
             var r2 = Sleepy.media.remove(m.mediaId);
             if (r2 && r2['catch']) r2['catch'](function () { /* 删不掉不影响删除本身 */ });
@@ -4156,10 +4161,12 @@
             { label: '撤回', run: function () { recallMine(msg); } });
         }
         /* 「留在灯上」（2026-10-06）：纯文字消息，双方向都可以。
-           插在「编辑」前面 —— 它是"把这句话送去别处"，跟引用/转发是一路的。 */
+           插在「编辑」前面 —— 它是"把这句话送去别处"，跟引用/转发是一路的。
+           ★ 2026-10-12：带 idx —— 长按哪个气泡就挂哪个气泡的话，
+           不是整条 '||' 原文（用户报「带上分割符了」）。 */
         if (!msg.type && !msg.recalledAt && String(msg.content || '').trim()) {
           items.splice(4, 0,
-            { label: '留在灯上', run: function () { leaveOnLamp(msg); } });
+            { label: '留在灯上', run: function () { leaveOnLamp(msg, idx); } });
         }
         /* 「朗读」（2.15）：只在角色的话、纯文字、且角色开着「长按给朗读」时出现。
            已经在长按的那一条上读了就写成「重读」—— 同一句话偶尔想再听一遍。 */
@@ -4295,12 +4302,17 @@
          谁说的话署谁的名 —— user 是「我」，assistant 是角色名。
          表情/转账/拍一拍是动作记录，照片要连相册，都算不上「一句话」，不进。
          时间戳用消息自己的（落款显示的是「这句话被说出来的时刻」，
-         不是「被挂上去的时刻」）。 */
-      function leaveOnLamp(msg) {
+         不是「被挂上去的时刻」）。
+         ★ 2026-10-12：必须带 idx —— 一条回复拆成几段气泡时，挂上去的
+         要是**长按的这个气泡**，不是整条 '||' 拼起来的原文（用户报：
+         「灯上挂的是带分割符的整串，又不是我选的那句话」）。
+         bubbleText 是全项目唯一的「第 idx 个气泡正文」出口（见其注释），
+         user 消息不参与 || 分段，传 null 时原样返回整条。 */
+      function leaveOnLamp(msg, idx) {
         var chat = getChat(chatId);
         var by = msg.role === 'user' ? userNameOf(chat) : charNameOf(chat);
         var rec = Sleepy.lampNotes && Sleepy.lampNotes.add({
-          text: String(msg.content || ''),
+          text: bubbleText(msg, idx),
           by: by,
           ts: msg.timestamp || Date.now(),
           src: 'chat'
@@ -4443,6 +4455,12 @@
             userId: c.userId,
             history: out
           });
+          /* 候选补丁 2026-10-13：引擎开分支走同一套人物/协议诊断
+             （built.protocol 是 c05 槽实际生效正文，文本判空）。 */
+          var diagNew = chatDiagPersona(c);
+          var activeNew = diagNew.flags.concat(
+            String(built.protocol || '').trim() ? [] : ['protoBlank']);
+          chatDiagCommit(c, activeNew).forEach(function (f) { ctx.toast(f.msg, 'warn'); });
           /* 日记事件垫在历史后面 —— 它是刚发生的事，比历史都新 */
           var peek = diaryPeekMsg(c.characterId);
           if (peek) built.messages.push(peek);
@@ -4474,7 +4492,17 @@
            都放在 slice 之后，所以不会被上下文条数截掉。 */
         if (Sleepy.switcher && Sleepy.switcher.compileSystemContext) {
           var sys = Sleepy.switcher.compileSystemContext(c.characterId, c.userId, limit);
+          /* L4 向量召回（2026-10-12 P1-1 修）：引擎路径走 compileRecall/K03c 槽，
+             旧路径此前整层缺失 —— prefetch 在 requestReply 里不分引擎都跑，
+             这里同步读缓存即可；没配向量/没召回返回 ''，不加空段。 */
+          var recOld = (Sleepy.memoryVec && Sleepy.memoryVec.text)
+            ? (Sleepy.memoryVec.text(c.characterId, c.userId || null) || '') : '';
+          if (recOld) out.unshift({ role: 'system', content: recOld });
           if (sys) out.unshift({ role: 'system', content: sys });
+        } else if (Sleepy.memoryVec && Sleepy.memoryVec.text) {
+          /* switcher 整个不在时也别丢召回（同上，同步读缓存） */
+          var recOld2 = Sleepy.memoryVec.text(c.characterId, c.userId || null);
+          if (recOld2) out.unshift({ role: 'system', content: recOld2 });
         }
         /* 表情包说明书：手上有哪些表情、想发的时候怎么写（[表情:名字]）。
            没有表情时不加这一段 —— 别平白多一段指令，模型容易照猫画虎瞎编。 */
@@ -4513,10 +4541,43 @@
         out.unshift({ role: 'system', content:
           '你还可以写慢递信：单独一行写 [慢递:小时数|信的内容]，如 [慢递:6|（信的正文，可以长一些）]。信会在 N 小时后送进对方的信箱（1 到 72），到点前对方看不到。适合想说但不必马上被看到的话；偶尔写一封就好。' });
 
-        var cfg = store.get('chatDefaults') || {};
-        if (cfg.heartbeatAuto !== false && out.length) {
+        /* ---- 候选补丁 2026-10-13 收口版：协议 + 人物，同一可核对片段 ----
+           口径：两条正常私聊路径都要完整带分泡+心声；c05 完整时整卡注入
+           （去重：不再叠加旧 heartbeat.replySpec），关闭行为引擎不丢它们；
+           heartbeatAuto 是遗留字段，只决定「c05 无效时旧心声回退注不注入」，
+           不据此拆分/改写 c05。最终 system 顺序（unshift 后进先出）：
+             [CHARACTER]人设 → 输出协议 → (旧心声仅回退时) → 慢递 → 灯
+             → 撤回 → 拍一拍 → genimg → stickers → 认知 → 召回 → 历史(+尾插)
+           （顺序由零网络完整链路断言验证。） */
+        var cfgOld = store.get('chatDefaults') || {};
+        var hbAutoOld = cfgOld.heartbeatAuto !== false;   /* 遗留字段：见上 */
+        var peOld = Sleepy.promptEngine;
+        var c05OvrOld = peOld ? peOld.isOverridden('c05') === true : false;
+        var c05BodyOld = peOld ? String(peOld.cardBody('c05') || '') : '';
+        var c05BlankOld = c05OvrOld && !c05BodyOld.trim();   /* 空串或纯空白覆盖 = 无效 */
+        var protoKindOld = 'none';   /* c05-default | c05-custom | heartbeat-only | none */
+        var protoTextOld = '';
+        if (peOld && !c05BlankOld) {
+          /* c05 有效（默认或非空自定义）：整卡原样注入，不拆句、不覆写用户保存值；
+             心声要求随卡在 —— 这就是去重，不是取消心声。 */
+          protoTextOld = c05BodyOld;
+          protoKindOld = c05OvrOld ? 'c05-custom' : 'c05-default';
+        } else if (hbAutoOld) {
+          /* c05 无效 + 遗留心声开关开着：回退旧心声指令（旧口径，无分泡要求） */
+          protoTextOld = Sleepy.heartbeat.replySpec();
+          protoKindOld = 'heartbeat-only';
+        }
+        /* 旧心声指令只在协议未覆盖心声职责时注入 —— 同一请求不出现两套心声要求 */
+        if (hbAutoOld && protoKindOld === 'none' && out.length) {
           out.unshift({ role: 'system', content: Sleepy.heartbeat.replySpec() });
         }
+        /* 人物诊断与协议诊断共用一套状态机（引擎开/关、普通回复/reroll 全覆盖） */
+        var diagOld = chatDiagPersona(c);
+        var activeOld = diagOld.flags.concat(chatDiagProtocol(c, { kind: protoKindOld }));
+        chatDiagCommit(c, activeOld).forEach(function (f) { ctx.toast(f.msg, 'warn'); });
+        /* 注入顺序：先 unshift 协议、再 unshift 人设 ⇒ 人设最终排在协议前面 */
+        if (protoTextOld) out.unshift({ role: 'system', content: protoTextOld });
+        if (diagOld.personaText) out.unshift({ role: 'system', content: diagOld.personaText });
 
         if (opts.note) {
           out.push({
@@ -5371,7 +5432,8 @@
           var who = m.role === 'user' ? '你' : ch.name;
           return who + '：' + String(m.type ? attachText(m) : (m.content || '')).slice(0, 80);
         }).filter(Boolean).join('\n');
-        var chBlock = ch.content ? '[CHARACTER]\n' + ch.content + '\n[/CHARACTER]' : '';
+        /* 人设唯一出口 compileCharacter（分层+红线并集），不再裸 content（勘察 P1） */
+        var chBlock = (Sleepy.promptEngine.compileCharacter) ? Sleepy.promptEngine.compileCharacter(ch.id) : '';
         var ctxLine = '[现在时间] ' + nowLine + '\n[近期聊天]\n' + (recent || '（今天还没聊过）');
 
         var sys, user;
@@ -6272,6 +6334,84 @@
     withPinnedFirst: withPinnedFirst
   };
 
+  /* ======== 候选补丁 2026-10-13：人物/协议装配诊断（只读，不落盘） ========
+     状态机：条件成立 → 记 key（会话|角色|故障型）；条件转假 → 删 key
+     （修复配置后标志自动清除，故障复发会重新提示）。
+     去重含角色维度：会话换绑角色后是新的 key，各自独立提示/清除。
+     提示只在「新亮起」时由调用方 toast（本层不碰 UI）。 */
+  var chatDiagFlags = {};
+  var CHAT_DIAG_KINDS = ['noChar', 'personaEmpty', 'maskBroken', 'personaError',
+    'protoBlank', 'bubblesOnly', 'protoMissing'];
+  var CHAT_DIAG_MSG = {
+    noChar: '这个对话还没有绑定角色，本轮请求不会附带人设',
+    personaEmpty: function (ch) { return '「' + ((ch && ch.name) || '?') + '」还没有设定原文，TA 只能凭名字聊天'; },
+    maskBroken: function (ch) { return '「' + ((ch && ch.name) || '?') + '」的本体映射失效（小号的父角色找不到），只用了这张脸自己的资料'; },
+    personaError: '人设编译出错，本轮请求没有附带人设',
+    protoBlank: '输出协议正文为空：分泡/心声要求未随本轮请求发出',
+    bubblesOnly: '分泡要求未装配：本轮只有旧心声指令（c05 输出协议无效）。心声不受影响',
+    protoMissing: '输出协议未装配：本轮请求没有分泡/心声要求'
+  };
+  /* 返回 true = 本次**新**亮起（调用方据此 toast 一次）；转假即清除，可复发 */
+  function chatDiagApply(chatId, charId, kind, on) {
+    var key = chatId + '|' + (charId || '-') + '|' + kind;
+    var was = !!chatDiagFlags[key];
+    if (on) chatDiagFlags[key] = true;
+    else delete chatDiagFlags[key];
+    return on && !was;
+  }
+  /* 人物装配评估（引擎开/关、普通回复/reroll 共用）。只读，不改存储。 */
+  function chatDiagPersona(chat) {
+    var chatId = chat ? chat.id : '';
+    var cid = chat ? chat.characterId : '';
+    var ch = cid ? Sleepy.core.findChar(cid) : null;
+    var res = { chatId: chatId, charId: cid || null, personaText: '', flags: [] };
+    if (!ch) { res.flags.push('noChar'); return res; }
+    var isSub = (ch.kind || 'main') === 'sub';
+    var broken = false;
+    if (isSub) {
+      var rt = Sleepy.core.rootOf(cid);
+      broken = !rt || rt.id === ch.id;    /* rootOf 断链时返回 sub 自己（core.js:699） */
+    }
+    try {
+      res.personaText = (Sleepy.promptEngine && Sleepy.promptEngine.compileCharacter(cid)) || '';
+      if (!res.personaText) res.flags.push(broken ? 'maskBroken' : 'personaEmpty');
+      else if (broken) res.flags.push('maskBroken');   /* 有资料仍准确报映射失效 */
+    } catch (e) {
+      res.flags.push('personaError');   /* 编译异常不误报「用户没填人设」 */
+    }
+    return res;
+  }
+  /* 协议装配评估：入参是装配方算好的 {kind}。
+     kind：'c05-default' | 'c05-custom'（都健康，不告警）
+         | 'heartbeat-only'（仅旧心声、缺分泡 —— 不误报缺心声）
+         | 'none'（无任何协议）| 'blank'（引擎路 c05 正文为空）。
+     收口注记：customMixed 已撤 —— 心声随回复带回、parseReply 拆分，
+     自定义 c05 原样注入即可，没有「与心声开关冲突」这回事
+     （heartbeatAuto 是遗留字段，不升格为协议规则）。 */
+  function chatDiagProtocol(chat, info) {
+    var kinds = [];
+    if (!info) return kinds;
+    if (info.kind === 'heartbeat-only') kinds.push('bubblesOnly');
+    else if (info.kind === 'none') kinds.push('protoMissing');
+    else if (info.kind === 'blank') kinds.push('protoBlank');
+    return kinds;
+  }
+  /* 统一落状态（两个引擎分支与 reroll 都调它）。
+     本层不碰 UI：返回本次**新亮起**的 [{kind, msg}]，由调用方（页面闭包里有
+     ctx.toast）负责弹提示。 */
+  function chatDiagCommit(chat, activeKinds) {
+    var chatId = chat ? chat.id : '';
+    var cid = chat ? chat.characterId : '';
+    var fresh = [];
+    CHAT_DIAG_KINDS.forEach(function (k) {
+      if (chatDiagApply(chatId, cid, k, activeKinds.indexOf(k) >= 0)) {
+        var m = CHAT_DIAG_MSG[k];
+        if (m) fresh.push({ kind: k, msg: typeof m === 'function' ? m(Sleepy.core.findChar(cid)) : m });
+      }
+    });
+    return fresh;
+  }
+
   Sleepy.chatStore = {
     getChats: getChats,
     viewChats: viewChats,
@@ -6292,6 +6432,16 @@
     getCharacters: getCharacters,
     findCharacter: findCharacter,
     newId: newId
+  };
+
+  /* 候选补丁：零网络测试观察口（只读；不改任何存储对象） */
+  Sleepy.chatDiag = {
+    flags: chatDiagFlags,
+    personaOf: chatDiagPersona,
+    protocolKindsOf: chatDiagProtocol,
+    apply: chatDiagApply,
+    KINDS: CHAT_DIAG_KINDS,
+    MSG: CHAT_DIAG_MSG
   };
 
   /* 聊天 App 容器（page-app.js）从这里取「消息」那一屏的实现。

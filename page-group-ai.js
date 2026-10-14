@@ -132,18 +132,20 @@
     if (!rec) return null;
     lines.push('【' + rec.name + '】本体。TA 在群里的账号：' +
       e.accounts.map(function (m) { return gs().accountMeta(m).name; }).join('、') + '。');
-    var persona = String(rec.content || '').trim();
+    /* 人设唯一出口 = compileCharacter（分层 + 红线并集，含短字段）。
+       以前这里只给 rec.content（截 1200）+ charMetaLines(rec)：
+       rec 是小号时缺本体人格与本体红线（2026-10-13 人设链路勘察 P0）。 */
+    var persona = (Sleepy.promptEngine && Sleepy.promptEngine.compileCharacter)
+      ? Sleepy.promptEngine.compileCharacter(e.ownerId) : '';
     if (persona) {
-      lines.push('人设：' + (persona.length > 1200 ? persona.slice(0, 1200) + '…' : persona));
+      lines.push(persona);
+    } else if (String(rec.content || '').trim()) {
+      /* 编译器不可用时的兜底：至少给原文（保留旧截断防超长） */
+      var rawPersona = String(rec.content || '').trim();
+      lines.push('人设：' + (rawPersona.length > 1200 ? rawPersona.slice(0, 1200) + '…' : rawPersona));
     } else {
       lines.push('人设：（没写设定，按名字和常识演一个有分寸的普通人）');
     }
-    /* 角色卡的短字段（说话方式 / 身份 / 红线）：走私聊 K01 的
-       同一份实现（charMetaLines）。以前这里只给 content，而且 speech 只在
-       NPC 分支里给 —— 于是群里的大号全是一个腔调（2026-09-22 预设通查）。 */
-    var meta = (Sleepy.promptEngine && Sleepy.promptEngine.charMetaLines)
-      ? Sleepy.promptEngine.charMetaLines(rec) : [];
-    meta.forEach(function (t) { lines.push(t); });
     if (isNpc) {
       var knownBy = rec.knownBy || null;
       if (knownBy) {
