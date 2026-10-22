@@ -16956,7 +16956,10 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v252（2026-10-22）：账密系统收口批 —— worker/repo-worker.js（发码营业
    口令闸 + 会话空闲 30 天过期）/ scripts/smoke.js 都变了。
    基准随批 v251 → v252。 */
-const EXPECTED_SW_CACHE = 'sleepy-v252';
+/* v253（2026-10-22 晚）：workers 子域去 QQ 化 —— repo-core.js（DEFAULT_BASE
+   换 sleepy-goodluck.workers.dev）/ sw.js / scripts/smoke.js 都变了。
+   基准随批 v252 → v253。 */
+const EXPECTED_SW_CACHE = 'sleepy-v253';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

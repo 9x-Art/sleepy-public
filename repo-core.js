@@ -58,7 +58,7 @@
   /* ★ 官方仓库地址：**烤在这里**，所有 user 开箱即用，不在页面上填。
      Worker 部署后把域名填进 DEFAULT_BASE 即可（repoCfg.base 留作覆盖
      通道，页面不暴露）。 */
-  var DEFAULT_BASE = 'https://sleepy-repo.2383444931.workers.dev';
+  var DEFAULT_BASE = 'https://sleepy-repo.sleepy-goodluck.workers.dev';
 
   function get(k, d) { var v = store.get(k); return v === null || v === undefined ? d : v; }
   function set(k, v) { store.set(k, v); }
