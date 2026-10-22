@@ -42,6 +42,7 @@
     if (!v.overrides) v.overrides = {};
     if (!v.disabled) v.disabled = {};
     if (!v.custom) v.custom = [];
+    if (v.inspect == null) v.inspect = false;   /* 自察默认关（2026-10-21）——只兜默认值，别洗掉 true */
     /* 一次性迁移：旧默认把 developerMode:true 写进了老存档（不是用户自己开的），
        这里洗成 false —— 不洗的话老设备升级后内置卡照样解锁。
        置 devMigrated 之后，设置页 5 连点**主动**开出的 true 不再被这里动。
@@ -55,6 +56,25 @@
   }
 
   function saveCfg(v) { store.set(KEY, v); }
+
+  /* 自察开关（方案-预设页分类与自察-v1 C2，2026-10-21）：默认关——
+     每轮多几十 token 输出，用户想核对「条目有没有起作用」时再开。 */
+  function inspectEnabled() { return cfg().inspect === true; }
+  function setInspect(on) {
+    var v = cfg();
+    v.inspect = !!on;
+    saveCfg(v);
+  }
+  /* 自察指令正文（唯一出处）：要求 TA 在正文前输出 [自察]…[/自察]，
+     三问全指向「这一轮实际用了什么、改了什么」；清单由装配时附上，
+     清单外的条目不许编。 */
+  var INSPECT_INSTR = [
+    '【自察】回复正文之前，先输出一段 [自察]…[/自察]（三行以内，写完就闭标签），如实回答：',
+    '一、这一轮你参考了下面列出的哪些设定资料（写条目名）；都没用到就写「无」。',
+    '二、其中有没有哪一条要求你特别注意或回避什么。',
+    '三、它把你本来要说的话改成了什么（一句话）。',
+    '只认下面列出的条目，清单之外的设定不要编造。[/自察] 之后照常输出正文。'
+  ].join('\n');
 
   function isEngineOn() { return cfg().useEngine !== false; }
   /* 只认**显式** true：出厂关（2026-10-07 用户拍板内置全上锁），
@@ -1243,6 +1263,16 @@
       note: '聊天历史（条数由对话设置控制）' }
   ];
 
+  /* 分类（方案-预设页分类与自察-v1，2026-10-21）：预设页按「线上提示词 /
+     角色功能」分组展示；功能类 = 挂 C04 的能力说明卡（开关保留、内容上锁），
+     其余全归提示词类。唯一出处在这里，页面不自己再列名单。 */
+  var FEATURE_IDS = {
+    pat: 1, msgrecall: 1, lamptag: 1, slowmail: 1,
+    stickers: 1, genimg: 1, htmlgame: 1, phone: 1,
+    weproposal: 1, wenote: 1, forum: 1
+  };
+  function slotCat(id) { return FEATURE_IDS[id] ? 'feature' : 'prompt'; }
+
   /* 已全部实装。历史备注：2026-09-19 之前线下（F2）一直挂在这张名单里灰显，
      实际 page-offline 的 requestTurn 早已走 assembleOffline —— 名单清空，
      配置页把线下按「已实装」列出。留空数组保结构，以后真有新调用类型再填。 */
@@ -1297,7 +1327,10 @@
      绝不把没标记的（可能写着某角色的私密设定）广播给全群。 */
   function addCustomCard(title, body, opts) {
     var v = cfg();
-    var card = { id: 'cu_' + Date.now().toString(36), title: String(title || '未命名注入'), body: String(body || ''), at: Date.now() };
+    /* id 不能只用 Date.now()：同一毫秒连加两张卡 id 相同 ——
+       moveCustomCard/removeCustomCard 按 id 找会串（2026-10-21 冒烟钓出）。
+       补一段随机尾。 */
+    var card = { id: 'cu_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: String(title || '未命名注入'), body: String(body || ''), at: Date.now() };
     if (opts && opts.group) card.group = true;   /* 只在开着时落字段，不留 group:false 尸体 */
     v.custom.push(card);
     saveCfg(v);
@@ -1322,6 +1355,21 @@
     var v = cfg();
     v.custom = v.custom.filter(function (c) { return c.id !== id; });
     saveCfg(v);
+  }
+
+  /* 自定义卡排序（方案-预设页分类与自察-v1 B，2026-10-21）：
+     cfg().custom 的数组顺序**就是**注入顺序（线上 assembleOnline 与线下
+     assembleOffline 都是 forEach 数组序），所以重排 = 交换相邻项 + 落库，
+     装配层零改动、天然真实生效。dir: -1 上移 / +1 下移。 */
+  function moveCustomCard(id, dir) {
+    var v = cfg();
+    var i = -1;
+    v.custom.forEach(function (c, k) { if (c.id === id) i = k; });
+    var j = i + (dir < 0 ? -1 : 1);
+    if (i < 0 || j < 0 || j >= v.custom.length) return false;
+    var t = v.custom[i]; v.custom[i] = v.custom[j]; v.custom[j] = t;
+    saveCfg(v);
+    return true;
   }
 
   /* ============================ I01 编译 ============================ */
@@ -1805,9 +1853,13 @@
     }).filter(Boolean);
   }
 
-  function compileWorldbook(charId, recentText) {
+  /* 世界书命中收集（方案-预设页分类与自察-v1 C1，2026-10-21）：
+     命中判定与拼 prompt 原来长在一起；调试预览要的「本轮命中了哪些条目、
+     为什么命中」就是同一份计算 —— 抽出 wbCollect 做唯一实现，
+     compileWorldbook 取 text、worldbookHitList 取 hits，绝不做第二份判定。 */
+  function wbCollect(charId, recentText) {
     var books = store.get('worldbooks');
-    if (!Array.isArray(books) || !books.length) return '';
+    if (!Array.isArray(books) || !books.length) return { text: '', hits: [] };
     var hay = String(recentText || '').toLowerCase();
     var charIds = {};
     if (charId) charIds[charId] = 1;
@@ -1817,6 +1869,7 @@
     } catch (e) { /* rootOf 拿不到就只认本尊 */ }
 
     var lines = [];
+    var hits = [];
     books.forEach(function (b) {
       if (!b || b.enabled === false) return;
       if (b.scope === 'personal' && !charIds[b.characterId]) return;
@@ -1825,18 +1878,34 @@
         var content = String(it.content || '').trim();
         if (!content) return;
         var hit = !!it.always;
+        var why = '常驻';
         if (!hit) {
           var keys = wbSplitKeys(it.keys);
-          hit = keys.length > 0 && keys.some(function (k) {
-            return hay.indexOf(k.toLowerCase()) >= 0;
-          });
+          var hitKey = null;
+          for (var ki = 0; ki < keys.length; ki++) {
+            if (hay.indexOf(keys[ki].toLowerCase()) >= 0) { hitKey = keys[ki]; break; }
+          }
+          if (!hitKey) return;
+          why = '命中关键词「' + hitKey + '」';
         }
-        if (!hit) return;
         lines.push('【' + (it.name || b.name || '条目') + '】' + content);
+        hits.push({ name: (it.name || b.name || '条目'), why: why,
+                    book: (b.name || ''), always: !!it.always });
       });
     });
-    if (!lines.length) return '';
-    return '【世界书】以下是当前世界观的设定资料，写作时遵守：\n' + lines.slice(0, 10).join('\n');
+    if (!lines.length) return { text: '', hits: [] };
+    return { text: '【世界书】以下是当前世界观的设定资料，写作时遵守：\n' + lines.slice(0, 10).join('\n'),
+             hits: hits.slice(0, 10) };
+  }
+
+  function compileWorldbook(charId, recentText) {
+    return wbCollect(charId, recentText).text;
+  }
+
+  /* 调试预览专用：本轮命中的世界书条目清单（结构与 wbCollect.hits 一致）。
+     只读不写，不进 prompt、不加调用。 */
+  function worldbookHitList(charId, recentText) {
+    return wbCollect(charId, recentText).hits;
   }
 
   /* K04 世界书 · 群线上版（2026-10-05 K03f）：复用 compileWorldbook 的
@@ -2006,6 +2075,7 @@
     var slots = [];
     var system = [];
     var protoUsed = '';   /* 候选补丁：c05 实际生效正文（'' = 协议未进 system） */
+    var wbHits = [];      /* C2 自察（2026-10-21）：本轮世界书命中清单（case worldbook 填） */
 
     /* 场景级选择：在**任何 pushSlot 之前**一次性求完全部校验与分配。
        下面的三个 case 只读取 btDec —— 不各自计算、不各自可能失败。 */
@@ -2042,7 +2112,20 @@
         case 'character': pushSlot(def, compileCharacter(charId)); break;
         case 'usercore': pushSlot(def, compileUserCore(userId)); break;
         case 'i01': pushSlot(def, compileI01(charId, userId)); break;
-        case 'time': pushSlot(def, compileTimeFacts(charId)); break;
+        case 'time': {
+          /* 间隔事实（2026-10-15 方案 A②）：历史带 at（见 history case）时，
+             代码算好「距最后一条消息已过多久」直接喂 —— 模型自己拿「现在」
+             减时刻算差值不可靠（真机复现：昨晚发的消息今天回，char 当成今天发的）。
+             无 at（老存档/测试夹具）→ gapLine 返回 ''，time 槽原样。 */
+          var tText = compileTimeFacts(charId);
+          var lastAtTs = 0;
+          history.forEach(function (m) { if (m && m.at > lastAtTs) lastAtTs = m.at; });
+          var calGap = Sleepy.calendar;
+          var gLine = (lastAtTs && calGap && calGap.gapLine) ? calGap.gapLine(lastAtTs) : '';
+          if (gLine) tText = (tText ? tText + '\n' : '') + gLine;
+          pushSlot(def, tText);
+          break;
+        }
         case 'realworld': pushSlot(def, compileRealworld()); break;
         case 'lang': pushSlot(def, compileLang(charId)); break;
         /* 三张受影响卡统一读 btDec：任一失败时三者一起回退旧路径 */
@@ -2073,7 +2156,9 @@
         case 'talife': pushSlot(def, compileTaLife(charId, userId, lastUserText(history))); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
-          pushSlot(def, compileWorldbook(charId, wbText));
+          var wbRes = wbCollect(charId, wbText);
+          pushSlot(def, wbRes.text);
+          wbHits = wbRes.hits;     /* 给自察指令当「本轮生效资料」清单 */
           break;
         }
         case 'custom':
@@ -2091,6 +2176,22 @@
              供页面做「协议正文为空」诊断（文本判据，不靠 token 估算）。
              空值统一在三元外兜一层：任一分支意外空值都不会被字符串化成 "undefined"。 */
           protoUsed = String((btDec.ok ? btDec.c05Text : cardBody('c05')) || '');
+          /* C2 自察（方案-预设页分类与自察-v1，2026-10-21，默认关）：
+             开着时在输出协议**之前**注入一段自察指令，附上本轮真实生效的
+             设定资料清单（世界书命中条目 + 已启用的自定义卡）——不给清单
+             模型只能瞎编条目名。要求在正文前输出 [自察]…[/自察]，
+             parseReply 负责剥掉（不进气泡、不落库正文、不回喂下一轮）。 */
+          if (inspectEnabled()) {
+            var manifest = wbHits.map(function (h, k) {
+              return (k + 1) + '. 世界书条目「' + h.name + '」（' + h.why + '）';
+            });
+            customCards().forEach(function (cc) {
+              if (cardEnabled(cc.id)) manifest.push((manifest.length + 1) + '. 自定义注入「' + cc.title + '」');
+            });
+            pushSlot({ id: 'inspect', slot: 'C04b', name: '自察', kind: 'program', required: false,
+              note: '开启时注入：让 TA 汇报本轮用了哪些设定条目' },
+              INSPECT_INSTR + (manifest.length ? '\n' + manifest.join('\n') : '\n（本轮没有生效的设定资料）'));
+          }
           pushSlot(def, protoUsed);
           break;
         }
@@ -2106,8 +2207,28 @@
 
     /* 最终 messages：system 槽按装配顺序 + 历史原文。
        U01（user 当前输入）就在 history 末尾 —— 和旧路径一致。 */
+    /* 最终 messages：system 槽按装配顺序 + 历史（行内时间戳，2026-10-15 方案 A①）。
+       戳走 cal.histStamp（私聊口径 = char 时区，配合 timeFacts 已有的时差行）；
+       at 缺失 → 无戳原样出站（老存档/测试夹具/黄金基线都不受影响）。
+       worldbook / taimpact / talife 的相关性判据仍吃**原始** history —— 戳不进关键词匹配。
+       多模态（photo）content 是数组：只给 text 分量加戳，别把数组前缀成字符串。 */
+    function stampContent(c, st) {
+      if (!st) return c;
+      if (Array.isArray(c)) {
+        return c.map(function (part) {
+          return (part && part.type === 'text') ? { type: 'text', text: st + part.text } : part;
+        });
+      }
+      return st + String(c == null ? '' : c);
+    }
+    var tzHist = '';
+    var calHist = Sleepy.calendar;
+    if (calHist && calHist.cfgOf) {
+      try { tzHist = ((calHist.cfgOf(charId) || {}).timezone) || ''; } catch (e) { tzHist = ''; }
+    }
     var messages = system.concat(history.map(function (m) {
-      return { role: m.role, content: m.content };
+      var st = (m && m.at && calHist && calHist.histStamp) ? calHist.histStamp(m.at, { tz: tzHist }) : '';
+      return { role: m.role, content: stampContent(m.content, st) };
     }));
 
     return { messages: messages, slots: slots, behavior: btDiag, protocol: protoUsed };
@@ -2590,6 +2711,34 @@
   var OPEN_OLD = '<心声>';
   var CLOSE_OLD = '</心声>';
 
+  /* 自察块剥离（方案-预设页分类与自察-v1 C2，2026-10-21）：
+     [自察]…[/自察] 是诊断输出 —— 不进气泡、不落 content（content 会回喂
+     下一轮，留着就是永久噪音）、单独带回给调用方（长按消息查看）。
+     与 [WHISPER] 同一套「开标签定位 + 半截防护」的思路；没写闭标签时
+     只收第一行（防止吞掉整段回复正文）。 */
+  var INSP_OPEN = '[自察]';
+  var INSP_CLOSE = '[/自察]';
+
+  function extractInspect(text) {
+    text = String(text || '');
+    var i = text.indexOf(INSP_OPEN);
+    if (i < 0) return { text: text, inspect: null };
+    var rest = text.slice(i + INSP_OPEN.length);
+    var j = rest.indexOf(INSP_CLOSE);
+    var body, tail;
+    if (j >= 0) {
+      body = rest.slice(0, j);
+      tail = rest.slice(j + INSP_CLOSE.length);
+    } else {
+      /* 没闭标签：只认第一行当自察，其余还给正文 */
+      var nl = rest.indexOf('\n');
+      body = nl >= 0 ? rest.slice(0, nl) : rest;
+      tail = nl >= 0 ? rest.slice(nl) : '';
+    }
+    body = body.trim();
+    return { text: text.slice(0, i) + tail, inspect: body || null };
+  }
+
   function heldTail(s, open) {
     var max = Math.min(s.length, open.length - 1);
     for (var len = max; len > 0; len--) {
@@ -2599,7 +2748,8 @@
   }
 
   function parseReply(raw) {
-    var text = String(raw || '');
+    var pre = extractInspect(raw);          /* 自察先剥（在 [WHISPER] 之前出现） */
+    var text = pre.text;
 
     var iNew = text.indexOf(OPEN_NEW);
     var iOld = text.indexOf(OPEN_OLD);
@@ -2616,7 +2766,7 @@
       var hold = Math.max(holdNew, holdOld);
       var vis = hold ? text.slice(0, text.length - hold) : text;
       var bt0 = splitBubblesT(vis);
-      return { visible: bt0.text, bubbles: bt0.bubbles, trans: bt0.trans, whisper: null, closed: false };
+      return { visible: bt0.text, bubbles: bt0.bubbles, trans: bt0.trans, whisper: null, closed: false, inspect: pre.inspect };
     }
 
     var visibleRaw = text.slice(0, i);
@@ -2631,7 +2781,7 @@
     }
 
     var bt1 = splitBubblesT(visibleRaw);
-    return { visible: bt1.text, bubbles: bt1.bubbles, trans: bt1.trans, whisper: beat, closed: j >= 0 };
+    return { visible: bt1.text, bubbles: bt1.bubbles, trans: bt1.trans, whisper: beat, closed: j >= 0, inspect: pre.inspect };
   }
 
   /* 翻译标记：`[译]中文译文[/译]`（也认没有收尾标签的半截写法）。
@@ -2721,6 +2871,12 @@
     addCustomCard: addCustomCard,
     saveCustomCard: saveCustomCard,
     removeCustomCard: removeCustomCard,
+    moveCustomCard: moveCustomCard,
+    /* 预设页分类（方案-预设页分类与自察-v1 A）：'prompt' | 'feature' */
+    slotCat: slotCat,
+    /* C2 自察：开关读写（默认关）+ 协议解析走 parseReply 的 inspect 出口 */
+    inspectEnabled: inspectEnabled,
+    setInspect: setInspect,
     /* 语言与翻译：两个下游判据都从这里出发（翻译页/群线下直接用） */
     langOfChar: langOfChar,
     transAsked: transAsked,
@@ -2740,6 +2896,8 @@
     compileCharacter: compileCharacter,
     compileUserCore: compileUserCore,
     compileWorldbook: compileWorldbook,
+    /* C1（2026-10-21）：本轮世界书命中清单，调试预览专用（只读，不进 prompt） */
+    worldbookHitList: worldbookHitList,
     /* K04/I03 的群线上版（2026-10-05 K03f）：世界书按知情范围分流
        （shared 共享块 + perEntity 逐本体块），语言只给说话方式行、不带译文协议。 */
     compileWorldbookGroup: compileWorldbookGroup,

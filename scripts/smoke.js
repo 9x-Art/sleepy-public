@@ -1436,6 +1436,265 @@ t('仓库打包隐私红线：整岛包不带聊天/照片/马甲/API（结构�
   return { 类型: manifest.type, 件数: manifest.items.length };
 });
 
+t('整岛包美化件最小化 + 导入只落新岛（2026-10-22 P0 修复回归）', () => {
+  /* 打包侧：岛覆盖 > 全局 —— 原岛覆盖了配色/壁纸就带原岛的；
+     打包者的其他岛覆盖、appOverrides 绝不进包（结构性判据落包文本） */
+  const a0 = S.store.get('appearance') || {};
+  a0.theme = 'grape';
+  a0.desktop = a0.desktop || {};
+  a0.desktop.global = Object.assign({ wall: 'auto', icons: 'glass', large: false }, a0.desktop.global || {});
+  a0.desktop.islands = a0.desktop.islands || {};
+  const sbSrc = S.core.createSandbox('isle', '美化源头岛');
+  a0.desktop.islands[sbSrc.id] = { theme: 'night', wall: 'dusk' };
+  const sbOther = S.core.createSandbox('isle', '不该进包的岛');
+  a0.desktop.islands[sbOther.id] = { theme: 'mint', wall: 'tide', wallMediaId: 'media_不该进包' };
+  a0.appOverrides = { chat: { name: '不该进包的App名' } };
+  S.store.set('appearance', a0);
+
+  const m = S.repo.packIsland(sbSrc.id, { title: '美化落地测试', author: 'smoke' });
+  const th = m.items.filter((i) => i.kind === 'theme')[0];
+  if (!th || !th.data) throw new Error('整岛包没带美化件');
+  if (th.data.fmt !== 'sleepy-theme-v1') throw new Error('美化件不是最小载荷格式');
+  if (th.data.theme !== 'night' || th.data.desk.wall !== 'dusk') {
+    throw new Error('美化件没取「原岛生效中的样子」（岛覆盖 > 全局）');
+  }
+  const text = JSON.stringify(m);
+  ['appOverrides', 'wallMediaId', sbOther.id].forEach((bad) => {
+    if (text.indexOf(String(bad)) >= 0) throw new Error('美化件把不该带的东西打进包了：' + bad);
+  });
+
+  /* 导入侧：应用为新岛覆盖 —— 领取者的全局与已有岛覆盖一个字不动 */
+  const before = JSON.stringify(S.store.get('appearance'));
+  let r = null;
+  S.repo.importIsland(m, { worldbook: 'mine', theme: 'pack' }, (x) => { r = x; });
+  if (!r || !r.ok) throw new Error('整岛包导入失败：' + JSON.stringify(r));
+  const a1 = S.store.get('appearance');
+  if (a1.theme !== 'grape') throw new Error('全局配色被冲了（P0 主症状）');
+  if (JSON.stringify(a1.desktop.islands[sbOther.id]) !== JSON.stringify(a0.desktop.islands[sbOther.id])) {
+    throw new Error('领取者已有岛的覆盖被冲了');
+  }
+  if (!a1.appOverrides || a1.appOverrides.chat.name !== '不该进包的App名') {
+    throw new Error('appOverrides 被冲了');
+  }
+  const ov = (a1.desktop.islands[r.sandboxId] || {});
+  if (ov.theme !== 'night' || ov.wall !== 'dusk') {
+    throw new Error('美化没落到新岛的覆盖上：' + JSON.stringify(ov));
+  }
+  if (S.appearance.deskCfg(r.sandboxId).wall !== 'dusk') throw new Error('新岛 deskCfg 没吃到覆盖');
+  if (before.indexOf('grape') < 0) throw new Error('夹具自身不对');
+  /* 清掉测试覆盖，别污染后面用例 */
+  const a2 = S.store.get('appearance');
+  delete a2.desktop.islands[sbSrc.id]; delete a2.desktop.islands[sbOther.id];
+  delete a2.desktop.islands[r.sandboxId];
+  delete a2.appOverrides;
+  S.store.set('appearance', a2);
+  /* 测试岛留着不拆（同文件其他仓库用例同口径；purgeSandbox 是异步门禁，别在这趟） */
+  return { 载荷: 'fmt v1', 落点: '新岛覆盖' };
+});
+
+t('摆盘单件：打包岛样子 + 三种导入（存预设 / 全局 / 当前岛）', () => {
+  const sb = S.core.createSandbox('isle', '摆盘测试岛');
+  const a0 = S.store.get('appearance') || {};
+  a0.desktop = a0.desktop || {};
+  a0.desktop.islands = a0.desktop.islands || {};
+  a0.desktop.islands[sb.id] = { theme: 'mint', icons: 'paper', large: true };
+  S.store.set('appearance', a0);
+
+  const m = S.repo.packTheme(sb.id, { title: '一套薄荷摆盘', author: 'smoke' });
+  if (m.type !== 'theme') throw new Error('packTheme 类型不对：' + m.type);
+  const th = m.items[0];
+  if (th.data.theme !== 'mint' || th.data.desk.icons !== 'paper' || th.data.desk.large !== true) {
+    throw new Error('摆盘件没取到原岛生效中的样子');
+  }
+
+  /* 存预设 */
+  const beforePresets = S.repo.themePresets().length;
+  let r1 = null;
+  S.repo.importTheme(m, 'preset', (x) => { r1 = x; });
+  if (!r1 || !r1.ok) throw new Error('存预设失败：' + JSON.stringify(r1));
+  const ps = S.repo.themePresets();
+  if (ps.length !== beforePresets + 1) throw new Error('预设没存上');
+  const p = ps[ps.length - 1];
+  if (p.name !== '一套薄荷摆盘' || p.data.theme !== 'mint') throw new Error('预设内容不对');
+
+  /* 应用到当前岛（不走预设）—— 先记住原激活岛，用完还原 */
+  const prevActive = S.store.get('activeSandboxId');
+  S.core.setActiveSandbox(sb.id);
+  let r2 = null;
+  S.repo.importTheme(m, 'island', (x) => { r2 = x; });
+  if (!r2 || !r2.ok) throw new Error('应用到当前岛失败：' + JSON.stringify(r2));
+  const cfg = S.appearance.deskCfg(sb.id);
+  if (cfg.icons !== 'paper' || cfg.large !== true) throw new Error('当前岛没吃到美化');
+
+  /* 应用为全局默认 */
+  let r3 = null;
+  S.repo.importTheme(m, 'global', (x) => { r3 = x; });
+  if (!r3 || !r3.ok) throw new Error('全局应用失败：' + JSON.stringify(r3));
+  const a1 = S.store.get('appearance');
+  if (a1.theme !== 'mint') throw new Error('全局配色没换：' + a1.theme);
+  if ((a1.desktop.global || {}).icons !== 'paper') throw new Error('全局桌面没换');
+
+  /* 预设 → 应用到全局（外观页「应用」按钮同路径） */
+  const del = S.repo.applyThemePayload(p.data, 'global');
+  if (!del.ok) throw new Error('预设应用失败');
+  S.repo.deleteThemePreset(p.id);
+  if (S.repo.themePresets().length !== beforePresets) throw new Error('预设没删掉');
+
+  /* 清场：外观还原 + 激活岛还原 */
+  const a2 = S.store.get('appearance');
+  delete a2.desktop.islands[sb.id];
+  a2.theme = 'grape';
+  a2.desktop.global = Object.assign({}, a2.desktop.global, { icons: 'glass', large: false });
+  S.store.set('appearance', a2);
+  if (prevActive) S.core.setActiveSandbox(prevActive);
+  return { 预设: 'ok', 当前岛: 'ok', 全局: 'ok' };
+});
+
+t('旧包兼容：老格式整档美化件导入只采全局侧，不再整档覆盖', () => {
+  const legacy = {
+    theme: 'peach', fontScale: 1.14,
+    desktop: { global: { wall: 'bloom', icons: 'line' },
+      islands: { sb_打包者的岛: { theme: 'night' } } },
+    appOverrides: { chat: { name: '打包者的App名' } }
+  };
+  const m = { v: 1, type: 'theme', title: '老包美化', items: [{ kind: 'theme', lock: 'open', data: legacy }] };
+  const before = S.store.get('appearance');
+  let r = null;
+  S.repo.importTheme(m, 'global', (x) => { r = x; });
+  if (!r || !r.ok) throw new Error('老包导入失败：' + JSON.stringify(r));
+  const a = S.store.get('appearance');
+  if (a.theme !== 'peach') throw new Error('老包全局配色没采到');
+  if ((a.desktop.global || {}).wall !== 'bloom') throw new Error('老包桌面没采到');
+  if (a.appOverrides && a.appOverrides.chat) throw new Error('老包 appOverrides 不该被采');
+  if (a.desktop.islands && a.desktop.islands.sb_打包者的岛) throw new Error('老包别人的岛覆盖不该被采');
+  /* 清场 */
+  S.store.set('appearance', before);
+  return { 兼容: '全局侧 only' };
+});
+
+t('火候单件：预设打包不漏卡 id + 叠加/整套两种导入 + 空包拒收', () => {
+  /* 夹具：本机的预设配置（卡 id 是 cu_ 前缀 + 时间戳，绝不该进包） */
+  const before = S.store.get('presetEngine') || null;
+  S.store.set('presetEngine', {
+    useEngine: true, developerMode: false,
+    disabled: { K03a: true },
+    overrides: { K05: '覆盖文本' },
+    custom: [
+      { id: 'cu_fixture_a', title: '卡甲', body: '内容甲' },
+      { id: 'cu_fixture_b', title: '卡乙', body: '内容乙', group: true }
+    ]
+  });
+
+  const m = S.repo.packPreset({ title: '一套火候', author: 'smoke' });
+  if (m.type !== 'preset') throw new Error('packPreset 类型不对：' + m.type);
+  const d = m.items[0].data;
+  if (d.fmt !== 'sleepy-preset-v1') throw new Error('预设件不是最小载荷格式');
+  const text = JSON.stringify(m);
+  if (text.indexOf('cu_fixture') >= 0) throw new Error('卡的 id 漏进包了');
+  if (text.indexOf('developerMode') >= 0 || text.indexOf('useEngine') >= 0) {
+    throw new Error('设备自身状态（引擎开关/开发者模式）不该进包');
+  }
+  if (d.disabled.length !== 1 || d.disabled[0] !== 'K03a') throw new Error('关卡清单没带上');
+  if (d.overrides.K05 !== '覆盖文本') throw new Error('槽位覆盖没带上');
+  if (d.custom.length !== 2 || d.custom[1].group !== true) throw new Error('自定义卡/群聊标记没带上');
+
+  /* 叠加导入：现有卡保留、新卡追加且重新发 id、关卡只增不减 */
+  S.store.set('presetEngine', {
+    disabled: { K99: true }, overrides: {}, custom: [{ id: 'cu_mine', title: '我自己的卡', body: '我的' }]
+  });
+  let r1 = null;
+  S.repo.importPreset(m, 'merge', (x) => { r1 = x; });
+  if (!r1 || !r1.ok) throw new Error('叠加导入失败：' + JSON.stringify(r1));
+  const c1 = S.store.get('presetEngine');
+  if (!c1.custom.filter((x) => x.id === 'cu_mine').length) throw new Error('叠加把我自己的卡弄丢了');
+  if (c1.custom.length !== 3) throw new Error('叠加后卡数不对：' + c1.custom.length);
+  if (c1.custom.some((x) => x.id === 'cu_fixture_a')) throw new Error('新卡没重新发 id');
+  if (!c1.disabled.K99 || !c1.disabled.K03a) throw new Error('关卡没叠加（只增不减）');
+  if (c1.overrides.K05 !== '覆盖文本') throw new Error('覆盖没写进');
+  const imported = c1.custom.filter((x) => x.title === '卡乙')[0];
+  if (!imported || imported.group !== true) throw new Error('群聊可用标记没跟过来');
+
+  /* 整套装上：三块整个换成包里的 */
+  let r2 = null;
+  S.repo.importPreset(m, 'replace', (x) => { r2 = x; });
+  if (!r2 || !r2.ok) throw new Error('整套导入失败：' + JSON.stringify(r2));
+  const c2 = S.store.get('presetEngine');
+  if (c2.custom.length !== 2 || c2.custom.some((x) => x.id === 'cu_mine')) {
+    throw new Error('整套导入没清掉原来的卡（或数量不对）');
+  }
+  if (c2.disabled.K99) throw new Error('整套导入没换掉关卡清单');
+
+  /* 空包拒收（判据不含「空」字，别让断言错误被同一个 catch 吞掉） */
+  let packedEmpty = '没抛';
+  try {
+    S.store.set('presetEngine', { disabled: {}, overrides: {}, custom: [] });
+    S.repo.packPreset({ title: '空包' });
+  } catch (e) { packedEmpty = String(e.message || e); }
+  if (packedEmpty === '没抛') throw new Error('空预设居然打得成包');
+  if (packedEmpty.indexOf('预设') < 0) throw new Error('空包报错话术不对：' + packedEmpty);
+  let r3 = null;
+  S.repo.importPreset({ items: [{ kind: 'preset', data: { fmt: 'sleepy-preset-v1', disabled: [], overrides: {}, custom: [] } }] }, 'merge',
+    (x) => { r3 = x; });
+  if (r3 && r3.ok) throw new Error('空预设件不该导成');
+
+  /* 清场还原 */
+  if (before) S.store.set('presetEngine', before);
+  else S.store.remove ? S.store.remove('presetEngine') : S.store.set('presetEngine', null);
+  return { 叠加: 'ok', 整套: 'ok', 空包拒收: 'ok' };
+});
+
+t('入席单件：世界档案打包/领取 —— 章节全文带走、岛章重盖、从零开局、媒体引用不进包', () => {
+  const sb = S.core.createSandbox('isle', '入席源头岛');
+  const impId = 'bi_fixture_src';
+  S.store.set('bookImports', (S.store.get('bookImports') || []).concat([{
+    id: impId, sandboxId: sb.id, fileName: '原书.txt', encoding: 'utf-8',
+    chapterCount: 2, startChapter: '第一章',
+    chapters: [{ title: '第一章', text: '雾港的灯亮了。' }, { title: '第二章', text: '邮包到了门口。' }],
+    createdAt: new Date().toISOString()
+  }]));
+  const boxId = 'book-box_fixture_src';
+  S.store.set('bookBoxes', (S.store.get('bookBoxes') || []).concat([{
+    id: boxId, sandboxId: sb.id, title: '雾港灯站', source: 'txt',
+    status: 'ongoing', stamp: '导入', enterable: true, note: '测试用',
+    coverRef: 'media_不该进包', sceneRefs: ['media_场景1'], importId: impId,
+    commission: { text: '把邮包送到旧宅', roleNote: '', startChapter: '第一章' },
+    summary: { brief: '海雾小港', npcs: [], places: [] },
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+  }]));
+
+  const m = S.repo.packBook(boxId, { title: '雾港灯站', author: 'smoke' });
+  if (m.type !== 'book') throw new Error('packBook 类型不对：' + m.type);
+  const text = JSON.stringify(m);
+  if (text.indexOf('雾港的灯亮了') < 0) throw new Error('章节全文没进包');
+  if (text.indexOf(sb.id) >= 0) throw new Error('打包者的岛章漏进包了');
+  if (text.indexOf('media_') >= 0) throw new Error('本机媒体引用漏进包了');
+  if (text.indexOf('bookRuns') >= 0) throw new Error('游玩进度不该进包');
+  if (m.items[0].data.box.commission.text !== '把邮包送到旧宅') throw new Error('委托没带上');
+
+  /* 领取：进当前激活岛，新 id 新岛章，status 归 empty，原盒不动 */
+  S.core.setActiveSandbox(sb.id);
+  let r = null;
+  S.repo.importBook(m, (x) => { r = x; });
+  if (!r || !r.ok) throw new Error('入席导入失败：' + JSON.stringify(r));
+  const boxes = (S.store.get('bookBoxes') || []).filter((b) => b && b.sandboxId === sb.id);
+  if (boxes.length !== 2) throw new Error('领取后档案盒数量不对：' + boxes.length);
+  const src = boxes.filter((b) => b.id === boxId)[0];
+  const got = boxes.filter((b) => b.id !== boxId)[0];
+  if (src.status !== 'ongoing' || src.coverRef === null) throw new Error('原盒被领带动了');
+  if (got.id === boxId || got.status !== 'empty') throw new Error('领取盒没从零开局');
+  if (got.sandboxId !== sb.id) throw new Error('岛章没重盖');
+  const newImp = (S.store.get('bookImports') || []).filter((x) => x && x.id === got.importId)[0];
+  if (!newImp || newImp.sandboxId !== sb.id) throw new Error('导入文本没重盖岛章');
+  if (newImp.id === impId) throw new Error('导入文本没发新 id');
+  if ((newImp.chapters || []).length !== 2) throw new Error('章节没带全');
+  if (got.coverRef !== null || (got.sceneRefs || []).length) throw new Error('领取盒媒体引用该清零');
+
+  /* 还原夹具 */
+  S.store.set('bookBoxes', (S.store.get('bookBoxes') || []).filter((b) => b && b.id !== boxId && b.id !== got.id));
+  S.store.set('bookImports', (S.store.get('bookImports') || []).filter((x) => x && x.id !== impId && x.id !== (newImp && newImp.id)));
+  return { 打包: 'ok', 领取: 'ok', 从零开局: 'ok' };
+});
+
 t('仓库门牌解析：链接 ?g= 与裸口令都抠得出来', () => {
   const p = S.repo.parseGateText;
   if (p('https://x.pages.dev/repo/?g=ab12cd34') !== 'ab12cd34') throw new Error('链接没抠出');
@@ -1941,7 +2200,9 @@ t('群声 v216：单楼匿名投影 / 帖子更新白名单 / 同人追更与作
   S.forum.resolveContext(sbQsIsle);
   const mine = Fx.listOwnedForumAccounts(sbQsIsle);
   const mainA = mine.filter((a) => a.accountType === 'main')[0];
-  const altA = mine.filter((a) => a.accountType === 'alt')[0] || mainA;
+  /* 假绿修复：不 fallback —— 负向断言必须真有第二个账号，退化成同人 = 自测自过 */
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  if (!altA || altA.id === mainA.id) throw new Error('测试环境缺第二个马甲');
   const daily = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
 
   /* ① 单楼匿名：char 可以选择只在这一楼藏脸 —— 公开层不再有真实账号 */
@@ -2342,6 +2603,434 @@ t('朋友圈引用：qsRef 进 moment；评论不写回群声', () => {
   return 'ok';
 });
 
+t('朋友圈转发喂模型：describeForModel 给正文+留声、不泄露账号 id、死帖 fail-closed', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  /* 期望值硬写（断言不许引被测常量）：标题/正文/留声都登记在字面量里 */
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    title: '模型侧展开源帖', content: '这是给模型看的正文样例，韭菜盒子真香。' }).post;
+  S.forum.createComment({ sandboxId: sbQsIsle, postId: p.id, accountId: altA.id, content: '留声样例一条' });
+  const shr = S.forumShare.shareToMoments({ sandboxId: sbQsIsle, postId: p.id, senderAccountId: mainA.id, attachedText: '' });
+  if (!shr.ok) throw new Error('分享失败：' + JSON.stringify(shr) + '｜post=' + JSON.stringify(p).slice(0, 300));
+  const mAll = S.momentsTab.all();
+  const m2 = mAll[0];   /* momentsTab.add 是 unshift：新动态在最前 */
+  if (!m2.qsRef || m2.qsRef.sourcePostId !== p.id) throw new Error('最新一条不是这次分享的：' + JSON.stringify(m2).slice(0, 200));
+  const d = S.forumShare.describeForModel(m2.qsRef);
+  if (!d) throw new Error('describeForModel 没给出内容');
+  if (d.indexOf('模型侧展开源帖') < 0) throw new Error('标题没进模型侧');
+  if (d.indexOf('韭菜盒子真香') < 0) throw new Error('正文没进模型侧');
+  if (d.indexOf('留声样例一条') < 0) throw new Error('留声没进模型侧');
+  if (d.indexOf(mainA.id) >= 0 || d.indexOf(altA.id) >= 0) throw new Error('模型侧泄露账号 id');
+  /* 死帖 fail-closed：帖子被删后返回 null，调用方退回「只知道分享过」的旧档 */
+  const posts = S.store.get('forumPosts').map((x) =>
+    x.id === p.id ? Object.assign({}, x, { status: 'deleted' }) : x);
+  S.store.set('forumPosts', posts);
+  if (S.forumShare.describeForModel(m2.qsRef) !== null) throw new Error('死帖没有 fail-closed');
+  return 'ok';
+});
+
+t('投票帖 v240：建帖校验 / 投改撤 / 汇总只给显示名', () => {
+  const Fx = S.forum;
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const mine = Fx.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  /* 假绿修复：不 fallback（同上） */
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  if (!altA || altA.id === mainA.id) throw new Error('测试环境缺第二个马甲');
+  const daily = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+
+  /* ① 建帖校验：少于 2 个选项 / 超 6 个都拒；重复选项去重不拒 */
+  const mk = (opts) => Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id,
+    accountId: mainA.id, postType: 'vote', title: '投票校验', content: 'x', vote: { options: opts } });
+  if (mk(['只有一项']).ok) throw new Error('1 个选项不该发出去');
+  if (mk(['1', '2', '3', '4', '5', '6', '7']).ok) throw new Error('7 个选项不该发出去');
+  const pDup = mk(['火锅', '火锅', '烧烤']);
+  if (!pDup.ok) throw new Error('重复选项该去重不是拒');
+  if (JSON.stringify(pDup.post.vote.options) !== JSON.stringify(['火锅', '烧烤'])) throw new Error('去重错了');
+
+  /* ② 正常投票帖：投 / 改 / 撤 / 汇总（硬写期望值，不引被测常量） */
+  const pv = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    postType: 'vote', title: '今晚吃什么', content: '投一下',
+    vote: { options: ['牛肉面', '小笼包'] } }).post;
+  if (JSON.stringify(pv.vote.options) !== JSON.stringify(['牛肉面', '小笼包'])) throw new Error('选项没落库');
+  const v1 = Fx.castVote(pv.id, mainA.id, 0, sbQsIsle);
+  if (!v1.ok || v1.changed !== 'added') throw new Error('首投没生效');
+  if (v1.summary.counts[0] !== 1 || v1.summary.counts[1] !== 0 || v1.summary.total !== 1) throw new Error('首投汇总算错');
+  if (typeof v1.summary.voters[0][0] !== 'string' || !v1.summary.voters[0][0]) throw new Error('投票人显示名丢了');
+  if (JSON.stringify(v1.summary).indexOf(mainA.id) >= 0) throw new Error('汇总泄露账号 id');
+  const v2 = Fx.castVote(pv.id, mainA.id, 1, sbQsIsle);
+  if (!v2.ok || v2.changed !== 'switched') throw new Error('改投没生效');
+  if (v2.summary.counts[0] !== 0 || v2.summary.counts[1] !== 1) throw new Error('改投后票没挪');
+  const v3 = Fx.castVote(pv.id, mainA.id, 1, sbQsIsle);
+  if (!v3.ok || v3.changed !== 'removed') throw new Error('撤票没生效');
+  if (v3.summary.total !== 0) throw new Error('撤票后总数没归零');
+  /* ③ 非法口径：越界选项 / 非投票帖 */
+  if (Fx.castVote(pv.id, mainA.id, 5, sbQsIsle).ok) throw new Error('越界选项该拒');
+  const pN = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id, title: '普通帖', content: 'x' }).post;
+  if (Fx.castVote(pN.id, mainA.id, 0, sbQsIsle).ok) throw new Error('普通帖不该能投');
+  /* ④ myVoteOf */
+  Fx.castVote(pv.id, mainA.id, 0, sbQsIsle);
+  if (Fx.myVoteOf(Fx.getPost(pv.id, sbQsIsle), mainA.id) !== 0) throw new Error('myVoteOf 错');
+  if (Fx.myVoteOf(Fx.getPost(pv.id, sbQsIsle), altA.id) !== -1) throw new Error('没投过的该是 -1');
+  return 'ok';
+});
+
+t('forumGen 投票导演：投票帖走选票不走红帖 + 随口一句落评论 + 陌生人票丢弃', () => new Promise((res) => {
+  const Fx = S.forum, Gg = S.forumGen;
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const daily = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const mine = Fx.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const pv = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    postType: 'vote', title: '周末去哪玩', content: '投个票',
+    vote: { options: ['海边', '山里'] } }).post;
+  /* 先让一位已投：导演提示词里该出现 TA（已投名单），安排的票也按人各一票 */
+  /* 假绿修复：不 fallback —— 「另一个投票者」必须真是另一个身份 */
+  const altA = mine.filter((a) => a.accountType === 'alt')[0];
+  if (!altA || altA.id === mainA.id) throw new Error('测试环境缺第二个马甲');
+  Fx.castVote(pv.id, altA.id, 0, sbQsIsle);
+  const resident = Fx.scopedForum('forumAccounts', sbQsIsle).filter((a) => a.ownerType === 'resident')[0];
+  if (!resident) throw new Error('没有居民账号可测');
+  Gg._setTransport((msgs, cb) => {
+    const u = msgs[1].content;
+    if (u.indexOf('海边') < 0 || u.indexOf('山里') < 0) { cb(null, JSON.stringify({ votes: [] })); return; }
+    cb(null, JSON.stringify({ votes: [
+      { author: 'char:顾清和', option: 2, say: '山里凉快。' },
+      { author: resident.displayName, option: 1, say: '' },
+      { author: '查无此人', option: 1, say: 'x' }
+    ]}));
+  });
+  Gg.requestReplies(pv.id, (err, r) => {
+    if (err) { Gg._setTransport((m, c) => c(null, qsSeedJson)); throw new Error(err.error); }
+    try {
+      if (r.voted !== 2) throw new Error('落票数不对：' + JSON.stringify(r));
+      const sum = Fx.voteSummary(Fx.getPost(pv.id, sbQsIsle), sbQsIsle);
+      /* altA 首投海边 + 顾清和山里 + 居民海边 */
+      if (sum.counts[0] !== 2 || sum.counts[1] !== 1 || sum.total !== 3) {
+        throw new Error('票况不对：' + JSON.stringify(sum.counts));
+      }
+      const cmts = Fx.listComments(pv.id, sbQsIsle);
+      if (!cmts.some((c) => c.content === '山里凉快。')) throw new Error('随口一句没落评论');
+      res('ok');
+    } finally {
+      Gg._setTransport((m, c) => c(null, qsSeedJson));   /* 还原种子 transport，别污染别的测试 */
+    }
+  });
+}));
+
+t('朋友圈转发投票帖：describeForModel 带选项与票况', () => {
+  const Fx = S.forum;
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const mine = Fx.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const pv = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    postType: 'vote', title: '投票转发样例帖', content: '选一个',
+    vote: { options: ['豆腐脑甜的', '豆腐脑咸的'] } }).post;
+  Fx.castVote(pv.id, mainA.id, 1, sbQsIsle);
+  S.forumShare.shareToMoments({ sandboxId: sbQsIsle, postId: pv.id, senderAccountId: mainA.id, attachedText: '' });
+  const mAll = S.momentsTab.all();
+  const d = S.forumShare.describeForModel(mAll[0].qsRef);   /* add 是 unshift：最新在最前 */
+  if (!d) throw new Error('describeForModel 没给出内容');
+  if (d.indexOf('豆腐脑甜的') < 0 || d.indexOf('豆腐脑咸的') < 0) throw new Error('选项没进模型侧');
+  if (d.indexOf('1 票') < 0) throw new Error('票况没进模型侧');
+  if (d.indexOf(mainA.id) >= 0) throw new Error('泄露账号 id');
+  return 'ok';
+});
+
+t('轻量地点 v242：placeText 收口 ≤20 字 + 转发喂模型带上地点', () => {
+  const Fx = S.forum;
+  S.forum.unlockContext();
+  S.forum.resolveContext(sbQsIsle);
+  const mine = Fx.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = Fx.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  /* 期望值硬写：exactly 20 个字；输入两侧带空格 + 超长，验证 trim + 截断 */
+  const longPlace = '码头边的大排档灯火通明人声鼎沸好不热闹呀';
+  const p1 = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    title: '地点样例帖', content: '就在这儿发的',
+    placeText: '  ' + longPlace + '外加一句超长的  ' }).post;
+  if (p1.placeText !== longPlace) throw new Error('placeText 没按 ≤20 字收口：' + JSON.stringify(p1.placeText));
+  const pBlank = Fx.createPost({ sandboxId: sbQsIsle, boardId: daily.id, accountId: mainA.id,
+    title: '没地点的帖', content: 'x', placeText: '   ' }).post;
+  if (pBlank.placeText !== '') throw new Error('空白地点该收成空串');
+  /* 转发喂模型：地点一并交代 */
+  S.forumShare.shareToMoments({ sandboxId: sbQsIsle, postId: p1.id, senderAccountId: mainA.id, attachedText: '' });
+  const mAll = S.momentsTab.all();
+  const d = S.forumShare.describeForModel(mAll[0].qsRef);
+  if (d.indexOf('发帖地点：' + longPlace) < 0) throw new Error('地点没进模型侧');
+  return 'ok';
+});
+
+t('轻量地点 v242：催更新帖自带 place 字段落库', () => new Promise((res) => {
+  const sb = S.core.createSandbox('isle', '群声地点岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  S.forum.ensureSeed(sb);
+  S.forumGen._setTransport((msgs, cb) => {
+    cb(null, JSON.stringify({ residents: [{ name: '摆摊的阿婆', style: '嗓门大' }],
+      posts: [{ board: 'daily', author: '摆摊的阿婆', type: 'normal',
+        title: '糖水铺开张了', content: '第一锅红豆沙好了', place: '码头边的大排档', minutesAgo: 30,
+        comments: [] }] }));
+  });
+  S.forumGen.ensureSeedContent(sb, (err) => {
+    try {
+      if (err) throw new Error(err.error);
+      const hit = S.forum.scopedForum('forumPosts', sb).filter((p) => p.title === '糖水铺开张了')[0];
+      if (!hit) throw new Error('带地点的新帖没落库');
+      if (hit.placeText !== '码头边的大排档') throw new Error('place 没收口：' + JSON.stringify(hit.placeText));
+      res('ok');
+    } finally {
+      S.forumGen._setTransport((m, c) => c(null, qsSeedJson));   /* 还原种子 transport */
+      S.core._purgeSync.sandbox(sb);
+    }
+  });
+}));
+
+t('删帖 v244：作者软删 / 非作者拒 / feed 与催回复链路都认死态', () => new Promise((res) => {
+  const Fx = S.forum, Gg = S.forumGen;
+  const sb = S.core.createSandbox('isle', '群声删帖岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  Fx.ensureSeed(sb);
+  S.forum.unlockContext();
+  S.forum.resolveContext(sb);
+  const mine = Fx.listOwnedForumAccounts(sb);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  /* 新岛没有小号 —— 「别人」用岛上 char 的论坛账号（ensureSeed 必建） */
+  const charAcc = Fx.scopedForum('forumAccounts', sb).filter((a) => a.ownerType === 'char')[0];
+  if (!charAcc || charAcc.id === mainA.id) throw new Error('测试环境缺第二个账号');
+  const daily = Fx.listBoards(sb).filter((b) => b.templateKey === 'daily')[0];
+  const p = Fx.createPost({ sandboxId: sb, boardId: daily.id, accountId: mainA.id,
+    title: '删帖样例帖', content: '一会儿就删' }).post;
+  /* ① 非作者拒（身份即权限，大小号互不代删） */
+  const rWrong = Fx.deleteOwnPost(p.id, charAcc.id, sb);
+  if (rWrong.ok) throw new Error('非作者竟然删掉了');
+  if (Fx.getPost(p.id, sb).status !== 'active') throw new Error('被拒的删帖动了状态');
+  /* ② 作者软删 */
+  const r = Fx.deleteOwnPost(p.id, mainA.id, sb);
+  if (!r.ok) throw new Error('作者删帖失败：' + JSON.stringify(r));
+  if (Fx.getPost(p.id, sb).status !== 'deleted') throw new Error('没软删成');
+  /* ③ feed 不再出现 + 催回复链路认死态 */
+  const pages = Fx.getHomeFeed('latest', null, 12, sb);
+  if (pages.items.some((x) => x.id === p.id)) throw new Error('删了的帖还在 feed 里');
+  Gg._setTransport((msgs, cb) => cb(null, JSON.stringify({ comments: [{ author: 'x', content: 'y' }] })));
+  Gg.requestReplies(p.id, (err2) => {
+    try {
+      if (!err2 || err2.stage !== 'config') throw new Error('死帖没被回应队列拦住：' + JSON.stringify(err2));
+      res('ok');
+    } finally {
+      Gg._setTransport((m, c) => c(null, qsSeedJson));
+      S.core._purgeSync.sandbox(sb);
+    }
+  });
+}));
+
+t('游标分页回归：getHomeFeed 翻页不重不漏、顺序新在前', () => {
+  const Fx = S.forum;
+  const sb = S.core.createSandbox('isle', '群声分页岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  Fx.ensureSeed(sb);
+  S.forum.unlockContext();
+  S.forum.resolveContext(sb);
+  try {
+    const mine = Fx.listOwnedForumAccounts(sb);
+    const mainA = mine.filter((a) => a.accountType === 'main')[0];
+    const daily = Fx.listBoards(sb).filter((b) => b.templateKey === 'daily')[0];
+    const marks = [];
+    for (let i = 0; i < 5; i++) {
+      const r = Fx.createPost({ sandboxId: sb, boardId: daily.id, accountId: mainA.id,
+        title: '分页样例' + i, content: 'x' });
+      if (!r.ok) throw new Error('样例帖没发出去');
+      marks.push(r.post.id);
+    }
+    /* 每页 2 条，翻到没为止：期望 2/2/1，无重复，且「分页样例4」最新在前 */
+    const seen = [];
+    let cursor = null, hasMore = true, first = true, guard = 0;
+    while (hasMore && guard < 20) {
+      guard++;
+      const pg = Fx.getHomeFeed('latest', cursor, 2, sb);
+      if (first && pg.items[0].id !== marks[4]) throw new Error('最新帖不在第一页第一条');
+      first = false;
+      pg.items.forEach((x) => {
+        if (seen.indexOf(x.id) >= 0) throw new Error('翻页出现重复帖：' + x.id);
+        seen.push(x.id);
+      });
+      cursor = pg.nextCursor;
+      hasMore = pg.hasMore;
+    }
+    if (guard >= 20) throw new Error('翻页没停下来');
+    const got = marks.filter((id) => seen.indexOf(id) >= 0);
+    if (got.length !== 5) throw new Error('5 帖没全被翻出来：' + got.length);
+    if (seen.indexOf(marks[4]) > seen.indexOf(marks[0])) throw new Error('顺序不是新在前');
+    return 'ok · 共 ' + seen.length + ' 帖，翻 ' + guard + ' 页';
+  } finally {
+    S.core._purgeSync.sandbox(sb);
+  }
+});
+
+t('仅关注者 v244b：feed 按观看者过滤 / 关注后放行 / 转发复检拒绝', () => {
+  const Fx = S.forum;
+  const sb = S.core.createSandbox('isle', '群声可见性岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  Fx.ensureSeed(sb);
+  S.forum.unlockContext();
+  S.forum.resolveContext(sb);
+  try {
+    const mine = Fx.listOwnedForumAccounts(sb);
+    const mainA = mine.filter((a) => a.accountType === 'main')[0];
+    const charAcc = Fx.scopedForum('forumAccounts', sb).filter((a) => a.ownerType === 'char')[0];
+    if (!charAcc || charAcc.id === mainA.id) throw new Error('测试环境缺第二个账号');
+    const daily = Fx.listBoards(sb).filter((b) => b.templateKey === 'daily')[0];
+    const p = Fx.createPost({ sandboxId: sb, boardId: daily.id, accountId: mainA.id,
+      title: '关注者可见帖', content: 'x', visibility: 'followers' }).post;
+    if (p.visibility !== 'followers') throw new Error('visibility 没落库');
+    const inFeed = (viewer) => Fx.getHomeFeed('latest', null, 12, sb, viewer)
+      .items.some((x) => x.id === p.id);
+    /* 陌生人视角与无视角都不出现；作者本人出现 */
+    if (inFeed(charAcc.id)) throw new Error('没关注的人竟在 feed 里看到了');
+    if (inFeed(null)) throw new Error('无观看者视角不该泄露仅关注者帖');
+    if (!inFeed(mainA.id)) throw new Error('作者本人看不到自己的帖');
+    /* 关注是岛级的（forumFollows 按 sandbox）——关注后放行 */
+    Fx.toggleFollow(sb, mainA.id);
+    if (!inFeed(charAcc.id)) throw new Error('关注了还看不到');
+    /* 转发复检：非 public 一律 no-perm（buildPayload 现读，不看发送者是谁） */
+    const shr = S.forumShare.shareToMoments({ sandboxId: sb, postId: p.id,
+      senderAccountId: mainA.id, attachedText: '' });
+    if (shr.ok || shr.reason !== 'no-perm') throw new Error('仅关注者帖不该能转发：' + JSON.stringify(shr));
+    /* 公开帖不受影响：陌生人照样看得到 */
+    const p2 = Fx.createPost({ sandboxId: sb, boardId: daily.id, accountId: mainA.id,
+      title: '公开帖样例', content: 'x' }).post;
+    if (!Fx.getHomeFeed('latest', null, 12, sb, charAcc.id).items.some((x) => x.id === p2.id)) {
+      throw new Error('公开帖被误过滤了');
+    }
+    return 'ok';
+  } finally {
+    S.core._purgeSync.sandbox(sb);
+  }
+});
+
+t('版规与今日话题 v244b：八板块版规全配 / 今日话题同岛同日稳定', () => {
+  const T = S.forum.BOARD_TEMPLATES;
+  if (T.length !== 8) throw new Error('板块数变了：' + T.length);
+  T.forEach((b) => {
+    if (!b.rules || !String(b.rules).trim()) throw new Error('板块缺版规：' + b.key);
+  });
+  /* 期望值硬写：daily 版规的登记字样 */
+  if (T[0].rules.indexOf('吵架请绕行') < 0) throw new Error('daily 版规内容对不上');
+  const t1 = S.qsTodayTopic(sbQsIsle);
+  const t2 = S.qsTodayTopic(sbQsIsle);
+  if (!t1 || t1 !== t2) throw new Error('今日话题同岛同日不稳定：' + JSON.stringify([t1, t2]));
+  return 'ok';
+});
+
+t('世界事件 v245b：种子顺路生成 / 新在前 / 截断 / 去重 / 环形封顶 40', () => new Promise((res) => {
+  const Fx = S.forum, Gg = S.forumGen;
+  const sb = S.core.createSandbox('isle', '群声风闻岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  Fx.ensureSeed(sb);
+  S.forum.unlockContext();
+  S.forum.resolveContext(sb);
+  /* 预填满 40 条旧闻，验证环形封顶（新的把最旧的挤出去） */
+  const map = Fx.getForumMap('forumSettingsBySandbox', sb) || {};
+  map.worldEvents = Array.from({ length: 40 }, (_, i) =>
+    ({ id: 'fe_old' + i, text: '旧闻' + i, at: new Date().toISOString() }));
+  Fx.setForumMap('forumSettingsBySandbox', sb, map);
+  /* 期望值硬写：两条有效事件 + 一条空串；第二条超过 40 字验证截断 */
+  const longText = '码头夜市周二休市但晚上不停业摆摊的阿婆说风雨无阻这句话特别长而且还在继续加长超过四十个字了';
+  S.forumGen._setTransport((msgs, cb) => {
+    cb(null, JSON.stringify({ residents: [], events: ['巷口的猫生了四只崽', '', longText],
+      posts: [{ board: 'daily', author: '@anon', type: 'normal',
+        title: '风闻样例帖', content: 'x', minutesAgo: 10, comments: [] }] }));
+  });
+  S.forumGen.ensureSeedContent(sb, (err, r) => {
+    try {
+      if (err) throw new Error(err.error);
+      if (!r.created || r.created.events !== 2) throw new Error('事件落库数不对：' + JSON.stringify(r.created));
+      const evs = Fx.listWorldEvents(sb);
+      if (!Array.isArray(evs) || evs.length !== 40) throw new Error('环形封顶失效：' + (evs || []).length);
+      if (evs[0].text !== longText.slice(0, 40)) throw new Error('最新事件不在首位或没截断：' + evs[0].text);
+      if (!evs.some((e) => e.text === '巷口的猫生了四只崽')) throw new Error('第二条事件丢了');
+      /* 封顶留最新 40 条：预填里最旧的（数组尾部两条）被挤出去，旧闻0 还在 */
+      if (evs.some((e) => e.text === '旧闻39' || e.text === '旧闻38')) throw new Error('最旧的旧闻没被挤出去');
+      if (!evs.some((e) => e.text === '旧闻0')) throw new Error('旧闻0 不该被挤出去');
+      /* 孤儿岛（没生成过事件）回落空数组而不是炸 */
+      if (!Array.isArray(Fx.listWorldEvents(sbQsIsle))) throw new Error('无事件岛该回落空数组');
+      res('ok');
+    } finally {
+      S.forumGen._setTransport((m, c) => c(null, qsSeedJson));
+      S.core._purgeSync.sandbox(sb);
+    }
+  });
+}));
+
+t('单板块催更 v246b：只落指定板块 / 越权指板块不听 / 60s 冷却', () => new Promise((res) => {
+  const Fx = S.forum, Gg = S.forumGen;
+  const sb = S.core.createSandbox('isle', '群声板块催更岛').id;
+  S.core.setSandboxChars(sb, [m1]);
+  S.core.setSandboxMasks(sb, [duQs]);
+  Fx.ensureSeed(sb);
+  S.forum.unlockContext();
+  S.forum.resolveContext(sb);
+  const game = Fx.listBoards(sb).filter((b) => b.templateKey === 'game')[0];
+  const food = Fx.listBoards(sb).filter((b) => b.templateKey === 'food')[0];
+  /* 先种一炉（seeded 标记是 genBoard 的前置），transport 里模型故意把帖子指去 food 板块 */
+  S.forumGen._setTransport((msgs, cb) => {
+    cb(null, JSON.stringify({ residents: [{ name: '开黑狂人', style: '嗓门大' }],
+      posts: [{ board: 'daily', author: '开黑狂人', type: 'normal',
+        title: '种子帖', content: 'x', minutesAgo: 60, comments: [] }] }));
+  });
+  S.forumGen.ensureSeedContent(sb, (err) => {
+    if (err) { S.core._purgeSync.sandbox(sb); throw new Error(err.error); }
+    S.forumGen._setTransport((msgs, cb) => {
+      /* 提示词里必须点名指定板块；返回里故意越权指 food */
+      const u = msgs[1].content;
+      if (u.indexOf('游戏区') < 0) { cb(null, JSON.stringify({ posts: [] })); return; }
+      cb(null, JSON.stringify({ posts: [
+        { board: 'food', author: '开黑狂人', type: 'normal', title: '新出的副本真难', content: '打不过', minutesAgo: 20, comments: [] },
+        { board: 'food', author: '@anon', type: 'normal', title: '深夜上分的忏悔', content: '又输了', minutesAgo: 15, comments: [] }
+      ]}));
+    });
+    Gg.genBoard(sb, game.id, (err2, r2) => {
+      const done = () => {
+        try {
+          const inGame = Fx.scopedForum('forumPosts', sb).filter((p) => p.boardId === game.id);
+          if (inGame.length !== 2) throw new Error('没全落进指定板块：' + inGame.length);
+          const inFood = Fx.scopedForum('forumPosts', sb).filter((p) => p.boardId === food.id);
+          if (inFood.length !== 0) throw new Error('越权的帖子落进了别的板块');
+          Gg.genBoard(sb, game.id, (err3) => {
+            try {
+              if (!err3 || err3.stage !== 'cooldown') throw new Error('板块冷却没拦住：' + JSON.stringify(err3));
+              res('ok');
+            } finally {
+              Gg._setTransport((m, c) => c(null, qsSeedJson));
+              S.core._purgeSync.sandbox(sb);
+            }
+          });
+        } catch (e) {
+          Gg._setTransport((m, c) => c(null, qsSeedJson));
+          S.core._purgeSync.sandbox(sb);
+          throw e;
+        }
+      };
+      if (err2) {
+        Gg._setTransport((m, c) => c(null, qsSeedJson));
+        S.core._purgeSync.sandbox(sb);
+        throw new Error(err2.error);
+      }
+      done();
+    });
+  });
+}));
+
 t('认知候选：familiar 落库、可升级、不自动 confirmed、不降级', () => {
   const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
   const altA = mine.filter((a) => a.accountType === 'alt')[0];
@@ -2387,6 +3076,51 @@ t('分享给 char 并打开 → char 对分享行为产生 familiar 认知', () 
   if (!k) throw new Error('char 认知候选没落');
   if (['familiar', 'suspected', 'high_confidence'].indexOf(k.state) < 0) throw new Error('认知档位不对：' + k.state);
   return { observer: '顾清和', state: k.state };
+});
+
+t('分享回执·已回应 v247b：接收方 char 开口才回执 / 一条一次 / 通知到分享者', () => {
+  const mine = S.forum.listOwnedForumAccounts(sbQsIsle);
+  const mainA = mine.filter((a) => a.accountType === 'main')[0];
+  const daily = S.forum.listBoards(sbQsIsle).filter((b) => b.templateKey === 'daily')[0];
+  const p = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id,
+    accountId: mainA.id, title: '回执样例帖', content: 'x' }).post;
+  const chat = S.chatStore.chatOf(m1) || S.chatStore.createChat('顾清和', m1);
+  S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p.id, chatId: chat.id,
+    senderAccountId: mainA.id, attachedText: '' });
+  S.forumShare.markOpened({
+    sandboxId: sbQsIsle, sourcePostId: p.id,
+    targetType: 'chat', targetId: chat.id,
+    openerName: '顾清和', openerEntityId: m1
+  });
+  const recOf = () => (S.store.get('forumShares') || [])
+    .filter((x) => x.sourcePostId === p.id && x.targetType === 'chat')[0];
+  /* ① user 自己再说话：不算回应（v1 的分享者就是 user） */
+  S.chatStore.addMessage(chat.id, { id: S.chatStore.newId(), role: 'user',
+    type: 'text', content: '我再看看', timestamp: Date.now() });
+  if (recOf().repliedAt) throw new Error('user 自己说话不该算回应');
+  /* ② 接收方 char 开口：回执落下 + 通知到分享者 */
+  S.chatStore.addMessage(chat.id, { id: S.chatStore.newId(), role: 'char',
+    type: 'text', content: '这帖子有点意思', timestamp: Date.now() });
+  const rec = recOf();
+  if (!rec.repliedAt) throw new Error('char 开口了却没回执');
+  const notes = S.forum.listNotifications(sbQsIsle, mainA.id)
+    .filter((n) => n.sourceId === p.id && n.previewText === '回应了你分享的帖子');
+  if (notes.length !== 1) throw new Error('「回应了」通知没落到分享者：' + notes.length);
+  /* ③ 一条分享只回执一次（时间戳不变） */
+  S.chatStore.addMessage(chat.id, { id: S.chatStore.newId(), role: 'char',
+    type: 'text', content: '再补一句', timestamp: Date.now() });
+  if (recOf().repliedAt !== rec.repliedAt) throw new Error('回执被重复写');
+  /* ④ 没打开过就不回执：新分享直接让 char 开口 → 仍是未回应 */
+  const p2 = S.forum.createPost({ sandboxId: sbQsIsle, boardId: daily.id,
+    accountId: mainA.id, title: '回执样例帖二', content: 'x' }).post;
+  S.forumShare.shareToChat({ sandboxId: sbQsIsle, postId: p2.id, chatId: chat.id,
+    senderAccountId: mainA.id, attachedText: '' });
+  S.chatStore.addMessage(chat.id, { id: S.chatStore.newId(), role: 'char',
+    type: 'text', content: '先不点开', timestamp: Date.now() });
+  const rec2 = (S.store.get('forumShares') || [])
+    .filter((x) => x.sourcePostId === p2.id && x.targetType === 'chat')[0];
+  if (rec2.repliedAt) throw new Error('没打开过也算回应了');
+  return 'ok';
 });
 
 console.log('\n--- page:群声 E 补强（增量催更 / 作者主页 / char 聊天回应）---');
@@ -4482,6 +5216,137 @@ t('K03e 暂停/受阻/待核实按真实状态表达（不伪装成进行中，�
   if (sys.indexOf('事项（受阻）：受阻夹具事项') < 0) throw new Error('受阻状态没如实标注');
   if (sys.indexOf('预算没批') < 0) throw new Error('受阻原因（detail）没带上');
   return '状态逐条如实';
+});
+
+/* ---------- 聊天历史时间标注（2026-10-15 方案 A）----------
+   真机复现：昨晚发的消息今天触发回复，char 以为是今天发的 —— 喂模型的历史
+   此前只有 role+content，没有时间。修法：行内戳（cal.histStamp，私聊按 char
+   时区/群聊按设备本地）+ 间隔事实（cal.gapLine，相对时间代码算好直接喂）。 */
+console.log('\n--- 聊天历史时间标注（方案 A：行内戳 + 间隔事实）---');
+
+t('histStamp：同天钟点/昨天/同年跨月/跨年四档，缺 at 与非法 at 返回空', () => {
+  const C = S.calendar;
+  const now = new Date('2026-10-15T12:00:00Z');   /* 东京（UTC+9）= 10-15 21:00 */
+  const jp = { tz: 'Asia/Tokyo', now };
+  const eq = (a, b, why) => { if (a !== b) throw new Error(why + '：实得「' + a + '」期望「' + b + '」'); };
+  eq(C.histStamp(new Date('2026-10-15T03:00:00Z').getTime(), jp), '[12:00] ', '同天只给钟点');
+  eq(C.histStamp(new Date('2026-10-14T12:00:00Z').getTime(), jp), '[昨天 21:00] ', '昨天档');
+  eq(C.histStamp(new Date('2026-10-01T03:00:00Z').getTime(), jp), '[10月1日 12:00] ', '同年更早档');
+  eq(C.histStamp(new Date('2025-12-31T12:00:00Z').getTime(), jp), '[2025年12月31日 21:00] ', '跨年带年份');
+  eq(C.histStamp(0, jp), '', '缺 at 不编时间');
+  eq(C.histStamp('垃圾', jp), '', '非法 at 不编时间');
+  return '四档 + 兜底 ok';
+});
+
+t('gapLine：分钟/小时/天分档，<5 分钟不说话，label 可换群口径', () => {
+  const C = S.calendar;
+  const now = Date.now();
+  const g = (agoMs, opts) => C.gapLine(now - agoMs, Object.assign({ now: now }, opts || {}));
+  if (g(4 * 60000) !== '') throw new Error('4 分钟不该说话');
+  if (g(59 * 60000) !== '距最后一条消息已过 59 分钟') throw new Error('分钟档：' + g(59 * 60000));
+  if (g(90 * 60000) !== '距最后一条消息已过 1.5 小时') throw new Error('跨小时档（≥1h 走小时）：' + g(90 * 60000));
+  if (g(18 * 3600 * 1000) !== '距最后一条消息已过 18 小时') throw new Error('小时档：' + g(18 * 3600 * 1000));
+  if (g(3 * 86400 * 1000) !== '距最后一条消息已过 3 天') throw new Error('天档：' + g(3 * 86400 * 1000));
+  if (g(18 * 3600 * 1000, { label: '距最新一条群消息已过 ' }) !== '距最新一条群消息已过 18 小时') throw new Error('群 label 没换');
+  return '分档 ok';
+});
+
+t('assembleOnline：带 at 历史 → 行内戳 + time 槽含间隔事实；无 at → 原样出站（护黄金基线）', () => {
+  const sb = S.core.createSandbox('isle', '时间戳群岛');
+  S.core.setActiveSandbox(sb.id);
+  const ch = S.core.upsertChar({ name: '时间戳甲', kind: 'main', content: '时间戳甲人设。' }).id;
+  S.core.setSandboxChars(sb.id, [ch]);
+  const PE = S.promptEngine;
+  const ago = Date.now() - 20 * 3600 * 1000;
+  const withAt = PE.assembleOnline({
+    charId: ch, userId: null,
+    /* 末条 = 20 小时前的旧消息（用户场景：昨晚发的今天才回）。
+       间隔事实按**最后一条**算 —— 末条是刚发的就不能报间隔（gapLine <5 分钟
+       不说话）。曾在此放「旧+新」两条导致误红：末条新鲜，gap 正确地为空。 */
+    history: [
+      { role: 'user', content: '旧消息正文甲', at: ago },
+      { role: 'assistant', content: '旧回复正文甲', at: ago + 60000 }
+    ]
+  });
+  const msgs = withAt.messages;
+  const m0 = msgs[msgs.length - 2];
+  if (m0.content.indexOf('旧消息正文甲') < 0 || m0.content.charAt(0) !== '[') {
+    throw new Error('行内戳没进：' + JSON.stringify(m0.content).slice(0, 90));
+  }
+  const sysJoin = msgs.filter((x) => x.role === 'system').map((x) => x.content).join('\n');
+  if (sysJoin.indexOf('距最后一条消息已过') < 0) {
+    const direct = S.calendar.gapLine(ago);
+    const slotT = (withAt.slots.filter((s) => s.id === 'time')[0] || {});
+    throw new Error('time 槽缺间隔事实 · direct gapLine(ago)=' + JSON.stringify(direct) +
+      ' · timeSlot tokens=' + slotT.tokens + ' · gapLine typeof=' + typeof S.calendar.gapLine);
+  }
+  const bare = PE.assembleOnline({
+    charId: ch, userId: null,
+    history: [{ role: 'user', content: '无时刻正文' }]
+  });
+  const bm = bare.messages[bare.messages.length - 1];
+  if (bm.content !== '无时刻正文') throw new Error('不带 at 的历史被改动：' + bm.content);
+  const bareSys = bare.messages.filter((x) => x.role === 'system').map((x) => x.content).join('\n');
+  if (bareSys.indexOf('距最后一条消息已过') >= 0) throw new Error('无 at 却报了间隔');
+  S.core._purgeSync.sandbox(sb);
+  return '戳 + 间隔进站，无 at 原样';
+});
+
+t('assembleOnline 多模态：photo 数组只戳 text 分量，image_url 分量不动', () => {
+  const sb = S.core.createSandbox('isle', '时间戳群岛');
+  S.core.setActiveSandbox(sb.id);
+  const ch = S.core.upsertChar({ name: '时间戳丙', kind: 'main', content: '时间戳丙人设。' }).id;
+  S.core.setSandboxChars(sb.id, [ch]);
+  const r = S.promptEngine.assembleOnline({
+    charId: ch, userId: null,
+    history: [{ role: 'user', at: Date.now(), content: [
+      { type: 'text', text: '看这张照片' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,XYZ' } }
+    ] }]
+  });
+  const last = r.messages[r.messages.length - 1];
+  if (!Array.isArray(last.content)) throw new Error('数组 content 被拍平成字符串');
+  if (last.content[0].text.charAt(0) !== '[' || last.content[0].text.indexOf('看这张照片') < 0) {
+    throw new Error('text 分量没戳：' + JSON.stringify(last.content[0]));
+  }
+  if (!last.content[1] || last.content[1].type !== 'image_url' ||
+      last.content[1].image_url.url !== 'data:image/png;base64,XYZ') {
+    throw new Error('image_url 分量被动了');
+  }
+  S.core._purgeSync.sandbox(sb);
+  return '数组分量级戳 ok';
+});
+
+t('群聊 composeRound：[RECENT_GROUP] 行内戳 + 间隔事实；新消息无间隔行', () => {
+  const sb = S.core.createSandbox('isle', '时间戳群岛');
+  S.core.setActiveSandbox(sb.id);
+  const ch = S.core.upsertChar({ name: '时间戳乙', kind: 'main', content: '时间戳乙人设。' }).id;
+  const u = S.core.ensureDefaultUser().id;
+  S.core.setSandboxChars(sb.id, [ch]);
+  const g = S.groupStore.createGroup({
+    name: '时间戳群', ownerAccountId: u,
+    members: [{ kind: 'char', ownerId: ch, accountId: ch }]
+  });
+  const gid = g.group.id;
+  const rgOf = () => {
+    const r = S.groupAI.composeRound(gid, { stimulus: '（时间戳）', budget: { actors: 2, msgs: 3 } });
+    const blk = r.messages[1].content;
+    return blk.slice(blk.indexOf('[RECENT_GROUP]'));
+  };
+  const old = Date.now() - 20 * 3600 * 1000;
+  S.groupStore.addMessage(gid, { senderKind: 'user', senderAccountId: u, content: '旧群消息正文', createdAt: old });
+  const rgOld = rgOf();
+  const line = rgOld.split('\n').filter((x) => x.indexOf('旧群消息正文') >= 0)[0];
+  if (!line || line.charAt(0) !== '[') throw new Error('群历史行没戳：' + line);
+  if (rgOld.indexOf('距最新一条群消息已过') < 0) throw new Error('群间隔事实没进');
+  S.groupStore.addMessage(gid, { senderKind: 'user', senderAccountId: u, content: '新群消息正文', createdAt: Date.now() });
+  const rgNew = rgOf();
+  if (rgNew.indexOf('距最新一条群消息已过') >= 0) throw new Error('刚发的消息不该有间隔行');
+  if (rgNew.split('\n').filter((x) => x.indexOf('新群消息正文') >= 0)[0].charAt(0) !== '[') {
+    throw new Error('新消息行没戳（钟点戳）');
+  }
+  S.core._purgeSync.sandbox(sb);
+  return '群戳 + 间隔 ok';
 });
 
 /* ---------- 群线上动态上下文 K03f（2026-10-05 本批）----------
@@ -8081,6 +8946,66 @@ t('locked 卡在非开发者模式下正文不外泄（slots 标 hidden）', () 
   S.promptEngine.setDev(was);
   return 'ok';
 });
+/* 方案-预设页分类与自察-v1（2026-10-21）：B 排序 + C2 自察。
+   判据落在装配产物上；期望值硬写（甲/乙/丙），绝不引被测常量。 */
+t('自定义卡排序：moveCustomCard 重排数组 → 装配产物顺序真实跟着变', () => {
+  const a = S.promptEngine.addCustomCard('甲卡', '排序测试甲甲甲');
+  const b = S.promptEngine.addCustomCard('乙卡', '排序测试乙乙乙');
+  const c = S.promptEngine.addCustomCard('丙卡', '排序测试丙丙丙');
+  try {
+    const orderOf = (r) => r.messages.map((m) => m.content || '')
+      .filter((t2) => /排序测试[甲乙丙]/.test(t2))
+      .map((t2) => (t2.indexOf('甲') >= 0 ? '甲' : t2.indexOf('乙') >= 0 ? '乙' : '丙'))
+      .join('');
+    const r1 = S.promptEngine.assembleOnline({ charId: m1, userId: u1, history: [] });
+    if (orderOf(r1) !== '甲乙丙') throw new Error('初始顺序不对：' + orderOf(r1));
+    if (!S.promptEngine.moveCustomCard(a.id, 1)) throw new Error('move 返回 false');
+    const r2 = S.promptEngine.assembleOnline({ charId: m1, userId: u1, history: [] });
+    if (orderOf(r2) !== '乙甲丙') throw new Error('下移没生效：' + orderOf(r2));
+    S.promptEngine.moveCustomCard(c.id, -1);
+    const r3 = S.promptEngine.assembleOnline({ charId: m1, userId: u1, history: [] });
+    if (orderOf(r3) !== '乙丙甲') throw new Error('上移没生效：' + orderOf(r3));
+    if (S.promptEngine.moveCustomCard(a.id, 1)) throw new Error('末位下移应返回 false');
+    return '甲乙丙→乙甲丙→甲丙乙 全中';
+  } finally {
+    [a, b, c].forEach((x) => S.promptEngine.removeCustomCard(x.id));
+  }
+});
+t('自察装配：开着 → c05 前注入指令+本轮生效资料清单；关着 → 不注入', () => {
+  const ch = S.core.upsertChar({ name: '自察测试角色', kind: 'main' }).id;
+  const card = S.promptEngine.addCustomCard('自察清单卡', '自察装配测试正文。');
+  try {
+    S.promptEngine.setInspect(true);
+    const on = S.promptEngine.assembleOnline({ charId: ch, userId: u1, history: [] });
+    const sysOn = on.messages.map((m) => m.content || '').join('\n');
+    if (sysOn.indexOf('[自察]') < 0) throw new Error('自察指令没进 system');
+    if (sysOn.indexOf('自定义注入「自察清单卡」') < 0) throw new Error('清单没带上自定义卡');
+    /* 指令必须在输出协议（c05 的正文特征）之前 —— 自察要教的是正文前的输出 */
+    const iIns = sysOn.indexOf('【自察】');
+    S.promptEngine.setInspect(false);
+    const off = S.promptEngine.assembleOnline({ charId: ch, userId: u1, history: [] });
+    const sysOff = off.messages.map((m) => m.content || '').join('\n');
+    if (sysOff.indexOf('【自察】') >= 0) throw new Error('关掉之后还注入');
+    return { 开: '指令+清单进 system', 关: '不注入' };
+  } finally {
+    S.promptEngine.setInspect(false);
+    S.promptEngine.removeCustomCard(card.id);
+  }
+});
+t('parseReply 剥 [自察]：不进气泡、单独带回；没闭标签只收第一行', () => {
+  const r1 = S.promptEngine.parseReply(
+    '[自察]用了「常驻设定」；注意雨夜氛围；把抱怨改成了关心。[/自察]雨这么大||早点回来[WHISPER]他想送伞。[/WHISPER]');
+  if (!r1.inspect || r1.inspect.indexOf('常驻设定') < 0) throw new Error('inspect 没剥出来');
+  if (r1.visible.indexOf('自察') >= 0) throw new Error('自察漏进了正文');
+  if (r1.bubbles.join('|') !== '雨这么大|早点回来') throw new Error('正文气泡被自察污染');
+  if (!r1.whisper || r1.whisper.indexOf('送伞') < 0) throw new Error('心声被自察挤掉');
+  const r2 = S.promptEngine.parseReply('[自察]只写了一行没闭标签\n这才是正文');
+  if (r2.inspect !== '只写了一行没闭标签') throw new Error('未闭合自察没按首行收');
+  if (r2.visible.indexOf('这才是正文') < 0) throw new Error('未闭合时把正文吞了');
+  const r3 = S.promptEngine.parseReply('普通回复');
+  if (r3.inspect !== null) throw new Error('没有自察不该凭空造一个');
+  return '剥/闭合兜底/无自察 三态全对';
+});
 t('K02 user 马甲人设：有 persona 就进装配，没有就省略', () => {
   /* 自带角色：沙盒隔离段（~1605 行）clearAll 过，m1/u1 已死 */
   const ch = S.core.upsertChar({ name: 'K02测试角色', kind: 'main' }).id;
@@ -9680,6 +10605,18 @@ t('phone 锁屏：默认没设密码；开了才有；老存档按没设解释',
   P.setLockEnabled(odd, true);
   if (!/^\d{4}$/.test((odd.lock || {}).pin || '')) throw new Error('开锁时该补上密码');
   return { 默认: '没锁', 打开后: '有锁', 老存档: '没锁', 补出的密码: odd.lock.pin };
+});
+
+t('查手机群聊视图 v247b：占位 toast 摘除 + 只读渲染接线（静态护栏）', () => {
+  const src = require('fs').readFileSync('page-phone.js', 'utf8');
+  /* 反向断言：占位 toast 不许再回来（2026-10-17 前它顶了这个位置两年半） */
+  if (src.indexOf('群聊的查看视图在下一批施工') >= 0) throw new Error('群聊查看视图还是占位 toast');
+  if (src.indexOf('paintGroupChat') < 0) throw new Error('群聊只读渲染没接线');
+  if (src.indexOf("kind: 'group'") < 0) throw new Error('curView 群聊分支没挂上');
+  /* 视角判据必须用落库的 senderEntityId，不许渲染时再猜 */
+  if (src.indexOf('m.senderEntityId === ownerId') < 0) throw new Error('视角判据没用 senderEntityId');
+  if (src.indexOf('groupStore.accountMeta') < 0) throw new Error('发送者展示名没走 accountMeta');
+  return 'ok';
 });
 
 t('phone 会话/行动/风险：authorized 恒 0 风险；偷看随行动爬阶段；疑似必抓不存在', () => {
@@ -16003,7 +16940,23 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
      vendor/lamp/acrylic-lamp.html（paintCard 自适应字号折行，html 源补回
      2026-10-10 漏同步的折行修复，重建后三方一致）/ scripts/smoke.js。
      基准随批 v234 → v235。 */
-const EXPECTED_SW_CACHE = 'sleepy-v238';
+/* v249（2026-10-22）：御膳房美化链路 P0 修复 + 摆盘单件批 ——
+   repo-core.js（theme 最小载荷 + applyThemePayload + packTheme/importTheme/
+   repoThemes 预设）/ page-repo.js（摆盘发布类型 + 导入向导三选）/
+   page-appearance.js（美化预设组）/ index.html / sw.js 都变了。
+   基准随批 v248 → v249。 */
+/* v250（2026-10-22）：火候单件批 —— repo-core.js（packPreset/importPreset/
+   applyPresetPayload，载荷 sleepy-preset-v1）/ page-repo.js（火候发布类型 +
+   导入二选）/ sw.js / index.html / scripts/smoke.js 都变了。
+   基准随批 v249 → v250。 */
+/* v251（2026-10-22）：入席单件批 —— repo-core.js（packBook/importBook/
+   cleanBookData，岛章与媒体引用不进包）/ page-repo.js（入席发布类型 +
+   导入进当前岛）/ sw.js / index.html / scripts/smoke.js 都变了。
+   基准随批 v250 → v251。 */
+/* v252（2026-10-22）：账密系统收口批 —— worker/repo-worker.js（发码营业
+   口令闸 + 会话空闲 30 天过期）/ scripts/smoke.js 都变了。
+   基准随批 v251 → v252。 */
+const EXPECTED_SW_CACHE = 'sleepy-v252';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -16889,6 +17842,270 @@ t('P0 回归：御膳房 worker 假 D1 全链路 —— publish 链 / 席间链 
   const meta2 = await (await worker.fetch(req('/item/' + r1.id + '/meta'), env)).json();
   if (meta2.ok !== false) throw new Error('下架后 meta 该 404：' + JSON.stringify(meta2));
   return { publish: 'ok+token', 席间: '记账通', 点赞: 1, inbox: 1, 下架: '包体清零', 负向: '2/2 不落半条' };
+});
+
+/* ============================================================
+   账密系统全链路（方案-账密系统-v2，2026-10-21）
+   ------------------------------------------------------------
+   激活→登录→3 台上限→解绑→改密→注销 全链路 + 三条负向（复用码 /
+   第 4 台 / 失败 5 次锁）。假 D1 带**唯一索引仿真**（codes.qq /
+   users.qq / devices(user_id,install_id)）—— 裸假 D1 不拦重复插入，
+   「一个 QQ 只能领一次」「同设备不重复计」这两条闸就会假绿。
+   ============================================================ */
+t('账密系统：激活→登录→设备上限→解绑→改密→注销 全链路 + 负向', async () => {
+  const worker = (await import('../worker/repo-worker.js')).default;
+
+  const T = { codes: [], users: [], devices: [], sessions: [] };
+  const UQ = {                      /* 唯一索引仿真：值 → 表名 */
+    'codes.qq': {}, 'users.qq': {}, 'devices.pair': {},
+  };
+  const uqKey = (tbl, row) => {
+    if (tbl === 'codes') return ['codes.qq', row.qq];
+    if (tbl === 'users') return ['users.qq', row.qq];
+    if (tbl === 'devices') return ['devices.pair', row.user_id + '|' + row.install_id];
+    return null;
+  };
+  const eq = (row, col, binds, bi) => String(row[col]) === String(binds[bi]);
+  function makeApi(norm, bound) {
+    return {
+      async run() {
+        const mi = norm.match(/^INSERT INTO (\w+) \(([^)]*)\) VALUES \(([^)]*)\)$/i);
+        if (mi) {
+          const tbl = mi[1];
+          const cols = mi[2].split(',').map((x) => x.trim());
+          const slots = mi[3].split(',').map((x) => x.trim());
+          if (cols.length !== slots.length) throw new Error('列/槽数不齐');
+          const row = {};
+          let bi = 0;
+          for (let i = 0; i < slots.length; i++) {
+            row[cols[i]] = slots[i] === '?' ? bound[bi++] : Number(slots[i]);
+          }
+          if (bi !== bound.length) throw new Error('绑定没对齐');
+          const uk = uqKey(tbl, row);
+          if (uk && UQ[uk[0]][uk[1]]) throw new Error('UNIQUE constraint failed: ' + uk[0]);
+          if (uk) UQ[uk[0]][uk[1]] = true;
+          T[tbl].push(row);
+          return { success: true };
+        }
+        const mu = norm.match(/^UPDATE (\w+) SET (.+?) WHERE (.+)$/i);
+        if (mu) {
+          /* D1 绑定按出现顺序：SET 的 ? 先吃，剩下的归 WHERE */
+          const sets = mu[2].split(',').map((x) => x.trim());
+          const wparts = mu[3].split(' AND ').map((x) => x.trim());
+          let bi = 0;
+          const setVals = sets.map((st) => {
+            const sm = st.match(/^(\w+) = \?$/);
+            if (sm) return { col: sm[1], val: bound[bi++] };
+            const sm2 = st.match(/^(\w+) = (\d+)$/);
+            if (!sm2) throw new Error('不认识的 SET：' + st);
+            return { col: sm2[1], val: Number(sm2[2]) };
+          });
+          const wvals = wparts.map((wp) => {
+            if (wp.endsWith('?')) return { col: wp.split(/\s*=\s*/)[0], val: bound[bi++] };
+            const [col, val] = wp.split(/\s*=\s*/);
+            return { col, val: Number(val) };
+          });
+          if (bi !== bound.length) throw new Error('UPDATE 绑定没对齐：' + norm);
+          for (const row of T[mu[1]]) {
+            if (!wvals.every((w) => String(row[w.col]) === String(w.val))) continue;
+            for (const sv of setVals) row[sv.col] = sv.val;
+          }
+          return { success: true };
+        }
+        if (/^(ALTER|CREATE)/i.test(norm)) return { success: true };
+        throw new Error('假 D1 不认识这条写语句：' + norm);
+      },
+      async first() { return (await this.all()).results[0] || null; },
+      async all() {
+        /* 会话鉴权专用：sessions JOIN users（带空闲过期：last_seen > 截点） */
+        const mj = norm.match(/^SELECT s\.token, s\.device_id, u\.id AS uid, u\.qq FROM sessions s JOIN users u ON u\.id = s\.user_id WHERE s\.token = \? AND s\.status = 1 AND u\.status = 1 AND s\.last_seen > \?$/i);
+        if (mj) {
+          const row = T.sessions.find((x) => x.token === bound[0] && x.status === 1 &&
+            Number(x.last_seen) > Number(bound[1]));
+          if (!row) return { results: [] };
+          const u = T.users.find((x) => x.id === row.user_id && x.status === 1);
+          if (!u) return { results: [] };
+          return { results: [{ token: row.token, device_id: row.device_id, uid: u.id, qq: u.qq }] };
+        }
+        const mc = norm.match(/^SELECT COUNT\(\*\) AS n FROM (\w+) WHERE (.+)$/i);
+        if (mc) {
+          const wparts = mc[2].split(' AND ').map((x) => x.trim());
+          /* 绑定按**查询**解析一次，不是按行 —— 行循环里 bi++ 会让第二行起
+             绑定变 undefined（2026-10-21 账密冒烟抓出的假 D1 缺陷） */
+          let bi = 0;
+          const wvals = wparts.map((wp) => {
+            if (wp.endsWith('?')) return { col: wp.split(/\s*=\s*/)[0], val: bound[bi++] };
+            const [col, val] = wp.split(/\s*=\s*/);
+            return { col, val: Number(val) };
+          });
+          let n = 0;
+          for (const row of T[mc[1]]) {
+            if (wvals.every((w) => String(row[w.col]) === String(w.val))) n++;
+          }
+          return { results: [{ n }] };
+        }
+        const ms = norm.match(/^SELECT (.+?) FROM ([a-z_]+)\s*(.*)$/i);
+        if (!ms) throw new Error('假 D1 不认识这条查询：' + norm);
+        let rows = T[ms[2]].slice();
+        const rest = ms[3] || '';
+        const wm = rest.match(/^WHERE (.+?)(?: ORDER BY ([\w_]+) (DESC|ASC))?$/i);
+        if (wm) {
+          const wparts = wm[1].split(' AND ').map((x) => x.trim());
+          let bi = 0;
+          const wvals = wparts.map((wp) => {
+            if (wp.endsWith('?')) return { col: wp.split(/\s*=\s*/)[0], val: bound[bi++] };
+            const [col, val] = wp.split(/\s*=\s*/);
+            return { col, val: Number(val) };
+          });
+          rows = rows.filter((row) => wvals.every((w) => String(row[w.col]) === String(w.val)));
+          if (wm[2]) {
+            const dir = wm[3].toUpperCase() === 'DESC' ? -1 : 1;
+            rows.sort((a, b) => (a[wm[2]] - b[wm[2]]) * dir);
+          }
+        }
+        const cols = ms[1].split(',').map((x) => x.trim());
+        return { results: rows.map((r) => { const o = {}; cols.forEach((c) => { if (c in r) o[c] = r[c]; }); return o; }) };
+      },
+    };
+  }
+  const DB = {
+    prepare(sql) {
+      const norm = String(sql).replace(/\s+/g, ' ').trim();
+      const api = { bind(...binds) { return makeApi(norm, binds.slice()); } };
+      api.run = api.bind().run; api.first = api.bind().first; api.all = api.bind().all;
+      return api;
+    },
+  };
+  const STORE = { _m: {}, async put(k, v) { this._m[k] = String(v); }, async get(k) { return this._m[k] ?? null; }, async delete(k) { delete this._m[k]; } };
+  const req = (p, o) => ({
+    url: 'https://repo.smoke.test' + p,
+    method: (o && o.method) || 'GET',
+    headers: { get: (hd) => ((o && o.headers) || {})[hd] || null },
+    json: async () => JSON.parse((o && o.body) || '{}'),
+    text: async () => (o && o.body) || '',
+  });
+  const ISSUE_KEY = 'smoke-营业口令';
+  const env = { DB, STORE, ISSUE_KEY };
+  const call = async (p, o) => (await (await worker.fetch(req(p, o), env)).json());
+  const auth = (token) => ({ headers: { 'X-Repo-Token': token } });
+
+  /* ---- 1. 发码：营业口令闸（无口令/错口令都拒）→ 好 QQ 出码；同 QQ 二领 409；坏 QQ 400 ---- */
+  const cNo = await call('/issue/claim', { method: 'POST', body: JSON.stringify({ qq: '12345678' }) });
+  if (cNo.ok !== false || cNo.message.indexOf('口令') < 0) {
+    throw new Error('没带营业口令必须被拒（fail closed）：' + JSON.stringify(cNo));
+  }
+  const cBad = await call('/issue/claim', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', key: '错的口令' }) });
+  if (cBad.ok !== false) throw new Error('错口令必须被拒：' + JSON.stringify(cBad));
+  const c1 = await call('/issue/claim', { method: 'POST', body: JSON.stringify({ qq: '12345678', key: ISSUE_KEY }) });
+  if (!c1.ok || !/^SLP-/.test(c1.code)) throw new Error('发码失败：' + JSON.stringify(c1));
+  const c2 = await call('/issue/claim', { method: 'POST', body: JSON.stringify({ qq: '12345678', key: ISSUE_KEY }) });
+  if (c2.ok !== false) throw new Error('同 QQ 二领必须被拒：' + JSON.stringify(c2));
+  const c3 = await call('/issue/claim', { method: 'POST', body: JSON.stringify({ qq: 'abc', key: ISSUE_KEY }) });
+  if (c3.ok !== false) throw new Error('坏 QQ 必须被拒');
+
+  /* ---- 2. 激活：码+QQ+密码 → token；复用码 409；换 QQ 用同码 403 ---- */
+  const a1 = await call('/account/activate', { method: 'POST',
+    body: JSON.stringify({ code: c1.code, qq: '12345678', pass: 'secret1', installId: 'inst-A', ua: 'Chrome/冒烟A' }) });
+  if (!a1.ok || !a1.token) throw new Error('激活失败：' + JSON.stringify(a1));
+  const a2 = await call('/account/activate', { method: 'POST',
+    body: JSON.stringify({ code: c1.code, qq: '12345678', pass: 'secret1', installId: 'inst-X', ua: 'x' }) });
+  if (a2.ok !== false) throw new Error('复用激活码必须 409：' + JSON.stringify(a2));
+  const c4 = await call('/issue/claim', { method: 'POST', body: JSON.stringify({ qq: '87654321', key: ISSUE_KEY }) });
+  const a3 = await call('/account/activate', { method: 'POST',
+    body: JSON.stringify({ code: c4.code, qq: '12345678', pass: 'secret1', installId: 'inst-Y', ua: 'y' }) });
+  if (a3.ok !== false) throw new Error('别人的码配我的 QQ 必须 403：' + JSON.stringify(a3));
+
+  /* ---- 3. 登录：同设备不重复计；3 台满第 4 台 403；解绑腾位 ---- */
+  const l1 = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', pass: 'secret1', installId: 'inst-A', ua: 'Chrome/冒烟A' }) });
+  if (!l1.ok) throw new Error('本机重登必须成功：' + JSON.stringify(l1));
+  if (T.devices.filter((d) => d.status === 1).length !== 1) throw new Error('同设备重复登录不该新增名额');
+  const tokByInst = {};
+  for (const inst of ['inst-B', 'inst-C']) {
+    const lr = await call('/account/login', { method: 'POST',
+      body: JSON.stringify({ qq: '12345678', pass: 'secret1', installId: inst, ua: 'UA-' + inst }) });
+    if (!lr.ok) throw new Error(inst + ' 登录失败：' + JSON.stringify(lr));
+    tokByInst[inst] = lr.token;
+  }
+  const l4 = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', pass: 'secret1', installId: 'inst-D', ua: 'UA-D' }) });
+  if (l4.ok !== false || !Array.isArray(l4.devices) || l4.devices.length !== 3) {
+    throw new Error('第 4 台必须 403 带设备清单：' + JSON.stringify(l4));
+  }
+  /* 解绑一台（用 token1 操作）→ 第 4 台腾位登录成功 */
+  const me1 = await call('/account/me', auth(a1.token));
+  if (!me1.ok || me1.devices.length !== 3) throw new Error('me 不对：' + JSON.stringify(me1));
+  const victim = me1.devices.find((d) => d.install_id === 'inst-B');
+  if (!victim) throw new Error('设备清单缺 inst-B');
+  const rv = await call('/account/devices/' + victim.id + '/revoke', Object.assign({ method: 'POST' }, auth(a1.token)));
+  if (!rv.ok) throw new Error('解绑失败：' + JSON.stringify(rv));
+  const l5 = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', pass: 'secret1', installId: 'inst-D', ua: 'UA-D' }) });
+  if (!l5.ok) throw new Error('解绑后第 4 台该能登：' + JSON.stringify(l5));
+  /* 被解绑设备的会话必须立刻失效（踢人语义） */
+  const meDead = await call('/account/me', auth(tokByInst['inst-B']));
+  if (meDead.ok !== false) throw new Error('被解绑设备的会话必须立刻失效');
+
+  /* ---- 4. 改密：老密码错 401；改对后新密码登得进、老密码登不进 ---- */
+  const pw1 = await call('/account/password', Object.assign({ method: 'POST',
+    body: JSON.stringify({ oldPass: 'wrong', newPass: 'newpass1' }) }, auth(l5.token)));
+  if (pw1.ok !== false) throw new Error('老密码错必须拒：' + JSON.stringify(pw1));
+  const pw2 = await call('/account/password', Object.assign({ method: 'POST',
+    body: JSON.stringify({ oldPass: 'secret1', newPass: 'newpass1' }) }, auth(l5.token)));
+  if (!pw2.ok) throw new Error('改密失败：' + JSON.stringify(pw2));
+  const lOld = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', pass: 'secret1', installId: 'inst-D', ua: 'UA-D' }) });
+  if (lOld.ok !== false) throw new Error('老密码不该还能登');
+  const lNew = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', pass: 'newpass1', installId: 'inst-D', ua: 'UA-D' }) });
+  if (!lNew.ok) throw new Error('新密码该能登：' + JSON.stringify(lNew));
+
+  /* ---- 5. 防撞库：连错 5 次后第 6 次 429（KV 计数）---- */
+  for (let i = 0; i < 5; i++) {
+    await call('/account/login', { method: 'POST',
+      body: JSON.stringify({ qq: '87654321', pass: 'bad-' + i, installId: 'inst-Z', ua: 'z' }) });
+  }
+  const lLock = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '87654321', pass: 'bad-5', installId: 'inst-Z', ua: 'z' }) });
+  if (lLock.ok !== false || lLock.message.indexOf('锁定') < 0) {
+    throw new Error('失败 5 次后必须 429 锁定：' + JSON.stringify(lLock));
+  }
+
+  /* ---- 6. 会话空闲过期：last_seen 超 30 天的会话一律失效（fail closed）----
+     inst-A 的 token 在第 3 段之后就不再使用，拿它做过期负向正好。 */
+  const devA = T.devices.find((d) => d.install_id === 'inst-A');
+  T.sessions.filter((s) => s.device_id === devA.id).forEach((s) => {
+    s.last_seen = Date.now() - 31 * 24 * 60 * 60 * 1000;
+  });
+  const meStale = await call('/account/me', auth(a1.token));
+  if (meStale.ok !== false) throw new Error('空闲超 30 天的会话必须失效：' + JSON.stringify(meStale));
+
+  /* ---- 7. 注销：密码确认 → 设备/会话全灭、qq 脱敏、本机登录态失效 ---- */
+  const fg1 = await call('/account/forget', Object.assign({ method: 'POST', body: JSON.stringify({ pass: 'bad' }) }, auth(lNew.token)));
+  if (fg1.ok !== false) throw new Error('注销密码必须确认：' + JSON.stringify(fg1));
+  const fg2 = await call('/account/forget', Object.assign({ method: 'POST', body: JSON.stringify({ pass: 'newpass1' }) }, auth(lNew.token)));
+  if (!fg2.ok) throw new Error('注销失败：' + JSON.stringify(fg2));
+  const meAfter = await call('/account/me', auth(lNew.token));
+  if (meAfter.ok !== false) throw new Error('注销后会话必须全灭');
+  const uRow = T.users.find((x) => x.id && String(x.qq).indexOf('deleted:') === 0);
+  if (!uRow) throw new Error('注销后 qq 字段没脱敏：' + JSON.stringify(T.users.map((x) => x.qq)));
+  /* 注销后同 QQ 想再登 → 用户行已 status 0，401（要复用需人工恢复） */
+  const lAfter = await call('/account/login', { method: 'POST',
+    body: JSON.stringify({ qq: '12345678', pass: 'newpass1', installId: 'inst-D', ua: 'UA-D' }) });
+  if (lAfter.ok !== false) throw new Error('注销后不该还能登');
+
+  /* ---- 8. 发码页出得来（独立小页，带 QQ 用途告知 + 营业口令输入位）---- */
+  const page = await worker.fetch(req('/issue'), env);
+  const html = await page.text();
+  if (html.indexOf('领取激活码') < 0 || html.indexOf('隐私政策') < 0 || html.indexOf('只能领一次') < 0) {
+    throw new Error('发码页内容不对（告知/闸说明缺失）');
+  }
+  if (html.indexOf('营业口令') < 0 || html.indexOf("getElementById('key')") < 0) {
+    throw new Error('发码页没有营业口令输入位');
+  }
+
+  return { 发码: '口令闸生效', 激活: '一码一人', 设备: '3 台上限+解绑腾位', 会话: '空闲 30 天过期', 改密: '新旧切换通', 防撞库: '5 次 429', 注销: '全灭+脱敏' };
 });
 
 t('P0-2 回归：repo-core.postComment 走通请求 —— 带铺子昵称、失败回 ok:false 可重发', async () => {

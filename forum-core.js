@@ -140,14 +140,22 @@
   /* 八个板块模板（跨岛复用；实例按 sandboxId 各建一份）。
      顺序即目录顺序，别随手调换 —— UI 按数组顺序渲染。 */
   var BOARD_TEMPLATES = [
-    { key: 'daily',    name: '日常生活',   desc: '柴米油盐，楼上楼下' },
-    { key: 'help',     name: '情感求助',   desc: '拿不准的事，说出来参谋' },
-    { key: 'treehole', name: '树洞',       desc: '匿名说点不敢说的' },
-    { key: 'fanwork',  name: '同人创作',   desc: '写画剪贴，给喜欢的人' },
-    { key: 'photo',    name: '摄影与旅行', desc: '路上看到的，都值得一张' },
-    { key: 'food',     name: '美食与探店', desc: '好吃不好吃，说了算' },
-    { key: 'game',     name: '游戏区',     desc: '打得好坏，都来聊聊' },
-    { key: 'local',    name: '本地生活',   desc: '失物招领与街头巷尾' }
+    { key: 'daily',    name: '日常生活',   desc: '柴米油盐，楼上楼下',
+      rules: '发日常随意，吵架请绕行。楼上楼下互相认识，说话留三分情面。' },
+    { key: 'help',     name: '情感求助',   desc: '拿不准的事，说出来参谋',
+      rules: '求助就把背景说清楚，别阴阳怪气。参谋自由发言，采不采纳看楼主。' },
+    { key: 'treehole', name: '树洞',       desc: '匿名说点不敢说的',
+      rules: '匿名发言。不猜身份、不截图外传——树洞里没有楼主，只有一句话。' },
+    { key: 'fanwork',  name: '同人创作',   desc: '写画剪贴，给喜欢的人',
+      rules: '二创标好原作与 CP；转载带授权。不喜欢就划走，别在楼里开战。' },
+    { key: 'photo',    name: '摄影与旅行', desc: '路上看到的，都值得一张',
+      rules: '晒图配一句话。摆拍没问题，冒充纪实不行。' },
+    { key: 'food',     name: '美食与探店', desc: '好吃不好吃，说了算',
+      rules: '探店讲真实感受。恰饭可以，恰了要讲。' },
+    { key: 'game',     name: '游戏区',     desc: '打得好坏，都来聊聊',
+      rules: '聊游戏别聊人。剧透提前一行打招呼。' },
+    { key: 'local',    name: '本地生活',   desc: '失物招领与街头巷尾',
+      rules: '失物招领写清时间地点。街坊闲聊别指名道姓。' }
   ];
 
   /* ------------------------------ 账号与板块初始化 ------------------------------ */
@@ -422,6 +430,21 @@
     var content = String(opt.content || '').trim();
     if (!title && !content) return { ok: false, message: '总得写点什么' };
 
+    /* 投票帖（v240）：选项发出即锁定（不在 POST_UPDATABLE 里，改不了）。
+       校验闭集：2~6 个、去重、每个 ≤24 字 —— 少于 2 个的「投票」是废话。 */
+    var vote = null;
+    if ((opt.postType || 'normal') === 'vote') {
+      var rawOpts = (opt.vote && opt.vote.options || []).map(function (s) {
+        return String(s || '').trim().slice(0, 24);
+      }).filter(Boolean);
+      var uniq = [];
+      rawOpts.forEach(function (s) { if (uniq.indexOf(s) < 0) uniq.push(s); });
+      if (uniq.length < 2 || uniq.length > 6) {
+        return { ok: false, message: '投票要 2~6 个不重复的选项' };
+      }
+      vote = { options: uniq, votes: [] };   /* votes: [{accountId, optionIndex, at}] */
+    }
+
     var post = tagScope({
       id: uid('fp'),
       boardId: opt.boardId,
@@ -436,7 +459,9 @@
       sourceId: opt.sourceId || '',
       sourceRef: opt.sourceRef || null,
       assetRefs: Array.isArray(opt.assetRefs) ? opt.assetRefs.slice(0, 9) : [],
-      placeText: opt.placeText || '',
+      /* v242：轻量地点 = 纯文字标签（不定位现实），发出后随帖，≤20 字 */
+      placeText: String(opt.placeText || '').trim().slice(0, 20),
+      vote: vote,
       status: 'active',
       createdAt: nowIso(), updatedAt: nowIso()
     }, sid);
@@ -556,6 +581,98 @@
       });
     }
     return { ok: true, comment: comment };
+  }
+
+  /* ------------------------------ 投票（v240） ------------------------------
+     票随帖走（post.vote.votes 内联）：不另开表 = 不进删房名单差集的老坑；
+     账号 id 只在数据层，公开层一律走 voteSummary 的显示名投影。
+     一人一票；改票 = 直接换 optionIndex；同选项再点 = 撤票。 */
+
+  function castVote(postId, accountId, optionIndex, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    var post = getPost(postId, sid);
+    if (!post || post.status !== 'active') return { ok: false, message: '帖子不在了' };
+    if (post.postType !== 'vote' || !post.vote || !Array.isArray(post.vote.options)) {
+      return { ok: false, message: '这不是投票帖' };
+    }
+    var idx = Number(optionIndex);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= post.vote.options.length) {
+      return { ok: false, message: '没有这个选项' };
+    }
+    var all = store.get('forumPosts') || [];
+    var hit = null;
+    all.forEach(function (p) { if (p && p.id === postId && p.sandboxId === sid) hit = p; });
+    if (!hit) return { ok: false, message: '帖子不在了' };
+    if (!hit.vote) hit.vote = { options: post.vote.options, votes: [] };
+    hit.vote.votes = hit.vote.votes || [];
+    var mine = null;
+    hit.vote.votes.forEach(function (v) { if (v.accountId === accountId) mine = v; });
+
+    var changed;
+    if (mine && mine.optionIndex === idx) {
+      hit.vote.votes.splice(hit.vote.votes.indexOf(mine), 1);
+      changed = 'removed';                       /* 同选项再点 = 撤票 */
+    } else if (mine) {
+      mine.optionIndex = idx; mine.at = nowIso();
+      changed = 'switched';                      /* 改投 */
+    } else {
+      hit.vote.votes.push({ accountId: accountId, optionIndex: idx, at: nowIso() });
+      changed = 'added';
+    }
+    hit.updatedAt = nowIso();
+    putForum('forumPosts', all);
+    return { ok: true, changed: changed, summary: voteSummary(hit, sid) };
+  }
+
+  /* 公开层汇总：counts / total / 每个选项的投票人显示名（走账号投影，
+     永不返回 accountId —— 匿名帖不匿名投票，身份就是大小号本身）。 */
+  function voteSummary(post, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    var opts = (post && post.vote && post.vote.options) || [];
+    var counts = opts.map(function () { return 0; });
+    var voters = opts.map(function () { return []; });
+    ((post && post.vote && post.vote.votes) || []).forEach(function (v) {
+      if (v && v.optionIndex >= 0 && v.optionIndex < counts.length) {
+        counts[v.optionIndex]++;
+        var acc = getAccount(v.accountId, sid);
+        voters[v.optionIndex].push(acc ? acc.displayName : '已注销账号');
+      }
+    });
+    return {
+      options: opts,
+      counts: counts,
+      total: counts.reduce(function (a, b) { return a + b; }, 0),
+      voters: voters
+    };
+  }
+
+  /* 我投了哪个（没投返回 -1）。 */
+  function myVoteOf(post, accountId) {
+    var vs = (post && post.vote && post.vote.votes) || [];
+    for (var i = 0; i < vs.length; i++) {
+      if (vs[i] && vs[i].accountId === accountId) return vs[i].optionIndex;
+    }
+    return -1;
+  }
+
+  /* ------------------------------ 删帖（v244） ------------------------------
+     作者软删：status → 'deleted'。死态链路（分享卡降级 / 详情 errBox /
+     feed 过滤）早就按这个口径备好了，这里只补真入口。
+     只有发帖身份本人能删 —— 身份即权限，大小号互不代删。 */
+  function deleteOwnPost(postId, accountId, sandboxId) {
+    var sid = sandboxId || lockedSandboxId;
+    var post = getPost(postId, sid);
+    if (!post || post.status !== 'active') return { ok: false, message: '帖子不在了' };
+    if (post.authorAccountId !== accountId) return { ok: false, message: '只有作者本人能删' };
+    var all = store.get('forumPosts') || [];
+    all.forEach(function (p) {
+      if (p && p.id === postId && p.sandboxId === sid) {
+        p.status = 'deleted';
+        p.updatedAt = nowIso();
+      }
+    });
+    putForum('forumPosts', all);
+    return { ok: true };
   }
 
   /* ------------------------------ 互动 ------------------------------ */
@@ -810,15 +927,62 @@
     store.set('forumFollows', list);
     return { on: true };
   }
-  function getHomeFeed(mode, cursor, limit, sandboxId) {
+  /* v244b：仅关注者可见（visibility:'followers'）——feed 层就过滤掉，
+     不给「看见了再看」的半泄露。观看者视角 = viewerAccountId：
+     作者本人放行；其余人只有关注了作者才放行。不传 viewer 一律不看
+     （调用方拿不到当前身份就当陌生人，别静默泄露）。 */
+  function visibleToViewer(p, sid, viewerAccountId) {
+    if (p.visibility !== 'followers') return true;
+    if (!viewerAccountId) return false;
+    return p.authorAccountId === viewerAccountId || isFollowing(sid, p.authorAccountId);
+  }
+
+  function getHomeFeed(mode, cursor, limit, sandboxId, viewerAccountId) {
     var sid = sandboxId || lockedSandboxId;
-    var posts = scopedForum('forumPosts', sid).filter(function (p) { return p.status === 'active'; });
+    var posts = scopedForum('forumPosts', sid).filter(function (p) {
+      return p.status === 'active' && visibleToViewer(p, sid, viewerAccountId);
+    });
     if (mode === 'follow') {
       var follows = followsOf(sid);
       var mine = posts.filter(function (p) { return follows.indexOf(p.authorAccountId) >= 0; });
       return pageOf(mine, cursor, limit || 12);
     }
     return pageOf(posts, cursor, limit || 12);
+  }
+
+  /* ------------------------ 世界事件（v245b，「今日风闻」） ------------------------
+     岛级小事件流：forum-gen 随种子/催更顺路生成，存进
+     forumSettingsBySandbox[sid].worldEvents —— 映射键本来就走删房清理那条路，
+     **不另开表**（省三处登记 + 避开删房名单差集的老坑）；环形封顶 40 条，新在前。
+     事件是公共风景：无身份维度、无匿名维度，谁看都一样。 */
+  var WORLD_EVENT_CAP = 40;
+
+  function listWorldEvents(sandboxId) {
+    var map = getForumMap('forumSettingsBySandbox', sandboxId || lockedSandboxId) || {};
+    return Array.isArray(map.worldEvents) ? map.worldEvents : [];
+  }
+
+  function addWorldEvents(sandboxId, texts, fromMinutesAgo) {
+    var sid = sandboxId || lockedSandboxId;
+    var map = getForumMap('forumSettingsBySandbox', sid) || {};
+    var list = Array.isArray(map.worldEvents) ? map.worldEvents : [];
+    var base = Math.max(5, Number(fromMinutesAgo) || 30);
+    var added = 0;
+    (Array.isArray(texts) ? texts : []).forEach(function (t, i) {
+      var text = String(t || '').trim().slice(0, 40);
+      if (!text) return;
+      if (list.some(function (e) { return e && e.text === text; })) return;   /* 不重播旧闻 */
+      list.unshift({
+        id: uid('fe'), text: text,
+        at: new Date(Date.now() - Math.max(1, base - i * 5) * 60000).toISOString()
+      });
+      added++;
+    });
+    if (added) {
+      map.worldEvents = list.slice(0, WORLD_EVENT_CAP);
+      setForumMap('forumSettingsBySandbox', sid, map);
+    }
+    return added;
   }
 
   /* ------------------------------ 游标分页 ------------------------------ */
@@ -880,12 +1044,18 @@
     getBoard: getBoard,
     listComments: listComments,
     createComment: createComment,
+    castVote: castVote,
+    voteSummary: voteSummary,
+    myVoteOf: myVoteOf,
+    deleteOwnPost: deleteOwnPost,
     toggleLike: toggleLike,
     toggleCollection: toggleCollection,
     hasInteract: hasInteract,
     countOf: countOf,
     repostCount: repostCount,
     getHomeFeed: getHomeFeed,
+    listWorldEvents: listWorldEvents,
+    addWorldEvents: addWorldEvents,
     isFollowing: isFollowing,
     toggleFollow: toggleFollow,
     followsOf: followsOf,

@@ -12,3 +12,8 @@ database_id = "ea5d3f03-c7a7-4a78-a73a-357281e2dd0a"
 [[kv_namespaces]]
 binding = "STORE"
 id = "6647713bee174fe68901dfca9f0e48c5"
+
+# 发码页营业口令（2026-10-22 收口）：secret 不进配置文件，部署后执行一次
+#   wrangler secret put ISSUE_KEY
+# 值 = 你发货时发给买家的那串口令。没配 = 发码页歇业（fail closed）。
+# 改口令 = 重新 put 一遍即可，旧口令立刻失效。

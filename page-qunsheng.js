@@ -8,7 +8,8 @@
    视觉照搬 demo（城市社区报刊感）：报纸米色 #f4f0e7、墨色 #25231f、
    主红 #a63b32、辅蓝 #315d68、宋体大报头、墨框拍纸头像、错位阴影。
    Batch B 范围：首页三条流 + 详情回复树 + 发布 + 我的基础页；
-   转发/分享卡（Batch C）、消息通知（Batch D）只留入口与占位。
+   转发/分享卡（Batch C）、消息通知（Batch D）**均已交付**（2026-10 批次）——
+   旧头注释说「只留入口与占位」是过期信息；v240-244 又补了投票/地点/删帖/无限滚动。
 
    上下文：一律 ctx.params.sandboxId > forum.resolveContext 锁定 > 当前房；
    伪造 sandboxId 走错误态。切岛后 selectedForumAccountBySandbox 独立恢复。
@@ -78,6 +79,7 @@
       '.qs-gum-head strong{color:var(--red);letter-spacing:.14em}',
       '.qs-gum h2{margin:9px 0 6px;font:700 20px/1.35 "Songti SC","STSong",serif}',
       '.qs-gum p{margin:0;color:#575149;font-size:13px;line-height:1.65}',
+      '.qs-gum .qs-gum-topic{margin-top:7px;font-weight:800;color:#a63b32}',
       '.qs-gum-foot{margin-top:11px;padding-top:9px;border-top:1px dashed var(--line)}',
       '.qs-section-title{display:flex;align-items:center;gap:10px;margin:3px 0 0;font-size:10px;font-weight:800;letter-spacing:.16em}',
       '.qs-section-title:after{content:"";height:1px;background:var(--ink);flex:1}',
@@ -186,6 +188,26 @@
       '.qs-more-btn[disabled]{opacity:.5;cursor:default}',
       '.qs-type{flex:0 0 auto;border:1px solid var(--line);background:transparent;padding:7px 10px;color:var(--muted);font-size:10px}',
       '.qs-type.on{border-color:var(--ink);background:var(--ink);color:var(--paper)}',
+      /* v240 投票：编辑器 + 详情页选项条 */
+      '.qs-vote-edit{margin-top:7px;border-top:1px solid var(--ink);padding:13px 0 4px}',
+      '.qs-vote-edit-row{display:flex;gap:7px;align-items:center;margin-bottom:8px}',
+      '.qs-vote-edit-row input{flex:1;min-width:0;border:1px solid #d8d0c2;border-radius:8px;',
+      'background:rgba(255,255,255,.7);padding:9px 10px;font:12.5px/1.5 inherit;color:#25231f;outline:0}',
+      '.qs-vote-edit-row .qs-vote-del{flex:0 0 auto;border:0;background:transparent;color:#a63b32;font-size:15px;cursor:pointer;padding:4px 6px}',
+      '.qs-vote-add{display:block;width:100%;margin-top:2px;padding:10px;border:1px dashed #c9bfae;border-radius:10px;',
+      'background:rgba(255,255,255,.5);color:#4a443c;font-size:12px;cursor:pointer}',
+      '.qs-vote{margin:12px 0 0;border:1px solid #d8d0c2;border-radius:12px;padding:12px 13px;background:rgba(233,226,213,.45)}',
+      '.qs-vote-head{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:#756f65}',
+      '.qs-vote-head b{font-size:12px;color:#315d68;letter-spacing:.06em}',
+      '.qs-vote-opt{display:block;width:100%;margin-top:8px;border:1px solid #c9bfae;border-radius:9px;',
+      'background:rgba(255,255,255,.6);padding:10px 11px;color:#3b372f;font-size:13px;cursor:pointer;text-align:left;position:relative;overflow:hidden}',
+      '.qs-vote-opt.mine{border-color:#a63b32;box-shadow:inset 0 0 0 1px #a63b32}',
+      '.qs-vote-opt .qs-vote-bar{position:absolute;left:0;top:0;bottom:0;background:rgba(176,138,94,.16);z-index:0}',
+      '.qs-vote-opt .qs-vote-row{position:relative;z-index:1;display:flex;justify-content:space-between;gap:8px;align-items:baseline}',
+      '.qs-vote-opt .qs-vote-pct{font-weight:800;color:#315d68;font-size:12px;white-space:nowrap}',
+      '.qs-vote-opt .qs-vote-who{display:block;margin-top:4px;font-size:10px;line-height:1.6;color:#756f65;position:relative;z-index:1;text-align:left}',
+      '.qs-vote-closed{margin-top:8px;font-size:10.5px;color:#756f65}',
+      '.qs-place-line{margin-top:12px;font-size:11.5px;line-height:1.6;color:#756f65}',
       '.qs-editor{margin-top:7px;border-top:1px solid var(--ink)}',
       '.qs-title-input,.qs-body-input{display:block;width:100%;border:0;outline:0;background:transparent;color:var(--ink)}',
       '.qs-title-input{padding:17px 2px 13px;border-bottom:1px solid var(--line);font:800 21px/1.4 "Songti SC","STSong",serif}',
@@ -354,7 +376,34 @@
     return t.length > n ? t.slice(0, n) + '…' : t;
   }
 
-  var TYPE_LABEL = { normal: '', long: '长文', help: '求助' };
+  var TYPE_LABEL = { normal: '', long: '长文', help: '求助', vote: '投票' };
+
+  /* v244b：泡泡糖「今日话题」——确定性选题池，同岛同日恒同一题（零模型零网络）。
+     导出 qsTodayTopic 给冒烟断言（同日同岛必同题、必在池内）。 */
+  var GUM_TOPICS = [
+    '今天有没有什么小事让你心情很好？',
+    '最近一次觉得「啊真好吃」是什么？',
+    '如果明天可以什么都不干，你想干嘛？',
+    '你最近在重复做的一件事是什么？',
+    '说一个只有这里的人才懂的梗',
+    '今天的天气，配一句你的心情',
+    '最近有没有遇到什么奇怪的巧合？',
+    '有什么东西你买了之后特别不后悔？',
+    '晚上吃什么都还没想好的举个手',
+    '最近让你笑出声的一件小事',
+    '有什么想学但一直没开始的东西？',
+    '说说你今天见到的一个路人',
+    '睡觉有什么怪癖？枕头朝哪边？',
+    '最近单曲循环的歌是什么？',
+    '如果能在岛上开一家店，你想开什么？',
+    '今天有没有偷偷偷懒？'
+  ];
+  function qsTodayTopic(sandboxId) {
+    var d = new Date();
+    var key = String(sandboxId || '') + '|' + d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+    return GUM_TOPICS[F().strHash(key) % GUM_TOPICS.length];
+  }
+  Sleepy.qsTodayTopic = qsTodayTopic;
 
   /* 首页实例状态：tab 切换不换页，就地重渲染 feed。 */
   var homeState = { sandboxId: null, tab: 'mixed' };
@@ -488,6 +537,10 @@
     }
     if (pa.anonymous) meta.appendChild(h('span', 'qs-tag', '匿名'));
     else if (TYPE_LABEL[post.postType]) meta.appendChild(h('span', 'qs-tag', TYPE_LABEL[post.postType]));
+    /* v242：轻量地点标签（卡片上直接看得到在哪儿） */
+    if (post.placeText) meta.appendChild(h('span', 'qs-tag', '📍 ' + post.placeText));
+    /* v244b：仅关注者标签 */
+    if (post.visibility === 'followers') meta.appendChild(h('span', 'qs-tag', '仅关注者'));
     /* 关注按钮（2026-10-11 关注补全）：非匿名 + 不是我自己的账号 */
     var meAcc = F().getSelectedForumAccount(fx.sandboxId);
     if (!pa.anonymous && (!meAcc || meAcc.id !== pa.accountId)) {
@@ -506,6 +559,11 @@
 
     if (post.title) card.appendChild(h('h3', null, post.title));
     if (post.content) card.appendChild(h('p', 'qs-body-p', excerpt(post.content, 90)));
+    /* v240：投票卡在信息流里就报参与数 —— 「N 人已投」是钩子，点进详情页投一票揭晓结果 */
+    if (post.postType === 'vote' && post.vote) {
+      card.appendChild(h('div', 'qs-vote-closed',
+        '☑ 投票 · ' + F().voteSummary(post, fx.sandboxId).total + ' 人已投'));
+    }
 
     if (comments.length) {
       var first = comments[0];
@@ -616,22 +674,30 @@
     edition.appendChild(refresh);
     main.appendChild(edition);
 
-    /* 今日风闻：取最新一帖当「风闻」占位（worldEvents 是后续批） */
+    /* 今日风闻（v245b）：真世界事件流（forum-gen 随种子/催更顺路生成，
+       存岛级映射键）——有事件放最新一条；没事件回落最新一帖，再没有就安静文案。 */
     var ticker = h('section', 'qs-ticker');
     ticker.appendChild(h('b', null, '今日风闻'));
-    var newest = F().getHomeFeed('latest', null, 1, fx.sandboxId).items[0];
-    ticker.appendChild(h('span', null, newest
-      ? excerpt((newest.title ? newest.title + ' —— ' : '') + newest.content, 46)
-      : '社区安静得很，还没有人开口。'));
+    var viewerId = (F().getSelectedForumAccount(fx.sandboxId) || {}).id || null;
+    var evs = F().listWorldEvents(fx.sandboxId);
+    var newest = F().getHomeFeed('latest', null, 1, fx.sandboxId, viewerId).items[0];
+    ticker.appendChild(h('span', null,
+      evs.length
+        ? excerpt(evs[0].text, 46) + '（' + fmtTime(evs[0].at) + '）'
+        : (newest
+          ? excerpt((newest.title ? newest.title + ' —— ' : '') + newest.content, 46)
+          : '社区安静得很，还没有人开口。')));
     main.appendChild(ticker);
 
-    /* 泡泡糖：快捷入口 = 去树洞匿名发一帖（今日话题是后续批） */
+    /* 泡泡糖：快捷入口 = 去树洞匿名发一帖；v244b 加「今日话题」——
+       确定性选题池（同岛同日恒同一题，零模型零网络），比空喊「匿名说一句」有抓手。 */
     var gum = h('section', 'qs-gum');
     gum.appendChild(h('div', 'qs-gum-head', [
       h('strong', null, '泡泡糖'),
       h('span', null, '匿名，化了就没')
     ]));
     gum.appendChild(h('h2', null, '说一句只有你们这个世界的人才看得懂的话。'));
+    gum.appendChild(h('p', 'qs-gum-topic', '今日话题：' + qsTodayTopic(fx.sandboxId)));
     gum.appendChild(h('p', null, '不解释，不点名。看懂的人自然会来留声。'));
     gum.appendChild(h('div', 'qs-gum-foot', [
       h('span', null, '使用当前论坛身份参与'),
@@ -645,7 +711,14 @@
 
     main.appendChild(h('div', 'qs-section-title', '正在发出杂响'));
 
-    var feed = F().getHomeFeed(homeState.tab, null, 12, fx.sandboxId);
+    /* feed（v244 无限滚动）：首屏 12 条，滚近底部就着页追加。
+       游标/余量记在 homeState —— 每次 renderHome（进页/切 tab/催更）都是新的一轮，
+       追加不动 DOM 里已有的卡片，不整页重绘（重绘会闪+丢滚动位置）。 */
+    homeState.cursor = null;
+    homeState.hasMore = null;
+    homeState.loading = false;
+    var feedBox = h('div', 'qs-feed-box');
+    var feed = F().getHomeFeed(homeState.tab, null, 12, fx.sandboxId, viewerId);
     if (!feed.items.length) {
       var empty = h('div', 'qs-empty');
       empty.appendChild(h('div', 'qs-empty-big',
@@ -654,9 +727,29 @@
         '发一帖，或者点上面的「催更」\n让这座岛的居民先开口。'));
       main.appendChild(empty);
     } else {
-      feed.items.forEach(function (p) { main.appendChild(postCard(p, fx)); });
+      feed.items.forEach(function (p) { feedBox.appendChild(postCard(p, fx)); });
+      main.appendChild(feedBox);
+      homeState.cursor = feed.nextCursor;
+      homeState.hasMore = feed.hasMore;
       if (feed.hasMore) {
-        main.appendChild(h('div', 'qs-empty', '（更多留声下一批接入无限滚动）'));
+        var sentinel = h('div', 'qs-empty qs-feed-sentinel', '往下滚，还有更多留声…');
+        main.appendChild(sentinel);
+
+        main.addEventListener('scroll', function () {
+          if (!homeState.hasMore || homeState.loading) return;
+          if (main.scrollTop + main.clientHeight < main.scrollHeight - 240) return;
+          homeState.loading = true;
+          sentinel.textContent = '正在捞下一批…';
+          var more = F().getHomeFeed(homeState.tab, homeState.cursor, 12, fx.sandboxId, viewerId);
+          /* 全部本地读，这里不可能真异步 —— 收尾放在同一拍，loading 不会卡死 */
+          more.items.forEach(function (p) { feedBox.appendChild(postCard(p, fx)); });
+          homeState.cursor = more.nextCursor;
+          homeState.hasMore = more.hasMore;
+          homeState.loading = false;
+          sentinel.textContent = more.hasMore ? '往下滚，还有更多留声…' : '到底啦，就这么多留声。';
+        });
+      } else if (feed.items.length >= 12) {
+        main.appendChild(h('div', 'qs-empty', '到底啦，就这么多留声。'));
       }
     }
     root.appendChild(main);
@@ -677,6 +770,15 @@
     var me = F().getSelectedForumAccount(fx.sandboxId);
     var comments = F().listComments(post.id, fx.sandboxId);
 
+    /* v244b：仅关注者的帖——非关注者（非作者）直进详情也看不到。
+       口径与 feed 过滤一致：作者本人放行，关注了作者放行。 */
+    if (post.visibility === 'followers') {
+      var isOwnerView = !!(me && me.id === post.authorAccountId);
+      if (!isOwnerView && !F().isFollowing(fx.sandboxId, post.authorAccountId)) {
+        return errBox('这篇只给关注的人看', '关注作者之后再来吧。');
+      }
+    }
+
     /* ---- 顶栏 ---- */
     var top = h('div', 'qs-topbar');
     var topline = h('div', 'qs-topline');
@@ -687,9 +789,14 @@
     crumb.appendChild(h('b', null, board ? board.name : '社区'));
     crumb.appendChild(h('small', null, '众声喧哗 · 原帖'));
     topline.appendChild(crumb);
-    var more = h('button', 'qs-textbtn', '更多');
-    more.addEventListener('click', function () { Sleepy.toast('转发与更多操作在下一批接入'); });
-    topline.appendChild(more);
+    /* 「更多」（v244）：作者本人显示——里面是真删帖（软删）。
+       非作者现在没有可挂的操作（举报没有基础设施，不给假钮）——整颗不渲染。 */
+    var isMine = !!(me && me.id === post.authorAccountId);
+    if (isMine) {
+      var more = h('button', 'qs-textbtn', '更多');
+      more.addEventListener('click', function () { openPostMoreSheet(ctx, post, fx, me); });
+      topline.appendChild(more);
+    }
     top.appendChild(topline);
     root.appendChild(top);
 
@@ -711,6 +818,7 @@
     whoBox.appendChild(h('div', 'qs-sub', fmtTime(post.createdAt) + ' · ' + fx.sandboxName));
     meta.appendChild(whoBox);
     if (pa.anonymous) meta.appendChild(h('span', 'qs-tag', '单帖匿名'));
+    if (post.visibility === 'followers') meta.appendChild(h('span', 'qs-tag', '仅关注者'));
     detail.appendChild(meta);
     if (post.title) detail.appendChild(h('h1', null, post.title));
 
@@ -735,6 +843,54 @@
       }
     }
     renderBody(detail);
+
+    /* ---- v240：投票块（微博式：自己投过票才揭晓各选项占比） ----
+       未投：选项即投票按钮，点了直接投；已投：占比条+票数+投票人显示名，
+       点别的选项 = 改投，点自己那项 = 撤票。公开层只给显示名，绝不露账号 id。 */
+    if (post.postType === 'vote' && post.vote) {
+      var sum = F().voteSummary(post, fx.sandboxId);
+      var myIdx = me ? F().myVoteOf(post, me.id) : -1;
+      var voteBox = h('div', 'qs-vote');
+      var vHead = h('div', 'qs-vote-head');
+      vHead.appendChild(h('b', null, '投票'));
+      vHead.appendChild(h('span', null,
+        sum.total + ' 人已投' + (myIdx < 0 ? ' · 投一票揭晓结果' : '')));
+      voteBox.appendChild(vHead);
+      sum.options.forEach(function (optText, i) {
+        var btn = h('button', 'qs-vote-opt' + (i === myIdx ? ' mine' : ''));
+        if (myIdx >= 0) {
+          var pct = sum.total ? Math.round(sum.counts[i] * 100 / sum.total) : 0;
+          var bar = h('i', 'qs-vote-bar');
+          bar.style.width = pct + '%';
+          btn.appendChild(bar);
+          var row = h('div', 'qs-vote-row');
+          row.appendChild(h('span', null, optText));
+          row.appendChild(h('span', 'qs-vote-pct', pct + '% · ' + sum.counts[i] + ' 票'));
+          btn.appendChild(row);
+          if (sum.voters[i].length) {
+            btn.appendChild(h('span', 'qs-vote-who', sum.voters[i].join('、')));
+          }
+        } else {
+          btn.appendChild(h('span', null, optText));
+        }
+        btn.addEventListener('click', function () {
+          if (!me) { Sleepy.toast('先领一个论坛身份再投'); return; }
+          var r = F().castVote(post.id, me.id, i, fx.sandboxId);
+          if (!r.ok) { Sleepy.toast(r.message || '投不了'); return; }
+          Sleepy.toast(
+            r.changed === 'removed' ? '撤回了这一票' :
+            r.changed === 'switched' ? '改投了「' + optText + '」' :
+            '投给了「' + optText + '」');
+          rebuild();
+        });
+        voteBox.appendChild(btn);
+      });
+      if (myIdx >= 0) {
+        voteBox.appendChild(h('div', 'qs-vote-closed',
+          '点自己选的那项 = 撤票；点别的选项 = 改投。'));
+      }
+      detail.appendChild(voteBox);
+    }
 
     /* 追更：同人连载一次一节（作者在模型侧自己挑要不要采纳读者留言） */
     if (post.fanwork) {
@@ -785,6 +941,11 @@
       });
       detail.appendChild(pic);
     });
+
+    /* v242：轻量地点 —— 纯文字标签，只说「在哪儿」，不定位现实 */
+    if (post.placeText) {
+      detail.appendChild(h('div', 'qs-place-line', '📍 ' + post.placeText));
+    }
 
     detail.appendChild(h('div', 'qs-stats', [
       '阅读 ' + (F().strHash(post.id) % 2000 + 100),
@@ -1014,23 +1175,37 @@
      就把勾选状态冲回默认。同页里 homeState / ownerOnly 都是这个道理。 */
   var composeGW = { on: false, topic: '' };
 
+  /* 发帖页实例状态：同样必须活在 render 外 —— rebuild 是整页重跑 renderCompose，
+     state 放局部的话，点「长文/求助」刚 setState 就被重建冲回 normal
+     （2026-10-16 用户实测「点不动」的根因；图片附件同款会被清）。
+     ghostwrite 不入 state：gwBtn 切的是 composeGW.on，落进 state 会被
+     首建快照钉死，切了也不生效 —— 用的时候直接读 composeGW.on。
+     每次全新 open 由 page() 的 onOpen 钩子重置；页内 rebuild 不重置。 */
+  var composeState = null;
+
   function renderCompose(ctx, fx) {
     var root = h('div', 'qs-root');
     var boards = F().listBoards(fx.sandboxId);
     var owned = F().listOwnedForumAccounts(fx.sandboxId, fx.userEntityId);
     var me = F().getSelectedForumAccount(fx.sandboxId);
 
-    var state = {
-      boardId: ctx.params.boardId ||
-        (F().getBoard(ctx.params.boardId, fx.sandboxId) ? ctx.params.boardId : '') ||
-        (boards[0] ? boards[0].id : ''),
-      type: 'normal',
-      anonymous: false,
-      ghostwrite: composeGW.on,   /* v216：同人创作板块「请人代笔写一篇」（真写正文） */
-      accountId: me ? me.id : null,
-      workId: null,          /* 帷境作品引用（Batch E） */
-      mediaIds: []           /* 图片附件 mediaId（Batch E，首版单图也走数组） */
-    };
+    if (!composeState) {
+      composeState = {
+        boardId: ctx.params.boardId ||
+          (F().getBoard(ctx.params.boardId, fx.sandboxId) ? ctx.params.boardId : '') ||
+          (boards[0] ? boards[0].id : ''),
+        type: 'normal',
+        anonymous: false,
+        accountId: me ? me.id : null,
+        workId: null,          /* 帷境作品引用（Batch E） */
+        visibility: 'public',  /* v244b：public | followers（仅关注者） */
+        mediaIds: [],          /* 图片附件 mediaId（Batch E，首版单图也走数组） */
+        voteOptions: ['', ''], /* v240：投票选项草稿（发布时取非空项，≥2 才发） */
+        placeOpen: false,      /* v242：轻量地点（纯文字标签，不定位现实） */
+        place: ''
+      };
+    }
+    var state = composeState;
 
     /* ---- 顶栏 ---- */
     var top = h('div', 'qs-topbar');
@@ -1100,7 +1275,6 @@
           (x[0] === 'work' && state.type === 'work' && state.workId);
         var b = h('button', 'qs-type' + (on ? ' on' : ''), x[1]);
         b.addEventListener('click', function () {
-          if (x[0] === 'vote') { Sleepy.toast('投票在后续批次接入'); return; }
           if (x[0] === 'work') { openWorkPicker(); return; }
           state.type = x[0];
           rebuild();
@@ -1180,24 +1354,80 @@
     });
     atts.appendChild(imgBtn);
     var voteBtn = h('button', null, '+ 投票');
-    voteBtn.addEventListener('click', function () { Sleepy.toast('投票在后续批次接入'); });
+    /* v240：投票是真类型了 —— 快捷入口和类型按钮同效（切 type，编辑器出选项框） */
+    voteBtn.addEventListener('click', function () {
+      state.type = 'vote';
+      rebuild();
+    });
     atts.appendChild(voteBtn);
     var workBtn = h('button', null, '+ 帷境作品');
     workBtn.addEventListener('click', openWorkPicker);
     atts.appendChild(workBtn);
-    var placeBtn = h('button', null, '+ 地点');
-    placeBtn.addEventListener('click', function () { Sleepy.toast('地点在后续批次接入'); });
+    var placeBtn = h('button', null, (state.placeOpen ? '× 地点' : '+ 地点'));
+    /* v242：轻量地点 —— 只挂一个文字标签（岛上的地方），不做真定位；
+       输入行在下方 editor 之后展开（这里只管开关），收起就清，别留看不见的旧地点 */
+    placeBtn.addEventListener('click', function () {
+      state.placeOpen = !state.placeOpen;
+      if (!state.placeOpen) state.place = '';
+      rebuild();
+    });
     atts.appendChild(placeBtn);
     editor.appendChild(atts);
 
     main.appendChild(editor);
+
+    /* ---- v242：轻量地点输入行（点「+ 地点」展开，输入不 rebuild 保焦点） ---- */
+    if (state.placeOpen) {
+      var placeRow = h('div', 'qs-vote-edit-row');
+      var placeInp = document.createElement('input');
+      placeInp.maxLength = 20;
+      placeInp.placeholder = '在哪儿？（如：码头边的大排档，不超过 20 字）';
+      placeInp.value = state.place;
+      placeInp.addEventListener('input', function () { state.place = placeInp.value; });
+      placeRow.appendChild(placeInp);
+      main.appendChild(placeRow);
+    }
+
+    /* ---- v240：投票选项编辑器（选了「投票」类型才出现） ----
+       输入框改动直接写 state 不 rebuild（保焦点）；加/删选项才重建。 */
+    if (state.type === 'vote' && !composeGW.on) {
+      var voteBox = h('div', 'qs-vote-edit');
+      voteBox.appendChild(h('b', null, '投票选项'));
+      voteBox.appendChild(h('small', null, '2~6 个选项，发出后不能改'));
+      state.voteOptions.forEach(function (val, i) {
+        var row = h('div', 'qs-vote-edit-row');
+        var inp = document.createElement('input');
+        inp.maxLength = 24;
+        inp.placeholder = '选项 ' + (i + 1) + '（不超过 24 字）';
+        inp.value = val;
+        inp.addEventListener('input', function () { state.voteOptions[i] = inp.value; });
+        row.appendChild(inp);
+        if (state.voteOptions.length > 2) {
+          var del = h('button', 'qs-vote-del', '×');
+          del.addEventListener('click', function () {
+            state.voteOptions.splice(i, 1);
+            rebuild();
+          });
+          row.appendChild(del);
+        }
+        voteBox.appendChild(row);
+      });
+      var addOpt = h('button', 'qs-vote-add', '＋ 加一个选项');
+      addOpt.addEventListener('click', function () {
+        if (state.voteOptions.length >= 6) { Sleepy.toast('最多 6 个选项'); return; }
+        state.voteOptions.push('');
+        rebuild();
+      });
+      voteBox.appendChild(addOpt);
+      main.appendChild(voteBox);
+    }
 
     /* ---- v216：同人创作板块「请人代笔写一篇」 ----
        以前 fanwork 只是普通编辑器，写出来的自然是「聊创作」的短帖，
        用户以为这个板块会真的产出一篇同人 —— 现在给一条真会写正文的路：
        一次一整篇，分好自然段，发布后还能在详情页「追更」。 */
     var gwTopic = null;
-    if (state.ghostwrite) {
+    if (composeGW.on) {
       editor.style.display = 'none';
       var gwBox = h('div', 'qs-gw-box');
       gwBox.appendChild(h('div', 'qs-gw-title', '代笔一篇'));
@@ -1213,7 +1443,7 @@
       gwBox.appendChild(h('small', null, '不满意可以不发；发了之后详情页能继续追更。'));
       main.appendChild(gwBox);
     }
-    var gwBtn = h('button', 'qs-gw-btn', state.ghostwrite ? '× 还是自己写' : '✎ 请人代笔写一篇');
+    var gwBtn = h('button', 'qs-gw-btn', composeGW.on ? '× 还是自己写' : '✎ 请人代笔写一篇');
     gwBtn.addEventListener('click', function () {
       composeGW.on = !composeGW.on;
       rebuild();
@@ -1276,6 +1506,24 @@
     anonRow.appendChild(anonTxt);
     main.appendChild(anonRow);
 
+    /* ---- 可见范围（v244b）：公开 / 仅关注者 ----
+       仅关注者的帖：feed 只给关注了作者的人看；转发被复检挡住（no-perm）。
+       关注关系是岛级的（forumFollows），这里沿用同一口径。 */
+    var visRow = h('div', 'qs-switch-row');
+    visRow.appendChild(h('b', null, '可见范围'));
+    var visBtns = h('div', 'qs-types');
+    visBtns.style.margin = '0 0 0 auto';
+    [['public', '公开'], ['followers', '仅关注者']].forEach(function (x) {
+      var vb = h('button', 'qs-type' + (state.visibility === x[0] ? ' on' : ''), x[1]);
+      vb.addEventListener('click', function () {
+        state.visibility = x[0];
+        rebuild();
+      });
+      visBtns.appendChild(vb);
+    });
+    visRow.appendChild(visBtns);
+    main.appendChild(visRow);
+
     main.appendChild(h('div', 'qs-notice',
       '发布后：树洞以外的帖子也可能被岛上其他人和街坊看到。匿名帖请放心说，公开身份不会泄露。'));
 
@@ -1299,7 +1547,7 @@
     send.addEventListener('click', function () {
       var acc = owned.filter(function (a) { return a.id === state.accountId; })[0] || me;
       if (!acc) { Sleepy.toast('先在身份卡里领一个论坛身份'); return; }
-      if (state.ghostwrite) { writeGhost(acc); return; }
+      if (composeGW.on) { writeGhost(acc); return; }
 
       /* v216：同人创作代笔 —— 一次调用写一整篇（真的产出正文，不是聊进度） */
       function writeGhost(useAcc) {
@@ -1326,10 +1574,15 @@
         accountId: acc.id,
         anonymous: anonChk.checked,
         postType: state.type,
+        visibility: state.visibility,
         title: titleInput.value,
         content: bodyInput.value,
+        placeText: state.placeOpen ? state.place : '',
         assetRefs: state.mediaIds.slice()
       };
+      if (state.type === 'vote') {
+        opt.vote = { options: state.voteOptions.slice() };   /* 数据层自己滤空/去重/卡 2~6 */
+      }
       if (state.type === 'work' && state.workId) {
         var proj = Sleepy.forumShare.wjProjection(state.workId);
         if (!proj) { Sleepy.toast('这部作品不能进论坛'); return; }
@@ -1345,6 +1598,46 @@
     });
 
     return root;
+  }
+
+  /* 「更多」面板（v244）：作者本人的帖子操作。当前只有删帖——
+     举报没有基础设施，宁可少一颗钮也不放假的。删帖 = 软删（status:'deleted'），
+     分享卡降级 / 详情 errBox / feed 过滤的死态链路都是按这个口径早就备好的。 */
+  function openPostMoreSheet(ctx, post, fx, me) {
+    var root = document.createElement('div');
+    root.className = 'qs-sheet';
+    var panel = h('section', 'qs-panel');
+    var phead = h('div', 'qs-panel-head');
+    phead.appendChild(h('h2', null, '帖子操作'));
+    var closeBtn = h('button', 'qs-close', '关闭');
+    closeBtn.addEventListener('click', function () { root.remove(); });
+    phead.appendChild(closeBtn);
+    panel.appendChild(phead);
+
+    panel.appendChild(h('div', 'qs-group-label', '作者操作'));
+    var del = h('button', 'qs-choice');
+    del.appendChild(document.createTextNode('删除这篇帖子'));
+    del.appendChild(h('span', null, '删除后社区里立刻看不到；分享出去的卡片会显示「已由作者删除」'));
+    del.addEventListener('click', function () {
+      Sleepy.ui.confirm({
+        title: '删掉这篇帖子？',
+        note: '软删：帖子从社区和转发卡片里消失；评论数据留在本机不动。',
+        ok: '删掉', danger: true
+      }).then(function (yes) {
+        if (!yes) return;
+        var r = F().deleteOwnPost(post.id, me.id, fx.sandboxId);
+        if (!r.ok) { Sleepy.toast(r.message || '删不了'); return; }
+        root.remove();
+        Sleepy.toast('删掉了');
+        Sleepy.nav.back();
+      });
+    });
+    panel.appendChild(del);
+    panel.appendChild(h('p', 'qs-notice', '更多操作（举报等）等有基础设施了再上——不放假的钮。'));
+    root.appendChild(panel);
+    root.addEventListener('click', function (e) { if (e.target === root) root.remove(); });
+    if (ctx && ctx.body) ctx.body.appendChild(root);
+    root.classList.add('show');
   }
 
   /* ------------------------------ 转发面板（Batch C） ------------------------------ */
@@ -1736,12 +2029,18 @@
 
     var main = h('main', 'qs-main');
 
-    /* ---- 版规卡（board.description；rules 是后续批的正式版规字段） ---- */
+    /* ---- 版规卡（v244b）：正式版规 = 板块模板 rules 按模板键回落——
+        老岛的 board 落库时没有 rules 字段，不从库里读，免迁移。
+        未来板块自定义版规要落库时再换数据源。 ---- */
+    var tplRules = '';
+    (F().BOARD_TEMPLATES || []).forEach(function (t) {
+      if (t.key === board.templateKey && t.rules) tplRules = t.rules;
+    });
     var intro = h('section', 'qs-ticker');
     intro.style.alignItems = 'flex-start';
     intro.appendChild(h('b', null, '版规'));
     intro.appendChild(h('span', null,
-      String(board.description || '').trim() || '这个板块还没写下版规 —— 先来的人说了算。'));
+      tplRules || String(board.description || '').trim() || '这个板块还没写下版规 —— 先来的人说了算。'));
     main.appendChild(intro);
 
     /* ---- 统计条：真实可算的三格 ---- */
@@ -1763,6 +2062,23 @@
       stats.appendChild(s);
     });
     main.appendChild(stats);
+
+    /* ---- 板块级催更（v246b）：只给这个板块生成 1~3 帖，不动别的板块 ---- */
+    var boardPoke = h('button', 'qs-poke', '催一下 —— 只让这个板块热闹起来');
+    boardPoke.addEventListener('click', function () {
+      boardPoke.disabled = true;
+      boardPoke.textContent = '去喊人了…';
+      G().genBoard(fx.sandboxId, board.id, function (err, r) {
+        if (err) {
+          Sleepy.toast(err.stage === 'cooldown' ? err.error
+            : '没喊动人：' + (err.error || '还没有可用的模型连接'));
+        } else {
+          Sleepy.toast(r.added ? '这个板块新来了 ' + r.added + ' 帖' : '这会儿没人在这个板块开口');
+        }
+        rebuild();
+      });
+    });
+    main.appendChild(boardPoke);
 
     /* ---- 序：最新（时间倒序）/ 热议（同感 + 留声加权） ---- */
     var tabs = h('nav', 'qs-tabs');
@@ -1797,7 +2113,7 @@
       var empty = h('div', 'qs-empty');
       empty.appendChild(h('div', 'qs-empty-big', '这个板块还安静着'));
       empty.appendChild(h('div', 'qs-empty-sub',
-        '右上角「发一帖」开个头，\n或者回首页点「催更」让居民们来聊聊。'));
+        '右上角「发一帖」开个头，\n或者点上面的「催一下」让居民们来这个板块聊聊。'));
       main.appendChild(empty);
     } else {
       items.forEach(function (p) { main.appendChild(postCard(p, fx)); });
@@ -1994,12 +2310,15 @@
       current.ctx.body.appendChild(node);
     }
   }
-  function page(fn) {
+  function page(fn, onOpen) {
     return {
       title: '群声',
       freshOnOpen: true,
       render: function (ctx) {
         ensureStyle();
+        /* 每次全新 open 都会走到这里（app.js 的 freshOnOpen 保证）；
+           页内 rebuild 只调 current.fn，不经这里 —— 所以拿它重置页实例状态。 */
+        if (typeof onOpen === 'function') onOpen();
         var fx = F().resolveContext(ctx && ctx.params && ctx.params.sandboxId);
         if (fx.ok) {
           /* 首次进岛幂等初始化（马甲/char/NPC 账号 + 八板块，零模型）——
@@ -2019,7 +2338,7 @@
 
   Sleepy.register('qunsheng', page(renderHome));
   Sleepy.register('qunsheng-post', page(renderPost));
-  Sleepy.register('qunsheng-compose', page(renderCompose));
+  Sleepy.register('qunsheng-compose', page(renderCompose, function () { composeState = null; }));
   Sleepy.register('qunsheng-me', page(renderMe));
   Sleepy.register('qunsheng-boards', page(renderBoards));
   Sleepy.register('qunsheng-board', page(renderBoard));

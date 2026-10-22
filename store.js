@@ -548,7 +548,11 @@
      和过程数据的区别：过程数据**要**进内部快照（回滚时必须恢复），
      同意标记是两个方向都不进，所以单列判据，不塞进 isProcessKey ——
      混进去会让「回滚要恢复过程数据」这套口径失效。 */
-  var DEVICE_LOCAL_KEYS = ['legalAgreedAt'];
+  var DEVICE_LOCAL_KEYS = ['legalAgreedAt', 'license'];
+  /* license（账密系统，2026-10-21）：授权会话 token 是设备本机的登录态 ——
+     换设备本来就要重新登录（激活码+QQ+密码），导出带过去反而制造
+     「token 在别的设备上被会话校验顶掉」的怪状态；与同意标记同口径，
+     导出/导入/快照三个方向都不带。 */
 
   function isDeviceLocalKey(top) {
     return DEVICE_LOCAL_KEYS.indexOf(top) >= 0;

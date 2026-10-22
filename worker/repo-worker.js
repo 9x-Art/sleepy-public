@@ -48,12 +48,167 @@ async function ensureSchema(env) {
         'CREATE TABLE IF NOT EXISTS condition_met (' +
         'item_id TEXT NOT NULL, device TEXT NOT NULL, kind TEXT NOT NULL, ' +
         'created_at INTEGER NOT NULL, PRIMARY KEY(item_id, device))').run();
+
+      /* ---- 账密系统（方案-账密系统-v2，2026-10-21，对齐发售路线 三/十节）----
+         激活码即账号：codes 发码页记账（一个 QQ 只能领一次，qq 唯一索引）；
+         users 只存 PBKDF2 哈希永不存明文；devices UNIQUE(user_id, install_id)
+         = 「同设备重复登录不新增名额」；sessions 按 device 挂，踢设备即作废。 */
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS codes (' +
+        'code TEXT PRIMARY KEY, qq TEXT NOT NULL, issued_at INTEGER NOT NULL, ' +
+        'used_by TEXT, status INTEGER NOT NULL DEFAULT 1)').run();
+      await env.DB.prepare(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_codes_qq ON codes(qq)').run();
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS users (' +
+        'id TEXT PRIMARY KEY, qq TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, ' +
+        'created_at INTEGER NOT NULL, status INTEGER NOT NULL DEFAULT 1)').run();
+      await env.DB.prepare(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_qq ON users(qq)').run();
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS devices (' +
+        'id TEXT PRIMARY KEY, user_id TEXT NOT NULL, install_id TEXT NOT NULL, ua TEXT, ' +
+        'created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, ' +
+        'status INTEGER NOT NULL DEFAULT 1)').run();
+      await env.DB.prepare(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_pair ON devices(user_id, install_id)').run();
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS sessions (' +
+        'token TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT, ' +
+        'created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, ' +
+        'status INTEGER NOT NULL DEFAULT 1)').run();
     })();
   }
   return schemaReady;
 }
 
+/* ---- 账密工具（全部 WebCrypto 原生，零依赖）----
+   PBKDF2-SHA256 10 万迭代：发售路线写的是 argon2/bcrypt，Workers 没有
+   原生实现；PBKDF2 是同级的可审计替代，配 KV 限速补位（方案卡已注明）。 */
+function toHex(buf) {
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function fromHex(s) {
+  return new Uint8Array(String(s || '').match(/../g).map((h) => parseInt(h, 16)));
+}
+function randHex(bytes) {
+  const b = new Uint8Array(bytes);
+  crypto.getRandomValues(b);
+  return toHex(b);
+}
+async function passHash(pass, saltHex) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(String(pass)), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: fromHex(saltHex), iterations: 100000, hash: 'SHA-256' }, key, 256);
+  return toHex(bits);
+}
+const QQ_RE = /^\d{5,12}$/;
+
+/* KV 防爆破计数：key 命中超过 max 即拒（TTL 内自愈）。
+   KV 最终一致 —— 极限并发下可能少记一两次，对撞库是减速带不是闸门，
+   闸门是「5 次锁」这个量级本身。 */
+async function rateHit(env, key, max) {
+  try {
+    const raw = await env.STORE.get(key);
+    const prev = Number(typeof raw === 'string' ? raw : ((raw && raw.body != null) ? raw.body : 0)) || 0;
+    await env.STORE.put(key, String(prev + 1), { expirationTtl: 900 });
+    return prev + 1 <= max;
+  } catch (e) { return true; }   /* KV 出问题不拦正常人 */
+}
+function ipOf(request) {
+  return (request.headers.get('CF-Connecting-IP') || 'unknown').slice(0, 40);
+}
+
+/* 会话鉴权：token 走 X-Repo-Token 同一个头（CORS 白名单不用加列）。
+   空闲过期（2026-10-22 收口）：last_seen 超 30 天的会话一律视为失效 ——
+   以前 token 永不过期，泄露一枚就等于永久账号；现在空闲即死，
+   活跃用户无感（每次 /me 都会刷 last_seen）。 */
+const SESSION_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+async function sessionOf(request, env) {
+  const token = request.headers.get('X-Repo-Token') || '';
+  if (!token) return null;
+  return await env.DB.prepare(
+    'SELECT s.token, s.device_id, u.id AS uid, u.qq FROM sessions s ' +
+    'JOIN users u ON u.id = s.user_id ' +
+    'WHERE s.token = ? AND s.status = 1 AND u.status = 1 AND s.last_seen > ?')
+    .bind(token, Date.now() - SESSION_IDLE_MS).first();
+}
+
 const ITEM_COLS = 'id,type,title,author,cover,lock,access,condition,summary,visible,version,size,downloads,created_at,updated_at';
+
+/* 发码页（发售路线 §十：与 App 内激活分两处；QQ 号属个人信息，告知写在此处）。
+   一屏一件事：填 QQ → 当场出码（只显示一次）→ 去 App 里激活设密码。 */
+const ISSUE_PAGE = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleepy · 领取激活码</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:#FAF6EF;color:#2B2B2B;font-family:system-ui,-apple-system,"PingFang SC",sans-serif;}
+  .card{width:min(360px,calc(100vw - 40px));background:#fff;border:1px solid #E8E0D2;
+    border-radius:14px;padding:28px 24px;box-sizing:border-box;}
+  h1{font-size:18px;margin:0 0 6px;}
+  .sub{font-size:12.5px;color:#8B8578;line-height:1.6;margin:0 0 18px;}
+  label{display:block;font-size:12.5px;color:#8B8578;margin-bottom:6px;}
+  input{width:100%;box-sizing:border-box;padding:11px 12px;font-size:15px;
+    border:1px solid #D8D0C0;border-radius:9px;outline:none;background:#fff;color:#2B2B2B;}
+  input:focus{border-color:#B08A5E;}
+  button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;
+    background:#B08A5E;color:#fff;font-size:14.5px;cursor:pointer;}
+  button:disabled{opacity:.5;}
+  .code{display:none;margin-top:18px;padding:14px;border:1px dashed #B08A5E;border-radius:10px;
+    text-align:center;font-size:20px;letter-spacing:2px;font-weight:600;color:#8A6A42;}
+  .note{font-size:12px;color:#A39B8B;line-height:1.6;margin-top:14px;}
+  .err{font-size:12.5px;color:#B4544A;margin-top:10px;display:none;}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>领取激活码</h1>
+  <p class="sub">付款后在这里登记 QQ 号，当场生成激活码；然后打开 Sleepy，用激活码 + 这个 QQ 号完成激活并设置密码。</p>
+  <label for="qq">QQ 号（5–12 位数字）</label>
+  <input id="qq" inputmode="numeric" maxlength="12" placeholder="例如 123456789">
+  <label for="key" style="margin-top:12px;">营业口令</label>
+  <input id="key" placeholder="随发货说明一起给你的口令">
+  <button id="go">领取激活码</button>
+  <div class="err" id="err"></div>
+  <div class="code" id="code"></div>
+  <p class="note">说明：一个 QQ 号只能领一次。QQ 号仅用于发货对账与登录账号识别，见 App 内「隐私政策」；需要删除时可在 App「我的授权」里注销。激活码只显示这一次，请当场复制保存。</p>
+</div>
+<script>
+  var go = document.getElementById('go');
+  go.addEventListener('click', function () {
+    var qq = document.getElementById('qq').value.trim();
+    var key = document.getElementById('key').value.trim();
+    var err = document.getElementById('err');
+    err.style.display = 'none';
+    go.disabled = true; go.textContent = '生成中…';
+    fetch('/issue/claim', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qq: qq, key: key }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) {
+          var el = document.getElementById('code');
+          el.textContent = res.code; el.style.display = 'block';
+          go.textContent = '已生成 · 记好上面的码';
+        } else {
+          err.textContent = res.message || '没领成，再试一次';
+          err.style.display = 'block';
+          go.disabled = false; go.textContent = '领取激活码';
+        }
+      })
+      .catch(function () {
+        err.textContent = '网络没通，再试一次'; err.style.display = 'block';
+        go.disabled = false; go.textContent = '领取激活码';
+      });
+  });
+</script>
+</body>
+</html>`;
 
 export default {
   async fetch(request, env) {
@@ -308,6 +463,219 @@ export default {
         if (!row) return j({ ok: false, message: '找不到你名下的这件' }, 404);
         await env.DB.prepare('UPDATE items SET status = 0 WHERE id = ?').bind(m[1]).run();
         await env.STORE.delete(row.body_key);
+        return j({ ok: true });
+      }
+
+      /* ==================== 账密系统（方案-账密系统-v2）==================== */
+
+      /* ---- GET /issue 发码页（独立小页，与 App 内激活分两处——发售路线合规分层）---- */
+      if (p === '/issue' && request.method === 'GET') {
+        return new Response(ISSUE_PAGE, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS },
+        });
+      }
+
+      /* ---- POST /issue/claim {qq, key} 领码：一个 QQ 号只能领一次（qq 唯一索引）----
+         营业口令闸（2026-10-22 收口：以前知道域名就能任意 QQ 白领码）：
+         env.ISSUE_KEY 是部署 secret（wrangler secret put ISSUE_KEY）；
+         没配 = 发码页歇业（fail closed），配了 = 口令对上才出码。 */
+      if (p === '/issue/claim' && request.method === 'POST') {
+        await ensureSchema(env);
+        const b = await request.json();
+        if (!env.ISSUE_KEY) return j({ ok: false, message: '发码页还没配营业口令，暂时歇业' }, 503);
+        if (String(b.key || '') !== env.ISSUE_KEY) {
+          return j({ ok: false, message: '营业口令不对 —— 口令随发货说明一起给你' }, 403);
+        }
+        const q = String(b.qq || '').trim();
+        if (!QQ_RE.test(q)) return j({ ok: false, message: 'QQ 号要是 5–12 位数字' }, 400);
+        if (!(await rateHit(env, 'rl:issue:' + ipOf(request), 10))) {
+          return j({ ok: false, message: '领得太频繁了，歇会儿再来' }, 429);
+        }
+        const code = 'SLP-' + randHex(6).toUpperCase();
+        try {
+          await env.DB.prepare(
+            'INSERT INTO codes (code, qq, issued_at, status) VALUES (?,?,?,1)')
+            .bind(code, q, Date.now()).run();
+        } catch (e) {
+          return j({ ok: false, message: '这个 QQ 号已经领过激活码了（一个号只能领一次）' }, 409);
+        }
+        return j({ ok: true, code: code });
+      }
+
+      /* ---- POST /account/activate {code, qq, pass, installId, ua} ----
+         码有效且未用 + qq 与发码时一致 → 建 users + devices + session。
+         一码一人，用过即废。 */
+      if (p === '/account/activate' && request.method === 'POST') {
+        await ensureSchema(env);
+        const b = await request.json();
+        const code = String(b.code || '').trim().toUpperCase();
+        const qq = String(b.qq || '').trim();
+        const pass = String(b.pass || '');
+        const installId = String(b.installId || '').slice(0, 80);
+        if (!code || !QQ_RE.test(qq)) return j({ ok: false, message: '激活码和 QQ 号都要填对' }, 400);
+        if (pass.length < 6) return j({ ok: false, message: '密码至少 6 位' }, 400);
+        if (!installId) return j({ ok: false, message: '缺设备标识' }, 400);
+        if (!(await rateHit(env, 'rl:act:' + ipOf(request), 10))) {
+          return j({ ok: false, message: '操作太频繁了，歇会儿再来' }, 429);
+        }
+        const c = await env.DB.prepare(
+          'SELECT qq, used_by, status FROM codes WHERE code = ?').bind(code).first();
+        if (!c || c.status !== 1) return j({ ok: false, message: '激活码不对' }, 404);
+        if (c.used_by) return j({ ok: false, message: '这个激活码已经被用过了（一码一人）' }, 409);
+        if (c.qq !== qq) return j({ ok: false, message: '这个码是发给另一个 QQ 号的，去发码页核对' }, 403);
+        if (await env.DB.prepare('SELECT id FROM users WHERE qq = ?').bind(qq).first()) {
+          return j({ ok: false, message: '这个 QQ 号已经激活过，直接登录就行' }, 409);
+        }
+        const uid = 'u-' + crypto.randomUUID().slice(0, 16);
+        const salt = randHex(16);
+        const hash = await passHash(pass, salt);
+        await env.DB.prepare(
+          'INSERT INTO users (id, qq, salt, hash, created_at, status) VALUES (?,?,?,?,?,1)')
+          .bind(uid, qq, salt, hash, Date.now()).run();
+        await env.DB.prepare('UPDATE codes SET used_by = ? WHERE code = ?').bind(uid, code).run();
+        const devId = 'd-' + crypto.randomUUID().slice(0, 16);
+        await env.DB.prepare(
+          'INSERT INTO devices (id, user_id, install_id, ua, created_at, last_seen, status) VALUES (?,?,?,?,?,?,1)')
+          .bind(devId, uid, installId, String(b.ua || '').slice(0, 120), Date.now(), Date.now()).run();
+        const token = crypto.randomUUID() + '.' + randHex(8);
+        await env.DB.prepare(
+          'INSERT INTO sessions (token, user_id, device_id, created_at, last_seen, status) VALUES (?,?,?,?,?,1)')
+          .bind(token, uid, devId, Date.now(), Date.now()).run();
+        return j({ ok: true, token: token, qq: qq });
+      }
+
+      /* ---- POST /account/login {qq, pass, installId, ua} ----
+         同设备（installId 已登记）重复登录不新增名额；3 台满且本机不在列
+         → 403 带设备清单，前端接「踢/解绑」UI（发售路线：防误封是 1 星评论重灾区）。 */
+      if (p === '/account/login' && request.method === 'POST') {
+        await ensureSchema(env);
+        const b = await request.json();
+        const qq = String(b.qq || '').trim();
+        const pass = String(b.pass || '');
+        const installId = String(b.installId || '').slice(0, 80);
+        if (!QQ_RE.test(qq) || !pass || !installId) {
+          return j({ ok: false, message: 'QQ 号、密码、设备标识都要有' }, 400);
+        }
+        /* 防撞库只计**失败**次数（成功登录不该消耗额度，否则正常用户 15 分钟
+           登 5 次就被自己锁死——2026-10-21 冒烟设计时抓出）。 */
+        const exceeded = async () => !(await rateHit(env, 'rl:login:' + ipOf(request) + ':' + qq, 5));
+        const u = await env.DB.prepare(
+          'SELECT id, salt, hash, status FROM users WHERE qq = ?').bind(qq).first();
+        if (!u || u.status !== 1 || (await passHash(pass, u.salt)) !== u.hash) {
+          if (await exceeded()) return j({ ok: false, message: '试错太多次了，锁定 15 分钟' }, 429);
+          return j({ ok: false, message: 'QQ 号或密码不对' }, 401);
+        }
+        let dev = await env.DB.prepare(
+          'SELECT id FROM devices WHERE user_id = ? AND install_id = ?').bind(u.id, installId).first();
+        if (dev) {
+          await env.DB.prepare('UPDATE devices SET last_seen = ?, status = 1 WHERE id = ?')
+            .bind(Date.now(), dev.id).run();
+        } else {
+          const cnt = await env.DB.prepare(
+            'SELECT COUNT(*) AS n FROM devices WHERE user_id = ? AND status = 1').bind(u.id).first();
+          if ((cnt.n || 0) >= 3) {
+            const list = await env.DB.prepare(
+              'SELECT id, ua, last_seen FROM devices WHERE user_id = ? AND status = 1 ORDER BY last_seen DESC')
+              .bind(u.id).all();
+            return j({ ok: false, message: '设备满 3 台了，先去解绑一台', devices: list.results }, 403);
+          }
+          dev = { id: 'd-' + crypto.randomUUID().slice(0, 16) };
+          await env.DB.prepare(
+            'INSERT INTO devices (id, user_id, install_id, ua, created_at, last_seen, status) VALUES (?,?,?,?,?,?,1)')
+            .bind(dev.id, u.id, installId, String(b.ua || '').slice(0, 120), Date.now(), Date.now()).run();
+        }
+        const token = crypto.randomUUID() + '.' + randHex(8);
+        await env.DB.prepare(
+          'INSERT INTO sessions (token, user_id, device_id, created_at, last_seen, status) VALUES (?,?,?,?,?,1)')
+          .bind(token, u.id, dev.id, Date.now(), Date.now()).run();
+        return j({ ok: true, token: token, qq: qq });
+      }
+
+      /* ---- POST /account/logout 登出（作废当前会话；设备行保留）---- */
+      if (p === '/account/logout' && request.method === 'POST') {
+        await ensureSchema(env);
+        const s = await sessionOf(request, env);
+        if (s) {
+          await env.DB.prepare('UPDATE sessions SET status = 0 WHERE token = ?').bind(s.token).run();
+        }
+        return j({ ok: true });   /* 没登录也回 ok —— 退出不该被网络卡住 */
+      }
+
+      /* ---- GET /account/me（登录态）---- */
+      if (p === '/account/me' && request.method === 'GET') {
+        await ensureSchema(env);
+        const s = await sessionOf(request, env);
+        if (!s) return j({ ok: false, message: '没登录或会话失效' }, 401);
+        await env.DB.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?')
+          .bind(Date.now(), s.token).run();
+        const devs = await env.DB.prepare(
+          'SELECT id, ua, install_id, created_at, last_seen FROM devices WHERE user_id = ? AND status = 1 ORDER BY last_seen DESC')
+          .bind(s.uid).all();
+        return j({ ok: true, qq: s.qq, devices: devs.results, now: Date.now() });
+      }
+
+      /* ---- GET /account/devices（登录态）---- */
+      if (p === '/account/devices' && request.method === 'GET') {
+        await ensureSchema(env);
+        const s = await sessionOf(request, env);
+        if (!s) return j({ ok: false, message: '没登录或会话失效' }, 401);
+        const devs = await env.DB.prepare(
+          'SELECT id, ua, created_at, last_seen FROM devices WHERE user_id = ? AND status = 1 ORDER BY last_seen DESC')
+          .bind(s.uid).all();
+        return j({ ok: true, devices: devs.results });
+      }
+
+      /* ---- POST /account/devices/:id/revoke 自助解绑/踢（登录态）----
+         解绑 = 设备行 status 0 + 该设备全部会话作废（被踢端下次校验即失效）。 */
+      m = p.match(/^\/account\/devices\/([\w-]+)\/revoke$/);
+      if (m && request.method === 'POST') {
+        await ensureSchema(env);
+        const s = await sessionOf(request, env);
+        if (!s) return j({ ok: false, message: '没登录或会话失效' }, 401);
+        const row = await env.DB.prepare(
+          'SELECT id FROM devices WHERE id = ? AND user_id = ? AND status = 1').bind(m[1], s.uid).first();
+        if (!row) return j({ ok: false, message: '找不到这台设备' }, 404);
+        await env.DB.prepare('UPDATE devices SET status = 0 WHERE id = ?').bind(row.id).run();
+        await env.DB.prepare('UPDATE sessions SET status = 0 WHERE device_id = ?').bind(row.id).run();
+        return j({ ok: true });
+      }
+
+      /* ---- POST /account/password {oldPass, newPass} 登录态内改密 ---- */
+      if (p === '/account/password' && request.method === 'POST') {
+        await ensureSchema(env);
+        const s = await sessionOf(request, env);
+        if (!s) return j({ ok: false, message: '没登录或会话失效' }, 401);
+        const b = await request.json();
+        const u = await env.DB.prepare(
+          'SELECT salt, hash FROM users WHERE id = ?').bind(s.uid).first();
+        if ((await passHash(String(b.oldPass || ''), u.salt)) !== u.hash) {
+          return j({ ok: false, message: '老密码不对' }, 401);
+        }
+        if (String(b.newPass || '').length < 6) return j({ ok: false, message: '新密码至少 6 位' }, 400);
+        const salt = randHex(16);
+        const hash = await passHash(String(b.newPass), salt);
+        await env.DB.prepare('UPDATE users SET salt = ?, hash = ? WHERE id = ?')
+          .bind(salt, hash, s.uid).run();
+        return j({ ok: true });
+      }
+
+      /* ---- POST /account/forget {pass} 注销（QQ 号删除出口，iOS 审核硬要求）----
+         老密码确认后：全部设备/会话作废，qq 字段脱敏（哈希与码的账目保留）。
+         密码彻底丢了 → 人工（Q 群）核身处理，起步期量小最省事（用户 2026-10-21 定）。 */
+      if (p === '/account/forget' && request.method === 'POST') {
+        await ensureSchema(env);
+        const s = await sessionOf(request, env);
+        if (!s) return j({ ok: false, message: '没登录或会话失效' }, 401);
+        const b = await request.json();
+        const u = await env.DB.prepare(
+          'SELECT salt, hash FROM users WHERE id = ?').bind(s.uid).first();
+        if ((await passHash(String(b.pass || ''), u.salt)) !== u.hash) {
+          return j({ ok: false, message: '密码不对，确认不了注销' }, 401);
+        }
+        await env.DB.prepare('UPDATE devices SET status = 0 WHERE user_id = ?').bind(s.uid).run();
+        await env.DB.prepare('UPDATE sessions SET status = 0 WHERE user_id = ?').bind(s.uid).run();
+        await env.DB.prepare('UPDATE users SET status = 0, qq = ? WHERE id = ?')
+          .bind('deleted:' + s.uid, s.uid).run();
         return j({ ok: true });
       }
 

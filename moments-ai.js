@@ -196,6 +196,15 @@
     }).join('\n');
   }
 
+  /* 转发的群声帖子（qsRef）：回应前现读原帖正文与留声 —— 只知道「TA 分享了」
+     根本接不上话（user 2026-10-16 拍板）。帖子没了/被封/转非公开 → 空串，
+     模型按群声规矩①「没看过就说没看过」，不编内容。 */
+  function qsRefBlock(m) {
+    if (!m || !m.qsRef || !Sleepy.forumShare || !Sleepy.forumShare.describeForModel) return '';
+    var d = Sleepy.forumShare.describeForModel(m.qsRef);
+    return d ? '\n【TA 转发的帖子原文（你点开看了）】\n' + d : '';
+  }
+
   /* ---------------------------- ① 角色自己发 ---------------------------- */
 
   /* 让某个角色自己发一条。cb(err, item) —— item 为 null 表示他不想发。
@@ -440,6 +449,7 @@
     var sys = baseSys(ch) + '\n\n' +
       '【你正在朋友圈里】\n' +
       '这条动态：' + String(m.text || '（只有一张配图，见' + (m.mediaId ? '下图' : '原文') + '）').slice(0, 120) + '\n' +
+      qsRefBlock(m) + '\n' +
       commentLines(m);
     var other = (m.comments || []).filter(function (c) { return c.id !== tgt.id; })
       .slice(-2).map(function (c) {
@@ -468,6 +478,7 @@
     var sys = baseSys(ch) + '\n\n【你正在朋友圈里】';
     var user = '「' + (m.name || '对方') + '」刚发了条动态：「' +
       String(m.text || '（只有一张配图，见' + (m.mediaId ? '下图' : '原文') + '）').slice(0, 120) + '」' +
+      qsRefBlock(m) +
       (commentLines(m) ? '\n' + commentLines(m) : '') + '\n' +
       '你在下面留一条评论（不超过 40 字，口语一点，别写引号、别解释、不要写你的名字），只回这一句。';
 

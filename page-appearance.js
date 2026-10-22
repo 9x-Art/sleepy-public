@@ -1004,6 +1004,45 @@
           }
         }
 
+        /* ---- 美化预设（御膳房带来的，2026-10-22）----
+           即时落档、不走草稿 —— 「应用」本身就是明确的保存动作
+           （口径同「单独修改 App」子页）。应用范围跟编辑目标走。 */
+        if (Sleepy.repo && Sleepy.repo.themePresets) {
+          var presets = Sleepy.repo.themePresets();
+          var gp = group('美化预设', '从御膳房带回来的美化 —— 应用到当前编辑目标（' +
+            (t.scope === 'island' ? '这座岛' : '全局默认') + '），即时生效。');
+          if (!presets.length) {
+            gp.card.appendChild(h('p', 'set-group-note',
+              '还没有预设 —— 从御膳房领一件「摆盘」，导入时选「先存进美化预设」就会到这里。'));
+          }
+          var applyTarget = t.scope === 'island' ? t.sbId : 'global';
+          presets.forEach(function (p) {
+            if (!p) return;
+            var row = h('div', 'vec-row');
+            var main = h('div', 'vec-row-main');
+            main.appendChild(h('div', 'vec-row-name', p.name || '未命名美化'));
+            main.appendChild(h('div', 'vec-row-meta',
+              p.data && p.data.theme ? '配色 · ' + p.data.theme : '一套外观'));
+            row.appendChild(main);
+            var use = ui.button('应用', 'ghost', function () {
+              var r = Sleepy.repo.applyThemePayload(p.data, applyTarget);
+              if (!r.ok) { ctx.toast(r.message || '没应用上', 'warn'); return; }
+              newDraft();   /* 草稿从新档重建，页面跟存档一致 */
+              ctx.toast(t.scope === 'island' ? '应用到这座岛了' : '应用为全局默认了', 'ok');
+              ctx.rebuild();
+            });
+            use.style.marginRight = '6px';
+            row.appendChild(use);
+            row.appendChild(ui.button('删了', 'ghost', function () {
+              Sleepy.repo.deleteThemePreset(p.id);
+              ctx.toast('删掉了', 'ok');
+              ctx.rebuild();
+            }));
+            gp.card.appendChild(row);
+          });
+          body.appendChild(gp.wrap);
+        }
+
         /* ---- 保存 ---- */
         var save = h('button', 'lk-save' + (draft.dirty ? ' is-dirty' : ''));
         save.type = 'button';

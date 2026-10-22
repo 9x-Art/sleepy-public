@@ -348,7 +348,8 @@
 
     body.innerHTML = '';
     ctx.setTitle(k.title);
-    ctx.setActions([]);
+    /* v242：顶栏保存动作与主 API / 总结编辑页对齐（doSave 函数声明提升，先挂不炸） */
+    ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
     ctx.__paint = function () { renderSingle(ctx, kind); };
 
     var gHint = group('这个接口干什么', k.hint);
@@ -388,16 +389,23 @@
       onPick: function (id) { f.model.input.value = id; }
     }));
 
-    var acts = h('div', 'dl-actions');
-    acts.appendChild(button('保存', 'dl-btn is-primary', function () { doSave(); }));
-    acts.appendChild(button('测试连接', 'dl-btn', function () { doTest(); }));
+    /* v242：按钮与主 API / 总结编辑页同一套（btn-row + ghost/primary）——
+       之前误用了下载页那套 dl-btn 灰按钮，设置 App 里就这一处长得不一样。 */
+    var acts = h('div', 'btn-row');
+    acts.appendChild(button('测试连接', 'ghost', function () { doTest(); }));
+    acts.appendChild(button('保存', 'primary', function () { doSave(); }));
     g.card.appendChild(acts);
     body.appendChild(g.wrap);
 
     renderVectorTools(ctx, body);
 
-    var g2 = group('恢复默认', k.fallback);
-    g2.card.appendChild(button('清空这份配置', 'dl-btn is-danger', function () {
+    /* 副标题随配置状态刷新：没配 → 提示要配；已配 → 报当前模型（体检 P3-1，2026-10-20：
+       之前写死 fallback，配好了还显示「还没配」，误导）。 */
+    var hasVecCfg = !!cfgOf(kind);
+    var g2 = group('恢复默认', hasVecCfg
+      ? ('已配置' + (cur.model ? ' · ' + cur.model : '') + '，下面这颗清空就回到没配。')
+      : k.fallback);
+    g2.card.appendChild(button('清空这份配置', 'danger', function () {
       if (!cfgOf(kind)) { ctx.toast('本来就是空的'); return; }
       clearCfg(kind);
       ctx.toast('清掉了');
@@ -521,7 +529,7 @@
       var noteEl = h('div', 'vec-row-meta', note);
       main.appendChild(noteEl);
       row.appendChild(main);
-      var btn = button(btnLabel, 'dl-btn is-primary', function () {
+      var btn = button(btnLabel, 'primary', function () {
         if (running || busyRebuild) return;
         busyRebuild = true;
         btn.disabled = true;
@@ -561,7 +569,7 @@
        刚扫失败、列表还是空的，却写「聊几轮之后会自动开始」，
        用户会以为一切正常（2026-09-23 用户截图里就是这两句并排出现）。 */
     var lastSweep = null;
-    var sweepBtn = button('现在扫一遍（把本岛的聊天补进索引）', 'dl-btn is-primary', function () {
+    var sweepBtn = button('现在扫一遍（把本岛的聊天补进索引）', 'primary', function () {
       if (!Sleepy.memoryVec || !Sleepy.memoryVec.sweepIsland) return;
       sweepBtn.disabled = true;
       sweepNote.textContent = '正在扫…（要一条条算向量，聊得多会慢一点）';
@@ -576,7 +584,7 @@
         sweepNote.textContent = '扫的时候出错了：' + ((e && e.message) || e);
       });
     });
-    var sweepActs = h('div', 'dl-actions');
+    var sweepActs = h('div', 'btn-row');
     sweepActs.appendChild(sweepBtn);
     gIdx.card.appendChild(sweepActs);
     gIdx.card.appendChild(sweepNote);
@@ -620,8 +628,8 @@
       label: '如果现在说…', value: '', rows: 3,
       placeholder: '比如：上次说的那家店'
     });
-    var tryBtn = button('找找看', 'dl-btn is-primary', function () { runProbe(); });
-    var tryActs = h('div', 'dl-actions');
+    var tryBtn = button('找找看', 'ghost', function () { runProbe(); });
+    var tryActs = h('div', 'btn-row');
     tryActs.appendChild(tryBtn);
     var outWrap = h('div', 'vec-out');
     gTry.card.appendChild(pick);
@@ -697,7 +705,7 @@
         wm.appendChild(h('div', 'vec-row-meta',
           '换了模型之后它们对不上号，已经不参与召回了 —— 建议清掉（聊天记录不动）'));
         warn.appendChild(wm);
-        warn.appendChild(button('清掉', 'dl-btn is-danger', function () {
+        warn.appendChild(button('清掉', 'danger', function () {
           ui.confirm({
             title: '清掉这 ' + n + ' 段旧模型的索引？',
             note: '聊天记录一个字都不会动。之后按原来的节奏重新索引。',
@@ -729,7 +737,9 @@
           /* 扫失败之后这一句必须换掉：空索引 + 「会自动开始」＝ 用户以为没事 */
           listWrap.appendChild(h('p', 'set-group-note', (lastSweep && !lastSweep.ok)
             ? '还没扫成 —— 上面那条写着原因，改好之后再点一次「现在扫一遍」。'
-            : '还没有索引 —— 聊几轮之后会自动开始（在后台跑，不挡聊天）。'));
+            /* 体检 P2-5（2026-10-20）：阈值写明，免得新对话前几轮空索引被误判「记忆坏了」 */
+            : '还没有索引 —— 一场对话攒够 8 条消息（或约 600 字）后会自动切块进索引，' +
+              '也可以点上面的「现在扫一遍」提前建（在后台跑，不挡聊天）。'));
           fillPick();
           return;
         }
@@ -754,7 +764,7 @@
           }).join(' · ');
           if (detail) main.appendChild(h('div', 'vec-row-meta', detail));
           line.appendChild(main);
-          line.appendChild(button('清掉', 'dl-btn is-danger', function () {
+          line.appendChild(button('清掉', 'danger', function () {
             ui.confirm({
               title: '清掉「' + name + '」的索引？',
               note: '聊天记录一个字都不会动 —— 只是以后按话题想不起这些片段了。',

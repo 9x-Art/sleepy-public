@@ -1163,6 +1163,12 @@
 
   function addMessage(chatId, msg) {
     mutate(chatId, function (c) { c.messages.push(msg); });
+    /* 分享回执·已回应（v247b）：接收方（char）在这段对话里开口了 →
+       给分享者补一条「回应了」回执。咽喉挂一次，所有发消息的路都吃得到；
+       forumShare 缺席/出错都不影响消息本身。 */
+    if (Sleepy.forumShare && Sleepy.forumShare.onConversationMessage) {
+      try { Sleepy.forumShare.onConversationMessage('chat', chatId, msg); } catch (e) { /* 静默 */ }
+    }
     return msg;
   }
 
@@ -4177,6 +4183,17 @@
             run: function () { readAloud(msg, seg); }
           });
         }
+        /* 「TA 的自察」（方案-预设页分类与自察-v1 C2）：开了自察的轮次
+           才有这条 —— 看 TA 汇报本轮用了哪些设定条目、改了什么话。
+           没有（关着/旧消息）就不出现，不占菜单位。 */
+        if (msg.role === 'assistant' && !msg.type && msg.inspect) {
+          items.splice(5, 0, {
+            label: 'TA 的自察',
+            run: function () {
+              ui.confirm({ title: 'TA 的自察', note: String(msg.inspect), ok: '知道了' });
+            }
+          });
+        }
         items.forEach(function (it) {
           var b = h('button', 'msg-pop-item' + (it.kind ? ' is-' + it.kind : ''), it.label);
           b.type = 'button';
@@ -4412,7 +4429,7 @@
             var rcLine = m.recallSeen
               ? ((m.content || '') + '\n（随后撤回了这条）')
               : '（撤回了一条消息，你没看到内容）';
-            if (rcLine) out.push({ role: 'user', content: rcLine });
+            if (rcLine) out.push({ role: 'user', content: rcLine, at: m.timestamp });
             return;
           }
 
@@ -4430,6 +4447,7 @@
             if (imgData) {
               out.push({
                 role: 'user',
+                at: m.timestamp,   /* 历史时间标注（2026-10-15 方案 A）：装配层渲染行内戳 */
                 content: [
                   { type: 'text', text: text },
                   { type: 'image_url', image_url: { url: imgData } }
@@ -4439,7 +4457,7 @@
             }
             preloadPhotoData(m.mediaId);
           }
-          out.push({ role: m.role, content: text });
+          out.push({ role: m.role, at: m.timestamp, content: text });
         });
 
         if (limit > 0 && out.length > limit) out = out.slice(-limit);
@@ -4578,6 +4596,30 @@
         /* 注入顺序：先 unshift 协议、再 unshift 人设 ⇒ 人设最终排在协议前面 */
         if (protoTextOld) out.unshift({ role: 'system', content: protoTextOld });
         if (diagOld.personaText) out.unshift({ role: 'system', content: diagOld.personaText });
+
+        /* 历史时间标注（2026-10-15 方案 A，旧路径收尾）：行内戳 + 间隔事实。
+           只动带 at 的历史条目（system 块没有 at，不受影响）。引擎开路径
+           已在 assembleOnline 内做同样的事 —— 引擎开时上面提前 return，
+           走不到这里，两边不会叠加。 */
+        var calOld = Sleepy.calendar;
+        if (calOld && calOld.histStamp) {
+          var tzOld = '';
+          try { tzOld = ((calOld.cfgOf(c.characterId) || {}).timezone) || ''; } catch (e) { tzOld = ''; }
+          var lastAtOld = 0;
+          out.forEach(function (mm) {
+            if (!mm.at) return;
+            mm.content = (Array.isArray(mm.content))
+              ? mm.content.map(function (part) {
+                  return (part && part.type === 'text')
+                    ? { type: 'text', text: calOld.histStamp(mm.at, { tz: tzOld }) + part.text }
+                    : part;
+                })
+              : calOld.histStamp(mm.at, { tz: tzOld }) + String(mm.content == null ? '' : mm.content);
+            if (mm.at > lastAtOld) lastAtOld = mm.at;
+          });
+          var gOld = (lastAtOld && calOld.gapLine) ? calOld.gapLine(lastAtOld) : '';
+          if (gOld) out.push({ role: 'user', content: '（' + gOld + '）' });
+        }
 
         if (opts.note) {
           out.push({
@@ -4847,7 +4889,11 @@
               /* memoryId 挂在消息上：reroll 时按它把这条回复从记忆库删掉 */
               var memRec = commitMemory(chatId, 'assistant', finalText);
               var memId = memRec ? memRec.id : null;
-              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId });
+              /* 自察（方案-预设页分类与自察-v1 C2）：parseReply 剥出来的
+                 [自察] 块单独落库，不进 content（content 会回喂下一轮）。
+                 只在开关开过时才有值；长按消息可看。 */
+              var insp = split.inspect || null;
+              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId, inspect: insp });
               else {
                 voiceMsgId = newId();
                 addMessage(chatId, {
@@ -4856,7 +4902,8 @@
                   content: finalText,
                   trans: transArr,
                   timestamp: Date.now(),
-                  memoryId: memId
+                  memoryId: memId,
+                  inspect: insp
                 });
               }
               replyMsgId = voiceMsgId;

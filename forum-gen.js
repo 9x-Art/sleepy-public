@@ -95,10 +95,13 @@
         '并且和行为场合像路人发帖 —— 不是自我介绍，不是人设说明书。\n' +
         '7. 【不要围着角色复读】居民之间要有自己的日常：找房子、加班、菜价、追剧、吐槽天气……' +
         '提到角色时也只是「顺嘴一提」，不要写成夸奖合集或人物侧写。\n' +
+        '8. events：2~4 条岛上的小风闻（每条不超过 30 字）——具体、有生活气的小事' +
+        '（谁家猫下崽、夜市休市、路口新开了个摊），不复述帖子内容，不提 AI。\n' +
         'JSON 结构：{"residents":[{"name":"..","style":".."}],' +
         '"posts":[{"board":"daily","author":"居民名|char:角色名|@anon","type":"normal|long|help",' +
         '"title":"..","content":"..","minutesAgo":120,' +
-        '"comments":[{"author":"..","content":"..","minutesAgo":30}]}]}' }
+        '"comments":[{"author":"..","content":"..","minutesAgo":30}]}],' +
+        '"events":[".."]} }' }
     ];
   }
 
@@ -108,6 +111,8 @@
     var lines = existing.slice(-8).map(function (c) {
       return (c.authorDisplay || '某人') + '：' + c.content;
     });
+    /* v242 轻量地点：发帖挂了地点标签就让回应感知到（说得出「在哪儿」） */
+    var placeLine = post.placeText ? '发帖地点：' + post.placeText + '\n' : '';
 
     return [
       { role: 'system', content:
@@ -117,6 +122,7 @@
         '社区：' + fx.sandboxName + '\n' +
         '岛上的角色：' + (chars.join('；') || '暂无') + '\n' +
         '板块：' + board.name + '\n' +
+        placeLine +
         '帖子' + (post.title ? '《' + post.title + '》' : '') + '：' + post.content.slice(0, 400) + '\n' +
         '已有回复：\n' + (lines.join('\n') || '（还没有人回）') + '\n\n' +
         '要求：\n' +
@@ -176,7 +182,7 @@
     var posts = (store_get('forumPosts') || []);
     var accounts = (store_get('forumAccounts') || []);
     var comments = (store_get('forumComments') || []);
-    var created = { residents: 0, posts: 0, comments: 0 };
+    var created = { residents: 0, posts: 0, comments: 0, events: 0 };
     var now = Date.now();
 
     /* ① 居民账号（ownerEntityId = 'gen:名字'，与岛内真实 NPC 区分开） */
@@ -225,7 +231,9 @@
         title: title, content: content,
         visibility: 'public', allowRepost: true,
         sourceType: '', sourceId: '', sourceRef: '',
-        assetRefs: [], placeText: '',
+        assetRefs: [],
+        /* v242：催更新帖可自带轻量地点（纯文字标签，≤20 字） */
+        placeText: String(p.place || '').trim().slice(0, 20),
         status: 'active',
         createdAt: at, updatedAt: at
       }, sid);
@@ -258,6 +266,9 @@
       });
     });
 
+    /* ④ 世界事件（v245b）：风闻随种子/催更顺路进环形池（新在前、封顶 40） */
+    created.events = forum.addWorldEvents(sid, data.events, 30);
+
     saveAll();
     return { ok: true, created: created };
   }
@@ -285,9 +296,12 @@
       }
       var r = writeSeed(fx, data);
       if (!r.ok) { cb({ stage: 'write', error: r.message }); return; }
-      forum.setForumMap('forumSettingsBySandbox', fx.sandboxId, {
-        seeded: true, seededAt: forum.nowIso()
-      });
+      /* v245b：**合并写**，不许整对象覆写 —— writeSeed 里 addWorldEvents
+         刚把 worldEvents 写进同一个映射，覆写会把它静默抹掉（冒烟抓过）。 */
+      var st = forum.getForumMap('forumSettingsBySandbox', fx.sandboxId) || {};
+      st.seeded = true;
+      st.seededAt = forum.nowIso();
+      forum.setForumMap('forumSettingsBySandbox', fx.sandboxId, st);
       cb(null, { seeded: true, created: r.created });
     });
   }
@@ -325,6 +339,8 @@
         '板块：' + forum.BOARD_TEMPLATES.map(function (b) { return b.key + '=' + b.name; }).join('、') + '\n' +
         '已有帖子标题（别重复）：' + (have.join(' / ') || '无') + '\n\n' +
         '要求：2~4 帖新帖，字段同前（board/author/type/title/content/minutesAgo/comments）；' +
+        '可以带可选的 place 字段（岛上某个具体地点的文字标签，不超过 20 字，不定位现实）；' +
+        '再带 1~3 条新的 events（岛上小风闻，每条不超过 30 字，别和已有的重复）；' +
         'author 只能是已有居民名、"char:角色名"（可选 "char:角色名@anon" 表示这个角色这一帖匿名）或 "@anon"；' +
         'minutesAgo 1~600；语言口语、有生活气，别提 AI。\n' +
         '【自然出演】角色可以出现也可以不出现，**这批里最好一帖都没有** —— 社区不是围着某一人转的地方。\n' +
@@ -340,6 +356,67 @@
       if (!r.ok) { cb({ stage: 'write', error: r.message }); return; }
       lastMoreAt = Date.now();
       cb(null, { created: r.created });
+      /* 催更扫尾：岛上还有投票帖就顺路安排一批人来投（静默，不挡主流程） */
+      try { sweepVotes(fx.sandboxId); } catch (e) { /* 静默 */ }
+    });
+  }
+
+  /* ------------------------ 单板块催更（v246b） ------------------------
+     板块页自己的「催一下」：只给这一个板块生成 1~3 帖（不带动全岛）。
+     复用 writeSeed 落库（board 强制成该板块的模板键，模型越权指别板块也不听）；
+     events 不生成——那是全岛风景，归 genMore 管。60s 冷却按板块记。 */
+  var lastBoardAt = {};
+  function genBoard(sandboxId, boardId, cb) {
+    cb = cb || function () {};
+    var fx = forum.resolveContext(sandboxId);
+    if (!fx.ok) { cb({ stage: 'config', error: fx.message }); return; }
+    var board = forum.getBoard(boardId, fx.sandboxId);
+    if (!board) { cb({ stage: 'config', error: '板块不在了' }); return; }
+    if (Date.now() - (lastBoardAt[boardId] || 0) < 60000) {
+      cb({ stage: 'cooldown', error: '刚催过这个板块，让大家喘口气' }); return;
+    }
+    var settings = forum.getForumMap('forumSettingsBySandbox', fx.sandboxId) || {};
+    if (!settings.seeded) { cb({ stage: 'config', error: '先完成首轮种子' }); return; }
+
+    var chars = fx.primaryCharIds.map(function (id) { return core.findChar(id); })
+      .filter(Boolean).map(personaLine);
+    var residents = forum.scopedForum('forumAccounts', fx.sandboxId)
+      .filter(function (a) { return a.ownerType === 'resident'; })
+      .map(function (a) { return a.displayName + (a.bio ? '（' + a.bio + '）' : ''); });
+    var have = forum.scopedForum('forumPosts', fx.sandboxId)
+      .filter(function (p) { return p.boardId === boardId; })
+      .map(function (p) { return p.title; }).filter(Boolean).slice(-20);
+
+    ask([
+      { role: 'system', content:
+        '你是「群声」社区的内容导演。只给指定的**一个板块**补充几帖新内容。' +
+        '只输出 JSON：{"posts":[...]}，不要解释。' },
+      { role: 'user', content:
+        '社区：' + fx.sandboxName + '\n' +
+        '岛上的角色：' + (chars.join('；') || '暂无') + '\n' +
+        '已有居民：' + (residents.join('、') || '暂无') + '\n' +
+        '指定板块：' + board.name + '（' + String(board.description || '') + '。版规：' +
+        String(board.rules || '') + '）\n' +
+        '这个板块已有的帖子标题（别重复）：' + (have.join(' / ') || '无') + '\n\n' +
+        '要求：\n' +
+        '1. posts 1~3 帖，**全部属于指定板块**，帖子的内容要贴合这个板块的主题和版规。\n' +
+        '2. 字段：title/content/minutesAgo（5~2880）/comments（0~3 条，author 同前）；' +
+        '可选 place（≤20 字，不定位现实）；树洞板块的帖 author 用 "@anon"。\n' +
+        '3. author 只能是已有居民名、"char:角色名"（可选 @anon）或 "@anon"；' +
+        '【自然出演】这批里最好一帖角色都没有；【禁止复读人设】。\n' +
+        '4. 语言口语、有生活气，别提 AI。' }
+    ], function (err, text) {
+      if (err) { cb(err); return; }
+      var data = extractJson(text);
+      if (!data || !Array.isArray(data.posts)) {
+        cb({ stage: 'parse', error: '生成结果不是能用的 JSON' }); return;
+      }
+      data.posts.forEach(function (p) { p.board = board.templateKey; });   /* 越权指板块也不听 */
+      data.residents = [];
+      var r = writeSeed(fx, data);
+      if (!r.ok) { cb({ stage: 'write', error: r.message }); return; }
+      lastBoardAt[boardId] = Date.now();
+      cb(null, { added: r.created.posts });
     });
   }
 
@@ -510,7 +587,8 @@
     var fx = forum.resolveContext(null);
     if (!fx.ok) { cb({ stage: 'config', error: fx.message }); return; }
     var post = forum.getPost(postId, fx.sandboxId);
-    if (!post) { cb({ stage: 'config', error: '帖子不在了' }); return; }
+    /* v244：删帖（软删）后 4s 迟到的回应队列不能再给死帖生成内容 */
+    if (!post || post.status !== 'active') { cb({ stage: 'config', error: '帖子不在了' }); return; }
     if (Date.now() - (lastReplyAt[postId] || 0) < 60000) {
       cb({ stage: 'cooldown', error: '刚催过，让大家喘口气' }); return;
     }
@@ -520,10 +598,25 @@
       return { authorDisplay: pa.displayName, content: c.content };
     });
 
-    ask(replyMessages(fx, post, board, existing), function (err, text) {
+    /* 投票帖走投票导演（v240）：不生成回帖，生成选票（随口一句落评论）。 */
+    var isVote = post.postType === 'vote' && post.vote;
+
+    ask(isVote ? voteMessages(fx, post, board) : replyMessages(fx, post, board, existing), function (err, text) {
       if (err) { cb(err); return; }
       var data = extractJson(text);
-      if (!data || !Array.isArray(data.comments)) {
+      if (!data) {
+        cb({ stage: 'parse', error: '生成结果不是能用的 JSON' }); return;
+      }
+      if (isVote) {
+        if (!Array.isArray(data.votes)) {
+          cb({ stage: 'parse', error: '生成结果不是能用的 JSON' }); return;
+        }
+        var casted = applyVotes(fx, post, data);
+        lastReplyAt[postId] = Date.now();
+        cb(null, { voted: casted });
+        return;
+      }
+      if (!Array.isArray(data.comments)) {
         cb({ stage: 'parse', error: '生成结果不是能用的 JSON' }); return;
       }
       var n = 0, now = Date.now();
@@ -557,6 +650,89 @@
 
   function replyCooldownLeft(postId) {
     return Math.max(0, 60000 - (Date.now() - (lastReplyAt[postId] || 0)));
+  }
+
+  /* ------------------------ 投票帖（v240）：安排大家来投 ------------------------
+     口径（user 2026-10-16）：NPC/char 用**论坛身份**参与投票 —— 和回帖同一条
+     队列回应机制，一次导演调用安排 2~5 人，各自按人设立场选选项、顺口留一句。
+     投票不匿名（@anon 不收）：身份就是大小号本身，公开层走账号显示名投影。
+     票随帖走（post.vote.votes），不另开表。 */
+
+  function voteMessages(fx, post, board) {
+    var chars = fx.primaryCharIds.map(function (id) { return core.findChar(id); })
+      .filter(Boolean).map(personaLine);
+    var sum = forum.voteSummary(post, fx.sandboxId);
+    var optLines = sum.options.map(function (o, i) {
+      return (i + 1) + '. ' + o + '（当前 ' + sum.counts[i] + ' 票）';
+    });
+    var voted = [];
+    sum.voters.forEach(function (names) {
+      names.forEach(function (n) { if (voted.indexOf(n) < 0) voted.push(n); });
+    });
+
+    return [
+      { role: 'system', content:
+        '你是「群声」社区的投票导演。这篇帖子发起了一个投票，安排岛上的人来投票。' +
+        '只输出 JSON：{"votes":[{"author":"..","option":1,"say":".."}]}，不要解释。' },
+      { role: 'user', content:
+        '社区：' + fx.sandboxName + '\n' +
+        '岛上的角色：' + (chars.join('；') || '暂无') + '\n' +
+        '板块：' + board.name + '\n' +
+        (post.placeText ? '发帖地点：' + post.placeText + '\n' : '') +
+        '帖子' + (post.title ? '《' + post.title + '》' : '') + '：' + String(post.content || '').slice(0, 300) + '\n' +
+        '投票选项：\n' + optLines.join('\n') + '\n' +
+        '已经投过票的：' + (voted.join('、') || '还没有人投') + '\n\n' +
+        '要求：\n' +
+        '1. votes 2~5 条；author 只能是居民名或 "char:角色名"（投票不匿名）；已经投过票的人不能再投。\n' +
+        '2. option 是选项序号（1~' + sum.options.length + ' 的数字），按各人设和立场选，别全体扎堆同一个选项。\n' +
+        '3. say 是投完随口说的一句（不超过 30 字），不想说话就给空串。\n' +
+        '4. 只安排真会关心这个话题的人投；实在没人就输出空数组。' }
+    ];
+  }
+
+  /* 模型输出落票 + 随口一句落评论。返回落了几票（撤票不算）。 */
+  function applyVotes(fx, post, data) {
+    var n = 0;
+    (data.votes || []).slice(0, 5).forEach(function (v) {
+      var authorRaw = String(v && v.author || '').trim();
+      var idx = Number(v && v.option) - 1;
+      var say = String(v && v.say || '').trim().slice(0, 60);
+      if (!authorRaw) return;
+      var acc = null;
+      if (authorRaw.indexOf('char:') === 0) {
+        var cName = authorRaw.slice(5).trim();
+        var ch = core.charsOfSandbox(fx.sandboxId).filter(function (x) { return x.name === cName; })[0];
+        acc = ch ? findAccountByOwner(fx, ch.id) : null;
+      } else {
+        acc = findAccountByOwner(fx, 'gen:' + authorRaw);
+      }
+      if (!acc || !acc.id) return;
+      var r = forum.castVote(post.id, acc.id, idx, fx.sandboxId);
+      if (!r.ok || r.changed === 'removed') return;
+      n++;
+      if (say) {
+        forum.createComment({
+          sandboxId: fx.sandboxId, postId: post.id, accountId: acc.id, content: say
+        });
+      }
+    });
+    return n;
+  }
+
+  /* 催更后的投票扫尾：岛上还有投票帖就挑最新一个安排一批人来投。
+   90s 独立冷却；失败静默 —— 催更主流程不背这个锅。 */
+  var lastVoteSweepAt = 0;
+  function sweepVotes(sandboxId, cb) {
+    cb = cb || function () {};
+    if (Date.now() - lastVoteSweepAt < 90000) { cb(null, { skipped: true }); return; }
+    var fx = forum.resolveContext(sandboxId);
+    if (!fx.ok) { cb({ stage: 'config', error: fx.message }); return; }
+    var posts = forum.scopedForum('forumPosts', fx.sandboxId)
+      .filter(function (p) { return p && p.status === 'active' && p.postType === 'vote' && p.vote; })
+      .sort(function (a, b) { return a.createdAt < b.createdAt ? 1 : -1; });
+    if (!posts.length) { cb(null, { skipped: true }); return; }
+    lastVoteSweepAt = Date.now();
+    requestReplies(posts[0].id, cb);
   }
 
   /* user 发帖后的自动队列入口（page 层 setTimeout 调它，不在数据层挂定时器） */
@@ -705,8 +881,10 @@
     setAnonPref: setAnonPref,
     getAnonPref: getAnonPref,
     genMore: genMore,
+    genBoard: genBoard,
     requestReplies: requestReplies,
     queueReplies: queueReplies,
+    sweepVotes: sweepVotes,
     charReactToShare: charReactToShare,
     askCharToPost: askCharToPost,
     replyCooldownLeft: replyCooldownLeft,

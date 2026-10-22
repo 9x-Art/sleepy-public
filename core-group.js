@@ -406,6 +406,12 @@
 
     g.updatedAt = item.createdAt;
     saveGroups(allGroups());
+
+    /* 分享回执·已回应（v247b）：群成员（char/NPC）在分享落地的群里开口了 →
+       给分享者补一条回执。咽喉挂一次；forumShare 缺席/出错不影响消息本身。 */
+    if (global.Sleepy && global.Sleepy.forumShare && global.Sleepy.forumShare.onConversationMessage) {
+      try { global.Sleepy.forumShare.onConversationMessage('group', groupId, item); } catch (e) { /* 静默 */ }
+    }
     return item;
   }
 

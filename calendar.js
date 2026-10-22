@@ -1330,6 +1330,59 @@
     return Number(String(dateISO).slice(5, 7)) + '月' + Number(String(dateISO).slice(8, 10)) + '日';
   }
 
+  /* ------------------------- 聊天历史时间标注（2026-10-15 方案 A） -------------------------
+     喂模型的历史此前只有 role+content，模型把「昨天发的」全当「刚刚」（真机复现：
+     user 昨晚发的消息，今天触发回复 char 以为是今天发的）。数据层早有时刻
+     （私聊 msg.timestamp / 群 msg.createdAt），缺的只是装配层渲染。
+
+     histStamp：历史行内戳的唯一出口（私聊引擎/旧路径 + 群聊 [RECENT_GROUP] 共用）。
+     · 口径：opts.tz 传角色时区（私聊，配合 timeFacts 已有的「user 那边」时差行）；
+       不传 = 设备本地（群聊——群世界锚在 user 手机，各角色时差在逐本体时间块里）。
+     · 同一天只给钟点（省 token）；昨天说「昨天」；更早给「M月D日」；跨年带年份。
+     · at 缺失/非法（老存档、导入假数据）返回 ''，调用方原样跳过 —— 不编时间。 */
+  function histStamp(at, opts) {
+    opts = opts || {};
+    if (!at) return '';
+    var d = new Date(at);
+    if (isNaN(d.getTime())) return '';
+    var now = opts.now ? new Date(opts.now) : new Date();
+    if (isNaN(now.getTime())) return '';
+    var cur, msg;
+    if (opts.tz) {
+      cur = tzNow(opts.tz, now);
+      msg = tzNow(opts.tz, d);
+    }
+    if (!cur || !msg) { cur = localNow(now); msg = localNow(d); }   /* 时区不可用兜底本地 */
+    var time = msg.time;
+    if (msg.iso === cur.iso) return '[' + time + '] ';
+    /* daysBetween 含首尾（红线：别再 +1）—— 「昨天」= 返回值 2 */
+    var dayDiff = daysBetween(msg.iso, cur.iso) - 1;
+    if (cur.iso.slice(0, 4) !== msg.iso.slice(0, 4)) {
+      return '[' + msg.iso.slice(0, 4) + '年' + monthDayText(msg.iso) + ' ' + time + '] ';
+    }
+    if (dayDiff === 1) return '[昨天 ' + time + '] ';
+    return '[' + monthDayText(msg.iso) + ' ' + time + '] ';
+  }
+
+  /* gapLine：间隔事实（方案 A②）。**相对时间必须代码算好直接喂** ——
+     让模型自己拿「现在」减「最后一条的时刻」算差值不可靠（这也是方案
+     不只靠行内戳的原因）。<5 分钟不说话：正常聊天节奏不需要解释，
+     也避免每轮都多一行。 */
+  function gapLine(fromTs, opts) {
+    opts = opts || {};
+    if (!fromTs) return '';
+    var now = opts.now ? new Date(opts.now).getTime() : Date.now();
+    var ms = now - fromTs;
+    if (isNaN(ms) || ms <= 0) return '';
+    var min = Math.round(ms / 60000);
+    if (min < 5) return '';
+    var txt;
+    if (min < 60) txt = min + ' 分钟';
+    else if (min < 60 * 48) txt = (Math.round(min / 6) / 10) + ' 小时';
+    else txt = Math.round(min / 1440) + ' 天';
+    return (opts.label || '距最后一条消息已过 ') + txt;
+  }
+
   /* 公共日期那一行的**唯一出口**（2026-10-03）。
      timeFacts（喂模型）与 page-calendar 的日事件列表（给人看）都走它 ——
      以前两边各拼一次，模型那边说错、界面这边显示同一个错。
@@ -1506,6 +1559,8 @@
     langOf: langOf, KEY_TRANS: KEY_TRANS, translateOn: translateOn, setTranslateOn: setTranslateOn,
     /* 时间事实（喂给模型的那一段） */
     tzNow: tzNow, localNow: localNow, cnDate: cnDate, timeFacts: timeFacts,
+    /* 聊天历史时间标注（2026-10-15 方案 A）：行内戳 + 间隔事实，装配层共用 */
+    histStamp: histStamp, gapLine: gapLine,
     /* 运行时时区唯一出口 + 兜底级别（2026-09-28 收尾；测试也从这里锚） */
     deviceTimezone: deviceTimezone, runtimeTzOf: runtimeTzOf,
     /* 公共日期 */

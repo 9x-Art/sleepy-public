@@ -405,7 +405,7 @@
         keyInput.autocomplete = 'new-password';
         keyInput.placeholder = c.apiKey ? '已保存；留空表示不替换' : '请输入服务商提供的 API Key';
         keyBox.appendChild(keyInput);
-        var eye = h('button', 'tts-mini-btn', '显示');
+        var eye = h('button', 'set-eye', '显示');   /* v242：与全 App 密码框同款小钮（原 tts-mini-btn 是裸文字钮） */
         eye.type = 'button';
         eye.addEventListener('click', function () {
           var hidden = keyInput.type === 'password';

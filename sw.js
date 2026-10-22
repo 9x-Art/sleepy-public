@@ -602,7 +602,207 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v238';
+var CACHE = 'sleepy-v252';
+
+/* v252（2026-10-22）：**账密系统收口批（worker）**——
+   · repo-worker：①发码页加营业口令闸 —— /issue/claim 必须带 key 且等于
+     env.ISSUE_KEY（wrangler secret put ISSUE_KEY；没配 = 歇业 fail closed），
+     堵「知道域名就能任意 QQ 白领码」；②会话空闲过期 —— sessionOf 只认
+     last_seen 30 天内的会话，token 不再永久有效（活跃用户无感，/me 刷活）。
+   · scripts/smoke.js：假 env 带 ISSUE_KEY；负向 ×3（无口令/错口令/空闲过期
+     会话）；发码页静态断言补口令输入位。
+   → 必须跳版本：worker/repo-worker.js / scripts/smoke.js 都变了。 */
+
+/* v251（2026-10-22）：**入席单件（世界档案单独分享）**——
+   · repo-core：cleanBookData/packBook/importBook —— 与整岛包 book 件同构
+     （box+import），差异：岛章 sandboxId 不进包（导入重盖）、媒体引用
+     （coverRef/sceneRefs）不进包、领取进当前激活岛且 status 归 empty
+     （从零开局，进度/卷宗/物件不跟过来）。
+   · page-repo：发布页类型 +「入席（单独分享一本世界档案）」（选当前岛
+     的档案盒）；导入向导 book 分支进当前岛；fillSub 顺手修「上次选空
+     残留禁用」带到别的类型。
+   → 必须跳版本：repo-core.js / page-repo.js / scripts/smoke.js 都变了。 */
+
+/* v250（2026-10-22）：**火候单件（预设单独分享）**——
+   · repo-core：presetPayloadOf/packPreset/applyPresetPayload/importPreset ——
+     载荷 fmt sleepy-preset-v1 只带 disabled/overrides/custom 三块最小集
+     （卡 id/时间戳、引擎开关、开发者模式都不进包，导入重新发 id）；
+     叠加 = 卡追加+关卡只增不减+覆盖逐槽盖；整套 = 三块全换；空包打包/导入双拒。
+   · page-repo：发布页类型 +「火候（打包一套预设配置）」；导入向导二选
+     （叠加 / 整套装上并明示会清掉自己原来的）。
+   → 必须跳版本：repo-core.js / page-repo.js / scripts/smoke.js 都变了。 */
+
+/* v249（2026-10-22）：**御膳房美化链路 P0 修复 + 摆盘单件**——
+   · repo-core：美化件改最小载荷 fmt sleepy-theme-v1（配色+桌面三键；
+     custom 壁纸引用本机媒体不进包→落 auto），packIsland 不再整档外观进包；
+     applyThemePayload 导入只写目标岛覆盖（或全局），绝不冲领取者整档；
+     新增 packTheme/importTheme/美化预设（repoThemes，设备级）；
+   · page-repo：发布页加「摆盘（单独分享一套美化）」类型；导入向导
+     整岛包美化选项改「应用到新岛（只动这座岛）」；摆盘单件三选
+     （存预设/全局/当前岛）；
+   · page-appearance：外观页新增「美化预设」组（应用=当前编辑目标，即时落档）。
+   → 必须跳版本：repo-core.js / page-repo.js / page-appearance.js / index.html 都变了。 */
+
+/* v248（2026-10-17）：**查手机群聊视图 + 分享回执·已回应 + 假绿修复批**
+   （TODO 第二批收尾 + 假绿批）——
+   · page-phone.js：群聊只读视图补完（此前 toast「下一批施工」）——
+     openGroupChat（deepScroll 同私聊口径）/ paintGroupChat：气泡左右按
+     **落库的 senderEntityId 对 ownerId** 判（渲染时不猜），发送者展示名走
+     groupStore.accountMeta（与群聊本体页同一套，不长第二张脸），系统消息
+     居中，撤回显示「撤回了一条消息」，只读 composer 照旧；
+   · forum-share.js：+onConversationMessage —— 接收方在分享落地的会话里
+     **开口**才给「回应了」回执（chat=role char / group=senderKind char|npc；
+     user 自己说话不算；只认已打开的最近一条，一条只回执一次），
+     通知走 notify 落到分享者；
+   · page-chat.js addMessage / core-group.js addMessage：咽喉各挂一次
+     onConversationMessage（try/catch 静默，forumShare 缺席不影响消息本身）；
+   · scripts/smoke.js：假绿修复——三处 `alt[0] || mainA` 退化型 fallback
+     （1944/2379/2429）改硬断言第二个身份存在（user 2026-10-17 点名）；
+     +2 回归（查手机群聊视图静态护栏含反向断言「占位 toast 不许回来」 /
+     已回应回执四断言）。
+   → 必须跳版本：page-phone.js / forum-share.js / page-chat.js /
+     core-group.js / scripts/smoke.js 都变了。 */
+
+/* v247（2026-10-17）：**板块级催更批**（user：每个板块能不能单独刷新）——
+   现状核查：帖子级刷新已有（详情页「催一下」→ requestReplies，带 60s
+   冷却与「只看楼主」过滤），缺的是板块级。
+   · forum-gen.js：+genBoard(sandboxId, boardId, cb) —— 只给指定板块生成
+     1~3 帖：提示词带板块名/简介/**版规**，帖内容贴题；board 强制成该板块
+     模板键（模型越权指别板块也不听）；events 不生成（全岛风景归 genMore）；
+     60s 冷却按板块记（lastBoardAt，与全岛 genMore 分开）；复用 writeSeed 落库；
+   · page-qunsheng.js：板块页统计条下挂「催一下 —— 只让这个板块热闹起来」
+     （qs-poke 同款，冷却 toast 口径同详情页）；空板块文案同步改指向本按钮；
+   · scripts/smoke.js：+genBoard 回归（只落指定板块 / 越权指板块不听 /
+     60s 冷却，transport stub 故意越权验证强制归位）。
+   → 必须跳版本：forum-gen.js / page-qunsheng.js / scripts/smoke.js 都变了。 */
+
+/* v246（2026-10-17）：**今日风闻真事件流批**（TODO 第二批 B4）——
+   · forum-core.js：+listWorldEvents/addWorldEvents —— 岛级小事件流，
+     存 forumSettingsBySandbox[sid].worldEvents（映射键本来就走删房清理，
+     **不另开表**省三处登记、避开删房名单差集老坑）；环形封顶 40 条新在前，
+     文本 ≤40 字、同文去重（催更不重播旧闻）；
+   · forum-gen.js：种子/催更的 JSON 协议加 events 字段（2~4 条 / 1~3 条
+     岛上小风闻，≤30 字、有生活气、不复述帖子）—— writeSeed 顺路入池；
+     **修了一个真 bug**：ensureSeedContent 落 seeded 标记时整对象覆写
+     设置映射，会把 writeSeed 刚写的 worldEvents 静默抹掉 → 改合并写；
+   · page-qunsheng.js：首页「今日风闻」改吃真事件流（最新一条 + 时间），
+     无事件回落最新一帖，再没有才显示安静文案；
+   · scripts/smoke.js：+世界事件回归（种子生成数 / 新在前 / 截断 / 封顶
+     挤最旧 / 孤儿岛回落空数组）。
+   → 必须跳版本：forum-core.js / forum-gen.js / page-qunsheng.js /
+     scripts/smoke.js 都变了。 */
+
+/* v245（2026-10-17）：**群声可见性 + 版规 + 今日话题批**（TODO 第二批前半）——
+   · forum-core.js：+visibleToViewer / getHomeFeed 加第 5 参 viewerAccountId
+     ——「仅关注者」（visibility:'followers'）的帖在 feed 层就过滤：
+     作者本人放行、关注了作者放行、无视角一律不看（不静默泄露）；
+     BOARD_TEMPLATES 八板块各配正式版规 rules（文案硬写，跨岛复用）；
+   · page-qunsheng.js：发帖页加「可见范围」行（公开/仅关注者，复用 qs-type）；
+     卡片与详情挂「仅关注者」标签；详情页对非关注者（非作者）直接 errBox
+     「这篇只给关注的人看」；首页三处 getHomeFeed（首屏/翻页/今日风闻）
+     全部带观看者视角；泡泡糖加「今日话题」（确定性选题池 16 条，
+     同岛同日恒同一题，零模型零网络，导出 Sleepy.qsTodayTopic 供冒烟）；
+     板块页版规卡按模板键回落显示 rules（老岛 board 落库无此字段，免迁移）；
+   · 转发复检零改动：buildPayload/checkOpen 本来就拒非 public（no-perm）；
+   · scripts/smoke.js：+2（仅关注者四视角断言+转发拒绝+公开帖不受影响 /
+     八板块版规全配+今日话题稳定）。
+   → 必须跳版本：forum-core.js / page-qunsheng.js / scripts/smoke.js 都变了。 */
+
+/* v244（2026-10-17）：**群声无限滚动 + 作者删帖批**（TODO 第一批，见
+   docs/待办-未完成功能.md）——
+   · page-qunsheng.js：首页 feed 无限滚动——首屏 12 条，滚近底部按游标
+     着页追加（追加不动已有卡片，不整页重绘不闪不丢滚动位）；占位行
+     「下一批接入无限滚动」删除；详情页「更多」死钮换成作者操作面板
+     （软删 + ui.confirm 二次确认，删后返回；**非作者整颗不渲染**——
+     举报没有基础设施，不放假的钮）；
+   · forum-core.js：+deleteOwnPost（作者软删 status:'deleted'，身份即权限）；
+   · forum-gen.js：requestReplies 拦 status!=='active'（删帖后 4s 迟到的
+     回应队列不再给死帖生成内容）；
+   · page-ta.js / page-group-offline.js / page-qunsheng.js：过期注释清理
+     （提案已上线 / 群线下结算已接线 / Batch C+D 已交付）；
+   · scripts/smoke.js：+删帖三断言（作者可删/非作者拒/feed 消失+队列拦截）
+     +游标分页回归（翻页不重不漏、新在前）。
+   → 必须跳版本：forum-core.js / forum-gen.js / page-qunsheng.js /
+     page-ta.js / page-group-offline.js / scripts/smoke.js 都变了。 */
+
+/* v243（2026-10-16）：**设置 App 按钮统一批**（user：向量记忆的保存/测试连接
+   和主 API 长得不一样，设置里好几个这样）——
+   · page-singleapi.js：向量记忆 API 页此前误用了下载页那套 dl-btn 灰按钮
+     （ui.button 的 kind 参数被塞了 CSS 类名，全设置 App 仅此一处）——
+     保存/测试连接/清空 + 向量工具区（重建/现在扫一遍/找找看/清掉×2）全部
+     换回标准 btn 系列（ghost/primary/danger），容器 dl-actions → btn-row，
+     顺序对齐主 API（测试连接在前、保存在后）；顶栏补上「保存」动作
+     （主 API / 总结编辑页都有，就它没有）；
+   · page-tts.js + style.css：TTS 账户连接的 API Key「显示」小钮从裸文字钮
+     tts-mini-btn 换成全 App 密码框统一的 set-eye，死 CSS 一并清掉；
+   · 其余设置子页（主 API/副 API/TTS/生图/备份/MCP/网页解析）核查过都是
+     标准按钮，未动；dl-btn 在贴纸/群等别处的对话框里是另一套视觉家族，不动。
+   → 必须跳版本：page-singleapi.js / page-tts.js / style.css 都变了。 */
+
+/* v242（2026-10-16）：**群声轻量地点批**（user 拍板：不定位现实，纯文字标签）——
+   · forum-core.js：placeText 收口（trim + ≤20 字，字段本就在 createPost 里）；
+   · page-qunsheng.js：「+ 地点」真接入 —— 点击展开输入行（输入不 rebuild
+     保焦点，收起即清防看不见的旧地点）；详情页「📍 地点」行；信息流卡片地点标签；
+   · forum-gen.js：回应感知地点（replyMessages/voteMessages 带「发帖地点」行，
+     NPC 吐槽说得出在哪儿）；催更新帖可自带 place 字段（writeSeed 收口）；
+   · forum-share.js：describeForModel 带「发帖地点」行；
+   · scripts/smoke.js：+2 回归（placeText 收口+转发票况带地点 / 催新帖 place 落库）。
+   → 必须跳版本：forum-core.js / page-qunsheng.js / forum-gen.js /
+     forum-share.js / scripts/smoke.js 都变了。 */
+
+/* v241（2026-10-16）：**群声投票批（v240 后续）**——
+   · forum-core.js：createPost 收 vote（2~6 选项去重 ≤24 字，发出即锁定，
+     不进 POST_UPDATABLE）；+castVote（一人一票，改投/撤票=同键再点）
+     / voteSummary（公开层只给显示名，绝不露账号 id）/ myVoteOf；
+     **票随帖走**（post.vote.votes 内联）——不另开表 = 不进删房名单差集的老坑；
+   · forum-gen.js：+voteMessages/applyVotes —— 投票帖走「投票导演」
+     （一次安排 2~5 人按人设选边、随口一句落评论，已投名单喂进去防重投，
+     投票不匿名）；requestReplies 分流投票帖；genMore 成功后 sweepVotes
+     扫尾（90s 独立冷却，失败静默不挡主流程）；
+   · page-qunsheng.js：类型「投票」+「+ 投票」真接入；投票选项编辑器
+     （输入不 rebuild 保焦点）；详情页投票块（微博式：自己投过才揭晓占比条
+     +票数+投票人；改投/撤票）；信息流卡片报「N 人已投」；
+   · forum-share.js：describeForModel 补投票段（选项+票况）；
+   · scripts/smoke.js：+3 回归（投票数据层 / 投票导演 / 转发喂模型票况）。
+   → 必须跳版本：forum-core.js / forum-gen.js / page-qunsheng.js /
+     forum-share.js / scripts/smoke.js 都变了。 */
+
+/* v240（2026-10-16）：**群声发帖状态修复 + 朋友圈转发喂模型批**——
+   · page-qunsheng.js：renderCompose 的 state 挪成模块级 composeState ——
+     此前点「长文/求助」刚 setState 就被 rebuild 整页重跑冲回 normal
+     （用户实测「点不动」），图片附件同款会被清；ghostwrite 改直读
+     composeGW.on（落 state 会被首建快照钉死）；page() 加 onOpen 钩子，
+     compose 注册时重置草稿（freshOnOpen 每次 open 都走，rebuild 不走）；
+   · forum-share.js：+describeForModel —— 朋友圈 qsRef 喂模型时现读原帖
+     正文（300 字截断）与最新 5 条留声（各 50 字），匿名纪律不变（全走
+     公开投影，绝不露账号 id）；死帖/被封/非公开返回 null fail-closed；
+   · moments-ai.js：评论动态/回复评论两条回应链接 qsRefBlock —— char/NPC
+     看得到转发的帖子内容才接得上话（user 2026-10-16 拍板）；
+   · life-feed.js：群声转发的信息流行给标题+作者+板块（不放全文，防挤窗口）；
+   · scripts/smoke.js：+describeForModel 回归（正文/留声进模型侧、
+     零账号 id、死帖 fail-closed）。
+   → 必须跳版本：page-qunsheng.js / forum-share.js / moments-ai.js /
+     life-feed.js / scripts/smoke.js 都变了。 */
+
+/* v239（2026-10-15）：**聊天历史时间标注批**（方案 A，用户拍板）——
+   真机复现：昨晚发的消息今天触发回复，char 以为是今天发的 ——
+   喂模型的历史此前只有 role+content，「现在」层（timeFacts/群逐本体时间块）
+   很全，缺的是历史每条的「何时」。数据层早有时刻（私聊 msg.timestamp /
+   群 msg.createdAt），纯装配层渲染：
+   · calendar.js：histStamp（行内戳唯一出口：同天钟点/昨天/月日/跨年四档，
+     私聊按 char 时区、群聊按设备本地；at 缺失不编时间）+ gapLine
+     （间隔事实：<5 分钟不说话，相对时间由代码算好直接喂，不让模型自己算差值）；
+   · prompt-engine.js：assembleOnline history 出站带行内戳 + time 槽追加间隔
+     （worldbook/taimpact 的相关性判据仍吃原始 history，戳不进关键词匹配；
+     photo 数组只戳 text 分量；无 at 原样出站，黄金基线不受影响）；
+   · page-chat.js：旧路径（引擎关）对称实现（透传 at + 收尾戳 + 间隔行）；
+   · page-presets.js：预演镜像同口径透传 at；
+   · page-group-ai.js：[RECENT_GROUP] 行内戳 + 间隔行（lastAtG 排除
+     「群聊已创建」等系统事件条 —— 事件条不是发言，不该顶掉真实的最后消息）；
+   · scripts/smoke.js：+5 回归（histStamp 四档 / gapLine 分档 / 引擎路径
+     戳+间隔 / 多模态分量级戳 / 群戳+间隔），SW 基准 v238 → v239。
+   → 必须跳版本：calendar.js / prompt-engine.js / page-chat.js /
+     page-presets.js / page-group-ai.js / scripts/smoke.js 都变了。 */
 
 /* v238（2026-10-14）：**人设链路统一出口批**（勘察-人设链路全量-2026-10-13）——
    · prompt-engine.js：compileCharacter 分层重写（sub=补充层 root 在前、

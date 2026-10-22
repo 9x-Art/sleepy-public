@@ -356,6 +356,105 @@
     return card;
   }
 
+  /* ------------------------------ ⑦ 模型侧展开 ------------------------------ */
+
+  /* 朋友圈引用喂模型时**现读原帖**（user 2026-10-16 拍板：char/NPC 看不到
+     正文和评论就没法接话）。qsRef 摘要只是「知道有这么回事」的档；
+     帖子已删 / 被封 / 转非公开 → 返回 null，调用方退回旧档（只知道分享过）。
+     匿名纪律不变：作者与留声一律走公开投影，绝不露账号 id。
+     纯本地读（store），无出站；正文/留声都截断，不挤模型窗口。 */
+  function describeForModel(qsRef) {
+    if (!qsRef || !qsRef.sandboxId || !qsRef.sourcePostId) return null;
+    if (!checkOpen(qsRef.sandboxId, qsRef.sourcePostId).ok) return null;
+    var post = forum.getPost(qsRef.sourcePostId, qsRef.sandboxId);
+    if (!post) return null;
+    var pa = forum.publicAuthorOf(post, post.authorAccountId, qsRef.sandboxId);
+    var out = [
+      '这是群声「' + (qsRef.boardName || '社区') + '」板块的一篇帖子：',
+      '《' + (post.title || '（无标题）') + '》 作者：' + pa.displayName
+    ];
+    var body = String(post.content || '').replace(/\s+/g, ' ').trim();
+    if (body) {
+      out.push(body.length > 300 ? body.slice(0, 300) + '……（后文略）' : body);
+    }
+    /* v242 轻量地点：发帖挂了地点标签就一并交代（说得出「在哪儿」） */
+    if (post.placeText) out.push('发帖地点：' + post.placeText);
+    /* 投票帖：把选项和当前票况一并交代 —— 不然 TA 连在投什么都不知道 */
+    if (post.postType === 'vote' && post.vote) {
+      var vs = forum.voteSummary(post, qsRef.sandboxId);
+      out.push('这是一个投票（当前 ' + vs.total + ' 人已投）：');
+      vs.options.forEach(function (o, i) {
+        out.push('- ' + o + '：' + vs.counts[i] + ' 票');
+      });
+    }
+    var cs = forum.listComments(post.id, qsRef.sandboxId) || [];
+    if (cs.length) {
+      out.push('帖下的留声（最新 ' + Math.min(cs.length, 5) + ' 条）：');
+      cs.slice(-5).forEach(function (c) {
+        var ca = forum.publicAuthorOfComment(post, c, qsRef.sandboxId);
+        out.push('- ' + ca.displayName + '：' + excerpt(c.content, 50));
+      });
+    } else {
+      out.push('帖下还没有留声。');
+    }
+    return out.join('\n');
+  }
+
+  /* ------------------------------ ⑧ 回执·已回应（v247b） ------------------------------ */
+
+  /* 接收方在分享落地的会话里**开口**了 → 给分享者补一条「回应了」回执。
+     口径：
+     · chat：只认接收方 char 的消息（msg.role === 'char'）—— user 自己
+       再说话不算（v1 的分享者就是 user）；
+     · group：只认 char/NPC 成员的消息（senderKind char|npc）—— user 的
+       群消息是分享者本人的，不算回应；
+     · 只认**已打开**（openedAt 有）且还没标过回应的最近一条分享；
+       一条分享只回执一次；通知走 notify（居民收件人自己会被滤掉）。 */
+  function onConversationMessage(targetType, targetId, msg) {
+    if (!msg) return false;
+    var shares = store.get('forumShares') || [];
+    var hit = null;
+    for (var i = shares.length - 1; i >= 0; i--) {
+      var r = shares[i];
+      if (!r || r.targetType !== targetType || r.targetId !== targetId) continue;
+      if (!r.openedAt || r.repliedAt) continue;
+      hit = r;
+      break;
+    }
+    if (!hit) return false;
+
+    var respond = false;
+    var actorName = '对方';
+    if (targetType === 'chat') {
+      respond = msg.role === 'char';
+      var chat = (Sleepy.chatStore && Sleepy.chatStore.getChat)
+        ? Sleepy.chatStore.getChat(targetId) : null;
+      var ch = (chat && chat.characterId && Sleepy.core && Sleepy.core.findChar)
+        ? Sleepy.core.findChar(chat.characterId) : null;
+      actorName = (ch && ch.name) || '对方';
+    } else if (targetType === 'group') {
+      respond = msg.senderKind === 'char' || msg.senderKind === 'npc';
+      var gs = Sleepy.groupStore;
+      if (gs && gs.findMember && gs.accountMeta) {
+        actorName = gs.accountMeta(gs.findMember(targetId, msg.senderAccountId)).name;
+      }
+    }
+    if (!respond) return false;
+
+    hit.repliedAt = forum.nowIso();
+    store.set('forumShares', shares);
+    forum.notify({
+      sandboxId: hit.sandboxId,
+      recipientAccountId: hit.senderAccountId,
+      category: 'receipt',
+      actorName: actorName,
+      sourceType: 'post',
+      sourceId: hit.sourcePostId,
+      previewText: '回应了你分享的帖子'
+    });
+    return true;
+  }
+
   /* ------------------------------ 导出 ------------------------------ */
 
   Sleepy.forumShare = {
@@ -367,6 +466,8 @@
     shareToMoments: shareToMoments,
     wjProjection: wjProjection,
     checkOpen: checkOpen,
+    describeForModel: describeForModel,
+    onConversationMessage: onConversationMessage,
     markOpened: markOpened,
     cardEl: cardEl
   };

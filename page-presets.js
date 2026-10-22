@@ -79,94 +79,80 @@
           ctx.open('preset-card', { id: id });
         }
 
-        /* ---- 调用类型 ---- */
+        /* ---- 调用类型（方案-预设页分类与自察-v1 A，2026-10-21）----
+           非开发者：只显示名字，不可点开、不加解释（用户口径「分类之后上锁，
+           不加解释」）。开发者：照旧可点进卡、带 token 数。 */
         var types = h('div', 'pp-sec');
         types.appendChild(h('p', 'pp-sec-title', '调用类型'));
-        var tRow = h('button', 'pp-row pp-row-active');
-        tRow.type = 'button';
-        var tMain = h('span', 'pp-row-main');
-        tMain.appendChild(h('span', 'pp-row-label', '线上普通回复'));
-        tRow.appendChild(tMain);
-        tRow.appendChild(h('span', 'pp-row-arrow', '›'));
-        tRow.addEventListener('click', function () {
-          global.scrollTo(0, 0);
-          openCard('f1');
-        });
-        types.appendChild(tRow);
-
-        /* 已实装、但由后台模块调用的类型（2026-09-19 线下 F2 一并转正：
-           page-offline 的 requestTurn 走的就是 assembleOffline）：
-           线下走线下页、总结引擎和主动消息引擎在后台用各自的卡。 */
         [
+          { id: 'f1', name: '线上普通回复' },
           { id: 'f2', name: '线下普通回复' },
-          { id: 'summary', name: '总结（线上累计 / 线下大）' },
+          { id: 'summary', name: '总结' },
           { id: 'proactive', name: '主动消息' },
           { id: 'groupRound', name: '群聊一轮编排' }
         ].forEach(function (t) {
-          var lockedCard = !!(E.cardMeta(t.id) && E.cardMeta(t.id).locked) && !dev;
-          var r = h('button', 'pp-row pp-row-active');
-          r.type = 'button';
+          var r = h(dev ? 'button' : 'div', 'pp-row' + (dev ? ' pp-row-active' : ''));
+          if (dev) r.type = 'button';
           var m = h('span', 'pp-row-main');
           m.appendChild(h('span', 'pp-row-label', t.name));
           r.appendChild(m);
-          r.appendChild(h('span', 'pp-row-lock', lockedCard ? '已上锁' : '内置'));
-          r.addEventListener('click', function () { openCard(t.id); });
+          if (dev) {
+            r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(E.estimate(E.cardBody(t.id)))));
+            r.addEventListener('click', function () {
+              global.scrollTo(0, 0);
+              openCard(t.id);
+            });
+          }
           types.appendChild(r);
         });
         body.appendChild(types);
 
-        /* ---- 注入序列（线上）---- */
-        var seq = h('div', 'pp-sec');
-        seq.appendChild(h('p', 'pp-sec-title', '注入序列 · 线上'));
-        seq.appendChild(h('p', 'pp-sec-note', '自上而下即注入顺序。'));
-
-        E.onlineSlots.forEach(function (def) {
-          if (def.id === 'custom' || def.id === 'history') return;
-          var meta = E.cardMeta(def.id);
-          var isCard = def.kind === 'card';
-          var enabled = isCard ? E.cardEnabled(def.id) : true;
-          var toks = isCard ? E.estimate(E.cardBody(def.id)) : 0;
-
-          var r = h('button', 'pp-row' + (enabled ? '' : ' is-off'));
-          r.type = 'button';
-          var m = h('span', 'pp-row-main');
-          m.appendChild(h('span', 'pp-row-label', def.name));
-          r.appendChild(m);
-          /* 上锁 UI（第三梯队 7）：非开发者模式下，内置锁卡在列表里就标出来 */
-          if (meta && meta.locked && !dev) r.appendChild(h('span', 'pp-row-lock', '已上锁'));
-          r.appendChild(h('span', 'pp-row-tag', def.slot));
-          if (isCard && toks) r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(toks)));
-          if (!def.required) r.appendChild(h('span', 'pp-row-req', '可选'));
-          r.addEventListener('click', function () { openCard(def.id); });
-          seq.appendChild(r);
-        });
-        body.appendChild(seq);
-
-        /* ---- 注入序列（线下）---- */
-        var seqOff = h('div', 'pp-sec');
-        seqOff.appendChild(h('p', 'pp-sec-title', '注入序列 · 线下'));
-        seqOff.appendChild(h('p', 'pp-sec-note', '线下每轮的装配顺序。'));
-
-        E.offlineSlots.forEach(function (def) {
-          /* custom 与线上一致：单独在下面「自定义注入」区块里列，
-             不混进注入序列（序列里那一行点不开，看着像坏掉） */
-          if (def.id === 'custom' || def.id === 'history') return;
-          var isCard = def.kind === 'card';
-          var meta = E.cardMeta(def.id);
-          var toks = isCard ? E.estimate(E.cardBody(def.id)) : 0;
-
-          var r = h(isCard ? 'button' : 'div', 'pp-row');
-          if (isCard) r.type = 'button';
-          var m = h('span', 'pp-row-main');
-          m.appendChild(h('span', 'pp-row-label', def.name));
-          r.appendChild(m);
-          if (meta && meta.locked && !dev) r.appendChild(h('span', 'pp-row-lock', '已上锁'));
-          r.appendChild(h('span', 'pp-row-tag', def.slot));
-          if (isCard && toks) r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(toks)));
-          if (isCard) r.addEventListener('click', function () { openCard(def.id); });
-          seqOff.appendChild(r);
-        });
-        body.appendChild(seqOff);
+        /* ---- 线上提示词 / 角色功能（按 slotCat 分组，唯一出处 prompt-engine）----
+           非开发者：名字即全部；角色功能卡的开不开是「功能取舍」不是
+           「内容泄露」，所以开关保留在行内（2026-10-21 用户确认）。 */
+        function catSec(title, cat) {
+          var sec = h('div', 'pp-sec');
+          sec.appendChild(h('p', 'pp-sec-title', title));
+          E.onlineSlots.forEach(function (def) {
+            if (def.id === 'custom' || def.id === 'history') return;
+            if (E.slotCat(def.id) !== cat) return;
+            var isCard = def.kind === 'card';
+            var r = h(dev && isCard ? 'button' : 'div',
+              'pp-row' + (dev && isCard && !E.cardEnabled(def.id) ? ' is-off' : ''));
+            if (dev && isCard) r.type = 'button';
+            var m = h('span', 'pp-row-main');
+            m.appendChild(h('span', 'pp-row-label', def.name));
+            r.appendChild(m);
+            if (dev && isCard) {
+              var toks = E.estimate(E.cardBody(def.id));
+              if (toks) r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(toks)));
+              if (!def.required) r.appendChild(h('span', 'pp-row-req', '可选'));
+              r.addEventListener('click', function () {
+                global.scrollTo(0, 0);
+                openCard(def.id);
+              });
+            }
+            if (cat === 'feature' && isCard && !def.required) {
+              var sw = h('label', 'set-switch pp-row-sw');
+              var cb = h('input'); cb.type = 'checkbox'; cb.checked = E.cardEnabled(def.id);
+              sw.appendChild(cb);
+              sw.appendChild(h('span', 'set-switch-track'));
+              sw.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var next = !E.cardEnabled(def.id);
+                E.setCardEnabled(def.id, next);
+                if (dev) r.classList[next ? 'remove' : 'add']('is-off');
+                ctx.toast(next ? '已启用' : '已停用', 'ok');
+              });
+              r.appendChild(sw);
+            }
+            sec.appendChild(r);
+          });
+          body.appendChild(sec);
+        }
+        catSec('线上提示词', 'prompt');
+        catSec('角色功能', 'feature');
 
         /* ---- 自定义注入 ---- */
         var cus = h('div', 'pp-sec');
@@ -183,15 +169,32 @@
         if (!E.customCards().length) {
           cus.appendChild(h('p', 'pp-empty', '还没有自定义注入'));
         }
-        E.customCards().forEach(function (cc) {
+        /* 顺序 = 注入顺序（方案-预设页分类与自察-v1 B，2026-10-21）：
+           cfg().custom 数组序即线上/线下装配序，↑↓ 直接重排数组、立即落库生效。
+           箭头用 span（button 套 button 不合法），点击要挡住冒泡别进编辑页。 */
+        E.customCards().forEach(function (cc, ci) {
           var enabled = E.cardEnabled(cc.id);
           var r = h('button', 'pp-row' + (enabled ? '' : ' is-off'));
           r.type = 'button';
           var m = h('span', 'pp-row-main');
           m.appendChild(h('span', 'pp-row-label', cc.title));
           r.appendChild(m);
-          /* token 数是数值不是解释：从原来的 hint 行挪到右侧标签位，
-             与上面两个注入序列区一致（2026-10-07 用户：条目下面的解释全去掉）。 */
+          var up = h('span', 'pp-row-move' + (ci === 0 ? ' is-dis' : ''), '↑');
+          up.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (ci === 0) return;
+            E.moveCustomCard(cc.id, -1);
+            build();
+          });
+          var down = h('span', 'pp-row-move' + (ci === E.customCards().length - 1 ? ' is-dis' : ''), '↓');
+          down.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (ci === E.customCards().length - 1) return;
+            E.moveCustomCard(cc.id, 1);
+            build();
+          });
+          r.appendChild(up);
+          r.appendChild(down);
           r.appendChild(h('span', 'pp-row-tok', '≈' + fmtTok(E.estimate(cc.body)) + ' tok'));
           r.addEventListener('click', function () { ctx.open('preset-custom-edit', { id: cc.id }); });
           cus.appendChild(r);
@@ -209,6 +212,20 @@
         pv.appendChild(h('span', 'pp-row-arrow', '›'));
         pv.addEventListener('click', function () { ctx.open('preset-preview', {}); });
         dbg.appendChild(pv);
+
+        /* 自察开关（方案-预设页分类与自察-v1 C2，2026-10-21，默认关）：
+           开着时 TA 每轮正文前先交一段 [自察]（本轮用了哪些设定条目、
+           改了什么话），parseReply 剥出去、不进气泡不回喂；长按回复可看。 */
+        var inspSw = ui.switchField({
+          label: '让 TA 汇报用了哪些设定',
+          hint: '开着：TA 回复前先写一段 [自察]，长按 TA 的回复可看。每轮多几十 tokens',
+          value: E.inspectEnabled()
+        });
+        inspSw.input.addEventListener('change', function () {
+          E.setInspect(inspSw.get());
+          ctx.toast(inspSw.get() ? '下一轮回复开始带自察' : '已关掉', 'ok');
+        });
+        dbg.appendChild(inspSw.el);
         body.appendChild(dbg);
 
         if (!dev) {
@@ -492,17 +509,22 @@
           if (m.role !== 'user' && m.role !== 'assistant') return;
           var text = m.type ? (m.content || '') : (m.content || '');
           if (!text) return;
-          hist.push({ role: m.role, content: text });
+          hist.push({ role: m.role, content: text, at: m.timestamp });   /* at：装配层渲染行内时间戳（与 page-chat 同口径） */
         });
         if (limit > 0 && hist.length > limit) hist = hist.slice(-limit);
 
         var r = E.assembleOnline({ charId: c.characterId, userId: c.userId, history: hist });
         var budget = E.budgetFor('online');
+        /* 本轮命中（方案-预设页分类与自察-v1 C1）：世界书条目级命中清单，
+           与装配同一个实现（worldbookHitList），只读展示，零新增调用。 */
+        var wbHits = E.worldbookHitList
+          ? E.worldbookHitList(c.characterId, hist.map(function (m) { return m.content || ''; }).join('\n').slice(-4000))
+          : [];
         render(r, budget, function (cb) {
           hist.forEach(function (m) {
             cb((m.role === 'user' ? 'user ▸ ' : 'char ▸ ') + m.content);
           });
-        });
+        }, wbHits);
       }
 
       function runOffline() {
@@ -528,7 +550,7 @@
         });
       }
 
-      function render(r, budget, historyLines) {
+      function render(r, budget, historyLines, wbHits) {
         sumBox.innerHTML = '';
         out.textContent = '';
         var total = 0;
@@ -553,6 +575,17 @@
           else totalLine.classList.add('is-ok');
         }
         sumBox.appendChild(totalLine);
+
+        /* 本轮命中（C1，2026-10-21）：只报线上模式；世界书没配/没命中
+           就一句空态，不装神秘 —— 用户要的是「条目到底进没进这轮」。 */
+        if (wbHits) {
+          var hitLine = h('p', 'pp-sum-total');
+          hitLine.textContent = wbHits.length
+            ? ('本轮世界书命中 ' + wbHits.length + ' 条：' +
+               wbHits.map(function (w) { return w.name + '（' + w.why + '）'; }).join('、'))
+            : '本轮世界书没有命中任何条目（常驻与关键词都没打中）。';
+          sumBox.appendChild(hitLine);
+        }
 
         /* 完整 prompt：每段前标槽位。正文一律 textContent，不吃注入。 */
         var lines = [];

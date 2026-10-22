@@ -334,6 +334,11 @@
     /* ---- user：可见历史 + 触发 + 预算 ---- */
     var user = [];
 
+    /* 历史时间标注（2026-10-15 方案 A）：行内戳走 cal.histStamp 唯一出口。
+       群口径 = user 设备本地（群世界锚在 user 手机，各角色时差在逐本体时间块里）。
+       createdAt 缺失（老存档）→ 戳为空串，原样跳过。 */
+    var calHist = Sleepy.calendar;
+
     var histLines = recent.map(function (m) {
       if (m.type === 'system') return '（系统：' + m.content + '）';
       if (m.recalledAt) return null;    /* 撤回的原文不进历史 */
@@ -348,7 +353,9 @@
             String(src.content || '').slice(0, 24) + '）';
         }
       }
-      return who + '：' + quote + String(m.content || '');
+      var stamp = (calHist && calHist.histStamp && m.createdAt)
+        ? calHist.histStamp(m.createdAt) : '';
+      return stamp + who + '：' + quote + String(m.content || '');
     }).filter(Boolean);
 
     /* 后加入成员的历史边界（MVP：提示级） */
@@ -363,7 +370,17 @@
       }).join('、') + ' 是后来才加入的，TA 不知道加入之前的群聊内容，不要当着 TA 的面默认 TA 知道旧事。）');
     }
 
-    user.push('[RECENT_GROUP]\n' + (histLines.join('\n') || '（还没有人说话）'));
+    /* 间隔事实（方案 A②）：群 pending / 补回轮距最后一条群消息可能隔了很久，
+       代码算好直接喂。最新一条 = 未撤回的**非系统**消息里 createdAt 最大者 ——
+       「群聊已创建」这类事件条不是聊天消息，不该顶掉真实的最后发言。 */
+    var lastAtG = 0;
+    recent.forEach(function (m) {
+      if (!m.recalledAt && m.type !== 'system' && m.createdAt > lastAtG) lastAtG = m.createdAt;
+    });
+    var gGap = (lastAtG && calHist && calHist.gapLine)
+      ? calHist.gapLine(lastAtG, { label: '距最新一条群消息已过 ' }) : '';
+    user.push('[RECENT_GROUP]' + (gGap ? '\n（' + gGap + '）' : '') + '\n'
+      + (histLines.join('\n') || '（还没有人说话）'));
     var pend = pendingText(groupId);
     if (pend) user.push('[PENDING]\n这些成员之前在忙，现在到了 TA 们补回的时机：\n' + pend);
     user.push('[STIMULUS]\n' + (opts.stimulus || '（user 刚刚发了一条消息，见最后）'));

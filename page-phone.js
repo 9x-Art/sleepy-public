@@ -704,6 +704,27 @@
         });
       }
 
+      /* 群聊只读视图（v247b，按账号视角渲染）：从这部手机的主人（本体）
+         看——TA 自己发出的消息在右，别人的在左；发送者用群成员的展示名
+         （accountMeta），系统消息居中。只读，composer 照旧摆着不可发。 */
+      function openGroupChat(g) {
+        var msgs = Sleepy.groupStore.messagesOf(g.id);
+        var deep = msgs.length > 30;
+        doAction('openChat', { where: 'messages' }, function () {
+          phone.addTrace(session, { type: 'read', app: 'messages', detail: '看了「' + g.name + '」的群聊' });
+          if (deep) {
+            doAction('deepScroll', { where: 'messages' }, function () {
+              phone.addTrace(session, { type: 'location', app: 'messages', detail: '往前翻了群里的旧记录' });
+              curView = { kind: 'group', group: g };
+              paint();
+            });
+          } else {
+            curView = { kind: 'group', group: g };
+            paint();
+          }
+        });
+      }
+
       function putBack() {
         /* 已经收束过的会话（收手/只看一眼）不再二次落 endedAt */
         if (session && !phone.getSession(session.id).endedAt) {
@@ -1092,6 +1113,7 @@
         head.appendChild(back);
         head.appendChild(h('span', 'ph-app-title',
           curView && curView.kind === 'real' ? chatNameOf(curView.chat) :
+          curView && curView.kind === 'group' ? curView.group.name :
           curView ? (curView.item.kind === 'draft' ? '草稿' : '幕后交流') :
           curInst ? curInst.templateName : APP_LABEL[curApp] || ''));
         /* ★ 2026-10-10 App 页右上角刷新：单 App 专属提示词
@@ -1125,6 +1147,7 @@
         if (curInst) paintCustomApp(root, curInst);
         else if (curApp === 'messages') {
           if (curView && curView.kind === 'real') paintRealChat(root, curView.chat);
+          else if (curView && curView.kind === 'group') paintGroupChat(root, curView.group);
           else if (curView) paintDerived(root, curView.item);
           else paintMsgList(root);
         } else if (curApp === 'notes') {
@@ -1221,8 +1244,7 @@
             gs.forEach(function (g) {
               var last = Sleepy.groupStore.lastMessage(g.id);
               list.appendChild(row(g.name, previewGroup(last), last ? last.at : g.createdAt, function () {
-                /* 群聊详情第 3 批接（要按账号视角渲染）——先如实说明 */
-                ctx.toast('群聊的查看视图在下一批施工', '');
+                openGroupChat(g);
               }));
             });
           }
@@ -1316,6 +1338,56 @@
         });
         if (!(chat.messages || []).length) {
           list.appendChild(h('p', 'ph-empty-t', '这段对话还没有消息。'));
+        }
+        root.appendChild(list);
+        root.appendChild(roComposer());
+      }
+
+      /* 群聊只读视图（v247b）：视角 = 这部手机的主人。
+         「是不是自己发的」用消息上的 senderEntityId 对 ownerId 判——
+         落库时已经归一（user 恒 'user' / char 顺 rootOf / NPC 是自己），
+         不在渲染时猜。群成员展示名走 accountMeta（查不到回落 '?'，
+         和群聊本体页同一套，不长第二张脸）。 */
+      function paintGroupChat(root, g) {
+        var msgs = Sleepy.groupStore.messagesOf(g.id);
+        var members = Sleepy.groupStore.membersOf(g.id, true);
+        var dhead = h('div', 'ph-dhead');
+        var dava = h('span', 'ph-row-ava ph-row-ava-big', g.name.slice(0, 1));
+        dava.style.background = ROW_TINTS[phone.hashOf(g.name) % ROW_TINTS.length];
+        dhead.appendChild(dava);
+        var dmid = h('div', 'ph-dhead-mid');
+        dmid.appendChild(h('p', 'ph-dhead-t', g.name));
+        dmid.appendChild(h('p', 'ph-dhead-s', '群聊 · ' +
+          Sleepy.groupStore.membersOf(g.id).length + ' 个成员 · ' + msgs.length + ' 条'));
+        dhead.appendChild(dmid);
+        root.appendChild(dhead);
+
+        var list = h('div', 'ph-bubbles');
+        msgs.forEach(function (m) {
+          if (m.type === 'system' || m.senderKind === 'system') {
+            list.appendChild(h('div', 'ph-sysline', m.content || ''));
+            return;
+          }
+          var member = null;
+          for (var i = 0; i < members.length; i++) {
+            if (members[i].accountId === m.senderAccountId) { member = members[i]; break; }
+          }
+          var meta = Sleepy.groupStore.accountMeta(member);
+          /* 回撤的群消息照私聊口径显示「撤回了一条消息」—— 事实记录在案 */
+          var recalled = !!m.recalledAt;
+          var mine = m.senderEntityId === ownerId;
+          var line = h('div', 'ph-bline' + (mine ? ' is-mine' : ''));
+          line.appendChild(h('span', 'ph-bwho', mine ? (ch.name || '我') : meta.name));
+          var bub = h('div', 'ph-bubble' + (recalled ? ' is-recalled' : ''));
+          var body = recalled ? '撤回了一条消息'
+            : (m.content || (m.mediaId ? '（一张图）' : (m.url ? '（一个表情包）' : '')));
+          bub.appendChild(h('span', null, body));
+          if (m.createdAt) bub.appendChild(h('small', 'ph-bubble-at', timeStr(m.createdAt)));
+          line.appendChild(bub);
+          list.appendChild(line);
+        });
+        if (!msgs.length) {
+          list.appendChild(h('p', 'ph-empty-t', '这个群里还没有消息。'));
         }
         root.appendChild(list);
         root.appendChild(roComposer());

@@ -2078,7 +2078,7 @@ span.msg-avatar-initial{
   white-space:pre-wrap;word-break:break-word;margin:0;
 }
 
-/* --------------------- 长按菜单（底部动作表） --------------------- */
+/* --------------------- 长按菜单（页面居中弹卡，2026-10-21 起不贴底） --------------------- */
 .msg-menu-mask{
   position:absolute;inset:0;
   background:var(--scrim);
@@ -2087,13 +2087,16 @@ span.msg-avatar-initial{
 }
 .msg-menu-mask.is-open{display:block;}
 .msg-menu{
-  position:absolute;left:0;right:0;bottom:0;
+  position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  width:calc(100% - 48px);max-width:340px;
+  max-height:calc(100% - 96px);overflow:auto;
   z-index:71;
   display:none;flex-direction:column;
-  padding:12px 14px calc(env(safe-area-inset-bottom) + 14px);
+  padding:12px 14px 14px;
   background:var(--bg-2);
-  border-top:1px solid var(--line);
-  border-radius:18px 18px 0 0;
+  border:1px solid var(--line);
+  border-radius:18px;
 }
 .msg-menu.is-open{display:flex;}
 .msg-menu-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;}
@@ -6526,7 +6529,7 @@ span.msg-avatar-initial{
 /* ---- 发布弹层（白卡，跟微信的发动态页一个气质）---- */
 .mo-composer{
   background:#fff;color:#1A1A1A;
-  padding:16px 16px calc(env(safe-area-inset-bottom) + 16px);
+  padding:16px;
 }
 .mo-composer .mo-chip{
   background:#F7F7F7;border-color:#E3E3E3;color:#68768F;
@@ -7699,6 +7702,15 @@ div.pp-row:active{background:none;}
 }
 .pp-row-tok{flex:none;font-size:10.5px;color:var(--text-dim);}
 .pp-row-req{flex:none;font-size:9.5px;color:var(--text-faint);opacity:.8;}
+/* 自定义注入排序箭头（方案-预设页分类与自察-v1 B，2026-10-21）：
+   span 不是 button（button 套 button 不合法），可点区做大点好按 */
+.pp-row-move{
+  flex:none;font-size:12px;line-height:1;color:var(--text-dim);
+  padding:6px 5px;cursor:pointer;user-select:none;
+}
+.pp-row-move.is-dis{opacity:.25;cursor:default;}
+/* 角色功能卡行内开关（A：内容上锁、开关保留） */
+.pp-row-sw{flex:none;margin-left:4px;}
 /* 上锁标（第三梯队 7）：无框小字，跟行尾其他标区分开 */
 .pp-row-lock{
   flex:none;font-size:9.5px;letter-spacing:.5px;
@@ -10626,6 +10638,8 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-bubbles{flex:1;display:flex;flex-direction:column;gap:12px;padding:8px 2px 20px;}
 .ph-bline{display:flex;flex-direction:column;gap:3px;max-width:82%;}
 .ph-bline.is-mine{align-self:flex-end;align-items:flex-end;}
+/* v247b：群聊只读视图的居中系统行（建群/邀请/退群等公开事件） */
+.ph-sysline{text-align:center;color:var(--text-faint);font-size:11px;line-height:1.6;margin:8px 0;}
 .ph-bwho{font-size:11px;opacity:.5;}
 .ph-bubble{
   padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.55;
@@ -12861,14 +12875,9 @@ button.cal-ev:active{background:var(--g-glass-2);}
   color:var(--g-accent-deep);
 }
 
-/* API Key 输入 + 显示/隐藏小钮 */
+/* API Key 输入 + 显示/隐藏小钮（v242：小钮统一走 .set-eye，原 tts-mini-btn 已删） */
 .tts-key-box{display:flex;align-items:center;gap:8px;}
 .tts-key-box input{flex:1;min-width:0;}
-.tts-mini-btn{
-  flex:none;padding:6px 4px;
-  border:0;background:none;cursor:pointer;
-  color:var(--g-accent-deep);font-family:inherit;font-size:12px;
-}
 
 /* 测试结果条（成功 / 失败 / 进行中） */
 .tts-result{margin-top:12px;}

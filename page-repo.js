@@ -521,6 +521,49 @@
 
     var choices = { theme: 'mine', worldbook: 'mine' };
 
+    /* 摆盘单件：存预设 / 应用全局 / 应用到某座岛（2026-10-22） */
+    var themeMode = 'preset';
+    if (manifest.type === 'theme') {
+      panel.appendChild(h('p', 'rp-hint',
+        '一套美化（配色 + 壁纸/图标风格）。可以只存起来，也可以马上用 —— 只会动你选的那个范围，别的岛不受影响。'));
+      var mrow = h('div', 'rp-row');
+      mrow.appendChild(h('span', null, '怎么用：'));
+      var msel = h('select');
+      [['preset', '先存进美化预设（不马上用）'], ['global', '应用为全局默认（所有岛）'],
+       ['island', '应用到当前岛']].forEach(function (o) {
+        var op = h('option', null, o[1]); op.value = o[0];
+        if (o[0] === themeMode) op.selected = true;
+        msel.appendChild(op);
+      });
+      msel.addEventListener('change', function () { themeMode = msel.value; });
+      mrow.appendChild(msel);
+      panel.appendChild(mrow);
+    }
+
+    /* 火候单件：叠加 / 整套装上（2026-10-22） */
+    var presetMode = 'merge';
+    if (manifest.type === 'preset') {
+      panel.appendChild(h('p', 'rp-hint',
+        '一套预设配置（关了哪些内置卡、槽位覆盖、自定义注入）。「叠加」不会动你现有的东西；「整套装上」会把这三块**整个换成包里的**——自己原来配的会被清掉，想清楚再选。'));
+      var prow = h('div', 'rp-row');
+      prow.appendChild(h('span', null, '怎么用：'));
+      var psel = h('select');
+      [['merge', '叠加到我现在这套'], ['replace', '整套装上（清掉我原来的）']].forEach(function (o) {
+        var op = h('option', null, o[1]); op.value = o[0];
+        if (o[0] === presetMode) op.selected = true;
+        psel.appendChild(op);
+      });
+      psel.addEventListener('change', function () { presetMode = psel.value; });
+      prow.appendChild(psel);
+      panel.appendChild(prow);
+    }
+
+    /* 入席单件：进当前岛（同角色卡口径，2026-10-22） */
+    if (manifest.type === 'book') {
+      panel.appendChild(h('p', 'rp-hint',
+        '一本世界档案（正文全文 + 委托 + 预读地图）。会落进**你当前所在的岛**的档案架，从零开局 —— 打包者的进度、卷宗、物件不跟过来。'));
+    }
+
     if (manifest.type === 'island') {
       panel.appendChild(h('p', 'rp-hint',
         '这座岛会作为一座**新岛**落进浮岛列表：角色和以身入局档案全部带入；' +
@@ -532,7 +575,7 @@
         var row = h('div', 'rp-row');
         row.appendChild(h('span', null, p[1] + '：'));
         var sel = h('select');
-        [['mine', '用我现在的'], ['pack', '带包里的']].forEach(function (o) {
+        [['mine', '用我现在的'], ['pack', '应用到新岛（只动这座岛）']].forEach(function (o) {
           var op = h('option', null, o[1]); op.value = o[0];
           if (choices[p[0]] === o[0]) op.selected = true;
           sel.appendChild(op);
@@ -570,6 +613,24 @@
         });
       } else if (manifest.type === 'worldbook') {
         RP().importWorldbook(manifest, function (r) {
+          go.disabled = false; go.textContent = '打包带走';
+          Sleepy.toast(r.message || (r.ok ? '导好了' : '没导上'), r.ok ? 'ok' : 'err');
+          if (r.ok) { sheet.remove(); ctx.rebuild(); }
+        });
+      } else if (manifest.type === 'theme') {
+        RP().importTheme(manifest, themeMode, function (r) {
+          go.disabled = false; go.textContent = '打包带走';
+          Sleepy.toast(r.message || (r.ok ? '导好了' : '没导上'), r.ok ? 'ok' : 'err');
+          if (r.ok) { sheet.remove(); ctx.rebuild(); }
+        });
+      } else if (manifest.type === 'preset') {
+        RP().importPreset(manifest, presetMode, function (r) {
+          go.disabled = false; go.textContent = '打包带走';
+          Sleepy.toast(r.message || (r.ok ? '导好了' : '没导上'), r.ok ? 'ok' : 'err');
+          if (r.ok) { sheet.remove(); ctx.rebuild(); }
+        });
+      } else if (manifest.type === 'book') {
+        RP().importBook(manifest, function (r) {
           go.disabled = false; go.textContent = '打包带走';
           Sleepy.toast(r.message || (r.ok ? '导好了' : '没导上'), r.ok ? 'ok' : 'err');
           if (r.ok) { sheet.remove(); ctx.rebuild(); }
@@ -650,7 +711,8 @@
     f1.appendChild(h('span', null, '类型'));
     var typeSel = h('select');
     [['island', '整岛包（这座岛能带走的都带上）'], ['char', '名帖（单选一个角色）'],
-     ['worldbook', '食单（单独上传一本世界书）']].forEach(function (o) {
+     ['worldbook', '食单（单独上传一本世界书）'], ['theme', '摆盘（单独分享一套美化）'],
+     ['preset', '火候（打包一套预设配置）'], ['book', '入席（单独分享一本世界档案）']].forEach(function (o) {
       var op = h('option', null, o[1]); op.value = o[0];
       typeSel.appendChild(op);
     });
@@ -664,6 +726,7 @@
     card1.appendChild(subRow);
     function fillSub() {
       subSel.innerHTML = '';
+      subSel.disabled = false;   /* 上次选空的残留禁用别带过来 */
       if (typeSel.value === 'char') {
         Sleepy.core.charsOfSandbox(sid).forEach(function (c) {
           var op = h('option', null, c.name || '未命名'); op.value = c.id;
@@ -683,6 +746,30 @@
           subSel.disabled = true;
           f1b.querySelector('span').textContent = '这台设备还没有世界书';
         } else subSel.disabled = false;
+      } else if (typeSel.value === 'theme') {
+        /* 摆盘：打包「哪座岛生效中的样子」—— 岛覆盖 > 全局，列全部岛选 */
+        Sleepy.core.listSandboxes().forEach(function (s) {
+          var nm = s.name || '未命名岛';
+          var op = h('option', null, nm); op.value = s.id;
+          if (s.id === sid) op.selected = true;
+          subSel.appendChild(op);
+        });
+        f1b.style.display = '';
+        f1b.querySelector('span').textContent = '打包哪座岛的样子（岛覆盖 > 全局）';
+      } else if (typeSel.value === 'book') {
+        /* 入席：当前岛的档案盒（以身入局上架过的世界） */
+        var boxes = (Sleepy.store.get('bookBoxes') || []).filter(function (b) {
+          return b && b.sandboxId === sid;
+        });
+        boxes.forEach(function (b) {
+          var op = h('option', null, (b.title || '未命名世界')); op.value = b.id;
+          subSel.appendChild(op);
+        });
+        f1b.style.display = '';
+        f1b.querySelector('span').textContent = boxes.length
+          ? '打包当前岛的哪个世界（领取者从零开局）'
+          : '这座岛还没有档案盒 —— 先在以身入局里导入一本书';
+        subSel.disabled = !boxes.length;
       } else f1b.style.display = 'none';
     }
     fillSub();
@@ -801,7 +888,13 @@
           ? RP().packChar(subSel.value, opts)
           : typeSel.value === 'worldbook'
             ? RP().packWorldbook(subSel.value, opts)
-            : RP().packIsland(sid, opts);
+            : typeSel.value === 'theme'
+              ? RP().packTheme(subSel.value, opts)
+              : typeSel.value === 'preset'
+                ? RP().packPreset(opts)
+                : typeSel.value === 'book'
+                  ? RP().packBook(subSel.value, opts)
+                  : RP().packIsland(sid, opts);
       } catch (e) {
         listCard.innerHTML = '';
         listCard.appendChild(h('p', null, String(e.message || e)));
@@ -910,7 +1003,13 @@
           ? RP().packChar(subSel.value, opts)
           : typeSel.value === 'worldbook'
             ? RP().packWorldbook(subSel.value, opts)
-            : RP().packIsland(sid, opts);
+            : typeSel.value === 'theme'
+              ? RP().packTheme(subSel.value, opts)
+              : typeSel.value === 'preset'
+                ? RP().packPreset(opts)
+                : typeSel.value === 'book'
+                  ? RP().packBook(subSel.value, opts)
+                  : RP().packIsland(sid, opts);
         manifest.summary = (sumIn.value || '').trim();
         RP().applyLocks(manifest, lockedIdx, secret, condition);
         if (access === 'gated') { manifest.access = 'gated'; manifest.lock = 'gated'; }

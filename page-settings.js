@@ -286,7 +286,13 @@
       body.appendChild(g4.wrap);
 
       var g5 = group('其他');
-      g5.card.appendChild(row({ label: '激活与设备', hint: '2.19 激活码 · QQ 绑定' }));
+      /* 我的授权（账密系统 v2，2026-10-21）：原来 2.19 的占位行接上了真页面 ——
+         激活 / 登录 / 设备管理都在 page-license（发码页在 worker 域名，App 内不放）。 */
+      var licRow = row({ label: '激活与设备', hint: '激活码 · 换设备登录 · 设备管理' });
+      licRow.disabled = false;
+      licRow.classList.remove('is-soon');
+      licRow.addEventListener('click', function () { ctx.open('license'); });
+      g5.card.appendChild(licRow);
 
       /* 用户协议 / 隐私政策（2026-10-07）：首启弹过一次之后，**这里必须留一个
          随时能翻回去的入口** —— 只在第一次弹是耍流氓，用户要能自己再查。

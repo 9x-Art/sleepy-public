@@ -25,8 +25,35 @@
   var store = Sleepy.store;
   var core = Sleepy.core;
 
-  var KEYS = ['repoCfg', 'repoGates', 'repoGateName', 'repoToken', 'repoDownloads', 'repoMine'];
+  var KEYS = ['repoCfg', 'repoGates', 'repoGateName', 'repoToken', 'repoDownloads', 'repoMine', 'repoThemes', 'license'];
   var MAX_SIZE = 5 * 1024 * 1024;
+
+  /* ---------------- 美化件载荷（sleepy-theme-v1，2026-10-22 P0 修复） ----------------
+     旧版 packIsland 把【整个外观存档】塞进包、导入时整档 set 回去 ——
+     会冲掉领取者的全局外观、所有岛的覆盖和 appOverrides，且全局生效而不是
+     落到新岛。改为**只带可移植的最小集**：
+       { fmt:'sleepy-theme-v1', theme:'配色id', desk:{wall,icons,large} }
+     · 「岛覆盖 > 全局」：打包取「原岛生效中的样子」（岛覆盖有就用岛覆盖）；
+     · 自定义壁纸（wall:'custom'+wallMediaId）引用**本机媒体**，不进包 → 落 auto；
+     · 字号/动效/字体/正文字色是全局性的（外观页口径），不跟岛走，也不进包。 */
+  var THEME_FMT = 'sleepy-theme-v1';
+  var THEME_DESK_KEYS = ['wall', 'icons', 'large'];
+  var THEME_DESK_DEFAULT = { wall: 'auto', icons: 'glass', large: false };
+
+  /* 原岛 sid 生效中的美化载荷。sid 空 = 纯全局样子。 */
+  function themePayloadOf(sid) {
+    var a = store.get('appearance') || {};
+    var isl = (sid && a.desktop && a.desktop.islands) ? (a.desktop.islands[sid] || null) : null;
+    var g = (a.desktop && a.desktop.global) || {};
+    var out = { fmt: THEME_FMT, theme: '', desk: {} };
+    THEME_DESK_KEYS.forEach(function (k) {
+      var v = isl && isl[k] !== undefined ? isl[k] : (g[k] !== undefined ? g[k] : THEME_DESK_DEFAULT[k]);
+      out.desk[k] = v;
+    });
+    out.theme = (isl && isl.theme) || a.theme || '';
+    if (out.desk.wall === 'custom') { out.desk.wall = 'auto'; }   /* 本机媒体壁纸不进包 */
+    return out;
+  }
 
   /* ★ 官方仓库地址：**烤在这里**，所有 user 开箱即用，不在页面上填。
      Worker 部署后把域名填进 DEFAULT_BASE 即可（repoCfg.base 留作覆盖
@@ -85,6 +112,23 @@
     };
   }
 
+  /* 摆盘单件：单独分享一套美化（2026-10-22 用户：美化也是单独分享的）。
+     data = themePayloadOf(sbId) —— 打包「这座岛生效中的样子」。 */
+  function packTheme(sbId, opts) {
+    opts = opts || {};
+    var sb = core.findSandbox(sbId);
+    if (!sb) throw new Error('找不到这座岛');
+    return {
+      v: 1, type: 'theme', gate: opts.gate || '',
+      title: opts.title || (sb.name || '这座岛') + ' · 美化',
+      author: opts.author || '', lock: 'open', version: 1,
+      cover: opts.cover || '',
+      visible: !!opts.visible,
+      items: [{ kind: 'theme', lock: 'open', name: '美化（外观）', url: '',
+        data: themePayloadOf(sbId) }]
+    };
+  }
+
   /* 整岛包：chars + worldbooks + 以身入局（档案盒+导入文本）+ 美化 + 岛元信息。
      不带：聊天/朋友圈/日记/照片/马甲/API。 */
   function packIsland(sid, opts) {
@@ -127,9 +171,8 @@
       });
     }
     if (parts.theme !== false) {
-      var ap = store.get('appearance');
-      if (ap) items.push({ kind: 'theme', lock: 'open', name: '美化（外观）', url: '',
-        data: ap });
+      items.push({ kind: 'theme', lock: 'open', name: '美化（外观）', url: '',
+        data: themePayloadOf(sid) });   /* P0 修：只带最小可移植集，不再整档进包 */
     }
     return {
       v: 1, type: 'island', gate: opts.gate || '',
@@ -503,6 +546,54 @@
         : (errs[0] || '包里没有能导的世界书') });
   }
 
+  /* 美化载荷落档（2026-10-22 P0 修）：
+     · target = 岛 id → 写**这座岛的覆盖**（appearance.desktop.islands[target]），
+       全局档和其他岛的覆盖一个字都不碰；
+     · target = 'global' → 写全局（配色 + desktop.global）；
+     · 旧格式兼容：老包 theme 件是没有 fmt 的整档外观 —— 只抽取全局侧的
+       配色与桌面键，islands/appOverrides 一律不采（不再有整档覆盖这回事）。
+     落完档调 apply()，导入即生效，不用重开 App。 */
+  function applyThemePayload(data, target) {
+    var d = data || {};
+    var a = store.get('appearance') || {};
+    var theme = '', desk = {};
+    if (d.fmt === THEME_FMT) {
+      theme = d.theme || '';
+      desk = d.desk || {};
+    } else {
+      /* 旧整档：抽全局侧。老包里 custom 壁纸同样落 auto。 */
+      theme = d.theme || '';
+      var g = (d.desktop && d.desktop.global) || {};
+      THEME_DESK_KEYS.forEach(function (k) {
+        desk[k] = g[k] !== undefined ? g[k] : THEME_DESK_DEFAULT[k];
+      });
+      if (desk.wall === 'custom') desk.wall = 'auto';
+    }
+    if (target === 'global') {
+      if (theme) a.theme = theme;
+      a.desktop = a.desktop || {};
+      a.desktop.global = a.desktop.global || {};
+      THEME_DESK_KEYS.forEach(function (k) {
+        if (desk[k] !== undefined) a.desktop.global[k] = desk[k];
+      });
+    } else {
+      var sb = core.findSandbox(target);
+      if (!sb) return { ok: false, message: '找不到要应用的岛' };
+      a.desktop = a.desktop || {};
+      a.desktop.islands = a.desktop.islands || {};
+      var ov = {};
+      if (theme) ov.theme = theme;
+      THEME_DESK_KEYS.forEach(function (k) {
+        ov[k] = desk[k] !== undefined ? desk[k] : THEME_DESK_DEFAULT[k];
+      });
+      a.desktop.islands[target] = ov;
+    }
+    store.set('appearance', a);
+    /* DOM 层收尾：apply 挂了不该连坐数据层（冒烟 vm 里没有真 DOM） */
+    try { if (Sleepy.appearance && Sleepy.appearance.apply) Sleepy.appearance.apply(); } catch (e) { /* 视图层 */ }
+    return { ok: true };
+  }
+
   /* 整岛包：生成新岛。choices: { theme:'mine'|'pack', worldbook:'mine'|'pack', book:'pack' } */
   function importIsland(manifest, choices, cb) {
     choices = choices || {};
@@ -568,15 +659,291 @@
     if (choices.theme === 'pack') {
       manifest.items.forEach(function (it) {
         if (it.kind === 'theme' && it.data) {
-          var ap = it.data;
-          if (it.wasHidden) ap.sealedCss = true;   /* 暗铺美化：生效但样式代码不给看 */
-          store.set('appearance', ap);
+          var r = applyThemePayload(it.data, sb.id);   /* P0 修：只应用到新岛 */
+          if (!r.ok) errs.push('美化：' + r.message);
         }
       });
     }
 
     cb({ ok: true, sandboxId: sb.id,
       message: '新岛「' + sb.name + '」落好了' + (errs.length ? '（有 ' + errs.length + ' 件没导上：' + errs[0] + '）' : '') });
+  }
+
+  /* ---------------- 摆盘单件导入（2026-10-22）----------------
+     mode: 'preset'（存进我的美化预设，不马上用）
+         | 'global'（应用为所有岛的默认）
+         | 'island'（应用到当前激活岛）。 */
+  function themePresets() { return get('repoThemes', []); }
+
+  function saveThemePreset(name, data) {
+    var list = themePresets();
+    list.push({ id: newId('th'), name: name || '未命名美化', data: data, at: Date.now() });
+    set('repoThemes', list.slice(-50));
+    return list[list.length - 1];
+  }
+
+  function deleteThemePreset(id) {
+    set('repoThemes', themePresets().filter(function (p) { return p && p.id !== id; }));
+  }
+
+  function importTheme(manifest, mode, cb) {
+    var it = null;
+    (manifest.items || []).forEach(function (x) {
+      if (x.kind === 'theme' && x.data && !it) it = x;
+    });
+    if (!it) { cb({ ok: false, message: '包里没有美化件' }); return; }
+    if (mode === 'preset') {
+      var p = saveThemePreset(manifest.title, it.data);
+      cb({ ok: true, message: '「' + p.name + '」存进美化预设了 —— 外观页里随时可用' });
+      return;
+    }
+    var target = mode === 'global' ? 'global' : (core.activeSandbox() || {}).id;
+    if (!target) { cb({ ok: false, message: '先进一座岛，或者选「应用为全局默认」' }); return; }
+    var r = applyThemePayload(it.data, target);
+    cb(r.ok
+      ? { ok: true, message: mode === 'global'
+          ? '美化应用为全局默认了'
+          : '美化应用到「' + core.findSandbox(target).name + '」了' }
+      : r);
+  }
+
+  /* ---------------- 火候单件（预设配置，2026-10-22）----------------
+     预设系统的可分享面 = presetEngine 档的三块：
+       disabled（关掉的内置卡）/ overrides（槽位覆盖文本）/ custom（自定义注入卡）。
+     载荷只带这三块的最小集：卡的 id/时间戳不进包（导入重新发）；
+     引擎开关 useEngine / developerMode / inspect 是**设备自身状态**，不进包。 */
+  var PRESET_FMT = 'sleepy-preset-v1';
+
+  function presetPayloadOf() {
+    var c = store.get('presetEngine') || {};
+    var disabled = Object.keys(c.disabled || {}).filter(function (k) { return c.disabled[k]; });
+    var overrides = {};
+    Object.keys(c.overrides || {}).forEach(function (k) {
+      if (c.overrides[k]) overrides[k] = c.overrides[k];
+    });
+    var custom = (c.custom || []).map(function (cc) {
+      var out = { title: String(cc.title || '未命名注入'), body: String(cc.body || '') };
+      if (cc.group) out.group = true;   /* 群聊可用标记照带（口径同 engine） */
+      return out;
+    });
+    return { fmt: PRESET_FMT, disabled: disabled, overrides: overrides, custom: custom };
+  }
+
+  function packPreset(opts) {
+    opts = opts || {};
+    var data = presetPayloadOf();
+    var n = data.disabled.length + Object.keys(data.overrides).length + data.custom.length;
+    if (!n) throw new Error('这套预设是空的 —— 先去预设页配点东西（关几张内置卡 / 写自定义注入）');
+    return {
+      v: 1, type: 'preset', gate: opts.gate || '',
+      title: opts.title || '预设 · 火候',
+      author: opts.author || '', lock: 'open', version: 1,
+      cover: opts.cover || '',
+      visible: !!opts.visible,
+      items: [{ kind: 'preset', lock: 'open', name: '预设（火候）', url: '', data: data }]
+    };
+  }
+
+  /* 预设落档。mode: 'merge'（叠加：卡追加、关的卡只增不减、覆盖逐槽盖）
+                | 'replace'（整套装上：三块全换成包里的 —— 会清掉自己原来的卡）。
+     返回统计给向导念。 */
+  function applyPresetPayload(d, mode) {
+    if (!d || d.fmt !== PRESET_FMT) return { ok: false, message: '预设件格式不对' };
+    var c = store.get('presetEngine') || {};
+    if (!c.overrides) c.overrides = {};
+    if (!c.disabled) c.disabled = {};
+    if (!c.custom) c.custom = [];
+    var newCard = function (src) {
+      return { id: 'cu_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        title: String(src.title || '未命名注入'), body: String(src.body || ''), at: Date.now(),
+        group: src.group ? true : undefined };
+    };
+    var stats = { cards: 0, off: 0, ov: 0 };
+    if (mode === 'replace') {
+      c.disabled = {};
+      c.overrides = {};
+      c.custom = [];
+    }
+    (d.disabled || []).forEach(function (k) {
+      if (k && !c.disabled[k]) { c.disabled[k] = true; stats.off++; }
+    });
+    Object.keys(d.overrides || {}).forEach(function (k) {
+      if (d.overrides[k]) { c.overrides[k] = d.overrides[k]; stats.ov++; }
+    });
+    (d.custom || []).forEach(function (cc) {
+      c.custom.push(newCard(cc)); stats.cards++;
+    });
+    store.set('presetEngine', c);
+    return { ok: true, stats: stats };
+  }
+
+  function importPreset(manifest, mode, cb) {
+    var it = null;
+    (manifest.items || []).forEach(function (x) {
+      if (x.kind === 'preset' && x.data && !it) it = x;
+    });
+    if (!it) { cb({ ok: false, message: '包里没有预设件' }); return; }
+    var d = it.data || {};
+    var n = (d.disabled || []).length + Object.keys(d.overrides || {}).length + (d.custom || []).length;
+    if (!n) { cb({ ok: false, message: '这套预设是空的，没什么可装' }); return; }
+    var r = applyPresetPayload(it.data, mode === 'replace' ? 'replace' : 'merge');
+    if (!r.ok) { cb(r); return; }
+    var s = r.stats;
+    cb({ ok: true, message: '预设装好了：' +
+      (s.cards ? '自定义注入 +' + s.cards + ' ' : '') +
+      (s.off ? '内置卡关 ' + s.off + ' 张 ' : '') +
+      (s.ov ? '槽位覆盖 ' + s.ov + ' 处' : '') +
+      (s.cards + s.off + s.ov === 0 ? '（包里的都已在用，没动）' : '') });
+  }
+
+  /* ---------------- 入席单件（以身入局世界档案，2026-10-22）----------------
+     与整岛包的 book 件同构：{ box, import } —— 盒 + 章节全文。
+     差异：单件是「分享一本书的世界」，领取者从零开局 →
+     status 归 empty、媒体引用（coverRef/sceneRefs，本机 mediaId）不进包。 */
+  function cleanBookData(boxId) {
+    var box = (store.get('bookBoxes') || []).filter(function (b) {
+      return b && b.id === boxId;
+    })[0];
+    if (!box) throw new Error('找不到这个档案盒');
+    var imp = box.importId
+      ? (store.get('bookImports') || []).filter(function (r) { return r && r.id === box.importId; })[0]
+      : null;
+    var boxOut = JSON.parse(JSON.stringify(box));
+    boxOut.coverRef = null;                 /* 本机媒体引用不进包（媒体红线同头像） */
+    boxOut.sceneRefs = [];
+    delete boxOut.sandboxId;                /* 岛章不进包 —— 导入时重新盖 */
+    var impOut = null;
+    if (imp) {
+      impOut = JSON.parse(JSON.stringify(imp));
+      delete impOut.sandboxId;
+    }
+    return { box: boxOut, import: impOut };
+  }
+
+  function packBook(boxId, opts) {
+    opts = opts || {};
+    var d = cleanBookData(boxId);
+    return {
+      v: 1, type: 'book', gate: opts.gate || '',
+      title: opts.title || d.box.title || '未命名世界',
+      author: opts.author || '', lock: 'open', version: 1,
+      cover: opts.cover || '',
+      visible: !!opts.visible,
+      items: [{ kind: 'book', lock: 'open', name: d.box.title || '世界档案', url: '', data: d }]
+    };
+  }
+
+  /* 领取：进**当前激活岛**（同角色卡口径），重新盖岛章 + 发新 id，
+     章节全文原样带过来，status 归 empty（从零开局），媒体引用清零。 */
+  function importBook(manifest, cb) {
+    var sb = core.activeSandbox();
+    if (!sb) { cb({ ok: false, message: '先进入一座岛，世界档案才有地方落' }); return; }
+    var added = [];
+    var errs = [];
+    (manifest.items || []).forEach(function (it) {
+      if (it.kind !== 'book' || !it.data) return;
+      try {
+        var d = it.data;
+        var impId = null;
+        if (d.import && d.import.chapters) {
+          var imp = JSON.parse(JSON.stringify(d.import));
+          imp.id = newId('bi');
+          imp.sandboxId = sb.id;              /* 重新盖岛章 */
+          var imps = store.get('bookImports') || [];
+          imps.push(imp);
+          store.set('bookImports', imps);
+          impId = imp.id;
+        }
+        var box = JSON.parse(JSON.stringify(d.box));
+        box.id = newId('book-box');
+        box.sandboxId = sb.id;
+        box.importId = impId;
+        box.status = 'empty';                 /* 领取者从零开局 */
+        box.coverRef = null;
+        box.sceneRefs = [];
+        var boxes = store.get('bookBoxes') || [];
+        boxes.push(box);
+        store.set('bookBoxes', boxes);
+        added.push(box.title || '世界档案');
+      } catch (e) { errs.push(String(e.message || e)); }
+    });
+    cb({ ok: added.length > 0,
+      message: added.length
+        ? '《' + added.join('》《') + '》进了「' + sb.name + '」的档案架' + (errs.length ? '（有件没导上）' : '')
+        : (errs[0] || '包里没有能导的世界档案') });
+  }
+
+  /* ==================== 授权层（账密系统，方案-账密系统-v2，2026-10-21）====================
+
+     激活码即账号（发售路线 §三/§十）：发码页领码（QQ 记账）→ App 激活设密码
+     → 换设备 QQ+密码登录 → 设备上限 3 台、可踢、自助解绑。
+     纪律：**账号与存储解耦** —— 这里绝不含任何备份/同步逻辑；
+     游玩数据永不经此（worker 同一条红线）。
+
+     键：license {token, qq, lastVerifiedAt} —— 已登记 store 的
+     DEVICE_LOCAL_KEYS（设备本机登录态，导出/导入/快照都不带）。 */
+
+  function licGet() { return get('license', null) || null; }
+  function licSet(v) { set('license', v || null); }
+
+  function licRequest(path, method, body, cb) {
+    var lic = licGet();
+    var headers = { 'Content-Type': 'application/json' };
+    if (lic && lic.token) headers['X-Repo-Token'] = lic.token;   /* 与作者令牌同头，CORS 白名单不另开列 */
+    global.fetch(base() + path, {
+      method: method || 'GET',
+      headers: headers,
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().then(function (js) { return { status: r.status, js: js }; });
+    }).then(function (res) {
+      var js = res.js || {};
+      cb({ ok: !!js.ok, status: res.status, message: js.message || '',
+        data: js, devices: js.devices || null });
+    }, function (e) {
+      cb({ ok: false, message: '连不上仓库服务：' + ((e && e.message) || e) });
+    });
+  }
+
+  /* 登录/激活成功后刷新 lastVerifiedAt —— 7 天离线宽限的计时起点（内测期不设强闸） */
+  function licSaveSession(token, qq) {
+    licSet({ token: token, qq: qq, lastVerifiedAt: Date.now() });
+  }
+
+  function licActivate(code, qq, pass, cb) {
+    licRequest('/account/activate', 'POST',
+      { code: code, qq: qq, pass: pass, installId: deviceId(), ua: global.navigator.userAgent }, function (r) {
+        if (r.ok) licSaveSession(r.data.token, r.data.qq);
+        cb(r);
+      });
+  }
+
+  function licLogin(qq, pass, cb) {
+    licRequest('/account/login', 'POST',
+      { qq: qq, pass: pass, installId: deviceId(), ua: global.navigator.userAgent }, function (r) {
+        if (r.ok) licSaveSession(r.data.token, r.data.qq);
+        cb(r);
+      });
+  }
+
+  function licLogout(cb) {
+    var lic = licGet();
+    var done = function () { licSet(null); if (cb) cb({ ok: true }); };
+    if (!lic || !lic.token) { done(); return; }
+    /* 先请求后清本地：请求失败也照样清（本地退出不该被网络卡住） */
+    licRequest('/account/logout', 'POST', null, done);
+  }
+
+  function licMe(cb) {
+    licRequest('/account/me', 'GET', null, function (r) {
+      if (r.ok) {
+        var lic = licGet() || {};
+        lic.lastVerifiedAt = r.data.now || Date.now();
+        lic.qq = r.data.qq || lic.qq;
+        licSet(lic);
+      }
+      cb(r);
+    });
   }
 
   Sleepy.repo = {
@@ -597,7 +964,18 @@
     packChar: packChar,
     packWorldbook: packWorldbook,
     packIsland: packIsland,
+    packTheme: packTheme,
+    packPreset: packPreset,
+    packBook: packBook,
     importWorldbook: importWorldbook,
+    themePayloadOf: themePayloadOf,
+    applyThemePayload: applyThemePayload,
+    themePresets: themePresets,
+    saveThemePreset: saveThemePreset,
+    deleteThemePreset: deleteThemePreset,
+    importTheme: importTheme,
+    importPreset: importPreset,
+    importBook: importBook,
     applyLocks: applyLocks,
     unlockItems: unlockItems,
     lockedCount: lockedCount,
@@ -617,7 +995,20 @@
     unpublish: unpublish,
     parseGateText: parseGateText,
     importChar: importChar,
-    importIsland: importIsland
+    importIsland: importIsland,
+    /* 授权层（账密系统 v2） */
+    license: licGet,
+    licenseActivate: licActivate,
+    licenseLogin: licLogin,
+    licenseLogout: licLogout,
+    licenseMe: licMe,
+    licenseDevices: function (cb) { licRequest('/account/devices', 'GET', null, cb); },
+    licenseRevoke: function (devId, cb) { licRequest('/account/devices/' + encodeURIComponent(devId) + '/revoke', 'POST', null, cb); },
+    licensePassword: function (oldPass, newPass, cb) { licRequest('/account/password', 'POST', { oldPass: oldPass, newPass: newPass }, cb); },
+    licenseForget: function (pass, cb) { licRequest('/account/forget', 'POST', { pass: pass }, function (r) {
+      if (r.ok) licSet(null);   /* 注销成功清本机登录态 */
+      cb(r);
+    }); }
   };
 
 })(window);

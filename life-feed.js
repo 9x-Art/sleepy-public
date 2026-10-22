@@ -82,7 +82,16 @@
          互动只带最新一条评论：v5 说动态事件包要保留互动链，但注入层
          不需要整条链（那会把窗口挤没），最新一条足够让 TA 知道「底下热闹过」。 */
       var who = m.characterId === charId ? '你自己' : (m.name || '对方');
+      var isQsRef = !!(m.qsRef && m.qsRef.sourcePostId);
       var body = String(m.text || '').trim();
+      if (isQsRef) {
+        /* 群声转发：行里给标题+作者+板块（正文/留声在 TA 真去回应时由
+           forumShare.describeForModel 现读 —— 信息流行不放全文，免得挤窗口） */
+        var qr = m.qsRef;
+        body = '转发了一篇群声帖子《' + (qr.title || '无标题') + '》' +
+          (qr.authorName ? '，作者 ' + qr.authorName : '') +
+          (qr.boardName ? '（' + qr.boardName + ' 板块）' : '');
+      }
       if (!body) body = (m.mediaId || m.url) ? '（只发了一张图）' : '（空）';
       var tail = '';
       var likes = (m.likes || []).length;
@@ -97,7 +106,9 @@
       }
       return {
         at: typeof m.at === 'number' ? m.at : Date.parse(m.at || '') || 0,
-        line: '- ' + dayTextOf(m.at) + ' ' + who + '：' + body.slice(0, 60) + tail
+        line: isQsRef
+          ? '- ' + dayTextOf(m.at) + ' ' + who + '：' + body + tail
+          : '- ' + dayTextOf(m.at) + ' ' + who + '：' + body.slice(0, 60) + tail
       };
     });
   }
