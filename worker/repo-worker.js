@@ -504,7 +504,20 @@ export default {
 
       /* ---- POST /account/activate {code, qq, pass, installId, ua} ----
          码有效且未用 + qq 与发码时一致 → 建 users + devices + session。
-         一码一人，用过即废。 */
+         一码一人，用过即废 —— **公用码（codes.status = 2）除外**。
+
+         公用码要的是「凭证共用、身份各归各」：它跳过 c.qq 归属校验、
+         也不写 used_by，谁拿它都能领号；但 users.qq 的唯一索引一步不让，
+         所以每个人领到的仍是**自己独占的一行 user**。
+         ⚠️ 别图省事改成「大家共用一个 user」：那会同时踩两个坑 ——
+           ① 3 台设备名额被所有人挤占，第 4 个人起就被 403 挡在门外；
+           ② revoke / password / forget 只按 session.uid 鉴权，同一个 uid
+              下陌生人之间能互相解绑设备、把共享密码改掉让所有人进不来，
+              forget 更是直接注销整串设备。**共享 uid ≠ 共享进门凭证。**
+         插一行公用码：
+           INSERT INTO codes (code, qq, issued_at, status)
+           VALUES ('内测码字面值', 'beta-public', <now>, 2);
+         （codes.qq 有唯一索引，占位值挑一个不会撞的，公用码最多一行。） */
       if (p === '/account/activate' && request.method === 'POST') {
         await ensureSchema(env);
         const b = await request.json();
@@ -515,14 +528,23 @@ export default {
         if (!code || !QQ_RE.test(qq)) return j({ ok: false, message: '激活码和 QQ 号都要填对' }, 400);
         if (pass.length < 6) return j({ ok: false, message: '密码至少 6 位' }, 400);
         if (!installId) return j({ ok: false, message: '缺设备标识' }, 400);
-        if (!(await rateHit(env, 'rl:act:' + ipOf(request), 10))) {
-          return j({ ok: false, message: '操作太频繁了，歇会儿再来' }, 429);
-        }
+
+        /* 先认码再计限流 —— 公用码与自领码不共用配额（见下）。
+           注意错码照样计数：c 为 null 时走的是下面那个严桶，
+           拿错码来穷举的人不会因为多认了一次码就免掉计数。 */
         const c = await env.DB.prepare(
           'SELECT qq, used_by, status FROM codes WHERE code = ?').bind(code).first();
-        if (!c || c.status !== 1) return j({ ok: false, message: '激活码不对' }, 404);
-        if (c.used_by) return j({ ok: false, message: '这个激活码已经被用过了（一码一人）' }, 409);
-        if (c.qq !== qq) return j({ ok: false, message: '这个码是发给另一个 QQ 号的，去发码页核对' }, 403);
+        const isShared = !!c && c.status === 2;
+        /* 两个配额分开的意义：自领码一人一码，10 次 / 15 分钟绰绰有余；
+           公用码是「一群人同一会儿进门」，同个出口 IP（学校 / 公司 /
+           同一处 WiFi）十几个人一起来就把严桶撞爆了，第 11 个人看到的
+           是「操作太频繁」而不是进门。公用码本就公开，这里只是减速带。 */
+        if (!(await rateHit(env, 'rl:act:' + ipOf(request), isShared ? 40 : 10))) {
+          return j({ ok: false, message: '操作太频繁了，歇会儿再来' }, 429);
+        }
+        if (!c || (c.status !== 1 && !isShared)) return j({ ok: false, message: '激活码不对' }, 404);
+        if (!isShared && c.used_by) return j({ ok: false, message: '这个激活码已经被用过了（一码一人）' }, 409);
+        if (!isShared && c.qq !== qq) return j({ ok: false, message: '这个码是发给另一个 QQ 号的，去发码页核对' }, 403);
         if (await env.DB.prepare('SELECT id FROM users WHERE qq = ?').bind(qq).first()) {
           return j({ ok: false, message: '这个 QQ 号已经激活过，直接登录就行' }, 409);
         }
@@ -532,7 +554,12 @@ export default {
         await env.DB.prepare(
           'INSERT INTO users (id, qq, salt, hash, created_at, status) VALUES (?,?,?,?,?,1)')
           .bind(uid, qq, salt, hash, Date.now()).run();
-        await env.DB.prepare('UPDATE codes SET used_by = ? WHERE code = ?').bind(uid, code).run();
+        /* 公用码不被「一码一人」消耗掉 —— 它本来就是给一批人反复领的。
+           关门办法：把那行 codes.status 置 0（已经进门的人不受影响，
+           他们的 user 行和 session 都还在）。 */
+        if (!isShared) {
+          await env.DB.prepare('UPDATE codes SET used_by = ? WHERE code = ?').bind(uid, code).run();
+        }
         const devId = 'd-' + crypto.randomUUID().slice(0, 16);
         await env.DB.prepare(
           'INSERT INTO devices (id, user_id, install_id, ua, created_at, last_seen, status) VALUES (?,?,?,?,?,?,1)')

@@ -16975,7 +16975,9 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v256（2026-10-23 深夜）：站内静态图片进安装期预热 —— sw.js 变了
    （warmShell 拆出 warmUrls / warmInlineAssets，art/ 的图从此能离线取到）。
    基准随批 v255 → v256。 */
-const EXPECTED_SW_CACHE = 'sleepy-v256';
+/* v257（2026-10-23 深夜）：内测一键进门 —— page-license.js / style.css 变了。
+   基准随批 v256 → v257。 */
+const EXPECTED_SW_CACHE = 'sleepy-v257';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -18124,7 +18126,45 @@ t('账密系统：激活→登录→设备上限→解绑→改密→注销 全�
     throw new Error('发码页没有营业口令输入位');
   }
 
-  return { 发码: '口令闸生效', 激活: '一码一人', 设备: '3 台上限+解绑腾位', 会话: '空闲 30 天过期', 改密: '新旧切换通', 防撞库: '5 次 429', 注销: '全灭+脱敏' };
+  /* ---- 9. 公用码（codes.status = 2，内测「一键进门」用，2026-10-23 深夜）----
+     要验证的口径是「凭证共用、身份各归各」：同一个码谁都能拿来领号，
+     但 users.qq 的唯一索引一步不让 ⇒ 每个人是**自己独占的一行 user**。
+     这条塌了就退化成「陌生人共用一个 uid」两个坑：3 台设备名额互相挤占、
+     revoke / 改密 / 注销都只按 session.uid 鉴权而互相可操作。
+     期望文案硬写（不许从被测常量反抄 —— 两边一起变就假绿了）。 */
+  T.codes.push({ code: 'SLP-BETA', qq: 'beta-public', issued_at: Date.now(), status: 2 });
+  const actBeta = (qq, inst) => call('/account/activate', { method: 'POST',
+    body: JSON.stringify({ code: 'SLP-BETA', qq: qq, pass: 'beta-pass', installId: inst, ua: 'Beta/' + inst }) });
+  const b1 = await actBeta('20000001', 'inst-b1');
+  if (!b1.ok || !b1.token) throw new Error('公用码第一个人领号失败：' + JSON.stringify(b1));
+  const b2 = await actBeta('20000002', 'inst-b2');
+  if (!b2.ok || !b2.token) throw new Error('公用码第二个人领号失败（码被消耗掉了？）：' + JSON.stringify(b2));
+  if (b1.token === b2.token) throw new Error('两个人拿到同一个会话 —— 身份没分开');
+  const uShared = T.users.filter((u) => String(u.qq) === '20000001' || String(u.qq) === '20000002').length;
+  if (uShared !== 2) throw new Error('公用码该给每人各一行 user，实到 ' + uShared);
+  /* 同一个 QQ 换个设备再领一次 → users.qq 唯一必须挡住 */
+  const b3 = await actBeta('20000001', 'inst-b3');
+  if (b3.ok !== false || b3.message.indexOf('已经激活过') < 0) {
+    throw new Error('同 QQ 二次领必须 409：' + JSON.stringify(b3));
+  }
+  /* 公用码不许被写上 used_by —— 写了第二个人起就领不到 */
+  const sharedRow = T.codes.find((c) => c.code === 'SLP-BETA');
+  if (sharedRow.used_by) throw new Error('公用码被写上了 used_by：' + sharedRow.used_by);
+  /* 关门路径：云端把这行码作废后必须立刻领不了 —— 前端删干净而云端没作废
+     等于给知道字面值的人留了后门（整段下线清单里最关键的一处）。 */
+  sharedRow.status = 0;
+  const b4 = await actBeta('20000009', 'inst-b4');
+  if (b4.ok !== false || b4.message.indexOf('激活码不对') < 0) {
+    throw new Error('公用码作废后必须领不了号：' + JSON.stringify(b4));
+  }
+  /* 负向对照：公用码这条新分支不许把普通码的路径放松 —— 普通码用过就该有
+     used_by（一码一人照旧）。 */
+  const usedRow = T.codes.find((c) => c.code === c1.code);
+  if (!usedRow || !usedRow.used_by) {
+    throw new Error('普通码的「一码一人」被公用码分支放松了：' + JSON.stringify(usedRow));
+  }
+
+  return { 发码: '口令闸生效', 激活: '一码一人', 设备: '3 台上限+解绑腾位', 会话: '空闲 30 天过期', 改密: '新旧切换通', 防撞库: '5 次 429', 注销: '全灭+脱敏', 公用码: '凭证共用 / 身份各归各' };
 });
 
 t('P0-2 回归：repo-core.postComment 走通请求 —— 带铺子昵称、失败回 ok:false 可重发', async () => {
