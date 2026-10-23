@@ -203,11 +203,23 @@
         user.push('[EXIST]\n' + (APP_LABEL_OF[opts.appOnly] || opts.appOnly) +
           '里已有的条目（不要重复，要新的东西）：\n' + exist.join('\n'));
       }
-      user.push('请按输出协议产出这个 App 的新内容（最多 3 条 deltas；没有合理的就返回空 deltas）。');
+      /* 2026-10-23 用户点名：手动刷新必须出东西 —— 「没有合理的就返回空」
+         是模型偷懒的出口（真机连点全弹「没有新动静」）。单 App 刷新改成
+         硬性 1～3 条；实在想不出大事就写他今天最可能做的小事。
+         整段结算（else 分支）仍允许空 —— 那是后台自动跑，不该硬凑。 */
+      user.push('请按输出协议产出这个 App 的新内容（**必须给出 1～3 条 deltas，禁止返回空 deltas** —— ' +
+        '这是 user 手动点的刷新，一定要有新东西；想不出大事，就写他今天最可能做的一件小事）。');
+      if (opts.nudge) {
+        user.push('[RETRY]\n上一轮你返回了空 deltas（或全部无效），已被退回。这一轮**必须**给出 1～3 条能落地的 deltas。');
+      }
     } else {
       user.push(opts.mode === 'bootstrap'
         ? (BOOTSTRAP_ASK[opts.level] || BOOTSTRAP_ASK.light)
         : '请按输出协议结算这段时间的生活（没有合理内容就返回空 deltas）。');
+      if (opts.nudge) {
+        user.push('[RETRY]\n上一轮你返回了空 deltas（或全部无效），已被退回。这一轮**必须**给出 1～3 条能落地的 deltas —— ' +
+          '从这段时间里他最可能做的小事里挑着写，不许再返回空。');
+      }
     }
 
     return [
@@ -232,7 +244,12 @@
     if (!APP_FOCUS_ASK[appKey]) {
       return Promise.resolve({ ok: false, error: '这个 App 还不支持单独刷新' });
     }
-    return settle(sbId, charId, { appOnly: appKey });
+    /* 2026-10-23 用户点名「只要刷新就要有新东西」：空手由 settle 内部
+       （force）自动补写一轮；解析失败在这外面再补一轮。 */
+    return settle(sbId, charId, { appOnly: appKey, force: true }).then(function (r) {
+      if (!(!r.ok && /解析失败/.test(r.error || ''))) return r;
+      return settle(sbId, charId, { appOnly: appKey, nudge: true });
+    });
   }
 
   function settle(sbId, charId, opts) {
@@ -251,6 +268,7 @@
       mode: opts.mode,
       level: opts.level,          /* 底片档位（light / rich），别在这儿丢掉 */
       appOnly: opts.appOnly,      /* 单 App 刷新（各 App 页的刷新按钮） */
+      nudge: opts.nudge,          /* 空手退回后的补写轮（2026-10-23） */
       from: opts.mode === 'bootstrap' ? null : from
     });
     var runId = 'run_' + Date.now().toString(36);
@@ -285,6 +303,16 @@
       /* 顺手把可检测痕迹标记为「他已可能发现」—— 消费端在聊天注入槽 */
       var detected = phone.markDetected(ph.id);
       store.set('phoneRawFail:' + charId, null);
+      /* 2026-10-23 用户点名「只要刷新就要有新东西」：手动刷新（force）空手
+         而归时自动补写一轮（[RETRY] 退回指令）。bootstrap 不递归（幂等门禁
+         在上面已经 completed 拦过）；补写轮 force 不传 —— 两轮都空就如实
+         回给页面，不无限烧调用。 */
+      if (opts.force && !opts.nudge && opts.mode !== 'bootstrap' &&
+          r.ok && stat.applied === 0) {
+        return settle(sbId, charId, {
+          appOnly: opts.appOnly, nudge: true
+        });
+      }
       return { ok: true, stat: stat, detected: detected };
     });
   }

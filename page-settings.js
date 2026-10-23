@@ -217,8 +217,8 @@
          行要留引用：从它们的配置页回来时 badge 得跟着变（见 refreshSummary）。 */
       var capRows = {};
       [
-        { label: '向量记忆 API', hint: '2.13 填 embedding 模型，不是对话模型', kind: 'vector' },
-        { label: '总结 API', hint: '2.14 便宜模型跑记忆抽取', kind: 'summary' }
+        { label: '向量记忆 API', hint: '填 embedding 模型，不是对话模型', kind: 'vector' },
+        { label: '总结 API', hint: '便宜模型跑记忆抽取', kind: 'summary' }
       ].forEach(function (c) {
         var cfg = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(c.kind) : null;
         capRows[c.kind] = row({
@@ -286,9 +286,10 @@
       body.appendChild(g4.wrap);
 
       var g5 = group('其他');
-      /* 我的授权（账密系统 v2，2026-10-21）：原来 2.19 的占位行接上了真页面 ——
-         激活 / 登录 / 设备管理都在 page-license（发码页在 worker 域名，App 内不放）。 */
-      var licRow = row({ label: '激活与设备', hint: '激活码 · 换设备登录 · 设备管理' });
+      /* 我的授权（账密系统 v2，2026-10-21；2026-10-23 起进门先过授权闸）——
+         能走到设置页说明已激活，这页只剩管理：改密 / 设备 / 注销
+         （激活 / 登录表单只活在启动闸上，page-license 两处共用一份）。 */
+      var licRow = row({ label: '我的授权', hint: '改密码 · 设备管理 · 注销' });
       licRow.disabled = false;
       licRow.classList.remove('is-soon');
       licRow.addEventListener('click', function () { ctx.open('license'); });
@@ -319,7 +320,7 @@
          面向用户后内置 prompt 上锁，这个开关是唯一的解锁口 ——
          所以它不能像普通开关一样摆在明面上（用户：「隐蔽一些qwq」）。
          row() 不带 onClick 会把自己 disabled 掉，这里手动解开再挂事件。 */
-      var aboutRow = row({ label: '关于 Sleepy', hint: '2.18 版本 · 更新日志' });
+      var aboutRow = row({ label: '关于 Sleepy', hint: '版本 · 更新日志' });
       aboutRow.disabled = false;
       aboutRow.classList.remove('is-soon');
       var devTaps = 0, devTimer = null;

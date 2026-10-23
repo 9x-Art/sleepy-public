@@ -5842,6 +5842,12 @@ span.msg-avatar-initial{
 .me-av.has-img,.mtb-mini.has-img,.cs-ava.has-img,.contact-av.has-img{
   color:transparent;background-size:cover;background-position:center;
 }
+/* 默认幽灵头像（2026-10-23）：没头像的角色/用户由 core.setAvatarBg 落
+   art/ 幽灵图并挂 is-default-ava —— 首字必须隐身（跟 has-img 同口径），
+   不然「首字压在幽灵脸上」。新上下文哪怕漏登 has-img 串，这条也兜底。 */
+.is-default-ava{
+  color:transparent;background-size:cover;background-position:center;
+}
 .addr-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
 .addr-name-line{display:flex;align-items:center;gap:7px;}
 .addr-name{font-size:14.5px;color:var(--text);}
@@ -15654,4 +15660,52 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 @media (min-width: 720px){
   .legal-card{ width:min(460px, 62%); max-height:min(80vh, 660px); }
   .legal-body{ max-height:min(60dvh, 520px); }
+}
+
+/* ==================== 启动授权闸（page-license.js · Sleepy.licenseGate）
+   2026-10-23：账密系统接进 bootHome —— 进门先过授权，桌面不挂。
+   画在 home 位（全屏 section），复用 set-group 系表单样式，只补门面壳。 */
+.license-gate{
+  min-height:100dvh;
+  box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:32px 24px 40px;
+  max-width:460px;
+  margin:0 auto;
+}
+.license-gate-brand{
+  margin:0 4px;
+  font-size:26px;
+  font-weight:700;
+  letter-spacing:.5px;
+  color:var(--amber);
+}
+.license-gate-sub{
+  margin:6px 4px 18px;
+  font-size:13px;
+  color:var(--text-faint);
+}
+.license-gate-note{
+  margin:0 4px 22px;
+  font-size:11px;
+  line-height:1.7;
+  color:var(--text-faint);
+  padding:10px 12px;
+  background:var(--g-accent-pale);
+  border-radius:12px;
+}
+/* 步间切换入口（2026-10-23 晚：门面改分步出 —— 一次只看一步） */
+.license-gate-switch{
+  margin:14px 4px 0;
+  font-size:12px;
+  color:var(--text-faint);
+  text-align:center;
+}
+.license-gate-switch-btn{
+  color:var(--amber);
+  text-decoration:underline;
+  text-underline-offset:3px;
+  cursor:pointer;
 }

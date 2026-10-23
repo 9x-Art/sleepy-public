@@ -200,6 +200,12 @@ const DOC_SEL = Object.create(null);
 /* ------------------------ localStorage 桩 ------------------------ */
 
 const LS = Object.create(null);
+/* v254 授权闸接进启动链：脚本加载期 page-chat-settings.js 末尾就会点一次
+   bootHome —— 未激活时闸挂门面、桌面不渲染，`desktop` 存档就不会被播种，
+   一大票依赖默认户型的用例（deskCfg 岛覆盖等）会集体连锁塌。
+   预置一份宽限内的激活态，让加载期点火走「已过闸」路径（等同已激活用户
+   开 App）。license 本身的行为由后面的授权闸/账密用例专门测。 */
+LS['sleepy.v1.license'] = JSON.stringify({ token: 'tok-smoke', qq: '1234', lastVerifiedAt: Date.now() });
 const localStorageStub = {
   get length() { return Object.keys(LS).length; },
   key(i) { return Object.keys(LS)[i] === undefined ? null : Object.keys(LS)[i]; },
@@ -4236,6 +4242,8 @@ t('setBarrier 撕障壁真的落盘（快照就地改，不是改深拷贝）', 
 });
 
 console.log('\n--- home 基底页渲染 ---');
+/* 激活态已在脚本加载前预置（见 LS 桩处），加载期点火就是「已过闸」路径，
+   桌面在 page-chat-settings.js 加载末尾就已挂上 —— 这里只是复验。 */
 /* home 不走页面栈，它的 render 必须有人主动点火（见 app.js 的 Sleepy.bootHome）。
    曾经漏掉点火：首页 section 永远空、但状态栏时钟照常走，很难一眼定位。 */
 t('bootHome 能跑通并返回 true', () => {
@@ -4263,6 +4271,8 @@ t('系统级切号入口还在（Sleepy.switcher.open）', () => {
   if (typeof S.switcher.open !== 'function') throw new Error('switcher.open 缺失 —— 系统级切号入口没了');
   return { open: true, close: typeof S.switcher.close === 'function' };
 });
+/* home 块测完，把种下的激活态复位（后面的账密/闸用例自己管 license） */
+S.store.set('license', null);
 
 console.log('\n--- photos:照片数据层 ---');
 t('photos.all() 空相册返回数组', () => {
@@ -16959,7 +16969,13 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v253（2026-10-22 晚）：workers 子域去 QQ 化 —— repo-core.js（DEFAULT_BASE
    换 sleepy-goodluck.workers.dev）/ sw.js / scripts/smoke.js 都变了。
    基准随批 v252 → v253。 */
-const EXPECTED_SW_CACHE = 'sleepy-v253';
+/* v254（2026-10-23）：授权闸接进启动链 —— app.js / repo-core.js /
+   page-license.js / page-settings.js / style.css 都变了。
+   基准随批 v253 → v254。 */
+/* v256（2026-10-23 深夜）：站内静态图片进安装期预热 —— sw.js 变了
+   （warmShell 拆出 warmUrls / warmInlineAssets，art/ 的图从此能离线取到）。
+   基准随批 v255 → v256。 */
+const EXPECTED_SW_CACHE = 'sleepy-v256';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -18153,6 +18169,57 @@ t('P0-2 静态护栏：席间两处发送点，同步异常也必须恢复按钮
   }
   if (sites !== 2) throw new Error('席间发送点应为 2 处（弹层 + 席间条），实到 ' + sites);
   return { 发送点: sites, 兜底: 'catch 恢复按钮' };
+});
+
+/* ==================== 授权闸（账密系统 v2 · 2026-10-23 接进启动链） ==================== */
+
+t('授权闸三态：licenseGateState —— none / ok / expired（7 天宽限）', () => {
+  if (typeof S.repo.licenseGateState !== 'function') throw new Error('repo.licenseGateState 未导出');
+  /* 期望值硬写：宽限 = 7 天（方案-账密系统-v1.md P1 口径），不从被测常量反抄 */
+  const DAY = 24 * 3600 * 1000;
+  S.store.set('license', null);
+  if (S.repo.licenseGateState() !== 'none') throw new Error('没激活应判 none，实到 ' + S.repo.licenseGateState());
+  S.store.set('license', { token: 'tok-smoke', qq: '1234', lastVerifiedAt: Date.now() - 6 * DAY });
+  if (S.repo.licenseGateState() !== 'ok') throw new Error('6 天前核对过应放行（宽限内），实到 ' + S.repo.licenseGateState());
+  S.store.set('license', { token: 'tok-smoke', qq: '1234', lastVerifiedAt: Date.now() - 8 * DAY });
+  if (S.repo.licenseGateState() !== 'expired') throw new Error('8 天没核对应判 expired，实到 ' + S.repo.licenseGateState());
+  S.store.set('license', null);
+  return { 三态: 'none/ok/expired', 宽限: '7 天硬写' };
+});
+
+t('授权闸装配：bootHome 先过闸再挂桌面 + 表单一份两用', () => {
+  const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  const gateIdx = appSrc.indexOf('Sleepy.licenseGate.state()');
+  /* 桌面 render 的定位要从闸的位置往后找：app.js 里还有别处（页面栈挂载）
+     也调 def.render(ctx)，全局 indexOf 会命中更早的那处，判据就失真了。 */
+  const renderIdx = appSrc.indexOf('def.render(ctx)', gateIdx);
+  if (gateIdx < 0) throw new Error('bootHome 里没有授权闸调用（账密没接进启动链）');
+  if (renderIdx < 0) throw new Error('授权闸后面没有桌面 render（先过闸再进门）');
+  if (appSrc.indexOf('缺席，本次放行') < 0) throw new Error('闸缺席时必须放行（闸自己挂了不能锁死所有人）');
+  if (appSrc.indexOf('Sleepy.bootHome.force = function') < 0) throw new Error('bootHome.force 没定义（repaint 保底和闸过审重进都要它）');
+  const licSrc = fs.readFileSync(path.join(ROOT, 'page-license.js'), 'utf8');
+  if (typeof S.licenseGate !== 'object' || typeof S.licenseGate.mount !== 'function') {
+    throw new Error('Sleepy.licenseGate 未导出（state/mount）');
+  }
+  /* 表单一份两用（2026-10-23 晚改分步）：激活/登录各自一个 build 函数
+     （各 1 处定义），设置页 renderGuest 走 buildGuestForms 拼 2 处调用
+     + buildGuestForms 自身定义 = 4 处出现；启动闸分步直接调两个 build
+     （gate 步切换各 1 处）= 各再 +1。 */
+  let nAct = 0, i2 = licSrc.indexOf('buildActivateForm(');
+  while (i2 >= 0) { nAct++; i2 = licSrc.indexOf('buildActivateForm(', i2 + 1); }
+  if (nAct !== 3) throw new Error('激活表单应一份两用（定义+设置页拼装+闸步=3），实到 ' + nAct);
+  let nIn = 0, i3 = licSrc.indexOf('buildLoginForm(');
+  while (i3 >= 0) { nIn++; i3 = licSrc.indexOf('buildLoginForm(', i3 + 1); }
+  if (nIn !== 3) throw new Error('登录表单应一份两用（定义+设置页拼装+闸步=3），实到 ' + nIn);
+  /* 闸是分步的：一次只出一块表单，默认第一步激活 */
+  if (licSrc.indexOf("show('activate')") < 0) throw new Error('启动闸没有分步（默认应先出激活）');
+  if (licSrc.indexOf('license-gate-switch') < 0) throw new Error('分步切换入口没挂（登录步得有路回来）');
+  /* 注册→登录流程：激活成功只切到登录步，onPass 只能挂在登录步上 ——
+     激活步的 onSuccess 必须是 show('login')，不是 onPass（用户 2026-10-23 晚口径）。 */
+  if (licSrc.indexOf("onSuccess: function () { show('login'); }") < 0) {
+    throw new Error('激活成功没转登录步（应像注册→登录：设完密码再登录一次才进门）');
+  }
+  return { 闸序: 'gate→render', 表单复用: '激活x' + nAct + ' 登录x' + nIn, 分步: '激活→登录→进门' };
 });
 
 if (asyncPending > 0) {

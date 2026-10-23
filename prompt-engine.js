@@ -628,6 +628,7 @@
     '正文之后必须附带一条完整的 [WHISPER]…[/WHISPER]。',
     '心声：',
     '心声不超过 40 字，呈现角色当下的简短内心感受或念头，不输出模型内部推理。不要求刻意制造表里反差，与人物及当前经历保持一致。',
+    '心声是每条回复的固定组成部分，不是可选项：无论正文长短、气泡多少，漏写 [WHISPER] 就是没有完成任务（2026-10-23 用户真机反馈：五轮里漏了四轮）。',
     '其他已启用内容：',
     '本轮若提供译文或其他能力的输出说明，按对应说明使用其标记及位置；本节不取消这些契约，也不授权未提供的能力。'
   ].join('\n');
@@ -2747,9 +2748,19 @@
     return 0;
   }
 
+  /* 2026-10-23 用户真机：气泡里直接显示 [21:30] 这种时间戳 —— 模型模仿
+     历史行内戳（histStamp 给历史每行加 [钟点] 前缀防时间漂移），有样学样
+     把戳也写进自己的回复。这里在解析层剥掉**长得确实像戳**的开头段
+     （只认钟点/昨天/日期三种形态，别把 [拍一拍:…] [灯:…] 这类能力标签
+     误伤 —— 它们各有自己的处理器，形态都不匹配这里的白名单）。 */
+  var STAMP_IMITATION_RE = /(^|\|\|)\s*\[(?:\d{1,2}:\d{2}(?::\d{2})?|昨天 \d{1,2}:\d{2}|\d{4}年\d{1,2}月\d{1,2}日(?: \d{1,2}:\d{2})?|\d{1,2}月\d{1,2}日(?: \d{1,2}:\d{2})?)\]\s*/g;
+  function stripStampImitation(text) {
+    return String(text || '').replace(STAMP_IMITATION_RE, '$1');
+  }
+
   function parseReply(raw) {
     var pre = extractInspect(raw);          /* 自察先剥（在 [WHISPER] 之前出现） */
-    var text = pre.text;
+    var text = stripStampImitation(pre.text);
 
     var iNew = text.indexOf(OPEN_NEW);
     var iOld = text.indexOf(OPEN_OLD);

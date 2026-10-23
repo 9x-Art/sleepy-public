@@ -590,42 +590,10 @@
         }
         body.appendChild(g1.wrap);
 
-        /* ---- App 入口 ----
-           不是组件：它们是「点开去某个页」的格子，归桌面编辑态管，
-           橱窗只提供「加一个入口」，不给移除（避免跟编辑态两处账）。 */
-        var apps = catalog().filter(function (c) { return c.type === 'app'; });
-        var g4 = group('App 入口', '点开去对应页的格子，跟组件分开管。');
-        apps.forEach(function (c) {
-          g4.card.appendChild(row({
-            label: c.label || c.app,
-            hint: 'App 入口',
-            value: (c.w || 1) + '×' + (c.h || 1),
-            onClick: function () {
-              var res = addWidget(c);
-              if (!res.ok) { ctx.toast(res.message, 'warn'); return; }
-              ctx.toast('摆到第 ' + (res.page + 1) + ' 屏了', 'ok');
-              paint();
-            }
-          }));
-        });
-        body.appendChild(g4.wrap);
-
-        /* ---- 现状 ---- */
-        var g3 = group('现在桌面上', '');
-        g3.card.appendChild(row({
-          label: '组件总数',
-          value: countOnDesktop() + ' 个'
-        }));
-        g3.card.appendChild(row({
-          label: '户型版本',
-          value: 'v' + (Sleepy.desktop.LAYOUT_VERSION || '?'),
-          hint: '版本升级会补齐新组件，保留你摆过的位置'
-        }));
-        body.appendChild(g3.wrap);
-
-        body.appendChild(h('p', 'set-foot',
-          '施工单（docs/施工卡-组件商城-v1.md）：简单砖 / 拍立得 / 慢递信箱 /' +
-          ' 华容道 / 今日一签 / 自定义模板组件按批上架，做完一件亮一件。'));
+        /* ---- App 入口组 / 「现在桌面上」现状块已删（2026-10-23 用户点名）----
+           外观页已经能「加到桌面 / 移除」，商城的 App 入口组只有加没有
+           移除，跟外观两处账；组件总数 / 户型版本是纯展示。两块连同
+           施工单页脚一起删，商城只留组件货架（g1 及以下）+ 自制组件。 */
       }
 
       paint();

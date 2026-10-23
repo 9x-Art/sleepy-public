@@ -953,6 +953,26 @@
       return false;
     }
 
+    /* 授权闸（账密系统 v2，2026-10-23）：进门先过授权 —— 账密是进入 sleepy
+       的门槛，不是进去后在设置里补填的。未激活（none）或离线宽限 7 天过期
+       （expired）时桌面不挂，把 page-license 的 licenseGate 画在 home 位，
+       激活/登录成功回调 onPass → bootHome.force() 重进。
+       判定唯一出处 repo.licenseGateState()。
+       page-license.js 排在点火脚本之前正常必已就位；万一缺席则放行并
+       console 一条 —— 闸自己挂了不能把所有人锁在门外。 */
+    if (!Sleepy.licenseGate) {
+      console.warn('[sleepy] license gate 缺席，本次放行');
+    } else if (Sleepy.licenseGate.state() !== 'ok') {
+      home.classList.add('is-active');
+      Sleepy.licenseGate.mount(home, function () { Sleepy.bootHome.force(); });
+      homeMounted = true;
+      return true;
+    } else {
+      /* 已过闸：后台静默核对一次刷 lastVerifiedAt（宽限计时起点）。
+         失败不卡人、不提示 —— 断网走宽限，这是 7 天宽限的本意。 */
+      try { Sleepy.repo.licenseMe(function () {}); } catch (e) { /* 静默 */ }
+    }
+
     /* 首页的 body 就是 section 本身（它不需要 .page-inner / .app-head 那套
        标题栏外壳 —— 桌面要占满整屏）。 */
     home.classList.add('is-active');
@@ -994,6 +1014,15 @@
     /* 别的文件（page-switch.js）要给首页的 render 包一层，需要拿到 ctx */
     Sleepy.__homeCtx = ctx;
     return true;
+  };
+
+  /* 重进：授权闸过审 / 桌面需要整块重建时用（force 后 homeMounted 复位，
+     bootHome 重走一遍）。repaint 的保底实现一直引用着这个 force 但从来没
+     人定义过（一调就炸）—— 2026-10-23 随授权闸一起补上真身。 */
+  Sleepy.bootHome.force = function () {
+    homeMounted = false;
+    if (home) home.innerHTML = '';
+    Sleepy.bootHome();
   };
 
   relayout();

@@ -952,12 +952,16 @@
           refresh.disabled = true;
           refresh.classList.add('is-spin');
           ctx.toast('正在翻他最近的生活…', 'ok');
-          Sleepy.phoneAI.settle(sb.id, ownerId).then(function (r) {
+          Sleepy.phoneAI.settle(sb.id, ownerId, { force: true }).then(function (r) {
             paint();
+            refresh.disabled = false;
+            refresh.classList.remove('is-spin');
             if (r.ok && r.stat && r.stat.applied > 0) {
               ctx.toast('他的生活往前走了一点（' + r.stat.applied + ' 条新痕迹）', 'ok');
             } else if (r.ok) {
-              ctx.toast('这段日子没什么新事情发生', 'ok');
+              /* 2026-10-23：手动刷新已带一轮自动补写，两轮都空才到这里 ——
+                 如实说 + 给下一步（顺手修：原来不恢复按钮，转圈卡死）。 */
+              ctx.toast('模型两轮都没写出新东西，稍后再刷新一次试试', 'warn');
             } else {
               ctx.toast(r.reason || r.error || '没刷新出来', 'warn');
             }
@@ -1131,10 +1135,17 @@
             ctx.toast('正在写「' + (APP_LABEL[curApp] || '') + '」的新动静…', 'ok');
             Sleepy.phoneAI.refreshApp(sb.id, ownerId, curApp).then(function (r) {
               paint();
+              appRefresh.disabled = false;
+              appRefresh.classList.remove('is-spin');
               if (r.ok && r.stat && r.stat.applied > 0) {
                 ctx.toast('「' + (APP_LABEL[curApp] || '') + '」多了 ' + r.stat.applied + ' 条', 'ok');
               } else if (r.ok) {
-                ctx.toast('这里暂时没有新动静', 'ok');
+                /* 2026-10-23：刷新链已带一轮自动补写，到这里是两轮都没落成 ——
+                   如实说 + 给下一步，别再甩一句「没有新动静」让人以为是对的。
+                   （顺手修：原来失败也不恢复按钮，转圈卡死。） */
+                ctx.toast((r.stat && r.stat.dropped > 0)
+                  ? '模型写了 ' + r.stat.dropped + ' 条但都没过校验，再点一次刷新试试'
+                  : '模型两轮都没写出新东西，稍后再刷新一次试试', 'warn');
               } else {
                 ctx.toast(r.reason || r.error || '没刷新出来', 'warn');
               }

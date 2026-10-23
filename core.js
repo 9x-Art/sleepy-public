@@ -1663,21 +1663,43 @@
     return Promise.resolve((rec && rec.avatar) || '');
   }
 
+  /* 无头像角色的默认头像（2026-10-23，AI 生成的幽灵贴纸）：
+     char = 戴睡帽抱枕头的幽灵（art/avatar-ghost-char.png）；
+     user = 打哈欠揉眼睛的幽灵（art/avatar-ghost-user.png）。
+     判别用 rec.kind（main/sub/npc = 角色记录）—— 别看 id 前缀猜，
+     本文件的老红线：两种 id 在不同命名空间里，前缀不可靠。 */
+  var DEFAULT_AVA_CHAR = 'art/avatar-ghost-char.png';
+  var DEFAULT_AVA_USER = 'art/avatar-ghost-user.png';
+  function defaultAvatarFor(rec) {
+    return (rec && (rec.kind === 'main' || rec.kind === 'sub' || rec.kind === 'npc'))
+      ? DEFAULT_AVA_CHAR : DEFAULT_AVA_USER;
+  }
+
   /* 背景图式头像（.addr-av / .chat-item-ava / 朋友圈这一类）。
      has-img 类由这里加 —— 以前是渲染点同步判 rec.avatar 加的，
-     本地图是异步取的，得等 url 回来再加。 */
+     本地图是异步取的，得等 url 回来再加。
+     2026-10-23：没头像不再回落「首字 + 暖色块」—— 落默认幽灵头像
+     （is-default-ava 类让首字隐身，见 style.css），user 看不爽自己换。 */
   function setAvatarBg(el, rec) {
     return avatarSrc(rec).then(function (u) {
-      if (!u || !el) return;
+      if (!el) return;
+      if (!u) {
+        el.classList.add('has-img', 'is-default-ava');
+        el.style.backgroundImage = 'url("' + defaultAvatarFor(rec) + '")';
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center';
+        return;
+      }
       el.classList.add('has-img');
       el.style.backgroundImage = 'url("' + String(u).replace(/"/g, '%22') + '")';
     });
   }
 
-  /* <img> 式头像（tile / 桌面 / 查手机这一类） */
+  /* <img> 式头像（tile / 桌面 / 查手机这一类）—— 同样落默认幽灵 */
   function setAvatarImg(img, rec) {
     return avatarSrc(rec).then(function (u) {
-      if (u && img) img.src = u;
+      if (!img) return;
+      img.src = u || defaultAvatarFor(rec);
     });
   }
 

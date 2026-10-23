@@ -886,6 +886,19 @@
   function licGet() { return get('license', null) || null; }
   function licSet(v) { set('license', v || null); }
 
+  /* 授权闸判定（2026-10-23 接进启动链）：常量必须排在所有使用点之前。
+     none = 没激活过；expired = 激活过但超过宽限没核对上；ok = 放行。
+     宽限的意义：正版用户断网不关门外 —— 只要 7 天内核对过一次就能进。 */
+  var LICENSE_GRACE_MS = 7 * 24 * 3600 * 1000;
+
+  function licGateState() {
+    var lic = licGet();
+    if (!lic || !lic.token) return 'none';
+    if (!lic.lastVerifiedAt || Date.now() - Number(lic.lastVerifiedAt) > LICENSE_GRACE_MS) return 'expired';
+    return 'ok';
+  }
+
+
   function licRequest(path, method, body, cb) {
     var lic = licGet();
     var headers = { 'Content-Type': 'application/json' };
@@ -998,6 +1011,7 @@
     importIsland: importIsland,
     /* 授权层（账密系统 v2） */
     license: licGet,
+    licenseGateState: licGateState,
     licenseActivate: licActivate,
     licenseLogin: licLogin,
     licenseLogout: licLogout,

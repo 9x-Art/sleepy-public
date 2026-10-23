@@ -6,8 +6,10 @@
    · 已激活：状态卡（QQ 尾号 / 设备数 / 最近校验）+ 设备管理（解绑）+ 改密 + 注销
    纪律：本页只碰「授权」—— 不含任何备份/同步逻辑（账号与存储解耦）。
 
-   内测期不设强闸：这里只建层与校验，App 可用性不被授权拦（lastVerifiedAt
-   已在刷，将来转首发开强制闸时直接用）。
+   内测期不设强闸的口径已更新（2026-10-23）：**授权闸已接进启动链** ——
+   app.js 的 bootHome 先看 repo.licenseGateState()，不是 ok 就把本文件的
+   licenseGate 画在 home 位，过审才挂桌面。设置里的 license 页退化成
+   「已激活后的管理页」（改密 / 设备 / 注销），激活/登录表单只活在闸上。
    ============================================================ */
 (function (global) {
   'use strict';
@@ -31,6 +33,69 @@
       String(d.getMinutes()).padStart(2, '0');
   }
 
+  /* 激活 / 登录表单 —— 门面（启动闸）和设置页共用这一份（逻辑只写一份）。
+     hooks.toast(msg, kind) 弹提示；hooks.onSuccess() 在激活/登录成功后回调
+     （闸 → 放行重进；设置页 → 重建回已激活视图）。
+     两个 build 各自返回一个 .set-group；buildGuestForms 是设置页用的
+     「两块叠着」拼法。启动闸走分步（一次只出一块），见文件尾 mount。 */
+  function buildActivateForm(hooks) {
+    var gAct = h('div', 'set-group');
+    gAct.appendChild(h('p', 'set-group-title', '激活'));
+    var fCode = ui.textField({ label: '激活码', placeholder: 'SLP-…（发码页领的）' });
+    var fQQ = ui.textField({ label: 'QQ 号', placeholder: '领码时登记的那个', inputmode: 'numeric' });
+    var fPass = ui.textField({ label: '设置密码（至少 6 位）', password: true });
+    var fPass2 = ui.textField({ label: '再输一遍密码', password: true });
+    [fCode, fQQ, fPass, fPass2].forEach(function (f) { gAct.appendChild(f.el); });
+    gAct.appendChild(ui.button('激活', 'primary', function () {
+      var code = fCode.get().trim().toUpperCase();
+      var qq = fQQ.get().trim();
+      var p1 = fPass.get(), p2 = fPass2.get();
+      if (!code || !qq) { hooks.toast('激活码和 QQ 号都要填', 'warn'); return; }
+      if (p1.length < 6) { hooks.toast('密码至少 6 位', 'warn'); return; }
+      if (p1 !== p2) { hooks.toast('两次密码不一样', 'warn'); return; }
+      hooks.toast('正在激活…');
+      repo.licenseActivate(code, qq, p1, function (r) {
+        if (r.ok) { hooks.toast('激活好了', 'ok'); hooks.onSuccess(); }
+        else hooks.toast(r.message || '没激活成', 'warn');
+      });
+    }));
+    return gAct;
+  }
+
+  function buildLoginForm(hooks) {
+    /* 登录（换设备来的） */
+    var gIn = h('div', 'set-group');
+    gIn.appendChild(h('p', 'set-group-title', '登录（换设备 / 重新登录）'));
+    var lQQ = ui.textField({ label: 'QQ 号', inputmode: 'numeric' });
+    var lPass = ui.textField({ label: '密码', password: true });
+    gIn.appendChild(lQQ.el);
+    gIn.appendChild(lPass.el);
+    gIn.appendChild(ui.button('登录', 'ghost', function () {
+      var qq = lQQ.get().trim(), p = lPass.get();
+      if (!qq || !p) { hooks.toast('QQ 号和密码都要填', 'warn'); return; }
+      hooks.toast('正在登录…');
+      repo.licenseLogin(qq, p, function (r) {
+        if (r.ok) { hooks.toast('登录好了', 'ok'); hooks.onSuccess(); }
+        else if (r.status === 403 && r.devices && r.devices.length) {
+          /* 设备满 3 台：把清单念出来 + 指去老设备解绑（防误封体验，发售路线硬要求） */
+          var names = r.devices.map(function (d) {
+            return shortUa(d.ua) + '（' + fmtTime(d.last_seen) + '）';
+          }).join('；');
+          hooks.toast('设备满 3 台：' + names + ' —— 到还在用的那台设备上「解绑」一台再登录', 'warn');
+        } else {
+          hooks.toast(r.message || '没登上', 'warn');
+        }
+      });
+    }));
+    return gIn;
+  }
+
+  function buildGuestForms(onto, hooks) {
+    onto.appendChild(buildActivateForm(hooks));
+    onto.appendChild(buildLoginForm(hooks));
+    onto.appendChild(h('p', 'set-foot', '还没领激活码？付款后到发码页用 QQ 号领取（地址在购买处）。密码忘了：换设备前先在这台设备上改密；设备全丢了联系群内人工处理。'));
+  }
+
   Sleepy.register('license', {
     title: '我的授权',
     render: function (ctx) {
@@ -48,7 +113,7 @@
         }
       }
 
-      /* ---------------- 未激活：激活 / 登录 ---------------- */
+      /* ---------------- 未激活：激活 / 登录（表单与启动闸共用一份） ---------------- */
       function renderGuest() {
         var intro = h('div', 'set-group');
         intro.appendChild(h('p', 'set-group-note',
@@ -56,57 +121,7 @@
           '然后在这里激活并设置密码；换设备用 QQ 号 + 密码登录，最多 3 台，可自助解绑。'));
         body.appendChild(intro);
 
-        /* 激活 */
-        var gAct = h('div', 'set-group');
-        gAct.appendChild(h('p', 'set-group-title', '激活'));
-        var fCode = ui.textField({ label: '激活码', placeholder: 'SLP-…（发码页领的）' });
-        var fQQ = ui.textField({ label: 'QQ 号', placeholder: '领码时登记的那个', inputmode: 'numeric' });
-        var fPass = ui.textField({ label: '设置密码（至少 6 位）', password: true });
-        var fPass2 = ui.textField({ label: '再输一遍密码', password: true });
-        [fCode, fQQ, fPass, fPass2].forEach(function (f) { gAct.appendChild(f.el); });
-        gAct.appendChild(ui.button('激活', 'primary', function () {
-          var code = fCode.get().trim().toUpperCase();
-          var qq = fQQ.get().trim();
-          var p1 = fPass.get(), p2 = fPass2.get();
-          if (!code || !qq) { ctx.toast('激活码和 QQ 号都要填', 'warn'); return; }
-          if (p1.length < 6) { ctx.toast('密码至少 6 位', 'warn'); return; }
-          if (p1 !== p2) { ctx.toast('两次密码不一样', 'warn'); return; }
-          ctx.toast('正在激活…');
-          repo.licenseActivate(code, qq, p1, function (r) {
-            if (r.ok) { ctx.toast('激活好了', 'ok'); build(); }
-            else ctx.toast(r.message || '没激活成', 'warn');
-          });
-        }));
-        body.appendChild(gAct);
-
-        /* 登录（换设备来的） */
-        var gIn = h('div', 'set-group');
-        gIn.appendChild(h('p', 'set-group-title', '登录（换设备 / 重新登录）'));
-        var lQQ = ui.textField({ label: 'QQ 号', inputmode: 'numeric' });
-        var lPass = ui.textField({ label: '密码', password: true });
-        gIn.appendChild(lQQ.el);
-        gIn.appendChild(lPass.el);
-        gIn.appendChild(ui.button('登录', 'ghost', function () {
-          var qq = lQQ.get().trim(), p = lPass.get();
-          if (!qq || !p) { ctx.toast('QQ 号和密码都要填', 'warn'); return; }
-          ctx.toast('正在登录…');
-          repo.licenseLogin(qq, p, function (r) {
-            if (r.ok) { ctx.toast('登录好了', 'ok'); build(); }
-            else if (r.status === 403 && r.devices && r.devices.length) {
-              /* 设备满 3 台：把清单念出来 + 指去老设备解绑（防误封体验，发售路线硬要求） */
-              var names = r.devices.map(function (d) {
-                return shortUa(d.ua) + '（' + fmtTime(d.last_seen) + '）';
-              }).join('；');
-              ctx.toast('设备满 3 台：' + names + ' —— 到还在用的那台设备上「解绑」一台再登录', 'warn');
-            } else {
-              ctx.toast(r.message || '没登上', 'warn');
-            }
-          });
-        }));
-        body.appendChild(gIn);
-
-        var foot = h('p', 'set-foot', '还没领激活码？付款后到发码页用 QQ 号领取（地址在购买处）。密码忘了：换设备前先在这台设备上改密；设备全丢了联系群内人工处理。');
-        body.appendChild(foot);
+        buildGuestForms(body, { toast: ctx.toast, onSuccess: build });
       }
 
       /* ---------------- 已激活：状态 + 设备管理 + 改密 + 注销 ---------------- */
@@ -230,5 +245,63 @@
     if (/Windows/i.test(s)) return 'Windows 设备';
     if (/Mac/i.test(s)) return 'Mac 设备';
     return '一台设备';
+  }
+
+  /* ==================== 启动授权闸（2026-10-23 接进 bootHome） ====================
+
+     账密系统是进入 sleepy 的门槛，不是进去后在设置里补填的东西。
+     app.js 的 bootHome 在挂桌面之前调 state()：不是 'ok' 就 mount() 到
+     home 位画门面，激活/登录成功回调 onPass → bootHome.force() 重进。
+     判定唯一出处是 repo.licenseGateState()，这里不自己拼逻辑。 */
+  Sleepy.licenseGate = {
+    state: function () { return repo.licenseGateState(); },
+
+    mount: function (el, onPass) {
+      el.innerHTML = '';
+      var wrap = h('div', 'license-gate');
+      wrap.appendChild(h('p', 'license-gate-brand', 'Sleepy'));
+      wrap.appendChild(h('p', 'license-gate-sub', '先过授权，再进门'));
+
+      var note = h('p', 'license-gate-note');
+      var forms = h('div', 'license-gate-forms');
+      wrap.appendChild(note);
+      wrap.appendChild(forms);
+      el.appendChild(wrap);
+
+      var gateToast = function (msg, kind) { Sleepy.toast(msg, kind); };   /* 全局 toast（app.js），页面栈外没有 ctx.toast */
+
+      /* 分步出（用户 2026-10-23 点名）：像游戏的注册→登录 ——
+         第一步激活设完密码**不直接进门**，跳到登录步把 QQ + 密码
+         再输一次，核对通过才算进门（onPass 只挂在登录成功上）。 */
+      function show(step) {
+        forms.innerHTML = '';
+        if (step === 'login') {
+          note.textContent = '换设备来的：用领码时登记的 QQ 号 + 密码登录（最多 3 台，可自助解绑）。';
+          forms.appendChild(buildLoginForm({ toast: gateToast, onSuccess: onPass }));
+          forms.appendChild(stepLink('还没有激活过？', '去激活', function () { show('activate'); }));
+        } else {
+          note.textContent = '第一步激活：付款后在发码页用 QQ 号领码（一个 QQ 只能领一次），填进来设个密码。';
+          forms.appendChild(buildActivateForm({
+            toast: gateToast,
+            /* 激活成功 ≠ 进门：转登录步再核一次（注册→登录的仪式感，
+               也顺手把密码记进肌肉记忆 —— onPass 只在登录步给）。 */
+            onSuccess: function () { show('login'); }
+          }));
+          forms.appendChild(stepLink('换设备 / 重新登录的', '去登录', function () { show('login'); }));
+        }
+        forms.appendChild(h('p', 'set-foot', '密码忘了：换设备前先在这台设备上改密；设备全丢了联系群内人工处理。'));
+      }
+      show('activate');
+    }
+  };
+
+  /* 步间切换入口：一行小字 + 可点的短语（set-foot 同款灰阶，不抢表单） */
+  function stepLink(pre, word, go) {
+    var p = h('p', 'license-gate-switch');
+    var a = h('span', 'license-gate-switch-btn', word);
+    a.addEventListener('click', go);
+    p.appendChild(document.createTextNode(pre + ' '));
+    p.appendChild(a);
+    return p;
   }
 })(window);
