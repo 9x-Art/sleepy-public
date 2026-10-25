@@ -685,6 +685,22 @@
           if (v && !mcpCount) ctx.toast('设置里还没有开着的工具，先去 设置 → MCP 连接', 'warn');
         }
       }));
+      /* 反查手机总开关（2026-10-25，用户）：关了这条对话就不许 TA 翻手机 ——
+         入口点不动、主动起意说明不挂、挂着 [[REV_PEEK]]/[[REV_ACCEPT]] 也不放行。
+         状态存对话记录自己的 rev.off 字段（与 page-chat 的 rev 状态同处）。 */
+      var revOff = !!(chat.rev && chat.rev.off);
+      secChat.appendChild(demoRow({
+        label: '反查手机（TA 能翻你手机）',
+        note: revOff ? '关 · TA 不能翻这台手机，入口也收起来了'
+                     : '开 · TA 可以在你递手机或剧情起意时翻看',
+        switched: !revOff,
+        onSwitch: function (v) {
+          cs().mutate(chatId, function (c2) {
+            c2.rev = c2.rev || {};
+            c2.rev.off = !v;
+          });
+        }
+      }));
       /* 「用户身份」这一行 2026-09-22 **整行删掉**（用户：「角色设置里
          『用户身份』功能去掉」）。它本来就是没绑 onClick 的灰行占位，
          而身份系统真正的入口在「浮岛」和「我」两处 —— 摆在这儿只是噪音。 */
@@ -1038,6 +1054,142 @@
           });
         }
       }));
+
+      /* ---- 旁白描述（2026-10-25）：这条对话开了之后，TA 的回复里可以
+         穿插 [旁白:描述] 渲染成的叙事文字（描述与对话交替出现），不用进
+         线下模式。cfg 存 chat.narration = {on, style, custom, len, density}；
+         文风/字数/密度的取值唯一出处 = prompt-engine 的 narr* 导出，
+         这里不自己再列一份清单。 ---- */
+      var PE = Sleepy.promptEngine;
+      var narrCfg = chat.narration || {};
+      function openNarrCustom(aCtx, aChatId, cur) {
+        var host = document.getElementById('phone') || document.body;
+        var oldD = host.querySelector('.iol-drawer');
+        if (oldD && oldD.parentNode) oldD.parentNode.removeChild(oldD);
+        var wrap = h('div', 'iol-drawer');
+        var panel = h('div', 'iol-drawer-panel');
+        panel.appendChild(h('h2', '', '自定义旁白文风'));
+        panel.appendChild(h('p', 'iol-drawer-desc', '一句话告诉 TA 旁白该怎么写（视角、句式、氛围都可以）。留空就按「简约白描」走。'));
+        var field = h('div', 'iol-field');
+        var ta = h('textarea');
+        ta.value = String(cur || '');
+        ta.placeholder = '例：第三人称现在时，镜头感强，多写光线与环境声，句子短。';
+        field.appendChild(ta);
+        panel.appendChild(field);
+        var actions = h('div', 'iol-drawer-actions');
+        var cancelB = h('button', 'iol-drawer-cancel', '先不改');
+        var saveB = h('button', 'iol-drawer-save', '就这样');
+        actions.appendChild(cancelB);
+        actions.appendChild(saveB);
+        panel.appendChild(actions);
+        function closeD() {
+          wrap.classList.remove('show');
+          setTimeout(function () { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }, 240);
+        }
+        saveB.addEventListener('click', function () {
+          cs().mutate(aChatId, function (c2) {
+            c2.narration = c2.narration || {};
+            c2.narration.style = 'custom';
+            c2.narration.custom = String(ta.value || '').trim();
+          });
+          aCtx.toast('已更新', 'ok');
+          closeD();
+          aCtx.rebuild();
+        });
+        cancelB.addEventListener('click', closeD);
+        wrap.addEventListener('click', function (e) { if (e.target === wrap) closeD(); });
+        wrap.appendChild(panel);
+        host.appendChild(wrap);
+        requestAnimationFrame(function () { wrap.classList.add('show'); });
+      }
+      secPer.appendChild(demoRow({
+        label: '旁白描述',
+        note: narrCfg.on
+          ? '已开 · 回复里会穿插叙事描述，不用进线下模式'
+          : '关 · 开了之后回复里穿插动作与画面的叙事描述',
+        switched: narrCfg.on === true,
+        onSwitch: function (v) {
+          cs().mutate(chatId, function (c2) {
+            c2.narration = c2.narration || { style: 'plain', len: 'm', density: 'few', custom: '' };
+            c2.narration.on = !!v;
+          });
+          ctx.toast(v ? '旁白已开' : '旁白已关', 'ok');
+          ctx.rebuild();
+        }
+      }));
+      if (narrCfg.on === true && PE && PE.narrStyles) {
+        var styleOpts = Object.keys(PE.narrStyles).map(function (k) {
+          return {
+            v: k,
+            label: PE.narrStyles[k].label,
+            desc: k === 'custom' ? '自己写一段文风要求' : PE.narrStyles[k].text
+          };
+        });
+        secPer.appendChild(demoRow({
+          label: '旁白文风',
+          note: narrCfg.style === 'custom'
+            ? ('自定义 · ' + (String(narrCfg.custom || '').slice(0, 14) || '没填，按简约白描走'))
+            : ((PE.narrStyles[narrCfg.style] || PE.narrStyles.plain).label),
+          onClick: function () {
+            openPickDrawer(ctx, {
+              title: '旁白用什么文风',
+              desc: '只影响 [旁白:] 描述段，说话的语气不受影响。',
+              options: styleOpts,
+              current: narrCfg.style || 'plain',
+              onPick: function (v) {
+                if (v === 'custom') { openNarrCustom(ctx, chatId, narrCfg.custom); return; }
+                cs().mutate(chatId, function (c2) {
+                  c2.narration = c2.narration || {};
+                  c2.narration.style = v;
+                });
+              }
+            });
+          }
+        }));
+        secPer.appendChild(demoRow({
+          label: '单段字数',
+          note: { s: '短 · 40 字内', m: '中 · 80 字内', l: '长 · 150 字内' }[narrCfg.len || 'm'],
+          onClick: function () {
+            openPickDrawer(ctx, {
+              title: '一段旁白写多长',
+              options: [
+                { v: 's', label: '短 · 40 字内', desc: '一两个画面，克制' },
+                { v: 'm', label: '中 · 80 字内', desc: '一小段完整的动作与神态' },
+                { v: 'l', label: '长 · 150 字内', desc: '有铺陈的场景描写' }
+              ],
+              current: narrCfg.len || 'm',
+              onPick: function (v) {
+                cs().mutate(chatId, function (c2) {
+                  c2.narration = c2.narration || {};
+                  c2.narration.len = v;
+                });
+              }
+            });
+          }
+        }));
+        secPer.appendChild(demoRow({
+          label: '穿插密度',
+          note: { one: '一轮最多 1 段', few: '一轮 2~3 段', any: '不限 · 以自然为准' }[narrCfg.density || 'few'],
+          onClick: function () {
+            openPickDrawer(ctx, {
+              title: '一条回复里旁白多密',
+              desc: '节奏都是描述→对话交替，这里只管一条回复里最多几段描述。',
+              options: [
+                { v: 'one', label: '一轮最多 1 段', desc: '淡淡的画面感，对话为主' },
+                { v: 'few', label: '一轮 2~3 段', desc: '描述与对话真正穿插起来' },
+                { v: 'any', label: '不限 · 以自然为准', desc: '情绪浓的回合可以多来几段' }
+              ],
+              current: narrCfg.density || 'few',
+              onPick: function (v) {
+                cs().mutate(chatId, function (c2) {
+                  c2.narration = c2.narration || {};
+                  c2.narration.density = v;
+                });
+              }
+            });
+          }
+        }));
+      }
 
       /* ---- 数据管理 ---- */
       var secData = sectionOf(body, '数据管理');

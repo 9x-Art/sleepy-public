@@ -1356,6 +1356,21 @@ body{
 .msg-text .md-a{color:var(--g-accent);text-decoration:underline;}
 .msg-text .md-b{font-weight:700;}
 
+/* 旁白叙事条（2026-10-25，方案 A：无泡叙事条）—— [旁白:描述] 的渲染形态。
+   衬线 + 浅字 + 左细线，和对话一眼分开；宽一点（旁白是画面不是台词）。
+   颜色全部走主题变量，夜灯自动跟着翻。 */
+.msg-text .msg-narr{
+  margin:5px 0;
+  padding:2px 0 2px 9px;
+  border-left:2px solid var(--g-accent);
+  font-family:var(--ff-serif);
+  font-size:calc(13px * var(--fs-scale, 1));
+  line-height:1.75;
+  color:var(--g-ink-2,var(--text-faint));
+}
+.msg-text .msg-narr:first-child{margin-top:0;}
+.msg-text .msg-narr:last-child{margin-bottom:0;}
+
 /* 表情回应药丸（QQ/企微风长按贴表情） */
 .msg-reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;}
 .msg-reaction{font-size:13px;line-height:1;padding:3px 8px;border:1px solid var(--bg-3);border-radius:999px;background:var(--bg-2);color:var(--g-ink);cursor:pointer;}
@@ -1565,8 +1580,13 @@ body{
   vertical-align: middle;
   flex: 0 0 32px;
   object-fit: cover;
+  /* 默认幽灵是奶油白+透明底（v255），浅色壁纸下白上白会隐形
+     （2026-10-25 用户：「默认头像没进聊天页」—— 其实渲染了，只是看不见）。
+     垫一层奶蓝底兜住对比度；真头像是照片、盖满圆，这层底永远露不出来。 */
+  background: var(--g-accent-pale);
   /* 注意：角色头像是「透明底 + 圆形」的 SVG —— 这里**不能**给底色，
-     否则透明部分会透出一块方框（实测）。 */
+     否则透明部分会透出一块方框（实测）。（旧注：圆形裁切下背景也是圆的，
+     方框问题不存在；真 transparency 需求若出现再拆类。） */
 }
 /* span.msg-avatar-initial（user 首字圆）2026-10-24 起不再有生成点 ——
    user 侧没头像也铺幽灵图了。样式留着不删：万一别的入口还想用首字圆，
@@ -15721,3 +15741,296 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   text-underline-offset:3px;
   cursor:pointer;
 }
+
+/* ============================================================
+   文字麻将（wm-core.js · 2026-10-25）
+   牌桌弹层：页面居中（红线：弹层一律居中，不贴底），挂 #phone。
+   铺底用 --g-base 纸皮 + --g-glass 头部，牌色避开绿（主题口径）。
+   ============================================================ */
+.wm-mask{
+  position:absolute;inset:0;z-index:997;
+  background:rgba(47,58,71,.42);
+  opacity:0;transition:opacity .18s ease;
+}
+.wm-mask.is-open{opacity:1;}
+.wm-panelbox{
+  position:absolute;inset:0;z-index:998;
+  display:flex;align-items:center;justify-content:center;padding:18px;
+  pointer-events:none;
+}
+.wm-panel{
+  pointer-events:auto;
+  width:min(100%,340px);max-height:82%;
+  display:flex;flex-direction:column;
+  background:var(--g-base);border-radius:16px;overflow:hidden;
+  box-shadow:var(--g-glass-shadow),var(--g-ring);
+  transform:scale(.96) translateY(6px);opacity:0;
+  transition:transform .18s ease,opacity .18s ease;
+}
+.wm-panelbox.is-open .wm-panel{transform:none;opacity:1;}
+
+.wm-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 12px 8px;border-bottom:1px solid var(--g-glass-line);
+  background:var(--g-glass-2);flex-shrink:0;
+}
+.wm-head-t{font-size:13px;font-weight:600;color:var(--g-ink);}
+.wm-head-s{font-size:8px;letter-spacing:.18em;color:var(--g-ink-3);text-transform:uppercase;}
+.wm-head-r{display:flex;align-items:center;gap:4px;}
+.wm-quit{
+  height:26px;padding:0 8px;border-radius:8px;border:none;
+  background:none;font-size:11px;color:var(--g-error);cursor:pointer;
+}
+.wm-quit:active{background:var(--g-error-dim);}
+.wm-close{
+  width:26px;height:26px;border-radius:8px;border:none;background:none;
+  font-size:16px;line-height:1;color:var(--g-ink-3);cursor:pointer;
+}
+.wm-close:active{background:var(--g-accent-pale);color:var(--g-ink);}
+
+/* 开桌页 */
+.wm-intro{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;padding:22px 26px;text-align:center;overflow-y:auto;
+}
+.wm-ava{width:56px;height:56px;border-radius:50%;object-fit:cover;box-shadow:var(--g-ring);}
+.wm-intro-t{font-size:13px;font-weight:700;color:var(--g-ink);}
+.wm-intro-d{font-size:11px;line-height:1.7;color:var(--g-ink-2);margin:0;}
+.wm-intro-d b{color:var(--g-ink);}
+.wm-go{
+  margin-top:2px;padding:9px 30px;border:none;border-radius:999px;cursor:pointer;
+  background:var(--g-accent-deep);color:#fff;font-size:12px;font-weight:700;
+  box-shadow:0 2px 8px rgba(92,134,180,.35);
+}
+.wm-go:active{transform:scale(.96);}
+
+/* 状态条 */
+.wm-stat{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 14px 3px;font-size:9px;color:var(--g-ink-3);flex-shrink:0;
+}
+.wm-stat-m.is-hot{color:var(--g-accent-deep);font-weight:700;}
+.wm-stat-m{flex:1;text-align:center;}
+
+/* ta 手牌背面 + 已出句子 */
+.wm-foe{padding:2px 14px;flex-shrink:0;}
+.wm-foe-row{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+.wm-foe-name{font-size:9px;color:var(--g-ink-2);width:30px;flex-shrink:0;}
+.wm-backs{display:flex;gap:2px;flex-wrap:wrap;}
+.wm-back{width:9px;height:13px;border-radius:2px;background:var(--g-ink-2);opacity:.75;}
+.wm-melds{min-height:22px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
+.wm-melds-my{padding:2px 14px;flex-shrink:0;}
+.wm-none{font-size:9px;color:var(--g-ink-3);opacity:.6;}
+.wm-meld{
+  border-radius:6px;padding:2px 6px;font-size:11px;font-weight:700;font-family:serif;
+}
+.wm-meld-ta{background:var(--g-accent-pale);color:var(--g-accent-deep);}
+.wm-meld-my{background:var(--g-accent-soft);color:var(--g-ink);}
+
+/* 裁判条 */
+.wm-judge{
+  margin:5px 14px 2px;padding:7px 10px;border-radius:10px;flex-shrink:0;
+  background:var(--g-accent-pale);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.wm-judge-t{font-size:11px;font-weight:700;color:var(--g-accent-deep);font-family:serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wm-judge-b{display:flex;gap:6px;flex-shrink:0;}
+
+/* 终局覆盖 */
+.wm-over{
+  position:absolute;inset:0;z-index:20;background:rgba(47,58,71,.45);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  padding:24px;text-align:center;
+}
+.wm-over-face{font-size:30px;}
+.wm-over-t{font-size:15px;font-weight:700;color:#fff;}
+.wm-over-s{font-size:11px;color:rgba(255,255,255,.8);font-family:serif;margin-bottom:6px;}
+
+/* 操作条 */
+.wm-ops{display:flex;align-items:center;gap:8px;padding:4px 14px;flex-shrink:0;flex-wrap:wrap;}
+.wm-btn{
+  border:none;border-radius:999px;padding:6px 14px;cursor:pointer;
+  font-size:11px;font-weight:700;
+}
+.wm-btn:active{transform:scale(.96);}
+.wm-btn.is-off{opacity:.35;pointer-events:none;}
+.wm-btn-dark{background:var(--g-ink);color:#fff;}
+.wm-btn-play{background:var(--g-accent-deep);color:#fff;}
+.wm-btn-ok{background:#5C9E6E;color:#fff;}   /* 通过 = 成功语义（唯二绿例外） */
+.wm-btn-no{background:var(--g-error);color:#fff;}
+.wm-re{margin-left:auto;border:none;background:none;font-size:10px;color:var(--g-ink-3);cursor:pointer;}
+
+/* 我的手牌 */
+.wm-hand{padding:2px 14px 12px;flex-shrink:0;}
+.wm-hand-scroll{
+  display:flex;gap:5px;overflow-x:auto;padding:6px 2px;touch-action:pan-x;
+  scrollbar-width:none;
+}
+.wm-hand-scroll::-webkit-scrollbar{display:none;}
+.wm-tile{
+  flex-shrink:0;width:36px;height:48px;border-radius:8px;cursor:pointer;
+  background:var(--g-glass-3);border:1px solid var(--g-glass-line);
+  box-shadow:0 1px 3px rgba(120,132,156,.12);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:0;transition:transform .1s ease;
+}
+.wm-tile.is-picked{border-color:var(--g-accent-deep);transform:translateY(-4px);}
+.wm-tile-ch{font-size:17px;font-weight:700;line-height:1;font-family:serif;}
+.wm-tile-py{font-size:7px;color:var(--g-ink-3);margin-top:3px;}
+.wm-hint{font-size:9px;color:var(--g-ink-3);text-align:center;margin-top:3px;}
+
+/* 牌类着色（避开绿；夜灯下走同一套深色字） */
+.wm-tile-emotion .wm-tile-ch{color:#C25E6E;}
+.wm-tile-verb .wm-tile-ch{color:var(--g-accent-deep);}
+.wm-tile-noun .wm-tile-ch{color:var(--g-ink);}
+.wm-tile-adj .wm-tile-ch{color:#A9812F;}
+.wm-tile-adverb .wm-tile-ch{color:var(--g-ink-3);}
+.wm-tile-scene .wm-tile-ch{color:#8B6FB4;}
+.wm-tile-sup .wm-tile-ch{color:#6B4552;}
+
+/* 牌桌播报：同拍一拍的居中灰字，加一点牌桌语气 */
+.msg-wm-line{color:var(--g-accent-deep);opacity:.85;}
+
+/* ============================================================
+   反查手机（revcheck-core.js · 2026-10-25）
+   接管覆盖层：不遮内容——顶部呼吸胶囊 + 全屏弹幕层（pointer-events:none
+   只留按钮可点），底下是真页面在真滚动（滑到哪显示到哪）。
+   ============================================================ */
+.rev-capsule{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  z-index:1200;display:flex;align-items:center;gap:8px;
+  padding:7px 10px 7px 14px;border-radius:999px;
+  background:rgba(47,58,71,.88);backdrop-filter:blur(20px);
+  box-shadow:0 4px 18px rgba(47,58,71,.35),0 0 12px rgba(194,94,110,.25);
+  animation:rev-pulse 2s ease-in-out infinite;
+}
+@keyframes rev-pulse{
+  0%,100%{box-shadow:0 4px 18px rgba(47,58,71,.35),0 0 12px rgba(194,94,110,.25);}
+  50%{box-shadow:0 4px 18px rgba(47,58,71,.35),0 0 26px rgba(194,94,110,.5);}
+}
+.rev-capsule.is-paused{animation:none;opacity:.75;}
+.rev-dot{
+  width:9px;height:9px;border-radius:50%;background:#C25E6E;flex-shrink:0;
+  animation:rev-dot 1s ease-in-out infinite;
+}
+@keyframes rev-dot{0%,100%{opacity:1;}50%{opacity:.35;}}
+.rev-cap-t{font-size:12px;font-weight:600;color:#fff;white-space:nowrap;}
+.rev-cap-btns{display:flex;gap:5px;}
+.rev-cap-btn{
+  width:26px;height:26px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.16);color:#fff;font-size:12px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+}
+.rev-cap-btn:active{transform:scale(.9);}
+.rev-cap-stop{background:rgba(194,94,110,.85);}
+
+.rev-danmaku{
+  position:absolute;inset:0;z-index:1199;pointer-events:none;overflow:hidden;
+}
+.rev-bubble{
+  position:absolute;max-width:70%;
+  padding:7px 12px;border-radius:14px 14px 14px 4px;
+  background:rgba(253,254,255,.94);color:var(--g-ink);
+  font-size:12px;line-height:1.6;
+  box-shadow:0 4px 16px rgba(47,58,71,.25),0 0 0 1px rgba(194,94,110,.25);
+  animation:rev-bubble 4.2s ease-out forwards;
+}
+@keyframes rev-bubble{
+  0%{opacity:0;transform:translateY(14px) scale(.92);}
+  12%{opacity:1;transform:translateY(0) scale(1);}
+  82%{opacity:1;}
+  100%{opacity:0;transform:translateY(-10px);}
+}
+
+/* 反查播报：同牌桌播报位 */
+.msg-rev-line{color:#8B6FB4;opacity:.9;}
+
+/* 递手机邀请卡：居中动作卡（同拍一拍位，加手机感） */
+.msg-rev-invite{
+  color:var(--g-accent-deep);
+  background:var(--g-accent-pale);
+  border-radius:10px;padding:6px 14px;
+}
+
+/* ============================================================
+   关系人管理抽屉（ta-relations UI · 2026-10-25）
+   复用 .iol-drawer 抽屉壳；块内字段行复用 .set-row / .set-input。
+   ============================================================ */
+.relmgr-block{
+  border:1px solid var(--g-glass-line);border-radius:12px;
+  padding:10px 12px;margin-bottom:10px;background:var(--g-glass-3);
+}
+.relmgr-sys{
+  margin:6px 0 0;font-size:11px;line-height:1.7;color:var(--g-ink-3);
+  background:var(--g-accent-pale);border-radius:8px;padding:5px 8px;
+}
+.relmgr-ops{display:flex;justify-content:flex-end;margin-top:8px;}
+.relmgr-del{
+  border:none;border-radius:8px;padding:4px 12px;cursor:pointer;
+  background:var(--g-error-dim);color:var(--g-error);font-size:11px;
+}
+.relmgr-del:active{transform:scale(.96);}
+.relmgr-add{
+  width:100%;border:1px dashed var(--g-accent);border-radius:10px;
+  padding:9px;background:none;color:var(--g-accent-deep);
+  font-size:12px;font-weight:600;cursor:pointer;
+}
+.relmgr-add:active{background:var(--g-accent-pale);}
+
+/* ============================================================
+   拍立得翻面卡（FlipPolaroid 移植 · 2026-10-25）
+   交互分区：点图片=放大（imageViewer）；点卡片其他区域=翻面。
+   3D 翻转在 .pld-inner 上，两面 backface-visibility 互斥。
+   ============================================================ */
+.pld{
+  display:block;border:none;background:none;padding:0;cursor:pointer;
+  perspective:1200px;-webkit-perspective:1200px;
+}
+.pld:active{transform:scale(.98);}
+.pld-inner{
+  position:relative;display:block;width:190px;height:238px;
+  transform-style:preserve-3d;-webkit-transform-style:preserve-3d;
+  transition:transform .7s ease;
+}
+.pld.is-flipped .pld-inner{transform:rotateY(180deg);}
+.pld-face{
+  position:absolute;inset:0;border-radius:12px;overflow:hidden;
+  backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  box-shadow:0 6px 18px rgba(47,58,71,.22);
+}
+.pld-front{
+  background:#fff;padding:9px 9px 40px;
+  display:flex;flex-direction:column;align-items:center;
+}
+.pld-img{
+  width:100%;flex:1;min-height:0;object-fit:cover;border-radius:7px;
+  display:block;background:var(--g-base-3);
+}
+.pld-hint{
+  position:absolute;left:0;right:0;bottom:9px;text-align:center;
+  font-size:9px;color:var(--g-ink-3);letter-spacing:.08em;
+}
+.pld-back{
+  transform:rotateY(180deg);
+  background:#ece8df;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:14px;text-align:center;
+}
+/* 背纸斜纹质感 */
+.pld-back::before{
+  content:'';position:absolute;inset:0;opacity:.18;
+  background:repeating-linear-gradient(45deg,#a89f8f 0,#a89f8f 1.5px,transparent 1.5px,transparent 6px);
+}
+.pld-note{
+  position:relative;font-size:13px;line-height:1.8;color:#4a4235;
+  font-family:'Caveat','KaiTi','楷体',cursive;
+  word-break:break-all;
+}
+.pld-date{
+  position:relative;margin-top:10px;font-size:9px;color:#8a8070;letter-spacing:.2em;
+}
+.pld-brand{
+  position:absolute;bottom:10px;left:0;right:0;
+  font-size:8px;color:#b5ac99;letter-spacing:.3em;
+}
+.pld.is-missing{cursor:default;}

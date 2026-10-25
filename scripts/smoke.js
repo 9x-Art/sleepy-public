@@ -5141,6 +5141,91 @@ t('K03e F1 线上：真实 messages 注入一次、槽序正确、其余槽未�
   return { 槽: slot.slot, 块次数: k03eCount(sys, '[TA_LIFE]') };
 });
 
+/* ---------------------------- narr 旁白描述（2026-10-25） ----------------------------
+   三层各测：解析拆段 / 半截剥壳（观感红线：[旁白: 三个字不许出现在任何
+   给用户看的文本里）/ 说明书卡（禁词字面硬写，不引被测常量）。
+   期望值全部硬写 —— 断言里引被测常量 = 两边一起变，改坏照样绿。 */
+t('narr 拆段：描述/对话/描述/描述 交替顺序保真，无标记返回 null', () => {
+  /* 注意：|| 分泡是气泡层的职责（splitBubbles），拆段在单个气泡文本内做 ——
+     这里用不含 || 的输入测顺序保真。 */
+  const segs = S.promptEngine.narrSegments('[旁白:她抬起头]今天怎么迟到了呀\n[旁白:她接过纸袋]还不是堵车嘛');
+  if (!segs || segs.length !== 4) throw new Error('拆段数不对：' + JSON.stringify(segs));
+  if (segs[0].n !== true || segs[0].text !== '她抬起头') throw new Error('第 1 段不是旁白：' + JSON.stringify(segs[0]));
+  if (segs[1].n !== false || segs[1].text !== '今天怎么迟到了呀\n') throw new Error('第 2 段不是对话：' + JSON.stringify(segs[1]));
+  if (segs[2].n !== true || segs[2].text !== '她接过纸袋') throw new Error('第 3 段不是旁白');
+  if (segs[3].n !== false || segs[3].text !== '还不是堵车嘛') throw new Error('第 4 段不是对话');
+  if (S.promptEngine.narrSegments('普通一句话') !== null) throw new Error('无标记应返回 null');
+  /* 全角冒号也认 */
+  const segs2 = S.promptEngine.narrSegments('[旁白：全角冒号]正文');
+  if (!segs2 || segs2.length !== 2 || segs2[0].text !== '全角冒号') throw new Error('全角冒号没认：' + JSON.stringify(segs2));
+  return { 段数: segs.length };
+});
+t('narr 半截尾巴（流式兜底）：扣标记留内文，[旁白: 三个字绝不漏出', () => {
+  const segs = S.promptEngine.narrSegments('前面对话[旁白:她抬起');
+  if (segs.length !== 2) throw new Error('半截拆段数不对：' + JSON.stringify(segs));
+  if (segs[0].n !== false || segs[0].text !== '前面对话') throw new Error('前段不对');
+  if (segs[1].n !== true || segs[1].text !== '她抬起') throw new Error('半截内文丢了');
+  const plain = S.promptEngine.narrPlain('前面对话[旁白:她抬起');
+  if (plain !== '前面对话她抬起') throw new Error('半截剥壳不对：' + plain);
+  if (plain.indexOf('[旁白') >= 0) throw new Error('观感红线：标记漏出来了');
+  const plain2 = S.promptEngine.narrPlain('[旁白:开头就是旁白]然后说话');
+  if (plain2 !== '开头就是旁白然后说话') throw new Error('完整剥壳不对：' + plain2);
+  if (S.promptEngine.narrPlain('干净文本') !== '干净文本') throw new Error('干净文本不该被动');
+  return 'ok';
+});
+t('narr 说明书卡：关/没传=空串；开=含格式、禁词与默认字数密度', () => {
+  if (S.promptEngine.narrCard(undefined) !== '') throw new Error('没传应返回空串');
+  if (S.promptEngine.narrCard({ on: false }) !== '') throw new Error('关应返回空串');
+  const card = S.promptEngine.narrCard({ on: true });
+  /* 期望值硬写（默认 plain / m / few），不引 narrCfgOf 的默认值 —— 两边一起变=没断 */
+  for (const s of ['[旁白:她抬起头', '交替推进', '80 字', '最多 2~3 段', '短句白描',
+    '【旁白禁令】', '不用括号写动作或内心', '微微一笑', '眼眸低垂', '空气仿佛凝固', '意味深长', '不替 user 写动作']) {
+    if (card.indexOf(s) < 0) throw new Error('卡里缺：' + s);
+  }
+  /* 自定义文风：custom 空文回退简约白描 */
+  const card2 = S.promptEngine.narrCard({ on: true, style: 'custom', custom: '  ' });
+  if (card2.indexOf('短句白描') < 0) throw new Error('自定义空文没回退默认文风');
+  const card3 = S.promptEngine.narrCard({ on: true, style: 'custom', custom: '镜头感强', len: 'l', density: 'one' });
+  for (const s of ['镜头感强', '150 字', '最多 1 段']) {
+    if (card3.indexOf(s) < 0) throw new Error('参数没进卡：' + s);
+  }
+  return 'ok';
+});
+t('narr F1 线上：ctx.narr 开 → narr 槽命中进 system；不传 → 槽不命中', () => {
+  const rOn = S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: [], narr: { on: true, len: 'm', density: 'few', style: 'plain' } });
+  const slotOn = (rOn.slots || []).filter((x) => x.id === 'narr')[0];
+  if (!slotOn || !slotOn.on) throw new Error('narr 槽没命中：' + JSON.stringify(slotOn));
+  const sysOn = (rOn.messages || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  if (sysOn.indexOf('[旁白:她抬起头') < 0 || sysOn.indexOf('【旁白禁令】') < 0) throw new Error('narr 卡没进 system');
+  const rOff = S.promptEngine.assembleOnline({ charId: k03e.chA, userId: k03e.uA, history: [] });
+  const slotOff = (rOff.slots || []).filter((x) => x.id === 'narr')[0];
+  if (!slotOff) throw new Error('narr 槽没注册进 ONLINE_SLOTS');
+  if (slotOff.on) throw new Error('没开旁白时 narr 槽不该命中');
+  const sysOff = (rOff.messages || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  if (sysOff.indexOf('旁白') >= 0) throw new Error('关着时旁白内容泄漏进了 system');
+  /* 槽位：紧跟 slowmail（C04 能力卡区），在 c05 输出协议之前 */
+  const ids = (rOn.slots || []).map((x) => x.id);
+  if (!(ids.indexOf('narr') > ids.indexOf('slowmail') && ids.indexOf('narr') < ids.indexOf('c05'))) {
+    throw new Error('narr 槽序不对：' + ids.join('>'));
+  }
+  return { 槽: slotOn.slot };
+});
+/* 静态护栏：page-chat / settings / css 三处接线在源码字面上（DOM 桩进不去的层）。 */
+t('narr 静态接线：消费面剥壳、流式兜底、设置行与叙事条样式都真实存在', () => {
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  if (pc.indexOf('narrPlain') < 0) throw new Error('page-chat 消费面没接 narrPlain');
+  if (pc.indexOf('narrSegments') < 0 || pc.indexOf('msg-narr') < 0) throw new Error('page-chat 渲染层没接旁白拆段');
+  if (pc.indexOf('narr: c.narration') < 0) throw new Error('引擎分支没把对话旁白配置传进装配');
+  if (pc.indexOf("peNarr.narrCard(c.narration)") < 0 && pc.indexOf('narrCard(c.narration)') < 0) throw new Error('旧组装路径没接旁白说明书');
+  const pcs = fs.readFileSync('page-chat-settings.js', 'utf8');
+  for (const s of ['旁白描述', 'narrStyles', 'iol-drawer-save']) {
+    if (pcs.indexOf(s) < 0) throw new Error('对话设置缺：' + s);
+  }
+  const css = fs.readFileSync('style.css', 'utf8');
+  if (css.indexOf('.msg-text .msg-narr') < 0 || css.indexOf('--ff-serif') < 0) throw new Error('叙事条样式缺失');
+  return 'ok';
+});
+
 t('K03e F2 线下：同一份记录同样注入一次（query 取场景末条 user 输入）', () => {
   const before = k03eSnapLife();
   const sess = { charId: k03e.chA, userId: k03e.uA, messages: [
@@ -17011,7 +17096,13 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    buildPageCss 无底爪印）/ style.css（气泡段 + send-btn）/ page-chat.js /
    page-group.js（头像落幽灵）/ scripts/smoke.js 变了。
    基准随批 v258 → v259。 */
-const EXPECTED_SW_CACHE = 'sleepy-v259';
+/* v260（2026-10-25）：文字麻将上线 —— wm-core.js（新增引擎）/ page-chat.js
+   （牌局接线）/ style.css（.wm-* 面板）/ index.html（加载引擎）变了。
+   基准随批 v259 → v260。 */
+/* v261（2026-10-25）：反查手机上线 —— revcheck-core.js（新增核心）/
+   page-chat.js（接管覆盖层+采样+注入）/ style.css（.rev-*）/ index.html
+   （加载核心）变了。基准随批 v260 → v261。 */
+const EXPECTED_SW_CACHE = 'sleepy-v269';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

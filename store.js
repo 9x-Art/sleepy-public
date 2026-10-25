@@ -195,6 +195,21 @@
     taPromises: [],
     taFollows: [],
 
+    /* ta 关系人账户表（ta-relations.js，2026-10-25 活人系统移植）：
+       TA 认识的第三人（发小/同事/家人…），挂 refCharId（归 root）+ 岛章。
+       { id, sandboxId, refCharId, name*, relation, bond,
+         note(用户手写，系统永不覆盖), learned(印象，注入强制「未必属实」),
+         currentState(系统养的近况), openThreads:[{id,title,open,intimacyGate,tone}],
+         lastMentioned, createdAt, updatedAt }
+       铁律：进了表的人持久存在，系统只许更新 currentState/开关 openThread/
+       记 lastMentioned/累积 learned（注入时带「未必属实」），严禁默默换人。 */
+    taRelations: [],
+
+    /* L2 今日状态块（ta-today.js，2026-10-25）：一天一次生成的「今天的他」，
+       { id, sandboxId, refCharId, date(YYYY-MM-DD), mood, occupation,
+         towardYou, smallThing, updatedAt }——date 不属今天即作废重算。 */
+    taToday: [],
+
     /* ta NPC 候选草稿（2026-10-02 第三批，ta-life.js）：
        未确认 NPC 只能是草稿 —— 独立键，不进 characters 表（正式名册），
        确认入库经 core.upsertChar 回填 formalCharId，重试幂等。

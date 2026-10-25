@@ -103,7 +103,18 @@
     sticker: '<svg ' + SVG_BODY + '>' +
       '<circle cx="12" cy="12" r="8.6"/>' +
       '<path d="M8.8 14.2a4.2 4.2 0 0 0 6.4 0"/>' +
-      '<path d="M9.2 9.6h.01M14.8 9.6h.01"/></svg>'
+      '<path d="M9.2 9.6h.01M14.8 9.6h.01"/></svg>',
+
+    /* 文字麻将：一张立着的字牌 + 两个点（跟这套线稿同一档粗细） */
+    mahjong: '<svg ' + SVG_BODY + '>' +
+      '<rect x="7" y="3.4" width="10" height="17.2" rx="2"/>' +
+      '<circle cx="12" cy="9" r="1.2"/>' +
+      '<circle cx="12" cy="14.6" r="1.2"/></svg>',
+
+    /* 反查手机：一只眼睛（TA 在看你手机） */
+    revcheck: '<svg ' + SVG_BODY + '>' +
+      '<path d="M2.8 12s3.4-5.6 9.2-5.6S21.2 12 21.2 12s-3.4 5.6-9.2 5.6S2.8 12 2.8 12z"/>' +
+      '<circle cx="12" cy="12" r="2.6"/></svg>'
   };
 
   /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管。
@@ -1712,11 +1723,17 @@
   function bubbleText(m, idx) {
     if (!m) return '';
     if (m.type) return attachText(m) || '';
+    var peN = Sleepy.promptEngine;
+    function np(t) {
+      return (peN && peN.narrPlain) ? peN.narrPlain(t) : t;
+    }
     var raw = m.content || '';
-    if (idx === null || idx === undefined || m.role !== 'assistant') return raw;
-    var arr = (Sleepy.promptEngine && Sleepy.promptEngine.splitBubbles)
-      ? Sleepy.promptEngine.splitBubbles(raw) : [raw];
-    return (arr[idx] === null || arr[idx] === undefined) ? raw : arr[idx];
+    if (idx === null || idx === undefined || m.role !== 'assistant') return np(raw);
+    var arr = (peN && peN.splitBubbles) ? peN.splitBubbles(raw) : [raw];
+    var out = (arr[idx] === null || arr[idx] === undefined) ? raw : arr[idx];
+    /* 旁白（2026-10-25）：引用/收藏/编辑/TTS/灯牌这些消费面拿的是纯文本
+       —— 括号剥掉、内文保留，半截尾巴也扣掉标记。 */
+    return np(out);
   }
 
   /* 日记事件：user 写了新日记 → 下一轮 TA 会知道「写了」，但看不看是 TA 的事
@@ -1803,6 +1820,8 @@
       var b = pe.splitBubblesT(raw).bubbles;
       if (b && b.length) raw = b[b.length - 1] || raw;
     }
+    /* 旁白（2026-10-25）：预览也是消费面，剥壳同 bubbleText */
+    if (pe && pe.narrPlain) raw = pe.narrPlain(raw);
     return raw.replace(/\s+/g, ' ').trim();
   }
 
@@ -2825,7 +2844,11 @@
         return String(s || '')
           .replace(/\[(?:html|sticker|whisper|WHISPER|think|reasoning|img|voice|emotion)\b[^\]]*\]/g, '')
           .replace(/\[\/?译\]/g, '')
-          .replace(/<\/?(?:think|reasoning)>/gi, '');
+          .replace(/<\/?(?:think|reasoning)>/gi, '')
+          /* 旁白兜底剥壳（2026-10-25）：完整的去括号留内文，流式半截的
+             从标记头吃到结尾扣掉标记 —— [旁白: 三个字绝不给用户看。 */
+          .replace(/\[旁白[：:]([^\]]*)\]/g, '$1')
+          .replace(/\[旁白[：:][\s\S]*$/, function (mm) { return mm.slice(mm.indexOf(':') + 1); });
       }
 
       function mdInline(text, node) {
@@ -2851,8 +2874,36 @@
 
       function renderRichText(raw, el) {
         el.innerHTML = '';
+        /* 旁白描述（2026-10-25）：有旁白标记时按段拆 —— 旁白段画成叙事条
+           （.msg-narr，方案 A），普通段走原 markdown 路径。narrSegments
+           不在（老引擎缓存缺失等）时由 stripProtocolTags 兜底剥壳，
+           [旁白: 三个字任何情况下都不许出现在气泡上。 */
+        var peNarr = Sleepy.promptEngine;
+        var segs = (peNarr && peNarr.narrSegments) ? peNarr.narrSegments(raw) : null;
+        if (segs && segs.some(function (sg) { return sg.n; })) {
+          var narrMade = false;
+          segs.forEach(function (sg) {
+            var t = stripProtocolTags(sg.text || '').trim();
+            if (!t) return;
+            if (sg.n) {
+              var d = h('div', 'msg-narr');
+              mdInline(t, d);
+              el.appendChild(d);
+              narrMade = true;
+            } else {
+              renderMdText(t, el);
+            }
+          });
+          if (narrMade) return;
+          /* 一段旁白都没画出来（全是空段）：退回普通路径，别给空气泡 */
+          el.innerHTML = '';
+        }
         var text = stripProtocolTags(raw);
         if (!text) return;
+        renderMdText(text, el);
+      }
+
+      function renderMdText(text, el) {
         var lines = text.split('\n'), para = [], i = 0;
         function flush() {
           if (!para.length) return;
@@ -3169,6 +3220,18 @@
            没有头像、没有长按菜单、没有重答 —— 它是个动作记录，不是话。 */
         if (msg.type === 'pat') {
           return h('div', 'msg-pat', msg.content || '拍了拍');
+        }
+        /* 文字麻将牌桌播报：同拍一拍的居中灰字位 —— 是系统播报，不是话。 */
+        if (msg.type === 'wm') {
+          return h('div', 'msg-pat msg-wm-line', msg.content || '');
+        }
+        /* 反查手机播报：同牌桌播报位，居中系统条。 */
+        if (msg.type === 'revcheck') {
+          return h('div', 'msg-pat msg-rev-line', msg.content || '');
+        }
+        /* 递手机邀请卡：居中动作卡（user 的动作记录，不是话）。 */
+        if (msg.type === 'rev-invite') {
+          return h('div', 'msg-pat msg-rev-invite', '📱 ' + (msg.content || '递出了手机'));
         }
         /* 查岗：居中「系统镜头」卡（用户 2026-09-29 定稿）—— 这张图不是
            任何人拍的（线上功能的窥视镜头），挂在 user 气泡里会读成
@@ -3785,6 +3848,12 @@
            取不到（老消息只存了文件名、或者图库被清过）就退回文件名卡片 ——
            宁可显示「这张图找不到了」，也别留一个破图。 */
         if (msg.type === 'photo' && msg.mediaId && Sleepy.media) {
+          /* 拍立得（FlipPolaroid 移植，2026-10-25）：带背面寄语的照片
+             渲染成 3D 翻面卡——**点图片区域=放大**（复用 imageViewer），
+             **点卡片其他区域=翻面**看背面寄语。没有寄语 = 普通照片。 */
+          if (msg.backNote && String(msg.backNote).trim()) {
+            return polaroidCard(msg);
+          }
           var box = h('div', 'msg-photo');
           var img = h('img', 'msg-photo-img');
           var fullSrc = '';        /* 取到 objectURL 后存这儿，点开大图要用 */
@@ -3813,6 +3882,50 @@
         main.appendChild(h('span', 'msg-attach-name', msg.name || '未命名'));
         main.appendChild(h('span', 'msg-attach-size', fmtBytes(msg.size || 0)));
         card.appendChild(main);
+        return card;
+      }
+
+      /** 拍立得翻面卡。交互分区（用户定稿）：
+          · 点**图片** → 放大（ui.imageViewer，和普通照片一个手感）
+          · 点**卡片其他区域**（白框/背面） → 翻面看寄语
+          结构：.pld（perspective）> .pld-inner（preserve-3d，翻转在这里）
+          > .pld-front / .pld-back（backface-visibility 互斥面）。 */
+      function polaroidCard(msg) {
+        var card = h('button', 'pld');
+        card.type = 'button';
+        var inner = h('span', 'pld-inner');
+        var front = h('span', 'pld-face pld-front');
+        var back = h('span', 'pld-face pld-back');
+        var img = h('img', 'pld-img');
+        img.alt = msg.caption || '照片';
+        front.appendChild(img);
+        front.appendChild(h('span', 'pld-hint', '✦ 点图片看大图 · 点白边翻面 ✦'));
+
+        back.appendChild(h('span', 'pld-note', String(msg.backNote)));
+        var d = new Date(msg.timestamp || Date.now());
+        back.appendChild(h('span', 'pld-date',
+          '· ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 ·'));
+        back.appendChild(h('span', 'pld-brand', 'POLAROID'));
+
+        inner.appendChild(front);
+        inner.appendChild(back);
+        card.appendChild(inner);
+
+        var shown = false;
+        Sleepy.media.url(msg.mediaId).then(function (src) {
+          if (src) { img.src = src; shown = true; return; }
+          card.classList.add('is-missing');
+          front.appendChild(h('span', 'msg-photo-miss', '这张图找不到了'));
+        }, function () {
+          card.classList.add('is-missing');
+          front.appendChild(h('span', 'msg-photo-miss', '图库打不开'));
+        });
+
+        img.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (shown) ui.imageViewer(img.src, { caption: msg.caption || '', alt: img.alt });
+        });
+        card.addEventListener('click', function () { card.classList.toggle('is-flipped'); });
         return card;
       }
 
@@ -3901,7 +4014,11 @@
         if (!pending) return '';
         var s = splitReplyOf(pending.raw);
         /* 流式期间多个气泡先挤在一个气泡里按行显示，落库后渲染层再拆 */
-        return s.bubbles ? s.bubbles.join('\n') : s.visible;
+        var txt = s.bubbles ? s.bubbles.join('\n') : s.visible;
+        /* 旁白（2026-10-25）：流式里也剥壳 —— 完整的留内文，半截的扣标记，
+           别让 [旁白: 在打字机里闪出来。落库后渲染层再画成叙事条。 */
+        return (Sleepy.promptEngine && Sleepy.promptEngine.narrPlain)
+          ? Sleepy.promptEngine.narrPlain(txt) : txt;
       }
 
       /* ======================== 多选 ========================
@@ -4401,6 +4518,940 @@
 
       /* ==================== 发送 / 接收 / reroll ==================== */
 
+      /* ==================== 文字麻将（wm-core.js 接线层） ====================
+
+        状态挂在对话对象上（c.wm = { game, pending, charLastPlay }），按对话
+        存档（用户 2026-10-25 定稿）：切对话互不干扰、退到列表再回来牌局还在。
+        读写纪律（store 深拷贝红线）：
+        · 读走 wmOf(chatId) —— 每次从 store 现取，不缓存整局对象；
+        · 写走 wmSave(chatId, fn) —— 进 mutate 拿**全量**列表改完整体落盘。
+        c.wm 不在 = 没开桌；buildMessages / 回复标签解析 / 面板都只认这份。 */
+      function wmOf(chatId) {
+        var c = getChat(chatId);
+        if (!c || !c.wm || !c.wm.game) return null;
+        return c.wm;
+      }
+
+      function wmSave(chatId, fn) {
+        return mutate(chatId, function (c) {
+          c.wm = c.wm || { game: null, pending: null, charLastPlay: null };
+          fn(c.wm);
+        });
+      }
+
+      /** 牌桌播报：落一条 type:'wm' 的居中灰条（同拍一拍的展示位）。
+          role 用 'system'——buildMessages 只放 user/assistant 进历史，
+          TA 对牌面的认知完全来自每轮注入的牌局上下文，不靠翻播报。 */
+      function wmPost(chatId, content) {
+        addMessage(chatId, {
+          id: newId(),
+          role: 'system',
+          type: 'wm',
+          content: content,
+          timestamp: Date.now()
+        });
+      }
+
+      /** 牌局上下文 system 消息（两处装配路径共用）。没开桌返回 null。 */
+      function wmContextMsg(chatId) {
+        if (!Sleepy.wm) return null;
+        var wm = wmOf(chatId);
+        if (!wm) return null;
+        var c = getChat(chatId);
+        var ctx = Sleepy.wm.buildContext(chatId, wm, {
+          user: userNameOf(c) || '我',
+          char: charNameOf(c) || 'TA'
+        });
+        if (!ctx) return null;
+        return { role: 'system', content: ctx };
+      }
+
+      /* ---------------- 牌桌面板（P2）----------------
+        居中弹层（红线：弹层一律页面居中，不贴底），挂 #phone。
+        面板只做牌桌：摸牌/选牌拼句/出牌/判 ta/看牌面。出牌=往聊天里
+        悬一个待裁决句 + 播报，之后的掰扯全在主聊天自然发生 —— TA 的
+        裁决藏在回复标签里（applyWmTags 解析），气泡里永远只有人话。
+        重绘纪律：每次 render 都从 wmOf(chatId) 现取（store 深拷贝红线，
+        不缓存整局对象），重开面板/聊天重绘都不串。 */
+
+      var WM_TILE_HUE = {
+        emotion: 'wm-tile-emotion', verb: 'wm-tile-verb', noun: 'wm-tile-noun',
+        adjective: 'wm-tile-adj', adverb: 'wm-tile-adverb', scene: 'wm-tile-scene',
+        supplement: 'wm-tile-sup'
+      };
+
+      function openWmPanel(ctx) {
+        var wm = Sleepy.wm;
+        if (!wm) { ctx.toast('牌桌模块没加载上', 'err'); return; }
+        var chat = getChat(chatId);
+        if (!chat) { ctx.toast('找不到这个对话', 'err'); return; }
+        var ch = findCharacter(chat.characterId);
+        var charName = ch ? ch.name : '对方';
+        var userName = userNameOf(chat) || '我';
+
+        var host = document.getElementById('phone') || document.body;
+        var mask = h('div', 'wm-mask');
+        var card = h('div', 'wm-panel');
+        var closed = false;
+
+        function close() {
+          if (closed) return;
+          closed = true;
+          mask.classList.remove('is-open');
+          card.classList.remove('is-open');
+          setTimeout(function () {
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+            if (panelBox && panelBox.parentNode) panelBox.parentNode.removeChild(panelBox);
+          }, 180);
+        }
+        var panelBox = h('div', 'wm-panelbox');
+        panelBox.addEventListener('click', function (e) { e.stopPropagation(); });
+        mask.addEventListener('click', close);
+
+        /* ---- 动作（全部走 wmSave，播报走 wmPost）---- */
+        function startFresh() {
+          wmSave(chatId, function (w) {
+            w.game = wm.createGame(chatId, charName);
+            w.pending = null;
+            w.charLastPlay = null;
+          });
+          render();
+        }
+        function quitGame() {
+          var cur = wmOf(chatId);
+          if (cur && cur.game && cur.game.status === 'playing' &&
+              !window.confirm('确定退出牌局吗？本局进度不会保留。')) return;
+          wmSave(chatId, function (w) { w.game = null; w.pending = null; w.charLastPlay = null; });
+          close();
+        }
+        function reset() {
+          wmSave(chatId, function (w) { w.game = null; w.pending = null; w.charLastPlay = null; });
+          startFresh();
+        }
+
+        /* ---- 渲染 ---- */
+        function tileEl(c, picked, onTap) {
+          var t = h('button', 'wm-tile ' + (WM_TILE_HUE[c.category] || '') + (picked ? ' is-picked' : ''));
+          t.type = 'button';
+          t.appendChild(h('span', 'wm-tile-ch', c.char));
+          t.appendChild(h('span', 'wm-tile-py', c.pinyin));
+          if (onTap) t.addEventListener('click', function () { onTap(c); });
+          return t;
+        }
+
+        function meldChip(m, cls) {
+          return h('span', 'wm-meld ' + cls, m.map(function (c) { return c.char; }).join(''));
+        }
+
+        function render() {
+          if (closed) return;
+          var cur = wmOf(chatId);
+          var g = cur ? cur.game : null;
+          card.innerHTML = '';
+
+          /* 头部 */
+          var head = h('div', 'wm-head');
+          var hLeft = h('div', 'wm-head-l');
+          hLeft.appendChild(h('div', 'wm-head-t', '文字麻将 · vs ' + charName));
+          hLeft.appendChild(h('div', 'wm-head-s', 'WORD MAHJONG'));
+          head.appendChild(hLeft);
+          var hRight = h('div', 'wm-head-r');
+          if (g) {
+            var quit = h('button', 'wm-quit', '退出牌局');
+            quit.type = 'button';
+            quit.addEventListener('click', quitGame);
+            hRight.appendChild(quit);
+          }
+          var x = h('button', 'wm-close', '×');
+          x.type = 'button';
+          x.addEventListener('click', close);
+          hRight.appendChild(x);
+          head.appendChild(hRight);
+          card.appendChild(head);
+
+          if (!g) {
+            /* 开桌页 */
+            var intro = h('div', 'wm-intro');
+            var av = (ch && ch.avatar)
+              ? (function () { var im = document.createElement('img'); im.className = 'wm-ava'; im.src = ch.avatar; im.alt = ''; return im; })()
+              : null;
+            if (av) intro.appendChild(av);
+            intro.appendChild(h('div', 'wm-intro-t', '和 ' + charName + ' 打「文字打马吊」'));
+            var desc = h('p', 'wm-intro-d');
+            desc.innerHTML = '各 13 张汉字牌。每回合摸 1 张，把手里 ≥3 个字拼成一句短句<b>整句打出</b>清空手牌——先出空的赢。<br>打出后<b>直接在聊天里跟 ta 掰扯</b>，裁决就藏在 ta 的回复里。';
+            intro.appendChild(desc);
+            var go = h('button', 'wm-go', '和 ' + charName + ' 开桌');
+            go.type = 'button';
+            go.addEventListener('click', startFresh);
+            intro.appendChild(go);
+            card.appendChild(intro);
+          } else {
+            var playing = g.status === 'playing';
+            var pending = cur.pending;
+            var lastPlay = cur.charLastPlay;
+            var myTurn = playing && !pending && !lastPlay;
+
+            /* 状态条 */
+            var stat = h('div', 'wm-stat');
+            stat.appendChild(h('span', 'wm-stat-c', '牌墙 ' + g.wall.length));
+            stat.appendChild(h('span', 'wm-stat-m' + (myTurn ? ' is-hot' : ''),
+              playing ? (pending ? '句子悬着：去聊天框跟 ta 掰扯'
+                : lastPlay ? '该你当裁判了'
+                : '拼一句打出去，组不成就摸牌') : '对局结束'));
+            stat.appendChild(h('span', 'wm-stat-c', '你 ' + g.hands[0].length + ' / ta ' + g.hands[1].length));
+            card.appendChild(stat);
+
+            /* ta 的手牌背面 + 已出的句子 */
+            var foe = h('div', 'wm-foe');
+            var foeRow = h('div', 'wm-foe-row');
+            foeRow.appendChild(h('span', 'wm-foe-name', charName));
+            var backs = h('div', 'wm-backs');
+            for (var bi = 0; bi < g.hands[1].length; bi++) backs.appendChild(h('i', 'wm-back'));
+            foeRow.appendChild(backs);
+            foe.appendChild(foeRow);
+            var foeMelds = h('div', 'wm-melds');
+            if (!g.melds[1].length) foeMelds.appendChild(h('span', 'wm-none', 'ta 还没出句'));
+            for (var fi = 0; fi < g.melds[1].length; fi++) foeMelds.appendChild(meldChip(g.melds[1][fi], 'wm-meld-ta'));
+            foe.appendChild(foeMelds);
+            card.appendChild(foe);
+
+            /* 我已出的句子 */
+            if (g.melds[0].length) {
+              var myMelds = h('div', 'wm-melds wm-melds-my');
+              for (var mi = 0; mi < g.melds[0].length; mi++) myMelds.appendChild(meldChip(g.melds[0][mi], 'wm-meld-my'));
+              card.appendChild(myMelds);
+            }
+
+            /* 用户裁判条 */
+            if (playing && lastPlay) {
+              var judge = h('div', 'wm-judge');
+              judge.appendChild(h('span', 'wm-judge-t', 'ta 打出「' + lastPlay.sentence + '」'));
+              var jbtns = h('div', 'wm-judge-b');
+              var passB = h('button', 'wm-btn wm-btn-ok', '通过');
+              passB.type = 'button';
+              passB.addEventListener('click', function () { doJudge('pass'); });
+              var rejB = h('button', 'wm-btn wm-btn-no', '打回');
+              rejB.type = 'button';
+              rejB.addEventListener('click', function () { doJudge('reject'); });
+              jbtns.appendChild(passB); jbtns.appendChild(rejB);
+              judge.appendChild(jbtns);
+              card.appendChild(judge);
+            }
+
+            /* 终局覆盖 */
+            if (g.status === 'finished') {
+              var over = h('div', 'wm-over');
+              var face = g.winner === 0 ? '🎉' : g.isDraw ? '🀄' : '🍵';
+              var verdict = g.winner === 0 ? '你赢啦！' : g.isDraw ? '流局' : charName + ' 先出空了';
+              over.appendChild(h('div', 'wm-over-face', face));
+              over.appendChild(h('div', 'wm-over-t', verdict));
+              if (g.winningSentence) over.appendChild(h('div', 'wm-over-s', '「' + g.winningSentence + '」'));
+              var again = h('button', 'wm-go', '再来一局');
+              again.type = 'button';
+              again.addEventListener('click', reset);
+              over.appendChild(again);
+              card.appendChild(over);
+            }
+
+            /* 操作条 + 我的手牌（对局中） */
+            if (playing) {
+              var ops = h('div', 'wm-ops');
+              var drawB = h('button', 'wm-btn wm-btn-dark' + (myTurn ? '' : ' is-off'), '摸牌');
+              drawB.type = 'button';
+              drawB.addEventListener('click', function () {
+                if (!myTurn) return;
+                wmSave(chatId, function (w) { w.game = wm.drawCard(w.game, 0); });
+                render();
+              });
+              ops.appendChild(drawB);
+              var sentence = picked.map(function (c) { return c.char; }).join('');
+              var playB = h('button', 'wm-btn wm-btn-play' + (picked.length >= 3 && myTurn ? '' : ' is-off'),
+                '打出「' + sentence + '」');
+              playB.type = 'button';
+              playB.addEventListener('click', doPlay);
+              ops.appendChild(playB);
+              var re = h('button', 'wm-re', '重开');
+              re.type = 'button';
+              re.addEventListener('click', reset);
+              ops.appendChild(re);
+              card.appendChild(ops);
+
+              var handBox = h('div', 'wm-hand');
+              var handScroll = h('div', 'wm-hand-scroll');
+              g.hands[0].forEach(function (c) {
+                handScroll.appendChild(tileEl(c, picked.some(function (p) { return p.id === c.id; }),
+                  myTurn ? function (card2) { togglePick(card2); } : null));
+              });
+              handBox.appendChild(handScroll);
+              handBox.appendChild(h('div', 'wm-hint',
+                picked.length > 0 ? '语序：' + sentence + '（再点取消）'
+                  : pending ? '句子悬着——去聊天框跟 ta 掰扯，ta 判完牌自动回来'
+                  : '按顺序点牌拼句（≥3 字）；打出后回聊天框跟 ta 聊'));
+              card.appendChild(handBox);
+            }
+          }
+
+          if (!card.parentNode) {
+            panelBox.appendChild(card);
+            host.appendChild(mask);
+            host.appendChild(panelBox);
+            setTimeout(function () { mask.classList.add('is-open'); panelBox.classList.add('is-open'); }, 20);
+          }
+        }
+
+        /* 点选顺序即语序（内存态，不落库） */
+        var picked = [];
+        function togglePick(c) {
+          var cur = wmOf(chatId);
+          if (!cur || cur.pending || cur.charLastPlay) return;
+          var i = -1;
+          for (var k = 0; k < picked.length; k++) if (picked[k].id === c.id) i = k;
+          if (i === -1) picked.push(c); else picked.splice(i, 1);
+          render();
+        }
+
+        /** 打出 = 往聊天里悬一个待裁决句（牌不清），播报 + 收面板回聊天 */
+        function doPlay() {
+          var cur = wmOf(chatId);
+          if (!cur || !cur.game || cur.game.status !== 'playing') return;
+          if (cur.pending || cur.charLastPlay || picked.length < 3) return;
+          var tiles = picked.slice();
+          var sentence = tiles.map(function (c) { return c.char; }).join('');
+          picked = [];
+          wmSave(chatId, function (w) { w.pending = { sentence: sentence, tiles: tiles }; });
+          wmPost(chatId, '🀄 牌桌：' + userName + ' 打出了「' + sentence + '」（' + tiles.length + ' 张），待 ' + charName + ' 裁决');
+          close();
+          renderMessages();
+        }
+
+        /** 用户判 ta 的句子：只结算牌面 + 播报，不额外生成角色台词 */
+        function doJudge(verdict) {
+          var cur = wmOf(chatId);
+          if (!cur || !cur.charLastPlay || !cur.game) return;
+          var target = cur.charLastPlay;
+          if (verdict === 'pass') {
+            wmSave(chatId, function (w) {
+              w.game = wm.playPhrase(w.game, 1, target.tiles, target.sentence);
+              w.charLastPlay = null;
+            });
+            wmPost(chatId, '🀄 牌桌：' + userName + ' 判过，' + charName + ' 打出的「' + target.sentence + '」清掉 ' + target.tiles.length + ' 张');
+            var after = wmOf(chatId);
+            if (after && after.game && after.game.status === 'finished') {
+              wmPost(chatId, after.game.isDraw ? '🀄 牌墙摸完，流局～'
+                : after.game.winner === 0 ? '🎉 手牌出空——你赢啦！'
+                : '🍵 ' + charName + ' 先出空了，ta 赢了');
+            }
+          } else {
+            wmSave(chatId, function (w) { w.charLastPlay = null; });
+            wmPost(chatId, '🀄 牌桌：' + userName + ' 把「' + target.sentence + '」打回了');
+          }
+          render();
+        }
+
+        render();
+      }
+
+      /* ---------------- 回复标签解析（P3）----------------
+        TA 回复里的 [[WM_PASS]] / [[WM_PARTIAL:..]] / [[WM_REJECT]] /
+        [[WM_PLAY:字|字|字]] 在这里动牌（解析口径在 wm-core.parseWmTags，
+        宽容匹配；正文在返回前剥净，气泡里永远只有人话）。
+        荷官原则：系统绝不代判 —— 标签没出现 = ta 还没想好，句子继续悬着。
+        无对局时也照剥（防标签泄漏），只是不动牌。 */
+      function applyWmTags(chatId, raw) {
+        if (!Sleepy.wm) return String(raw || '').trim();
+        var parsed = Sleepy.wm.parseWmTags(raw);
+        var wm = wmOf(chatId);
+        if (!wm) return parsed.text;          /* 没开桌：只防泄漏 */
+
+        /* 这一轮的牌局状态全部现取（下面每步 wmSave 之后都会重读一遍，
+           拿着开局快照往下走会用过期手牌配牌 —— 悬句判完牌面已经变了） */
+        var chat = getChat(chatId);
+        var ch = findCharacter(chat && chat.characterId);
+        var charName = ch ? ch.name : '对方';
+        var userName = userNameOf(chat) || '我';
+
+        /* ── 1. 裁决用户悬着的句子（pending 每步现取，判完牌面会变） ── */
+        var cur = wmOf(chatId);
+        var pending = cur ? cur.pending : null;
+        if (pending) {
+          if (parsed.pass) {
+            var pendPass = pending;
+            wmSave(chatId, function (w) {
+              w.game = Sleepy.wm.playPhrase(w.game, 0, pendPass.tiles, pendPass.sentence);
+              w.pending = null;
+            });
+            wmPost(chatId, '🀄 牌桌：' + charName + ' 判过，' + userName + ' 打出的「' + pendPass.sentence + '」清掉 ' + pendPass.tiles.length + ' 张');
+            pending = null;
+          } else if (parsed.partial) {
+            var words = parsed.partial.words.filter(function (w2) { return pending.sentence.indexOf(w2) !== -1; });
+            var resolved = false;
+            if (words.length) {
+              var hit = Sleepy.wm.tilesForPassWords(pending.tiles, words);
+              if (hit.accepted.length >= 2) {
+                wmSave(chatId, function (w) {
+                  w.game = Sleepy.wm.playPhrase(w.game, 0, hit.accepted, hit.sentence);
+                  w.pending = null;
+                });
+                wmPost(chatId, '🀄 牌桌：' + userName + ' 的句子部分过——「' + hit.sentence + '」清掉 ' + hit.accepted.length + ' 张，其余的字收回');
+                pending = null;
+                resolved = true;
+              }
+            }
+            if (!resolved && pending) {
+              wmPost(chatId, '🀄 牌桌：裁决的词没对上牌，这句先悬着');
+            }
+          } else if (parsed.reject) {
+            var pendRej = pending;
+            wmSave(chatId, function (w) { w.pending = null; });
+            wmPost(chatId, '🀄 牌桌：整句打回，' + pendRej.tiles.length + ' 张牌收回 ' + userName + ' 手里');
+            pending = null;
+          } else {
+            /* 荷官催标签：ta 嘴上说了裁决但系统没收到，明着催（下一条回复就会补） */
+            wmPost(chatId, '🀄 牌桌：没有收到裁决标签，刚才那句不算数——请补一个 [[WM_PASS]] / [[WM_PARTIAL:子串|子串]] / [[WM_REJECT]]');
+          }
+        }
+
+        /* ── 2. ta 出牌（悬句解决后才允许；状态从 store 现取）──
+           ta 上一句还挂在裁判条上（用户没按通过/打回）→ 本轮不摸不打，
+           否则同一条句子会被重复落账。 */
+        cur = wmOf(chatId);
+        var g = cur ? cur.game : null;
+        var lastPlay = cur ? cur.charLastPlay : null;
+        if (g && g.status === 'playing' && !pending && !lastPlay) {
+          if (parsed.play) {
+            var chars = parsed.play.chars;
+            var tiles = [];
+            var used = new Set();
+            (chars || []).forEach(function (chr) {
+              var found = null;
+              for (var i = 0; i < g.hands[1].length; i++) {
+                var hd = g.hands[1][i];
+                if (hd.char === chr && !used.has(hd.id)) { found = hd; break; }
+              }
+              if (found) { tiles.push(found); used.add(found.id); }
+            });
+            if (tiles.length >= 3 && tiles.length === chars.length) {
+              var sentence = tiles.map(function (c) { return c.char; }).join('');
+              /* 悬案化：不落账（不从手牌移除、不写 melds），等用户在面板判。 */
+              wmSave(chatId, function (w) { w.charLastPlay = { tiles: tiles, sentence: sentence }; });
+              wmPost(chatId, '🀄 牌桌：' + charName + ' 打出了「' + sentence + '」（' + tiles.length + ' 张），待 ' + userName + ' 裁决');
+            } else {
+              wmPost(chatId, '🀄 牌桌：' + charName + ' 出的字对手不上号，按过处理');
+            }
+          } else {
+            /* ta 组不出句子 → 摸一张（ta 的「摸牌」选择）；墙空就地结算 */
+            var drew = false;
+            wmSave(chatId, function (w) {
+              if (w.game.status !== 'playing') return;
+              if (w.game.wall.length === 0) { w.game = Sleepy.wm.endByWall(w.game); return; }
+              w.game = Sleepy.wm.drawCard(w.game, 1);
+              drew = true;
+            });
+            if (drew) wmPost(chatId, '🀄 牌桌：' + charName + ' 组不出句子，摸了一张牌');
+          }
+          wmSave(chatId, function (w) { if (w.game && w.game.status === 'playing') w.game.turn = 0; });
+        }
+
+        /* ── 3. 终局播报 ── */
+        var afterWm = wmOf(chatId);
+        if (afterWm && afterWm.game && afterWm.game.status === 'finished') {
+          wmPost(chatId, afterWm.game.isDraw ? '🀄 牌墙摸完，流局～'
+            : afterWm.game.winner === 0 ? '🎉 手牌出空——你赢啦！'
+            : '🍵 ' + charName + ' 先出空了，ta 赢了');
+        }
+
+        return parsed.text;
+      }
+
+      /* ==================== 反查手机（revcheck-core.js 接线层） ====================
+
+        TA 偷看你的手机。执行形态对齐《方案-反查手机-v1.1》主形态：
+        不演戏——直接把**真页面**一个个打开（nav.open），对真滚动容器做平滑
+        滚动模拟，TA 的内心想法（LLM）以弹幕气泡飘过当前屏；顶部一枚呼吸
+        胶囊报状态 + 暂停/结束（手法照 qs reverseTakeoverRunner）。
+        数据层：采样器真读本岛数据（岛章红线，跨岛绝不进采样）；
+        收尾：summary 落 type:'revcheck' 系统条 + eventNote 注入下一轮 +
+        记忆落库（标注来源）。
+        冷却/开关挂在 chat.rev = { lastAt, off, note }（走 mutate 落库）。 */
+
+      function revStateOf(chat) {
+        return (chat && chat.rev) || {};
+      }
+
+      /** 可看清单：按岛现算（岛章红线——只列本岛有的东西） */
+      function revAvailable(chat) {
+        var core2 = Sleepy.core;
+        var sid = chat.sandboxId || null;
+        var scopedChats = sid && core2 && core2.scoped
+          ? core2.scoped(allChats()).filter(function (c) { return c.sandboxId === sid && !c.groupId; })
+          : allChats().filter(function (c) { return !c.groupId; });
+        var targets = [];
+        /* 私聊：TA 自己的对话放最前，然后是岛内其他对象（滑到谁读谁） */
+        scopedChats.forEach(function (c) {
+          if (c.id === chat.id) {
+            targets.unshift({ id: c.characterId, name: charNameOf(c) || 'ta', chatId: c.id });
+            return;
+          }
+          targets.push({ id: c.characterId, name: chatDisplayName(c), chatId: c.id });
+        });
+        return [
+          { id: 'chat', targets: targets },
+          { id: 'moments', name: '朋友圈' },
+          { id: 'photos', name: '相册' },
+          { id: 'diary', name: '日记' },
+          { id: 'favorites', name: '收藏' },
+          { id: 'profile', name: '微信账号' },
+          { id: 'forum', name: '群声' }
+        ];
+      }
+
+      /** 采样器：真读本岛数据 → {detail, learned}。失败回落通用文案，不阻断浏览。 */
+      function revSample(step) {
+        try {
+          var chat = getChat(chatId);
+          var sid = chat && chat.sandboxId || null;
+          function scoped(key) {
+            var list = store.get(key);
+            if (!Array.isArray(list)) return [];
+            return (sid && Sleepy.core && Sleepy.core.scoped) ? Sleepy.core.scoped(list) : list;
+          }
+          if (step.page === 'chat' && step.chatId) {
+            var tc = getChat(step.chatId);
+            var msgs = (tc && Array.isArray(tc.messages)) ? tc.messages : [];
+            var lines = [];
+            for (var i = msgs.length - 1; i >= 0 && lines.length < 6; i--) {
+              var m = msgs[i];
+              if (m.role !== 'user' && m.role !== 'assistant') continue;
+              if (m.type === 'checkin' || m.type === 'wm') continue;   /* 查岗/牌桌内部条不给看 */
+              var text = String(m.content || '').trim();
+              if (!text) continue;
+              lines.unshift((m.role === 'user' ? '你：' : '对方：') + text.slice(0, 40));
+            }
+            if (!lines.length) return { detail: '聊天记录（空）', learned: '' };
+            var userSays = lines.filter(function (l) { return l.indexOf('你：') === 0; }).slice(0, 3);
+            return {
+              detail: '和「' + step.targetName + '」的聊天：' + lines.slice(0, 4).join(' / '),
+              learned: userSays.length ? ('与「' + step.targetName + '」对话中你提到：' + userSays.join('；')) : ''
+            };
+          }
+          if (step.page === 'moments') {
+            var posts = scoped('moments').filter(function (p) { return p && !p.groupId; }).slice(-4).reverse();
+            if (!posts.length) return { detail: '朋友圈', learned: '' };
+            return {
+              detail: '朋友圈动态：' + posts.map(function (p) { return String(p.content || p.text || '').slice(0, 30); }).join(' / '),
+              learned: ''
+            };
+          }
+          if (step.page === 'photos') {
+            var ph = scoped('photos');
+            return { detail: '相册（' + ph.length + ' 张）', learned: '' };
+          }
+          if (step.page === 'diary') {
+            var ds = scoped('diaries').slice(-3).reverse();
+            if (!ds.length) return { detail: '日记（空）', learned: '' };
+            return {
+              detail: '日记：' + ds.map(function (d) { return String(d.content || '').slice(0, 30); }).join(' / '),
+              learned: ''
+            };
+          }
+          if (step.page === 'favorites') {
+            var fs = scoped('favorites');
+            return { detail: '收藏（' + fs.length + ' 条）', learned: '' };
+          }
+          if (step.page === 'profile') {
+            var mask = null;
+            var users = store.get('userMasks');
+            if (Array.isArray(users) && chat.userId) {
+              users.forEach(function (u) { if (u && u.id === chat.userId) mask = u; });
+            }
+            var wallet = store.get('wallet') || {};
+            return {
+              detail: '「我」的资料页：' + (mask ? (mask.name || '') : '') +
+                (mask && mask.persona ? '（' + String(mask.persona).slice(0, 40) + '）' : '') +
+                (wallet.balance !== undefined ? '，余额 ¥' + wallet.balance : ''),
+              learned: ''
+            };
+          }
+          if (step.page === 'forum') {
+            var fps = scoped('forumPosts').filter(function (p) { return p && p.status !== 'deleted'; }).slice(-4).reverse();
+            if (!fps.length) return { detail: '群声（空）', learned: '' };
+            return {
+              detail: '群声帖子：' + fps.map(function (p) { return String(p.title || p.content || '').slice(0, 24); }).join(' / '),
+              learned: ''
+            };
+          }
+        } catch (e) { /* 采样失败不阻断 */ }
+        return { detail: '浏览了「' + step.pageName + '」', learned: '' };
+      }
+
+      /** 页面切换：nav.open 真页面。页面没注册就跳过这步（返回 false）。 */
+      function revOpenPage(step) {
+        var map = { moments: 'moments', photos: 'gallery', diary: 'diary', favorites: 'collection', forum: 'qunsheng' };
+        var reg = Sleepy.registered ? Sleepy.registered() : {};
+        var id;
+        if (step.page === 'chat' && step.chatId) {
+          id = 'chat-detail';
+          if (!reg[id]) return false;
+          Sleepy.nav.open(id, { chatId: step.chatId });
+          return true;
+        }
+        if (step.page === 'profile') {
+          id = reg['me'] ? 'me' : (reg['wallet'] ? 'wallet' : null);
+        } else {
+          id = map[step.page] || null;
+        }
+        if (!id || !reg[id]) return false;
+        Sleepy.nav.open(id, {});
+        return true;
+      }
+
+      /** 找当前页面里最大的可滚动容器（照 qs findScroller 手法） */
+      function revFindScroller() {
+        var phone = (Sleepy.el && Sleepy.el.phone) || document.getElementById('phone');
+        if (!phone) return null;
+        var all = phone.querySelectorAll('.msg-wrap, .page-scroll, [class*="scroll"]');
+        var best = null, bestH = 0;
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 200 && el.clientHeight > bestH) {
+            best = el; bestH = el.clientHeight;
+          }
+        }
+        return best;
+      }
+
+      /** 模拟手指滚屏：顶→中→底→回顶循环（对齐 qs simulateScrollInApp） */
+      function revSimScroll(scroller) {
+        if (!scroller || !scroller.isConnected) return;
+        var maxTop = scroller.scrollHeight - scroller.clientHeight;
+        if (maxTop <= 0) return;
+        if (scroller.scrollTop >= maxTop - 30) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+        else scroller.scrollTo({ top: Math.min(scroller.scrollTop + scroller.clientHeight * 0.7, maxTop), behavior: 'smooth' });
+      }
+
+      /** 内心想法：裸 LLM 一次调用（走主 API 候选首位），失败回 ''（不弹幕不阻断） */
+      function revThought(charName, persona, view) {
+        var api = Sleepy.api;
+        if (!api || !api.candidates) return Promise.resolve('');
+        var cand = api.candidates()[0];
+        if (!cand || !cand.baseUrl || !cand.apiKey) return Promise.resolve('');
+        var sys = '你在扮演「' + charName + '」，正偷看「你」的手机（这是用户手机里的真实数据，不是演出）。' +
+          '人设：' + String(persona || '').slice(0, 400) + '\n' +
+          '你刚看到（' + view.pageName + '）：' + (view.detail || '') +
+          (view.learned ? ('\n你注意到：' + view.learned) : '') +
+          '\n用一句符合人设的内心想法（15 字内，口语，可以有情绪：吃醋/好奇/心虚/得意都行）。只输出想法本身。';
+        var ctrl = new AbortController();
+        /* 超时放宽：思维链模型慢（真机实测 2026-10-25），后台弹幕等得起 */
+        var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 45000);
+        return fetch(String(cand.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cand.apiKey },
+          body: JSON.stringify({
+            model: cand.model,
+            messages: [{ role: 'user', content: sys }],
+            temperature: 0.9, max_tokens: 1000, stream: false
+          }),
+          signal: ctrl.signal
+        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+          clearTimeout(timer);
+          return String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim().slice(0, 40);
+        }).catch(function () { clearTimeout(timer); return ''; });
+      }
+
+      /**
+       * 接管主流程。consent 已过（或主动触发直接看）。
+       * deps 注入便于以后复用；结束回调回聊天页。
+       */
+      function revRun(charName, persona, chat) {
+        var rc = Sleepy.revcheck;
+        if (!rc) return;
+        if (revRunning) { ctx.toast('TA 已经在看手机了', 'warn'); return; }
+        var plan = rc.buildPlan(revAvailable(chat), persona, revStateOf(chat).off);
+        if (!plan.length) { ctx.toast('这台手机上没有 TA 能看的东西', 'warn'); return; }
+
+        var host = (Sleepy.el && Sleepy.el.phone) || document.getElementById('phone');
+        var capsule = h('div', 'rev-capsule');
+        capsule.innerHTML = '<span class="rev-dot"></span><span class="rev-cap-t">👁 ' + charName + ' 在看你手机</span>';
+        var pauseB = h('button', 'rev-cap-btn rev-cap-pause', '⏸');
+        var stopB = h('button', 'rev-cap-btn rev-cap-stop', '×');
+        var btnRow = h('span', 'rev-cap-btns');
+        btnRow.appendChild(pauseB); btnRow.appendChild(stopB);
+        capsule.appendChild(btnRow);
+        var danmaku = h('div', 'rev-danmaku');
+        host.appendChild(capsule);
+        host.appendChild(danmaku);
+
+        var state = { idx: -1, paused: false, timer: null, scrollTimer: null, scroller: null,
+          items: [], thoughts: [], done: false, from: Sleepy.nav.top() };
+
+        function danmu(text) {
+          if (!text) return;
+          var b = h('div', 'rev-bubble', text);
+          b.style.left = (8 + Math.random() * 54) + '%';
+          b.style.top = (18 + Math.random() * 40) + '%';
+          danmaku.appendChild(b);
+          setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 4200);
+        }
+        function stopLoops() {
+          if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+          if (state.scrollTimer) { clearInterval(state.scrollTimer); state.scrollTimer = null; }
+          /* 打断进行中的 smooth 滚动（qs 的三连补刀：同步赋值 + auto + 下帧再一刀） */
+          try {
+            var sc = state.scroller;
+            if (sc && sc.isConnected) {
+              var y = sc.scrollTop;
+              sc.scrollTop = y;
+              try { sc.scrollTo({ top: y, behavior: 'auto' }); } catch (e) {}
+              setTimeout(function () { try { if (sc.isConnected) sc.scrollTop = sc.scrollTop; } catch (e) {} }, 0);
+            }
+          } catch (e) {}
+        }
+        function teardown() {
+          stopLoops();
+          if (capsule.parentNode) capsule.parentNode.removeChild(capsule);
+          if (danmaku.parentNode) danmaku.parentNode.removeChild(danmaku);
+          revRunning = false;
+        }
+        function finish(interrupted) {
+          if (state.done) return;
+          state.done = true;
+          teardown();
+          var summary = rc.buildSummary(charName, state.items, state.thoughts);
+          addMessage(chatId, {
+            id: newId(), role: 'system', type: 'revcheck',
+            content: '🕵️ ' + summary, timestamp: Date.now()
+          });
+          /* learned 落 TA 记忆（标注来源），TA 下轮起长期记得 */
+          var learnedAll = state.items.map(function (it) { return it.learned; }).filter(Boolean).join('；');
+          if (learnedAll) {
+            try { commitMemory(chatId, 'assistant', '（翻看了你的手机）' + learnedAll); }
+            catch (e) { /* 记忆失败不影响播报 */ }
+          }
+          /* eventNote 注入下一轮：TA 主动接住看到的内容 */
+          revSave(chatId, function (w) {
+            w.lastAt = Date.now();
+            w.note = summary;
+          });
+          renderMessages();
+          ctx.toast(interrupted ? 'TA 被你抓个正着' : (charName + ' 看完了你的手机'), 'ok');
+        }
+        function advance() {
+          if (state.done || state.paused) return;
+          var next = state.idx + 1;
+          if (next >= plan.length) { finish(false); return; }
+          state.idx = next;
+          var step = plan[next];
+          var opened = revOpenPage(step);
+          var item = { pageName: step.pageName, detail: step.detail, learned: '' };
+          state.items.push(item);
+          state.scroller = null;
+          state.timer = setTimeout(function () {
+            if (state.done || state.paused) return;
+            if (opened) {
+              state.scroller = revFindScroller();
+              state.scrollTimer = setInterval(function () { revSimScroll(state.scroller); }, 1200);
+            }
+            var sampled = revSample(step);
+            item.detail = sampled.detail; item.learned = sampled.learned;
+            revThought(charName, persona, { pageName: step.pageName, detail: sampled.detail, learned: sampled.learned })
+              .then(function (t) {
+                if (t && !state.done && !state.paused) {
+                  state.thoughts.push(t);
+                  danmu(t);
+                }
+              });
+            state.timer = setTimeout(advance, 5000);
+          }, opened ? 700 : 200);
+        }
+        pauseB.addEventListener('click', function () {
+          state.paused = !state.paused;
+          pauseB.textContent = state.paused ? '▶' : '⏸';
+          capsule.classList.toggle('is-paused', state.paused);
+          if (state.paused) { stopLoops(); }
+          else {
+            state.scroller = revFindScroller();
+            state.scrollTimer = setInterval(function () { revSimScroll(state.scroller); }, 1200);
+            state.timer = setTimeout(advance, 5000);
+          }
+        });
+        stopB.addEventListener('click', function () { finish(true); });
+
+        revRunning = true;
+        ctx.toast(charName + ' 开始查看你的手机…', 'info');
+        advance();
+      }
+      var revRunning = false;
+
+      /** 反查状态/倾向（自动推导 + chat.rev.override 覆盖） */
+      function revPersonaOf(ch, chat) {
+        var st = revStateOf(chat);
+        return st.override || (ch ? ch.content : '') || '';
+      }
+
+      /** 反查总开关（对话设置页那块）：关了 = 这条对话不许 TA 翻手机 */
+      function revEnabled(chat) {
+        return !(chat && chat.rev && chat.rev.off);
+      }
+
+      /** 手动入口（加号面板，v1.2 用户口径）：点格子 = **递手机邀请**。
+          不当场判定同意/拒绝——落一张邀请卡，TA 知道是你邀请的，
+          下一轮回复里自己决定：接（夹 [[REV_ACCEPT]]，管线随即开翻）
+          或拒绝（嘴上说，不夹标签）。判定权在 TA。 */
+      function revManual(ctx2) {
+        var rc = Sleepy.revcheck;
+        if (!rc) return;
+        var chat = getChat(chatId);
+        var ch = findCharacter(chat && chat.characterId);
+        if (!chat || !ch) return;
+        if (!revEnabled(chat)) { ctx2.toast('这条对话关掉了反查手机（对话设置里可以开回来）', 'warn'); return; }
+        addMessage(chatId, {
+          id: newId(), role: 'user', type: 'rev-invite',
+          content: '你把手机递给了「' + ch.name + '」，屏幕朝上——「想看就看吧」',
+          timestamp: Date.now()
+        });
+        revSave(chatId, function (w) { w.invite = { at: Date.now() }; });
+        renderMessages();
+      }
+
+      /** TA 回复里的邀请应答（onDone 链调）：有 [[REV_ACCEPT]] 就当场开翻。
+          邀请一次性：无论接没接都清掉。返回剥净正文。 */
+      function applyRevInvite(chatId, raw) {
+        if (!Sleepy.revcheck) return String(raw || '').trim();
+        var parsed = Sleepy.revcheck.parseAcceptTag(raw);
+        var chat = getChat(chatId);
+        if (!chat || !revStateOf(chat).invite) return parsed.text;   /* 没邀请也照剥防泄漏 */
+        revSave(chatId, function (w) { w.invite = null; });
+        if (parsed.accept && !revEnabled(chat)) return parsed.text;  /* 开关关了：起意不放行 */
+        if (parsed.accept) {
+          var ch = findCharacter(chat.characterId);
+          var charName = ch ? ch.name : '对方';
+          addMessage(chatId, {
+            id: newId(), role: 'system', type: 'pat',
+            content: '「' + charName + '」接过了你的手机', timestamp: Date.now()
+          });
+          renderMessages();
+          revRun(charName, revPersonaOf(ch, chat), getChat(chatId));
+        }
+        return parsed.text;
+      }
+
+      /** 主动起意（v1.3 剧情驱动）：TA 回复里夹 [[REV_PEEK]] = 剧情上真的想看，
+          当场开翻。不掷骰子——频率由剧情控制，冷却只当保险丝（防模型上头）。
+          标签一律从正文剥净（没起意也照剥防泄漏）。返回剥净正文。 */
+      function applyRevPeek(chatId, raw) {
+        if (!Sleepy.revcheck) return String(raw || '').trim();
+        var parsed = Sleepy.revcheck.parsePeekTag(raw);
+        var chat = getChat(chatId);
+        if (!parsed.peek || !chat) return parsed.text;
+        if (!revEnabled(chat)) return parsed.text;   /* 开关关了：起意不放行（标签照剥） */
+        var ch = findCharacter(chat.characterId);
+        var persona = revPersonaOf(ch, chat);
+        if (!Sleepy.revcheck.canPeekNow({ persona: persona, lastAt: revStateOf(chat).lastAt || 0 }, Date.now())) {
+          return parsed.text;   /* none 档 / 冷却未过：起意也不放行（标签照剥） */
+        }
+        revSave(chatId, function (w) { w.lastAt = Date.now(); });
+        revRun(ch.name, persona, chat);
+        return parsed.text;
+      }
+
+      /* ==================== 关系人账户（ta-relations.js 接线层） ====================
+
+        活人系统 L1：TA 认识的第三人，自治生长（用户定稿：不走提案确认）。
+        · 注入：buildMessages 每轮垫「身边的人」摘要（印象强制「未必属实」）；
+        · 生长：每次回复后 fire-and-forget——提及检测（全名精确匹配自动记
+          lastMentioned）+ 挑最久没养的账户让 LLM 养一格近况（节流：同账户
+          3 天不重复喂、每轮至多 1 个）。LLM 失败静默，绝不阻塞聊天。
+        铁律在 ta-relations.js（note 永不覆盖 / learned 未必属实 / 严禁换人）。 */
+
+      function taRelTick(chatId, replyText) {
+        var tr = Sleepy.taRelations;
+        if (!tr) return;
+        var chat = getChat(chatId);
+        if (!chat || !chat.characterId) return;
+        var now = Date.now();
+        tr.touchMentioned(chat.characterId, chat.sandboxId, replyText, now);
+        var acc = tr.pickForAdvance(chat.characterId, chat.sandboxId, now);
+        if (!acc) return;
+        var api = Sleepy.api;
+        if (!api || !api.candidates) return;
+        var cand = api.candidates()[0];
+        if (!cand || !cand.baseUrl || !cand.apiKey) return;
+        var recent = (chat.messages || []).slice(-6).map(function (m) {
+          return (m.role === 'user' ? '你：' : 'TA：') + String(m.content || '').slice(0, 40);
+        }).join('\n');
+        var ctrl = new AbortController();
+        /* 真机实测（xinxiwang 网关，2026-10-25）：思维链模型（如 vertex gemini）
+           一来慢（几百 token 要 1~2 分钟）、二来 reasoning_content 会挤配额——
+           超时和 max_tokens 都放宽，反正这条链是后台 fire-and-forget。 */
+        var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 45000);
+        fetch(String(cand.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cand.apiKey },
+          body: JSON.stringify({
+            model: cand.model,
+            messages: [{ role: 'user', content: tr.buildAdvancePrompt(acc, recent) }],
+            /* 真机实测：max_tokens 600 仍会被思维链挤到 content 截断（半个
+               JSON），2000 才稳。解析失败再走下面宽容提取兜底。 */
+            temperature: 0.8, max_tokens: 2000, stream: false
+          }),
+          signal: ctrl.signal
+        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+          clearTimeout(timer);
+          var raw = String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim();
+          var patch = null;
+          var m = raw.match(/\{[\s\S]*\}/);
+          if (m) { try { patch = JSON.parse(m[0]); } catch (e) { patch = null; } }
+          if (!patch) {
+            /* 宽容提取：content 被思维链挤截断时，半个 JSON 也把字段捞回来 */
+            patch = {};
+            var f = function (key) {
+              var fm = raw.match(new RegExp('"' + key + '"\s*:\s*"([^"]*)"'));
+              return fm ? fm[1] : '';
+            };
+            patch.currentState = f('currentState');
+            patch.learned = f('learned');
+            if (!patch.currentState && !patch.learned) return;
+          }
+          tr.applyAdvance(chat.characterId, chat.sandboxId, acc.id, patch, Date.now());
+        }).catch(function () { clearTimeout(timer); /* 静默 */ });
+      }
+
+      /** L2 今日块：今天还没有 → 生成一次（一天一次/角色；素材只从账本读；
+          生成失败静默，明天再试——绝不阻塞聊天）。 */
+      function taTodayTick(chatId) {
+        var td = Sleepy.taToday;
+        if (!td) return;
+        var chat = getChat(chatId);
+        if (!chat || !chat.characterId) return;
+        if (td.get(chat.characterId, chat.sandboxId)) return;   /* 今天已有 */
+        var api = Sleepy.api;
+        if (!api || !api.candidates) return;
+        var cand = api.candidates()[0];
+        if (!cand || !cand.baseUrl || !cand.apiKey) return;
+        var ch = findCharacter(chat.characterId);
+        var material = td.buildMaterial(chat.characterId, chat.sandboxId);
+        var ctrl = new AbortController();
+        var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 60000);
+        fetch(String(cand.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cand.apiKey },
+          body: JSON.stringify({
+            model: cand.model,
+            messages: [{ role: 'user', content: td.buildPrompt(ch ? ch.name : 'TA', material) }],
+            temperature: 0.85, max_tokens: 2000, stream: false
+          }),
+          signal: ctrl.signal
+        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+          clearTimeout(timer);
+          var raw = String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim();
+          var m = raw.match(/\{[\s\S]*\}/);
+          if (!m) return;
+          var fields;
+          try { fields = JSON.parse(m[0]); } catch (e) { return; }
+          td.put(chat.characterId, chat.sandboxId, fields, Date.now());
+        }).catch(function () { clearTimeout(timer); /* 静默：明天再试 */ });
+      }
+
       function buildMessages(opts) {
         opts = opts || {};
         var c = getChat(chatId);
@@ -4471,7 +5522,10 @@
           var built = Sleepy.promptEngine.assembleOnline({
             charId: c.characterId,
             userId: c.userId,
-            history: out
+            history: out,
+            /* 旁白描述（2026-10-25）：这条对话自己的开关与文风/字数/密度。
+               没开 = undefined → narrCard 返回 '' → narr 槽不注入。 */
+            narr: c.narration || null
           });
           /* 候选补丁 2026-10-13：引擎开分支走同一套人物/协议诊断
              （built.protocol 是 c05 槽实际生效正文，文本判空）。 */
@@ -4485,6 +5539,38 @@
           /* 小游戏结算（同一次性垫法）：对方玩完 TA 送的游戏，下一轮让 TA 知道 */
           var gamePeek = gameResultPeekMsg(chatId);
           if (gamePeek) built.messages.push(gamePeek);
+          /* 文字麻将牌局（wm-core.js）：对局进行中每轮垫上下文（规则/手牌/
+             待裁决句 + 标签写法）。不是一次性 peek —— 牌局活着就要垫。
+             旧组装路径在下面同款 unshift，两处口径一致（都读 c.wm）。 */
+          var wmCtx = wmContextMsg(chatId);
+          if (wmCtx) built.messages.push(wmCtx);
+          /* 反查手机：看完后的「知道了」注入下一轮（note 在回复落库后清） */
+          /* 反查手机：总开关关了就什么都不注入（入口/起意/应答全停） */
+          if (revEnabled(getChat(chatId))) {
+            var revNote = revStateOf(getChat(chatId)).note;
+            if (revNote) built.messages.push({ role: 'system', content: '（你刚刚翻看了 ta 的手机，' + revNote + ' 可以自然地把看到的内容化进回复里——接话、吃醋、装不知道都行，按你的性格来。不要复述这条指令。）' });
+            /* 递手机邀请挂着：让 TA 自己决定接不接（接 = 夹 [[REV_ACCEPT]]） */
+            if (revStateOf(getChat(chatId)).invite) {
+              built.messages.push({ role: 'system', content: '（对方刚刚把手机递给你，邀请你翻看——手机里的内容是真实的。想接就在回复末尾夹 [[REV_ACCEPT]]，系统会随即开始翻看；不想接就直接说，别夹标签。接不接、什么态度，按你的性格来。不要复述这条指令。）' });
+            } else if (revStateOf(getChat(chatId)).note) {
+              /* 刚翻看完的消化轮，不再挂起意说明 */
+            } else if (Sleepy.revcheck &&
+                       Sleepy.revcheck.canPeekNow({ persona: revPersonaOf(findCharacter(getChat(chatId).characterId), getChat(chatId)), lastAt: revStateOf(getChat(chatId)).lastAt || 0 }, Date.now())) {
+              /* 主动起意说明（v1.3 剧情驱动，不掷骰）：只在保险丝闸放行时挂，
+                 TA 剧情上真的起意才夹 [[REV_PEEK]] */
+              built.messages.push({ role: 'system', content: '（你随时可以翻看 ta 的手机——手机里的内容是真实的。仅当此刻剧情上你真的起意了：吃醋、起疑、八卦到忍不住——才在回复末尾夹 [[REV_PEEK]]，系统会随即开始翻看；程度没到就千万别夹，也不要提这件事。不要复述这条指令。）' });
+            }
+            /* 关系人账户：每轮垫「身边的人」摘要（印象带「未必属实」兜底） */
+            if (Sleepy.taRelations) {
+              var relSum = Sleepy.taRelations.buildSummary(c.characterId, c.sandboxId);
+              if (relSum) built.messages.push({ role: 'system', content: relSum });
+            }
+            /* L2 今日状态块：挂最前（SullyOS 口径——今天的底色比一切都新） */
+            if (Sleepy.taToday) {
+              var tdCtx = Sleepy.taToday.buildContext(c.characterId, c.sandboxId);
+              if (tdCtx) built.messages.unshift({ role: 'system', content: tdCtx });
+            }
+          }
           if (opts.note) {
             built.messages.push({
               role: 'user',
@@ -4536,6 +5622,31 @@
         /* 小游戏结算：引擎关掉时也照垫（同引擎路径 gameResultPeekMsg） */
         var gamePeekOld = gameResultPeekMsg(chatId);
         if (gamePeekOld) out.push(gamePeekOld);
+        /* 文字麻将：引擎关掉时同款垫牌局上下文（口径见引擎路径 wmCtx） */
+        var wmCtxOld = wmContextMsg(chatId);
+        if (wmCtxOld) out.push(wmCtxOld);
+        /* 反查手机：旧组装路径同款注入（总开关关了什么都不注入，口径见引擎路径） */
+        if (revEnabled(getChat(chatId))) {
+          var revNoteOld = revStateOf(getChat(chatId)).note;
+          if (revNoteOld) out.push({ role: 'system', content: '（你刚刚翻看了 ta 的手机，' + revNoteOld + ' 可以自然地把看到的内容化进回复里。不要复述这条指令。）' });
+          /* 递手机邀请：旧组装路径同款（口径见引擎路径） */
+          if (revStateOf(getChat(chatId)).invite) {
+            out.push({ role: 'system', content: '（对方刚刚把手机递给你，邀请你翻看。想接就在回复末尾夹 [[REV_ACCEPT]]；不想接就直接说，别夹标签。按你的性格决定。）' });
+          } else if (Sleepy.revcheck &&
+                     Sleepy.revcheck.canPeekNow({ persona: revPersonaOf(findCharacter(getChat(chatId).characterId), getChat(chatId)), lastAt: revStateOf(getChat(chatId)).lastAt || 0 }, Date.now())) {
+            out.push({ role: 'system', content: '（你随时可以翻看 ta 的手机。仅当剧情上你真的起意了才在回复末尾夹 [[REV_PEEK]]；程度没到就别夹，也不要提这件事。）' });
+          }
+          /* 关系人账户：旧组装路径同款垫摘要 */
+          if (Sleepy.taRelations) {
+            var relSumOld = Sleepy.taRelations.buildSummary(c.characterId, c.sandboxId);
+            if (relSumOld) out.push({ role: 'system', content: relSumOld });
+          }
+          /* L2 今日状态块：旧组装路径同款（挂最前） */
+          if (Sleepy.taToday) {
+            var tdCtxOld = Sleepy.taToday.buildContext(c.characterId, c.sandboxId);
+            if (tdCtxOld) out.unshift({ role: 'system', content: tdCtxOld });
+          }
+        }
 
         /* 心声跟主回复一起出：往最前面塞一条系统指令，要求模型把
            「没说出口的心里话」用 <心声>…</心声> 包在正文末尾。
@@ -4558,6 +5669,14 @@
         /* 慢递信箱说明书：同引擎路径的 slowmail 卡，文案保持一致（口径同上）。 */
         out.unshift({ role: 'system', content:
           '你还可以写慢递信：单独一行写 [慢递:小时数|信的内容]，如 [慢递:6|（信的正文，可以长一些）]。信会在 N 小时后送进对方的信箱（1 到 72），到点前对方看不到。适合想说但不必马上被看到的话；偶尔写一封就好。' });
+
+        /* 旁白描述说明书（2026-10-25）：这条对话开了旁白才注入 —— 引擎路径
+           走 narr 槽（ctx.narr），这里是旧组装路径的同步注入，同一份文案
+           （prompt-engine.narrCard），两处互斥不叠加。 */
+        var peNarr = Sleepy.promptEngine;
+        var narrTextOld = (peNarr && peNarr.narrCard && c.narration && c.narration.on)
+          ? peNarr.narrCard(c.narration) : '';
+        if (narrTextOld) out.unshift({ role: 'system', content: narrTextOld });
 
         /* ---- 候选补丁 2026-10-13 收口版：协议 + 人物，同一可核对片段 ----
            口径：两条正常私聊路径都要完整带分泡+心声；c05 完整时整卡注入
@@ -4807,6 +5926,14 @@
               split.whisper = hgx.text;
             }
 
+            /* 反查手机邀请应答：TA 回复里夹 [[REV_ACCEPT]] = 接过手机当场开翻；
+               没夹 = 嘴上拒绝（TA 自己说的）。邀请一次性，无论接没接都清。
+               标签从正文剥净（无邀请时也照剥防泄漏）。 */
+            finalText = applyRevInvite(chatId, finalText);
+            /* 主动起意（v1.3 剧情驱动）：TA 夹 [[REV_PEEK]] = 自己想看，当场开翻；
+               不掷骰子——频率由剧情控制，冷却只当保险丝。标签照剥防泄漏。 */
+            finalText = applyRevPeek(chatId, finalText);
+
             /* [撤回:N|原因] 同样抽掉 —— TA 想收回说过的话。抽完先别急着执行：
                执行要等下面落库动作都排完了（撤的是历史消息，跟落库顺序无关，
                但空正文判断要把「只撤回没说话」算进来）。 */
@@ -4829,6 +5956,12 @@
                实现在 applyPhoneTrace 里（导出给冒烟走真实路径）——
                别把这段逻辑挪回这里：这里的作用域没有 chat 变量，
                曾经因此静默丢掉全部痕迹（见该函数注释）。 */
+            /* 文字麻将（wm-core.js）：WM 标签解析要在剥正文的最前面做完——
+               它要看见原始标签动牌，动完把标签剥干净（气泡/心声里永远只有人话）。
+               无对局时它也照剥（防泄漏），只是不动牌。 */
+            finalText = applyWmTags(chatId, finalText);
+            if (split.whisper) split.whisper = Sleepy.wm ? Sleepy.wm.stripWmTags(split.whisper) : split.whisper;
+
             var trace = applyPhoneTrace(chatId, finalText);
             finalText = trace.text;
             var pdApplied = trace.applied;
@@ -4978,6 +6111,16 @@
             }
             /* 这一轮聊完了 → 后台把它索引进向量库（L4，不挡聊天） */
             kickSweep();
+            /* 反查手机：上一轮的「知道了」这轮已消化 → 清 note。
+               （v1.3 起主动查走 [[REV_PEEK]] 剧情起意，不再掷骰。） */
+            try {
+              revSave(chatId, function (w) { w.note = null; });
+            } catch (e) { /* 反查失败不影响聊天 */ }
+            /* 关系人账户自治生长（fire-and-forget）：提及检测 + 养一格近况。
+               素材用剥净后的正文（taRelTick 内部全名精确匹配 + 3 天节流）。 */
+            try { taRelTick(chatId, finalText); } catch (e) { /* 生长失败不影响聊天 */ }
+            /* L2 今日块：今天还没有就生成一次（一天一次，失败静默明天再试） */
+            try { taTodayTick(chatId); } catch (e) { /* 同上 */ }
           },
           /* 注意：runChat 暴露的是 onFail（全部候选都失败 / 一个候选都没有），
              不是 onError。写成 onError 的话没有任何回调会被触发，
@@ -5028,6 +6171,11 @@
              收不收由 user 在卡片上决定，与「不补发表情」不冲突。 */
           var pWp = extractProposal(pText);
           pText = pWp.text;
+          /* 半截回复里的 WM 标签同样剥干净（不动牌 —— 用户是主动停的） */
+          if (Sleepy.wm) pText = Sleepy.wm.stripWmTags(pText);
+          /* 反查邀请标签同样剥（半截回复不动接管流程）；[[REV_PEEK]] 同 */
+          if (Sleepy.revcheck) pText = Sleepy.revcheck.parseAcceptTag(pText).text;
+          if (Sleepy.revcheck) pText = Sleepy.revcheck.parsePeekTag(pText).text;
           var memRec = commitMemory(chatId, 'assistant', pText);
           var memId = memRec ? memRec.id : null;
           if (target) patchMessage(chatId, target, { content: pText, timestamp: Date.now(), memoryId: memId });
@@ -5373,6 +6521,10 @@
         { id: 'pat', svg: PLUS_ICON.pat, name: '拍一拍', run: function () { patChar(); } },
         { id: 'genimg', svg: PLUS_ICON.genimg, name: '生图', run: function () { openGenSheet(); } },
         { id: 'checkin', svg: PLUS_ICON.checkin, name: '查岗', run: function () { runCheckin(); } },
+        /* 文字麻将（wm-core.js）：和当前角色开桌 1v1，牌局在对话里进行 */
+        { id: 'mahjong', svg: PLUS_ICON.mahjong, name: '文字麻将', run: function () { closePanel(); openWmPanel(ctx); } },
+        /* 反查手机：让 TA 偷看你的手机（同意/拒绝走 TA 的倾向档） */
+        { id: 'revcheck', svg: PLUS_ICON.revcheck, name: '反查手机', run: function () { closePanel(); revManual(ctx); } },
         { id: 'diary', svg: PLUS_ICON.diary, name: '日记', run: function () { closePanel(); ctx.open('diary', {}); } },
         /* 翻译开关（用户 2026-09-19：「翻译开关放在加号面板吧」）。
            它是 **toggle**，不关面板 —— 想边看译文边点其他的很正常。
@@ -5639,7 +6791,9 @@
             url: r.url || '',
             subject: opts.subject,
             shot: opts.shot || '',
-            plan: opts.plan || null
+            plan: opts.plan || null,
+            /* 拍立得背面寄语（可空）：有它这张图才是可翻面的拍立得 */
+            backNote: opts.backNote || ''
           };
           if (opts.replaceId) {
             base.timestamp = Date.now();
@@ -5687,10 +6841,25 @@
          （{"description":…,"contentType":…,"shot":…,"subjects":["user","char"]}）——
          有 JSON 就按 plan 走（画面主体由 subjects 决定，TA 可以只发食物/路景）；
          还是一句话 → legacy：按旧正则猜 shot、默认锁 char。 */
+      /** 拆「描述|背面寄语」（拍立得 v1）：按**最后一个** | 切——描述本身
+          可能是含 | 的 JSON（subjects 数组没有 |，但万一有也不该被当寄语）；
+          寄语为空 = 普通照片不可翻面。 */
+      function splitPhotoNote(desc) {
+        var s = String(desc || '');
+        var i = s.lastIndexOf('|');
+        if (i === -1) return { desc: s, backNote: '' };
+        var note = s.slice(i + 1).trim();
+        var head = s.slice(0, i).trim();
+        if (!note || !head) return { desc: s, backNote: '' };
+        return { desc: head, backNote: note.slice(0, 60) };
+      }
+
       function charSendPhoto(desc) {
         var c = getChat(chatId);
         var ch = c && c.characterId ? findCharacter(c.characterId) : null;
         if (!ch || !Sleepy.imggen || !Sleepy.imggen.activeApi()) return;
+        var pn = splitPhotoNote(desc);
+        desc = pn.desc;
         var parsed = Sleepy.imggen.parsePlanJson(desc);
         var plan = null;
         if (parsed) {
@@ -5718,6 +6887,7 @@
           subject: plan ? plan.description : desc,
           shot: plan ? '' : (/selfie|自拍/i.test(desc) ? 'selfie' : ''),
           caption: (plan ? plan.description : desc).slice(0, 30),
+          backNote: pn.backNote,
           as: 'assistant'
         }).then(function (r) {
           if (!r.ok) ctx.toast((r.error && r.error.message) || 'TA 想发图但没发出来', 'warn');
@@ -5738,6 +6908,7 @@
           subject: msg.subject,
           shot: msg.plan ? '' : (msg.shot || ''),
           caption: msg.caption || '',
+          backNote: msg.backNote || '',
           as: msg.role === 'assistant' ? 'assistant' : 'checkin',
           replaceId: msg.id
         }).then(function (r) {
@@ -5981,6 +7152,8 @@
       function buildPanel() {
         panel.innerHTML = '';
         PLUS_ITEMS.forEach(function (it) {
+          /* 反查总开关关了：格子隐藏（整格拿掉，点不动都没必要留） */
+          if (it.id === 'revcheck' && !revEnabled(getChat(chatId))) return;
           var on = it.toggle && it.get ? !!it.get() : false;
           /* 他说中文 → 这一项用不上。**不隐藏**：面板每屏的条目数量应该稳定，
              藏一个会让别的项跳舞；改成灰掉 + 点一下给一句解释。 */

@@ -703,6 +703,22 @@
     relayout();
   });
 
+  /* --------------------- 安卓原生桥（2026-10-25 sleepy-android） ---------------------
+     SleepyNative 由壳工程 addJavascriptInterface 注入，页面脚本运行前就位。
+     浏览器/PWA 里没有它，下面这些挂载全是空调用，零影响。 */
+  if (global.SleepyNative) {
+    /* 物理返回键（Activity.onBackPressed → 这里）：页面栈逐层退；
+       退无可退交回原生 moveTaskToBack（回桌面不杀进程，回来还是原样）。 */
+    global.__sleepyBack = function () {
+      if (pageStack.length > 0) { closeTop(); return; }
+      try { global.SleepyNative.goHome(); } catch (e) { /* 桥缺席就随它去 */ }
+    };
+    /* OTA 更新结果（壳的 Updater 拉完版本回填 toast；失败也是一句话，不吵） */
+    global.__sleepyUpdateResult = function (msg) {
+      try { toast(String(msg || ''), 'ok'); } catch (e) { /* toast 不在就静默 */ }
+    };
+  }
+
   /* 边缘右滑返回。落在可交互元素上的不接管，否则会和按钮点击打架 */
   var dragging = null;
   var EDGE = 46;

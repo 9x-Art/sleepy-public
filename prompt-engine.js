@@ -1210,6 +1210,11 @@
     { id: 'msgrecall', slot: 'C04', name: '撤回', kind: 'card', required: false },
     { id: 'lamptag', slot: 'C04', name: '灯牌', kind: 'card', required: false },
     { id: 'slowmail', slot: 'C04', name: '慢递信箱', kind: 'card', required: false },
+    /* 旁白描述（2026-10-25）：线上聊天的 [旁白:描述] 穿插。program 槽 ——
+       开关在**对话设置**里按对话存（chat.narration.on），不在预设页；
+       cfg 由 page-chat 经 ctx.narr 传进来，关着 = '' = 不注入。 */
+    { id: 'narr', slot: 'C04', name: '旁白描述', kind: 'program', required: false,
+      note: '这条对话开了旁白穿插才注入（[旁白:描述]，文风/字数/密度在对话设置）' },
     { id: 'stickers', slot: 'C04', name: '表情包说明', kind: 'program', required: false,
       note: '有表情包才注入' },
     { id: 'genimg', slot: 'C04', name: '发图能力', kind: 'program', required: false,
@@ -1270,7 +1275,8 @@
   var FEATURE_IDS = {
     pat: 1, msgrecall: 1, lamptag: 1, slowmail: 1,
     stickers: 1, genimg: 1, htmlgame: 1, phone: 1,
-    weproposal: 1, wenote: 1, forum: 1
+    weproposal: 1, wenote: 1, forum: 1,
+    narr: 1   /* 旁白描述（开关在对话设置，预设页只读展示） */
   };
   function slotCat(id) { return FEATURE_IDS[id] ? 'feature' : 'prompt'; }
 
@@ -2140,6 +2146,9 @@
            旧路径（page-chat.js useEngine 关闭分支）与此互斥，无双注入。 */
         case 'lamptag': pushSlot(def, cardBody('lamptag')); break;
         case 'slowmail': pushSlot(def, cardBody('slowmail')); break;
+        /* 旁白描述（2026-10-25）：ctx.narr = 这条对话的 chat.narration。
+           关着/没传 → narrCard 返回 '' → program 槽不命中，一个字不多烧。 */
+        case 'narr': pushSlot(def, narrCard(ctx.narr)); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
         case 'htmlgame': pushSlot(def, cardBody('htmlgame')); break;
@@ -2839,6 +2848,111 @@
     return out.length ? out : [''];
   }
 
+  /* ============================ 旁白描述（2026-10-25） ============================
+     线上聊天的「旁白穿插」：对话设置里按对话开了 narr 开关后，模型可以在
+     回复里用 [旁白:描述] 写画面与动作，渲染层把它剥出来画成叙事样式
+     （方案 A：无泡叙事条，page-chat renderRichText）。
+
+     纪律：
+     - 标签必须**完整剥壳**，剥不干净 = 原文漏一个 [旁白: 出来，观感灾难。
+       所以三件套各管一段：narrSegments（渲染层拆段）/ narrPlain
+       （非渲染面：TTS/引用/收藏/流式中 —— 括号去掉、保留内文，半截尾巴
+       扣掉标记留内文）/ narrCard（说明书，含禁词段）。
+     - 旁白文本保留在落库 content 里（下一轮模型看得见自己的写法，风格
+       才稳得住）；只有显示面剥壳。与 [慢递:]/[灯:] 的「落库前抽走」不同
+       —— 那两个是「信件/灯牌」独立实体，正文不该复读；旁白是消息本身。
+     - 说明书卡是唯一注入点：引擎开走 narr 槽（assembleOnline ctx.narr），
+       旧组装路径在 page-chat 里 unshift 同一份文案。两处互斥，别写第二份。 */
+
+  var NARR_RE = /\[旁白[：:]([\s\S]*?)\]/g;
+  var NARR_TAIL_RE = /\[旁白[：:][\s\S]*$/;   /* 流式半截：从标记头一直吃到结尾 */
+
+  /* 拆段：[{n:true,text:'旁白内文'}|{n:false,text:'普通文本'}]，顺序保真。
+     没有任何旁白标记时返回 null（调用方走原渲染路径，零开销）。 */
+  function narrSegments(text) {
+    var s = String(text || '');
+    if (s.indexOf('[旁白') < 0) return null;
+    var out = [], last = 0, m;
+    NARR_RE.lastIndex = 0;
+    while ((m = NARR_RE.exec(s)) !== null) {
+      if (m.index > last) out.push({ n: false, text: s.slice(last, m.index) });
+      if (m[1]) out.push({ n: true, text: m[1] });
+      last = m.index + m[0].length;
+    }
+    /* 尾巴：普通文本 or 流式半截 [旁白:xxx……（半截按旁白算，扣掉标记留内文；
+       半截标记前面可能还有普通文本，也要拆开 —— 剥壳红线：[旁白: 三个字
+       任何情况下都不许出现在给用户看的文本里）。 */
+    if (last < s.length) {
+      var tail = s.slice(last);
+      var tm = tail.match(NARR_TAIL_RE);
+      if (tm) {
+        if (tm.index > 0) out.push({ n: false, text: tail.slice(0, tm.index) });
+        var inner = tail.slice(tm.index + tm[0].indexOf(':') + 1);
+        if (inner) out.push({ n: true, text: inner });
+      } else {
+        out.push({ n: false, text: tail });
+      }
+    }
+    return out.length ? out : null;
+  }
+
+  /* 非渲染面用：括号去掉、内文保留；半截尾巴扣掉 [旁白: 标记留内文。
+     永远不返回带 [旁白: 字样的文本 —— 这是观感红线。 */
+  function narrPlain(text) {
+    var s = String(text || '');
+    if (s.indexOf('[旁白') < 0) return s;
+    s = s.replace(NARR_RE, '$1');
+    s = s.replace(NARR_TAIL_RE, function (mm) { return mm.slice(mm.indexOf(':') + 1); });
+    return s;
+  }
+
+  /* ---- 文风预设 / 字数 / 密度（对话设置页与说明书卡共用的唯一出处）---- */
+  var NARR_STYLES = {
+    plain:     { label: '简约白描', text: '短句白描，只写看得见的动作与画面，几乎不用形容词。' },
+    delicate:  { label: '细腻唯美', text: '感官细节丰富，节奏舒缓，可以用克制的比喻。' },
+    lightnovel:{ label: '轻小说腔', text: '轻快、有画面感，偶尔带一点吐槽，不像严肃文学。' },
+    cold:      { label: '冷峻克制', text: '冷静的短句，情绪藏在动作里，不直接点破。' },
+    custom:    { label: '自定义',   text: '' }
+  };
+  var NARR_LENS = { s: '40', m: '80', l: '150' };
+  var NARR_DENSITY = { one: '1', few: '2~3', any: '不限（以自然为准，别刷屏）' };
+
+  function narrCfgOf(raw) {
+    var c = raw || {};
+    return {
+      on: c.on === true,
+      style: NARR_STYLES[c.style] ? c.style : 'plain',
+      custom: String(c.custom || ''),
+      len: NARR_LENS[c.len] ? c.len : 'm',
+      density: NARR_DENSITY[c.density] ? c.density : 'few'
+    };
+  }
+
+  /* 说明书卡正文。off / 没传 → ''（调用方不注入）。含禁词段（口径同
+     wj-check 的 banned 层 + 总纲句式禁令：括号、套话、意味深长收尾）。
+     单气泡 30 字的 c05 规则与旁白冲突，这里显式豁免旁白段。 */
+  function narrCard(raw) {
+    var cfg = narrCfgOf(raw);
+    if (!cfg.on) return '';
+    var styleText = cfg.style === 'custom'
+      ? (cfg.custom.trim() || NARR_STYLES.plain.text)
+      : NARR_STYLES[cfg.style].text;
+    return [
+      '【旁白描述】这条对话开启了旁白穿插：你可以在回复里写画面描述，用 [旁白:描述] 包起来，',
+      '如 [旁白:她抬起头，指尖还捏着没写完的便签]。界面会把它渲染成独立的叙事文字，和对话穿插出现。',
+      '- 节奏：描述→对话→描述→对话交替推进；不要只在开头描述一次就再也不描述，也不要整条全是旁白没有对话。',
+      '- 单段旁白不超过约 ' + NARR_LENS[cfg.len] + ' 字；一条回复里旁白最多 ' + NARR_DENSITY[cfg.density] + ' 段。',
+      '- 旁白可以单独占一个气泡，也可以写在对话气泡的开头或中间；分泡规则照旧，旁白算它所在那一段的一部分。',
+      '- 开了旁白后，旁白段的字数不受「单气泡 30 字」限制，对话部分仍按原规则写短。',
+      '- 文风：' + styleText,
+      '【旁白禁令】',
+      '- 不用括号写动作或内心 —— 想写就放进 [旁白:] 里或让角色说出来；',
+      '- 不用套话：「微微一笑」「眼眸低垂」「空气仿佛凝固」「眼底闪过一丝」这类一律不用；',
+      '- 不写意味深长的收尾；不替 user 写动作、反应或对白；',
+      '- 旁白只写 char 自己与环境，写已经发生的画面，不预写未来。'
+    ].join('\n');
+  }
+
   /* ============================ 预算对比 ============================ */
 
   /* 总纲 6.4：线上普通轮次输入目标 12k～23k，复杂轮次尽量 ≤26k。
@@ -2900,6 +3014,15 @@
     /* 装配与解析 */
     assembleOnline: assembleOnline,
     assembleOffline: assembleOffline,
+    /* 旁白描述（2026-10-25）：解析/剥壳/说明书卡的唯一实现。
+       page-chat 渲染与流式、page-chat-settings 的文风选项都从这里取。 */
+    narrSegments: narrSegments,
+    narrPlain: narrPlain,
+    narrCard: narrCard,
+    narrCfgOf: narrCfgOf,
+    narrStyles: NARR_STYLES,
+    narrLens: NARR_LENS,
+    narrDensity: NARR_DENSITY,
     /* K01 的两个出口（2026-09-22 通查）：主动消息和群聊以前各自手拼
        `[CHARACTER]` + content，于是说话方式/红线这些短字段全看不见。
        导出给它们复用，别再有第二份实现。

@@ -365,6 +365,7 @@
                      事项/承诺/关注，tagScope 盖岛章，删房跟着清。 */
                   'taItems', 'taPromises', 'taFollows',
                   'taNpcDrafts', 'taProposals', 'taEvents',
+                  'taRelations', 'taToday',
                   /* 挂件灯留言（page-desktop Sleepy.lampNotes，2026-10-06）：
                      灯上的话跟岛走，tagScope 盖章 / scoped 读，删房跟着清 */
                   'lampNotes',

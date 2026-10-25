@@ -286,6 +286,23 @@
       body.appendChild(g4.wrap);
 
       var g5 = group('其他');
+      /* 检查更新（2026-10-25 安卓壳）：只在原生 App 里出现 —— 浏览器/PWA
+         的更新就是刷新页面，不用这行。桥的 checkUpdate 异步拉 version.json
+         比对构建号，结果经 __sleepyUpdateResult 回 toast（含失败原因）。 */
+      if (window.SleepyNative && typeof window.SleepyNative.checkUpdate === 'function') {
+        var updRow = row({
+          label: '检查更新',
+          hint: '拉取线上新版本，下载完自动生效（失败不影响使用）',
+          value: (window.SleepyNative.getInfo && window.SleepyNative.getInfo().build) || ''
+        });
+        updRow.disabled = false;
+        updRow.classList.remove('is-soon');
+        updRow.addEventListener('click', function () {
+          ctx.toast('正在检查更新…');
+          window.SleepyNative.checkUpdate();
+        });
+        g5.card.appendChild(updRow);
+      }
       /* 我的授权（账密系统 v2，2026-10-21；2026-10-23 起进门先过授权闸）——
          能走到设置页说明已激活，这页只剩管理：改密 / 设备 / 注销
          （激活 / 登录表单只活在启动闸上，page-license 两处共用一份）。 */

@@ -163,6 +163,14 @@
      所以排在三个页面之前。依赖 ui.js 的 h，语言与开关在运行时
      从 calendar 惰性取（calendar.js 排在后面，不影响）。 -->
 <script src="msg-trans.js" defer></script>
+<!-- 文字麻将引擎（2026-10-25）：纯逻辑零依赖，只排在 page-chat 之前 -->
+<script src="wm-core.js" defer></script>
+<!-- 反查手机核心（2026-10-25）：纯逻辑零依赖（触发闸/权限/计划），排在 page-chat 之前 -->
+<script src="revcheck-core.js" defer></script>
+<!-- 关系人账户（活人系统 L1，2026-10-25）：纯数据层，排在 page-chat 之前 -->
+<script src="ta-relations.js" defer></script>
+<!-- L2 今日状态块（活人系统，2026-10-25）：纯数据层，排在 page-chat 之前 -->
+<script src="ta-today.js" defer></script>
 <script src="page-chat.js" defer></script>
 <!-- 线上群聊（实施总纲 v1）：core-group 是群数据层（本体/账号两层模型，
      消息单列一张表），page-group 是建群流程 + 群消息页 + 群详情页。
@@ -377,7 +385,11 @@ style.css，改十次也只在第二次刷新后才看见，白白怀疑了半�
 选择器、优先级。指向 127.0.0.1 的页面本来也装不了 PWA（手机打开
 127.0.0.1 是手机自己），所以跳过它没有任何代价。 */
 var devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !devHost) {
+/* 安卓壳（2026-10-25）：SleepyNative 注入即存在（addJavascriptInterface 在
+   页面脚本运行前就位）。App 里离线由原生层接管（update/ 目录优先于内置
+   assets），SW 会缓存旧文件跟原生更新打架 —— 跳过注册。 */
+var inNative = typeof window.SleepyNative !== 'undefined';
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !devHost && !inNative) {
   window.addEventListener('load', function () {
     navigator.serviceWorker.register('sw.js')['catch'](function () { /* 静默失败 */ });
   });

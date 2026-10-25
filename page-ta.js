@@ -759,6 +759,17 @@
       meta: '先记候选，确认后才成为正式人物',
       onClick: function () { ctx.open('ta-draft-edit', {}); }
     }));
+    /* 活人系统（ta-relations.js，2026-10-25）：TA 的关系人账户表——
+       用户填骨架，系统自治养近况；这里管骨架（增删改 note 等手写字段），
+       近况/印象是系统养的，只读展示。 */
+    var relAccounts = (Sleepy.taRelations && Sleepy.taRelations.list)
+      ? Sleepy.taRelations.list(char.id, sid) : [];
+    pSec.appendChild(rowEl({
+      text: 'TA 的关系人 →',
+      tag: relAccounts.length ? String(relAccounts.length) + ' 人' : '',
+      meta: '活人系统：系统会自己养这些人的近况（骨架在这儿改）',
+      onClick: function () { openRelManager(ctx, char, sid, charName); }
+    }));
     out.appendChild(pSec);
 
     /* ---- 脚注：承诺与幕后入口（v2：承诺详情在幕后，不再是占位）---- */
@@ -1737,6 +1748,142 @@
     opSec.appendChild(opWrap);
     out.appendChild(opSec);
     try { body.scrollTop = 0; } catch (e) { /* 桩环境没有 */ }
+  }
+
+  /* ==================== 关系人管理抽屉（ta-relations.js UI） ====================
+
+    骨架在这儿改：name 只能新建时定（铁律：换名=换人，改要删了重建）；
+    relation/bond/note 是用户手写字段；learned/currentState 是系统养的，
+    这里**只读展示**（字段底色灰）。删除要 confirm（进了表的人持久存在，
+    删是明确动作不是顺手的事）。 */
+
+  function openRelManager(ctx, char, sid, charName) {
+    var tr = Sleepy.taRelations;
+    if (!tr) return;
+    var host = document.getElementById('phone') || document.body;
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', charName + ' 的关系人'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '名字只能在新建时定（换了名字就是换了个人）。近况和印象是系统自己养的，这里只能看；你写下的「事实」系统永远不会覆盖。'));
+
+    var blocks = [];   /* { id?, el, inputs:{name,relation,bond,note}, deleted } */
+
+    function fieldRow(label, value, readonly) {
+      var row = h('div', 'set-row cs-row');
+      var main = h('span', 'set-row-main');
+      main.appendChild(h('span', 'set-row-label', label));
+      var input = document.createElement('input');
+      input.className = 'set-input';
+      input.value = value || '';
+      if (readonly) { input.readOnly = true; input.style.opacity = '.6'; }
+      main.appendChild(input);
+      row.appendChild(main);
+      return { row: row, input: input };
+    }
+
+    function addBlock(rec) {
+      var isEdit = !!(rec && rec.id);
+      var box = h('div', 'relmgr-block');
+      var nameF = fieldRow('名字', rec ? rec.name : '', isEdit);   /* 换名=换人 */
+      var relF = fieldRow('关系（发小/同事/家人…）', rec ? rec.relation : '');
+      var bondF = fieldRow('亲疏基调（铁哥们/面和心不和…）', rec ? rec.bond : '');
+      var noteF = fieldRow('你确立的事实', rec ? rec.note : '');
+      box.appendChild(nameF.row);
+      box.appendChild(relF.row);
+      box.appendChild(bondF.row);
+      box.appendChild(noteF.row);
+
+      /* 系统养的：只读展示（有货才显示） */
+      if (isEdit) {
+        if (rec.currentState) box.appendChild(h('p', 'relmgr-sys', '系统养的近况：' + rec.currentState));
+        if (rec.learned) box.appendChild(h('p', 'relmgr-sys', 'TA 的印象（未必属实）：' + rec.learned));
+        var open = (rec.openThreads || []).filter(function (t) { return t.open; });
+        if (open.length) {
+          box.appendChild(h('p', 'relmgr-sys', '悬着的事：' +
+            open.map(function (t) { return t.title + (t.tone === 'good' ? '（好事）' : ''); }).join('、')));
+        }
+      }
+
+      var ops = h('div', 'relmgr-ops');
+      if (isEdit) {
+        var del = h('button', 'relmgr-del', '删除');
+        del.type = 'button';
+        del.addEventListener('click', function () {
+          if (!window.confirm('删掉「' + rec.name + '」？TA 对这个人的印象会一起消失。')) return;
+          b.deleted = true;
+          box.style.display = 'none';
+        });
+        ops.appendChild(del);
+      }
+      box.appendChild(ops);
+      panel.appendChild(box);
+
+      var b = { id: rec ? rec.id : null, deleted: false,
+        inputs: { name: nameF.input, relation: relF.input, bond: bondF.input, note: noteF.input } };
+      blocks.push(b);
+    }
+
+    (Sleepy.taRelations.list(char.id, sid) || []).forEach(function (rec) { addBlock(rec); });
+
+    var addNew = h('button', 'relmgr-add', '＋ 新建关系人');
+    addNew.type = 'button';
+    addNew.addEventListener('click', function () {
+      var have = blocks.filter(function (b) { return !b.deleted; }).length;
+      if (have >= Sleepy.taRelations.SOFT_LIMIT) {
+        ctx.toast('骨架 ' + Sleepy.taRelations.SOFT_LIMIT + ' 个人就够了，别贪多', 'warn');
+        return;
+      }
+      addBlock(null);
+    });
+    panel.appendChild(addNew);
+
+    var actions = h('div', 'iol-drawer-actions');
+    var cancel = h('button', 'iol-drawer-cancel', '先不改');
+    var save = h('button', 'iol-drawer-save', '保存');
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    cancel.addEventListener('click', close);
+    save.addEventListener('click', function () {
+      try {
+        var n = 0;
+        blocks.forEach(function (b) {
+          var name = String(b.inputs.name.value || '').trim();
+          if (b.deleted) {
+            if (b.id) { tr.remove(char.id, b.id); n++; }
+            return;
+          }
+          if (!name) return;   /* 没名字的空块跳过 */
+          tr.upsert(char.id, {
+            id: b.id || null,
+            name: name,
+            relation: b.inputs.relation.value,
+            bond: b.inputs.bond.value,
+            note: b.inputs.note.value,
+            sandboxId: sid
+          });
+          n++;
+        });
+        ctx.toast(n ? '关系人存好了' : '没什么要存的', 'ok');
+        close();
+        if (ctx.refresh) ctx.refresh();
+      } catch (e) {
+        ctx.toast('没存上：' + ((e && e.message) || e), 'err');
+      }
+    });
+
+    host.appendChild(wrap);
+    setTimeout(function () { wrap.classList.add('show'); }, 20);
   }
 
 })(window);

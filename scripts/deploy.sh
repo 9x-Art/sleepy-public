@@ -53,5 +53,9 @@ for mustnt in docs _retired preview scripts README.md serve.js; do
 done
 echo "自查通过：运行时要用的都在，文档/归档/脚本都不在。"
 
+# OTA 更新清单（2026-10-25 安卓壳）：清单只写进部署副本、不进仓库 ——
+# APK 内置出厂包，启动时拉这份清单做增量更新（断网/失败回落内置包，不变砖）。
+node "$(dirname "$0")/gen-version.js" "$OUT"
+
 cd "$OUT"
 wrangler pages deploy . --project-name sleepy --branch main --commit-hash="$H" --commit-dirty=true

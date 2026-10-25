@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SullyOS → Sleepy 数据转换器</title>
+<style>
+  :root{
+    --base:#F7FAFE; --accent:#7CA8D6; --accent-deep:#5C86B4; --accent-pale:#E4EEF9;
+    --ink:#2F3A47; --ink2:#66768A; --ink3:#94A3B4; --line:rgba(126,136,156,.16);
+    --err:#B0453B; --ok:#3E7D52;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    background:var(--base);color:var(--ink);min-height:100vh;padding:32px 16px;
+  }
+  .wrap{max-width:760px;margin:0 auto;}
+  h1{font-size:20px;margin-bottom:4px;}
+  .sub{font-size:12px;color:var(--ink2);margin-bottom:24px;line-height:1.7;}
+  .card{
+    background:#fff;border:1px solid var(--line);border-radius:14px;
+    padding:20px;margin-bottom:16px;box-shadow:0 2px 10px rgba(120,132,156,.07);
+  }
+  .drop{
+    border:2px dashed var(--accent);border-radius:12px;padding:36px 20px;
+    text-align:center;color:var(--ink2);cursor:pointer;transition:background .15s;
+  }
+  .drop.is-over{background:var(--accent-pale);}
+  .drop b{color:var(--accent-deep);}
+  .drop input{display:none;}
+  .step-t{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+  .step-n{
+    width:20px;height:20px;border-radius:50%;background:var(--accent-deep);color:#fff;
+    font-size:11px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .step-n.is-dim{background:var(--ink3);}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;}
+  th{color:var(--ink2);font-weight:600;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .muted{color:var(--ink3);font-size:11px;}
+  .warn{color:#A9812F;font-size:11px;line-height:1.7;}
+  .skip-list{max-height:180px;overflow-y:auto;font-size:11px;color:var(--ink2);line-height:1.9;}
+  button.go{
+    border:none;border-radius:999px;padding:10px 28px;cursor:pointer;
+    background:var(--accent-deep);color:#fff;font-size:13px;font-weight:700;
+  }
+  button.go:disabled{opacity:.35;cursor:not-allowed;}
+  button.go:active{transform:scale(.97);}
+  .errbox{background:rgba(176,69,59,.08);color:var(--err);border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.7;white-space:pre-wrap;}
+  .okbox{background:rgba(62,125,82,.08);color:var(--ok);border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.7;}
+  .hidden{display:none;}
+  code{background:var(--accent-pale);border-radius:4px;padding:1px 5px;font-size:11px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SullyOS → Sleepy 数据转换器</h1>
+  <p class="sub">
+    独立小工具，全程在浏览器本地跑，<b>不上传任何数据</b>。喂给它 SullyOS 的备份包（.zip），
+    产出 sleepy 能直接导入的 .json 存档——每个角色迁成一座孤岛：人设 + 聊天记录 + 文本记忆 + 日记 + 世界书。
+    向量记忆<b>不迁</b>（两边分类体系不同，迁入后在 sleepy 里重新切块入库）。
+  </p>
+
+  <div class="card">
+    <div class="step-t"><span class="step-n" id="dot1">1</span>选 SullyOS 备份包</div>
+    <label class="drop" id="drop">
+      把 <b>SullyOS 导出的 .zip 备份</b>拖到这里，或点击选择文件<br>
+      <span class="muted">（SullyOS → 设置 → 备份 → 完整备份导出的那个压缩包）</span>
+      <input type="file" id="file" accept=".zip,application/zip">
+    </label>
+    <button id="sampleBtn" class="go" style="margin-top:14px;background:var(--accent);font-size:12px">没有备份？用内置示例试一把 →</button>
+    <div id="parseErr" class="errbox hidden" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card hidden" id="reportCard">
+    <div class="step-t"><span class="step-n">2</span>转换报告（先看一眼再下载）</div>
+    <table id="reportTable"></table>
+    <div id="warnBox" class="warn" style="margin-top:12px"></div>
+    <div id="skipCard" class="hidden" style="margin-top:10px">
+      <div class="muted" style="margin-bottom:4px">以下数据这次没迁（清单都在，没有静默丢）：</div>
+      <div class="skip-list" id="skipList"></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="outCard">
+    <div class="step-t"><span class="step-n">3</span>导出 sleepy 存档</div>
+    <button class="go" id="dl">下载 sleepy-import.json</button>
+    <div class="muted" style="margin-top:10px;line-height:1.8">
+      拿到文件后：打开 sleepy → <code>设置 → 数据与备份 → 导入</code>，选这个 json。
+      导入自带快照回滚，导坏了可以退回来。向量库清空后是重建起点，属预期。
+    </div>
+    <div id="dlErr" class="errbox hidden" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   SullyOS → Sleepy 转换器核心（无依赖，window.S2S 暴露纯函数，
+   供 scripts/s2s-convert-test.js 在 Node 里抽出来跑单测）
+   ============================================================ */
+(function (global) {
+  'use strict';
+
+  /* ---------------- 极简 ZIP 读取（STORE + DEFLATE-RAW） ---------------- */
+
+  function u32(v, o) { return (v[o] | (v[o+1] << 8) | (v[o+2] << 16) | (v[o+3] << 24)) >>> 0; }
+  function u16(v, o) { return v[o] | (v[o+1] << 8); }
+
+  function dec(text) { return new TextDecoder().decode(text); }
+
+  /** 解析 central directory，返回 [{name, method, size, csize, offset}] */
+  function zipEntries(buf) {
+    var v = new Uint8Array(buf);
+    var eocd = -1;
+    for (var i = v.length - 22; i >= 0 && i > v.length - 65558; i--) {
+      if (u32(v, i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('这不是一个有效的 zip 包（找不到中央目录）');
+    var count = u16(v, eocd + 10);
+    var ptr = u32(v, eocd + 16);
+    var out = [];
+    for (var n = 0; n < count; n++) {
+      if (u32(v, ptr) !== 0x02014b50) throw new Error('zip 中央目录损坏（第 ' + n + ' 项）');
+      var method = u16(v, ptr + 10);
+      var csize = u32(v, ptr + 20);
+      var size = u32(v, ptr + 24);
+      var nameLen = u16(v, ptr + 28);
+      var extraLen = u16(v, ptr + 30);
+      var cmtLen = u16(v, ptr + 32);
+      var lho = u32(v, ptr + 42);
+      var name = dec(v.subarray(ptr + 46, ptr + 46 + nameLen));
+      /* local header 里名字/extra 长度可能与 central 不同，按 local 自己的读 */
+      var lnLen = u16(v, lho + 26);
+      var leLen = u16(v, lho + 28);
+      out.push({ name: name, method: method, size: size, csize: csize, offset: lho + 30 + lnLen + leLen });
+      ptr += 46 + nameLen + extraLen + cmtLen;
+    }
+    return out;
+  }
+
+  async function zipInflate(v, e) {
+    var raw = v.subarray(e.offset, e.offset + e.csize);
+    if (e.method === 0) return raw;
+    if (e.method !== 8) throw new Error('不支持的压缩方式 ' + e.method + '（文件 ' + e.name + '）');
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('这个浏览器不支持 DecompressionStream，换新版 Chrome / Edge 打开');
+    }
+    var ds = new DecompressionStream('deflate-raw');
+    var stream = new Blob([raw]).stream().pipeThrough(ds);
+    var ab = await new Response(stream).arrayBuffer();
+    return new Uint8Array(ab);
+  }
+
+  /** 读整个 zip → { 文件名: Uint8Array } */
+  async function readZip(buf) {
+    var v = new Uint8Array(buf);
+    var entries = zipEntries(buf);
+    var files = {};
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (e.name.endsWith('/')) continue;
+      files[e.name] = await zipInflate(v, e);
+    }
+    return files;
+  }
+
+  /* ---------------- SullyOS v2/v3 备份组装（对齐 assembleV2Backup） ---------------- */
+
+  function shardName(field, idx) {
+    return 'stores/' + field + '.' + String(idx).padStart(3, '0') + '.json';
+  }
+
+  /** zip 文件表 → 备份 data 对象（向量 bin / assets 原样丢弃——转换器明确不迁） */
+  function assembleBackup(files) {
+    /* v1 老格式兜底（借 osBridge 的经验：SullyOS 早期备份是 data.json 单根 +
+       assets/*，没有 manifest/stores 分片）：没有 manifest 就试试 data.json。 */
+    if (!files['manifest.json'] && files['data.json']) {
+      var v1;
+      try { v1 = JSON.parse(dec(files['data.json'])); }
+      catch (e) { throw new Error('data.json 解析失败（v1 老格式备份）'); }
+      if (!v1 || typeof v1 !== 'object') throw new Error('data.json 不是对象（v1 老格式备份损坏）');
+      return { data: v1, manifest: { formatVersion: 1, stores: {} },
+        dropped: ['v1 老格式（data.json 单根）——已按原样读入，未分片校验'] };
+    }
+    if (!files['manifest.json']) {
+      throw new Error('包里没有 manifest.json——确认这是 SullyOS 导出的备份包（不是随手一个 zip）');
+    }
+    var manifest;
+    try { manifest = JSON.parse(dec(files['manifest.json'])); }
+    catch (e) { throw new Error('manifest.json 解析失败，备份包可能损坏'); }
+    var ver = manifest.formatVersion;
+    if (ver !== 2 && ver !== 3) {
+      throw new Error('不支持的备份格式版本 ' + ver + '（只认 v2 / v3）');
+    }
+    var meta = {};
+    if (files['metadata.json']) {
+      try { meta = JSON.parse(dec(files['metadata.json'])); }
+      catch (e) { throw new Error('metadata.json 解析失败'); }
+    }
+    var stores = manifest.stores || {};
+    var dropped = [];
+    Object.keys(stores).forEach(function (field) {
+      var arr = [];
+      for (var p = 0; p < stores[field].parts; p++) {
+        var f = files[shardName(field, p)];
+        if (!f) { dropped.push(field + ' 第 ' + p + ' 片缺失，该字段整层跳过'); return; }
+        try {
+          var chunk = JSON.parse(dec(f));
+          if (Array.isArray(chunk)) arr = arr.concat(chunk);
+        } catch (e) { dropped.push(field + ' 第 ' + p + ' 片解析失败，跳过这片'); }
+      }
+      meta[field] = arr;
+    });
+    if (manifest.vectors) dropped.push('向量记忆 memory_vectors.bin（分类体系不同，不迁；sleepy 端重建）');
+    if (files['assets'] || Object.keys(files).some(function (k) { return k.indexOf('assets/') === 0; })) {
+      dropped.push('素材旁路 assets/*（图片本体；text_only 备份里本来就是空引用）');
+    }
+    return { data: meta, manifest: manifest, dropped: dropped };
+  }
+
+  /* ---------------- 工具 ---------------- */
+
+  var seq = 0;
+  function uid(prefix) {
+    seq++;
+    return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6) + '-' + seq;
+  }
+  function s(v) { return (v === undefined || v === null) ? '' : String(v); }
+  /** SullyOS 的 date 字段（'YYYY-MM-DD'）→ ms；解析不动回 0 */
+  function dateToMs(d) {
+    if (!d) return 0;
+    if (typeof d === 'number') return d;
+    var t = Date.parse(s(d));
+    return isNaN(t) ? 0 : t;
+  }
+
+  /* ---------------- 映射（SullyOS data → sleepy data） ----------------
+     sleepy 数据模型（store.js 头注释）：
+       sandboxes 孤岛容器 / characters(kind main, sandboxId) / userMasks /
+       links(cognition) / chats(charId×userId, messages[]) / memories(四元组) /
+       diaries / worldbooks(两级: 书→entries)
+     幽灵纪律：空名角色、空消息、向量、assets、配置类一律不进输出，
+     每一项跳过都记进 report.skipped，报告里可见。 */
+
+  function convert(data, opts) {
+    opts = opts || {};
+    var report = { islands: 0, chars: 0, chats: 0, messages: 0, memories: 0, diaries: 0, worldbookEntries: 0, skipped: [], warnings: [] };
+    var skip = function (why) { report.skipped.push(why); };
+
+    /* 按角色筛选（借 osBridge 的 BridgeOptions）：只勾了部分角色时，
+       没勾的整座岛不迁——它的消息/记忆/日记天然跟着消失（我们按角色迭代，
+       孤儿记录天生不进产物），省掉 osBridge 里 dropOrphan 那道单独的闸。 */
+    var only = (opts.onlyCharIds && opts.onlyCharIds.length) ? opts.onlyCharIds : null;
+
+    var characters = Array.isArray(data.characters) ? data.characters : [];
+    var messages = Array.isArray(data.messages) ? data.messages : [];
+    var memoryNodes = Array.isArray(data.memory_nodes) ? data.memory_nodes : [];
+    var diaries = Array.isArray(data.diaries) ? data.diaries : [];
+    var worldbooks = Array.isArray(data.worldbooks) ? data.worldbooks : [];
+    var profile = Array.isArray(data.user_profile) ? data.user_profile[0] : (data.user_profile || null);
+
+    var out = {
+      sandboxes: [], characters: [], userMasks: [], links: [],
+      chats: [], memories: [], diaries: [], worldbooks: []
+    };
+    /* SullyOS charId → sleepy mainId 的映射（挂载世界书反查用；
+       不能按下标对位——幽灵角色被跳过后两边数组就对不上了） */
+    var charIdMap = {};
+
+    /* 用户名：user_profile 里有名字就带上 */
+    var userName = (profile && (profile.name || profile.nickname)) || '我';
+    var userPersona = profile ? s(profile.bio || profile.persona || profile.description || '') : '';
+
+    /* 素材解析：full 备份里 assets 是 [{id, data(dataURL)}]，头像引用是 'assets/xxx' 令牌 */
+    var assetMap = {};
+    if (Array.isArray(data.assets)) {
+      data.assets.forEach(function (a) {
+        if (a && a.id && typeof a.data === 'string' && a.data.indexOf('data:image/') === 0) {
+          assetMap[a.id] = a.data;
+        }
+      });
+    }
+    function resolveImg(ref) {
+      var r = s(ref);
+      if (r.indexOf('data:image/') === 0) return r;              /* v2 老备份已解析回 dataURL */
+      if (r.indexOf('assets/') === 0) return assetMap[r.slice(7)] || '';   /* v3 令牌 */
+      return '';
+    }
+
+    var totalChars = characters.filter(function (c) { return c && c.id && s(c.name).trim(); }).length;
+    characters.forEach(function (c) {
+      var name = s(c && c.name).trim();
+      if (!c || !c.id || !name) { skip('角色：一条无 id / 无名的记录（幽灵数据），跳过'); return; }
+      if (only && only.indexOf(c.id) === -1) { skip('角色「' + name + '」：未勾选，这次不迁'); return; }
+
+      /* ── 孤岛 ── */
+      var sbId = uid('sb');
+      var mainId = uid('ch');
+      var maskId = uid('um');
+
+      /* ── 主号（人设 = 描述 + 系统提示词 + 世界观，剥幽灵空段） ── */
+      var persona = [s(c.description).trim(), s(c.systemPrompt).trim(), s(c.worldview).trim()]
+        .filter(function (p) { return p; }).join('\n\n');
+      var avatar = resolveImg(c.avatar);
+      if (c.avatar && !avatar) report.warnings.push('「' + name + '」的头像在备份里是空引用（多半是 text_only 备份），导入后落 sleepy 的幽灵头像');
+
+      out.characters.push({
+        id: mainId, kind: 'main', parentId: null, sandboxId: sbId,
+        name: name, wechatName: name, content: persona,
+        avatar: avatar, boundUserId: maskId,
+        createdAt: c.lastRealInteractionAt || Date.now(), updatedAt: Date.now()
+      });
+      charIdMap[c.id] = mainId;
+
+      /* ── 马甲 + 关系 ── */
+      out.userMasks.push({
+        id: maskId, sandboxId: sbId, name: userName,
+        persona: userPersona, createdAt: Date.now()
+      });
+      out.links.push({
+        id: uid('lk'), sandboxId: sbId, charId: mainId, userId: maskId,
+        cognition: 'unaware', barrier: false, createdAt: Date.now()
+      });
+      out.sandboxes.push({
+        id: sbId, kind: 'isle', name: name, cover: '',
+        charIds: [mainId], maskIds: [maskId], theme: null
+      });
+      report.islands++; report.chars++;
+      report.charTotal = totalChars;
+
+      /* ── 聊天记录（私聊；群聊消息 groupId 非空的不进这座岛） ── */
+      var msgs = [];
+      var gSkip = 0;
+      messages.forEach(function (m) {
+        if (!m || m.charId !== c.id) return;
+        if (m.groupId) { gSkip++; return; }
+        var content = s(m.content);
+        var role = m.role === 'user' ? 'user' : (m.role === 'system' ? 'system' : 'assistant');
+        /* 幽灵消息：空正文且没引用的照片等（SullyOS 撤回/置空残留），不迁 */
+        if (!content.trim()) { gSkip++; return; }
+        var sm = { id: uid('m'), role: role, content: content, timestamp: m.timestamp || 0 };
+        if (m.replyTo && m.replyTo.content) {
+          sm.quote = { role: m.replyTo.role === 'user' ? 'user' : 'assistant', content: s(m.replyTo.content) };
+        }
+        msgs.push(sm);
+      });
+      if (gSkip) skip('「' + name + '」：' + gSkip + ' 条消息跳过（群聊消息 / 空正文幽灵）');
+      if (msgs.length) {
+        out.chats.push({
+          id: uid('ct'), name: '与 ' + name, characterId: mainId, userId: maskId,
+          sandboxId: sbId, pinned: false,
+          createdAt: msgs[0].timestamp || Date.now(),
+          updatedAt: msgs[msgs.length - 1].timestamp || Date.now(),
+          messages: msgs
+        });
+        report.chats++; report.messages += msgs.length;
+      } else {
+        report.warnings.push('「' + name + '」没有可迁的私聊消息，孤岛照建但对话是空的');
+      }
+
+      /* ── 记忆（文本层；向量不迁）──
+         来源一：char.memories（MemoryFragment {date, summary}）
+         来源二：memory_nodes（记忆宫殿，按 charId 挂）——字段形状防御式取 */
+      var memCount = 0;
+      (Array.isArray(c.memories) ? c.memories : []).forEach(function (f) {
+        var text = s(f && (f.summary || f.text || f.content)).trim();
+        if (!text) return;
+        out.memories.push({
+          id: uid('me'), rootId: mainId, sandboxId: sbId,
+          fromCharId: mainId, toUserId: maskId,
+          role: 'assistant', text: text, at: dateToMs(f.date)
+        });
+        memCount++;
+      });
+      memoryNodes.forEach(function (n) {
+        if (!n || n.charId !== c.id) return;
+        var text = s(n.text || n.content || n.summary).trim();
+        if (!text) return;
+        out.memories.push({
+          id: uid('me'), rootId: mainId, sandboxId: sbId,
+          fromCharId: mainId, toUserId: maskId,
+          role: 'assistant', text: text, at: n.timestamp || dateToMs(n.date) || 0
+        });
+        memCount++;
+      });
+      report.memories += memCount;
+
+      /* ── 日记：交换日记(userPage/charPage) + solo 日记 → sleepy 单条 ── */
+      diaries.forEach(function (d) {
+        if (!d || d.charId !== c.id) return;
+        var at = d.timestamp || dateToMs(d.date);
+        if (d.kind === 'solo') {
+          var soloText = s(d.page && d.page.text).trim();
+          if (soloText) {
+            out.diaries.push({ id: uid('dy'), sandboxId: sbId, content: soloText, timestamp: at, author: 'char', charId: mainId });
+            report.diaries++;
+          }
+          return;
+        }
+        var up = s(d.userPage && d.userPage.text).trim();
+        var cp = s(d.charPage && d.charPage.text).trim();
+        if (up) {
+          out.diaries.push({ id: uid('dy'), sandboxId: sbId, content: '【我写的】\n' + up, timestamp: at, author: 'user', charId: mainId });
+          report.diaries++;
+        }
+        if (cp) {
+          out.diaries.push({ id: uid('dy'), sandboxId: sbId, content: cp, timestamp: at + 1, author: 'char', charId: mainId });
+          report.diaries++;
+        }
+      });
+    });
+
+    /* ── 世界书：SullyOS 的 worldbooks 是平铺条目（title+content+key[]），
+       sleepy 是两级（书→entries）。全并成一本全局书。 ── */
+    var wbEntries = [];
+    worldbooks.forEach(function (w) {
+      var content = s(w && w.content).trim();
+      if (!content) { skip('世界书：一条空内容条目跳过'); return; }
+      wbEntries.push({
+        id: uid('wb'),
+        name: s(w.title) || s(w.category) || '条目',
+        keys: Array.isArray(w.key) ? w.key.filter(Boolean).map(s) : [],
+        content: content,
+        enabled: !w.disable
+      });
+    });
+    /* 角色身上挂载的 mountedWorldbooks：跟角色走，按岛拆成个人书 */
+    characters.forEach(function (c) {
+      if (!c || !c.id || !Array.isArray(c.mountedWorldbooks) || !c.mountedWorldbooks.length) return;
+      var mainId = charIdMap[c.id];
+      if (!mainId) return;
+      var target = null;
+      for (var i = 0; i < out.characters.length; i++) {
+        if (out.characters[i].id === mainId) { target = out.characters[i]; break; }
+      }
+      if (!target) return;
+      var book = { id: uid('wbb'), name: '「' + target.name + '」的挂载世界书', scope: 'personal', characterId: target.id, entries: [], createdAt: Date.now(), updatedAt: Date.now() };
+      c.mountedWorldbooks.forEach(function (w) {
+        var content = s(w && w.content).trim();
+        if (!content) return;
+        book.entries.push({
+          id: uid('wb'), name: s(w.title) || '条目',
+          keys: Array.isArray(w.key) ? w.key.filter(Boolean).map(s) : [],
+          content: content, enabled: !w.disable
+        });
+        report.worldbookEntries++;
+      });
+      if (book.entries.length) out.worldbooks.push(book);
+    });
+    if (wbEntries.length) {
+      out.worldbooks.push({
+        id: uid('wbb'), name: '来自 SullyOS 的世界书', scope: 'global', characterId: null,
+        entries: wbEntries, createdAt: Date.now(), updatedAt: Date.now()
+      });
+      report.worldbookEntries += wbEntries.length;
+    }
+
+    /* ── 明确不迁的周边（清单进报告）── */
+    var notMigrated = [
+      'galleryImages 图库', 'emojis 表情', 'tasks 待办', 'anniversaries 纪念日',
+      'social_posts 小红书', 'games 游戏记录', 'courses 自习', 'novels 小说',
+      'bank_* 记账', 'story_theaters 剧院', 'vr_* 彼方', 'worlds 家园',
+      'pixel_home_* 小窝', 'topic_boxes 话题盒', 'apiConfig / theme 等本机配置'
+    ];
+    notMigrated.forEach(function (n) { skip('周边：' + n + '（本次不迁）'); });
+
+    return { data: out, report: report };
+  }
+
+  /** 最终 sleepy 导入 payload（store.canImport 认的就是这个形状） */
+  function buildPayload(mapped) {
+    return {
+      app: 'sleepy',
+      schema: 3,
+      scope: 'user',
+      exportedAt: new Date().toISOString(),
+      from: 'sullyos-converter',
+      data: mapped
+    };
+  }
+
+  /* ---------------- 内置示例（别人没备份也能试）----------------
+     生成一个 v1 老格式（data.json 单根）的迷你 SullyOS 备份 zip——
+     顺带覆盖 v1 读取路径。zip 只给本页自己的解析器吃（STORE + 不校验 CRC）。 */
+  function makeSampleZip() {
+    var sample = {
+      characters: [
+        { id: 'c1', name: '小满', description: '猫系便利店店员', systemPrompt: '口癖是喵',
+          memories: [{ id: 'f1', date: '2026-10-01', summary: '一起看过海' }],
+          mountedWorldbooks: [{ id: 'mw1', title: '海边之约', content: '夏天要去一次海边', key: ['海'], disable: false }] },
+        { id: 'c2', name: '阿蓝', description: '安静的书店老板', systemPrompt: '', memories: [] }
+      ],
+      messages: [
+        { id: 1, charId: 'c1', role: 'user', content: '在吗', timestamp: 1750000000000 },
+        { id: 2, charId: 'c1', role: 'assistant', content: '喵，在', timestamp: 1750000001000 },
+        { id: 3, charId: 'c2', role: 'user', content: '打扰啦', timestamp: 1750000002000 }
+      ],
+      memory_nodes: [{ id: 'n1', charId: 'c1', text: '爱吃鱼', timestamp: 1750000003000 }],
+      diaries: [{ id: 'd1', charId: 'c1', date: '2026-10-02', timestamp: 1750000100000,
+        userPage: { text: '今天开心' }, charPage: { text: 'ta 今天也开心' } }],
+      worldbooks: [],
+      user_profile: [{ name: '阿宝', bio: '奶凶奶凶' }],
+      assets: []
+    };
+    var text = JSON.stringify(sample);
+    /* 最小 zip（STORE 单条目）：本地头 + 文件名 + 数据 + 中央目录 + EOCD。
+       ⚠️ 正文必须走 UTF-8 字节（TextEncoder）——charCodeAt&0xFF 会把中文
+       写成非法字节，解析端 TextDecoder 解出来是坏 JSON。 */
+    var name = 'data.json', nb = [], i;
+    for (i = 0; i < name.length; i++) nb.push(name.charCodeAt(i));
+    var enc = new TextEncoder().encode(text);
+    var db = [];
+    for (i = 0; i < enc.length; i++) db.push(enc[i]);
+    var u16 = function (v) { return [v & 255, (v >> 8) & 255]; };
+    var u32 = function (v) { return [v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255]; };
+    var lh = [].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(0), u32(db.length), u32(db.length), u16(nb.length), u16(0), nb);
+    var cd = [].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(0), u32(db.length), u32(db.length), u16(nb.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(0), nb);
+    var eocd = [].concat(u32(0x06054b50), u16(0), u16(0), u16(1), u16(1), u32(cd.length), u32(lh.length + db.length), u16(0));
+    var bytes = [].concat(lh, db, cd, eocd);
+    return new Uint8Array(bytes).buffer;
+  }
+
+  /* ---------------- 导出 API ---------------- */
+  global.S2S = {
+    readZip: readZip,
+    zipEntries: zipEntries,
+    assembleBackup: assembleBackup,
+    convert: convert,
+    buildPayload: buildPayload,
+    makeSampleZip: makeSampleZip,
+    /* 转换主流程：ArrayBuffer → { payload, report } */
+    run: async function (buf) {
+      var files = await readZip(buf);
+      var assembled = assembleBackup(files);
+      var r = convert(assembled.data);
+      assembled.dropped.forEach(function (d) { r.report.skipped.push('备份层：' + d); });
+      return { payload: buildPayload(r.data), report: r.report };
+    }
+  };
+})(window);
+</script>
+<script>
+/* ---------------- UI 接线（Node 测试只抽上面那块核心，不进这段） ---------------- */
+(function () {
+  var drop = document.getElementById('drop');
+  var fileInput = document.getElementById('file');
+  var parseErr = document.getElementById('parseErr');
+  var reportCard = document.getElementById('reportCard');
+  var outCard = document.getElementById('outCard');
+  var result = null;
+  var staged = null;   /* { data, dropped, fileName }：解析完等选角色 */
+
+  function showErr(msg) {
+    parseErr.textContent = msg;
+    parseErr.classList.remove('hidden');
+  }
+
+  /* 第 1 步：解析备份，列出角色清单让用户勾选（借 osBridge 的 BridgeOptions：
+     按角色筛选——部分搬家是真实需求，比如只把某一个角色带去 sleepy）。 */
+  async function handleBuffer(buf, label) {
+    parseErr.classList.add('hidden');
+    reportCard.classList.add('hidden');
+    outCard.classList.add('hidden');
+    try {
+      var files = await S2S.readZip(buf);
+      staged = S2S.assembleBackup(files);
+      staged.fileName = label || '';
+    } catch (e) {
+      showErr('解析失败：' + ((e && e.message) || e));
+      return;
+    }
+    renderCharPicker();
+  }
+
+  function renderCharPicker() {
+    var chars = (staged.data && Array.isArray(staged.data.characters)) ? staged.data.characters : [];
+    var usable = chars.filter(function (c) { return c && c.id && String(c.name || '').trim(); });
+    var old = document.getElementById('pickCard');
+    if (old) old.parentNode.removeChild(old);
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.id = 'pickCard';
+    var t = document.createElement('div');
+    t.className = 'step-t';
+    var n = document.createElement('span'); n.className = 'step-n'; n.textContent = '2';
+    t.appendChild(n);
+    t.appendChild(document.createTextNode('选要搬的角色（' + staged.fileName + '）'));
+    card.appendChild(t);
+    if (!usable.length) {
+      card.appendChild(Object.assign(document.createElement('p'), { className: 'warn', textContent: '备份里没找到有名字的角色，没什么可迁的。' }));
+      document.querySelector('.wrap').appendChild(card);
+      return;
+    }
+    var list = document.createElement('div');
+    usable.forEach(function (c) {
+      var lab = document.createElement('label');
+      lab.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 4px;cursor:pointer;';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true; cb.value = c.id;
+      cb.dataset.name = c.name;
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(c.name + (c.relation ? '（' + c.relation + '）' : '')));
+      list.appendChild(lab);
+    });
+    card.appendChild(list);
+    var note = document.createElement('p');
+    note.className = 'muted';
+    note.style.marginTop = '8px';
+    note.textContent = '没勾的角色整座岛不迁（它的消息/记忆/日记跟着不搬）。';
+    card.appendChild(note);
+    var go = document.createElement('button');
+    go.className = 'go'; go.textContent = '开始转换';
+    go.style.marginTop = '12px';
+    go.addEventListener('click', function () {
+      var picked = [];
+      list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+        if (cb.checked) picked.push(cb.value);
+      });
+      doConvert(picked);
+    });
+    card.appendChild(go);
+    document.querySelector('.wrap').insertBefore(card, reportCard);
+  }
+
+  async function doConvert(onlyCharIds) {
+    try {
+      var mapped = S2S.convert(staged.data, { onlyCharIds: onlyCharIds });
+      var r = mapped.report;
+      (staged.dropped || []).forEach(function (d) { r.skipped.push('备份层：' + d); });
+      result = { payload: S2S.buildPayload(mapped.data), report: r };
+    } catch (e) {
+      showErr('转换失败：' + ((e && e.message) || e));
+      return;
+    }
+    renderReport(result.report);
+    reportCard.classList.remove('hidden');
+    outCard.classList.remove('hidden');
+    var pick = document.getElementById('pickCard');
+    if (pick) pick.parentNode.removeChild(pick);
+  }
+
+  function renderReport(r) {
+    var rows = [
+      ['孤岛（每角色一间房）', r.islands],
+      ['角色（主号）', r.chars],
+      ['私聊会话', r.chats],
+      ['消息条数', r.messages],
+      ['文本记忆条数', r.memories],
+      ['日记篇数', r.diaries],
+      ['世界书条目', r.worldbookEntries]
+    ];
+    document.getElementById('reportTable').innerHTML =
+      '<tr><th>项目</th><th style="text-align:right">数量</th></tr>' +
+      rows.map(function (x) {
+        return '<tr><td>' + x[0] + '</td><td class="num">' + x[1] + '</td></tr>';
+      }).join('');
+    var warns = document.getElementById('warnBox');
+    warns.textContent = r.warnings.length ? r.warnings.join('\n') : '';
+    var skipCard = document.getElementById('skipCard');
+    if (r.skipped.length) {
+      skipCard.classList.remove('hidden');
+      document.getElementById('skipList').textContent = r.skipped.join('\n');
+    } else {
+      skipCard.classList.add('hidden');
+    }
+  }
+
+  document.getElementById('dl').addEventListener('click', function () {
+    if (!result) return;
+    try {
+      var text = JSON.stringify(result.payload);
+      var blob = new Blob([text], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'sleepy-import-from-sullyos.json';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    } catch (e) {
+      var dlErr = document.getElementById('dlErr');
+      dlErr.textContent = '导出失败：' + ((e && e.message) || e);
+      dlErr.classList.remove('hidden');
+    }
+  });
+
+  function handleFile(f) {
+    if (!f) return;
+    f.arrayBuffer().then(function (b) { handleBuffer(b, f.name); }, function (e) {
+      showErr('读不出文件：' + ((e && e.message) || e));
+    });
+  }
+  fileInput.addEventListener('change', function () {
+    if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+  });
+  ['dragover', 'dragenter'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('is-over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('is-over'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+
+  /* 别人没备份也能玩：一键灌内置示例（顺手覆盖 v1 老格式读取路径） */
+  var sampleBtn = document.getElementById('sampleBtn');
+  if (sampleBtn) {
+    sampleBtn.addEventListener('click', function () {
+      parseErr.classList.add('hidden');
+      try { handleBuffer(S2S.makeSampleZip(), '内置示例'); }
+      catch (e) { showErr('示例生成失败：' + ((e && e.message) || e)); }
+    });
+  }
+})();})();
+</script>
+</body>
+</html>
