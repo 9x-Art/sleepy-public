@@ -1306,10 +1306,14 @@ body{
 .msg-body{display:flex;flex-direction:column;min-width:0;}
 .msg-user{align-self:flex-end;}
 .msg-user .msg-text{
-  /* 字色用 --on-accent（「压在主色块上的前景色」，夜灯下是深色）——
-     原来写死 #2A2118，在焦糖/海盐的实心气泡上对比度不够，
-     而且配色换了它不换，看着像「正文不跟主题」。 */
-  background:var(--amber);color:var(--on-accent,#FFFFFF);
+  /* 2026-10-24（用户口径：我方藕粉、透明感重）：实心底 → 30% 藕粉半透明
+     + 深藕粉字 + 同色细边（半透明泡没有边会「化」在底色里）。
+     字色深色而不是白：白字压半透明泡会透出页面底，混色后发糊。
+     色值与 page-char-appearance 的 COLORS.lotus 对齐（两处必须同值，
+     改一处忘另一处 = 外观页开了/关了是两个颜色）。 */
+  background:color-mix(in srgb,#C5A0AE 30%,transparent);color:#6B4552;
+  border:0.5px solid color-mix(in srgb,#C5A0AE 45%,transparent);
+  box-shadow:none;
   /* 四角一样圆、不画三角尾巴（用户 2026-09-22：「默认的原始 ui 里气泡那个
      小角不太好看」）—— 原来这里是 18px 3px 18px 18px + 一个贴在角上的三角形，
      那个 3px 的"小角"就是被嫌的地方。现代聊天 UI 都不带尾巴了。
@@ -1317,7 +1321,11 @@ body{
   border-radius:18px;
 }
 .msg-assistant .msg-text{
-  background:var(--paper);
+  /* 对方淡蓝（同上批次）：30% 雾蓝半透明 + 细边；字色仍跟主题 --g-ink，
+     淡底上可读，不写死。 */
+  background:color-mix(in srgb,#A8BFD8 30%,transparent);
+  border:0.5px solid color-mix(in srgb,#A8BFD8 45%,transparent);
+  box-shadow:none;
   /* 原本写的是 color:var(--text)，而 --text 就是 #F2E8DC，和这张纸同一个颜色，
      所以角色的每句话都是浅字写在浅底上，等于隐身。
      现在跟主题的 --g-ink 走（下面 2565 那段才是真正生效的一组，
@@ -1330,7 +1338,6 @@ body{
   /* 字号走变量：外观 App 里的「正文字号」改的就是它 */
   font-size:calc(14px * var(--fs-scale, 1));line-height:1.55;
   position:relative;
-  box-shadow:0 1px 2px rgba(0,0,0,.08);
 }
 /* 尾巴默认不画（外观 App 选了「底部/顶部」时由 JS 打开） */
 .msg-user .msg-text::after,
@@ -1352,7 +1359,7 @@ body{
 /* 表情回应药丸（QQ/企微风长按贴表情） */
 .msg-reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;}
 .msg-reaction{font-size:13px;line-height:1;padding:3px 8px;border:1px solid var(--bg-3);border-radius:999px;background:var(--bg-2);color:var(--g-ink);cursor:pointer;}
-.msg-reaction.is-mine{border-color:var(--g-accent);background:rgba(124,168,214,.14);color:var(--g-accent);}
+.msg-reaction.is-mine{border-color:color-mix(in srgb,#C5A0AE 45%,transparent);background:rgba(197,160,174,.14);color:#8A5A6C;}
 
 /* 长按菜单顶部 emoji 回应条 */
 .msg-pop-emoji{display:flex;gap:2px;padding:5px 4px;border-bottom:1px solid var(--bg-3);}
@@ -1404,23 +1411,29 @@ body{
 }
 .emo-btn:active{background:var(--bg-3);color:var(--text);}
 .emo-btn svg{width:20px;height:20px;}
+/* 发送键（2026-10-24 用户选的「轻量爪印」）：**去掉实底**，爪印直接用
+   主色 —— 输入区一行里只有输入框是「实」的，其余都是线条与图标。
+   按压 / 忙碌才泛起一圈 pale 底（半透明底用 --g-accent-pale，
+   不用 --g-accent-soft：夜间那个下发深）。
+   ⚠️ 爪印色不许再引 --amber/--g-accent-deep 之外的实底变量 ——
+   本文件 2851 行那条老教训（同变量同色隐形）就是底色字色撞车撞出来的。
+   ap-accented（角色外观生效中）由 page-char-appearance 的 buildPageCss
+   覆盖，那边爪印跟角色色板走。 */
 .send-btn{
   width:44px;height:44px;
   border-radius:50%;border:0;
-  background:var(--amber);color:#2A2118;
+  background:transparent;color:var(--g-accent-deep);
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;flex:none;
-  transition:transform .12s var(--ease), background .2s var(--ease);
+  transition:transform .12s var(--ease), background .15s var(--ease);
 }
-.send-btn:active{transform:scale(.94);}
-/* 忙碌状态：爪印变淡呼吸，比单纯置灰更像「对方在打字」 */
+.send-btn:active{transform:scale(.94);background:var(--g-accent-pale);}
+/* 忙碌状态：不再呼吸（无底之后呼吸的是空气），压淡 + pale 底表示「等着」 */
 .send-btn.is-busy{
-  background:var(--bg-3);color:var(--text-faint);
-  cursor:default;
-  animation:paw-wait 1.15s ease-in-out infinite;
+  background:var(--g-accent-pale);color:var(--g-ink-3);
+  cursor:default;animation:none;
 }
 .send-btn.is-busy:active{transform:none;}
-@keyframes paw-wait{0%,100%{opacity:.4}50%{opacity:.95}}
 
 /* 加号面板（+）v0.2 — UI 微调 */
 /* 加号按钮：输入区里最左那枚。
@@ -1555,12 +1568,9 @@ body{
   /* 注意：角色头像是「透明底 + 圆形」的 SVG —— 这里**不能**给底色，
      否则透明部分会透出一块方框（实测）。 */
 }
-/* user 头像占位（没设头像时显示首字） */
-span.msg-avatar-initial{
-  display:flex;align-items:center;justify-content:center;
-  font-size:13px;color:#fff;background:linear-gradient(145deg,#c9b394,#a18561);
-  cursor:default;
-}
+/* span.msg-avatar-initial（user 首字圆）2026-10-24 起不再有生成点 ——
+   user 侧没头像也铺幽灵图了。样式留着不删：万一别的入口还想用首字圆，
+   加回 class 即可；死规则零成本，删了以后要用得翻 git。 */
 /* user 行：头像在右（row-reverse，margin 跟着换边） */
 .msg-user{flex-direction:row-reverse;}
 .msg-user .msg-avatar{margin-right:0;margin-left:8px;}
@@ -2807,31 +2817,35 @@ span.msg-avatar-initial{
 .chat-item.is-pinned{background:var(--g-pin-wash);}
 .chat-item.is-pinned:active{background:color-mix(in srgb,var(--g-pin-wash) 88%,var(--g-ink-3));}
 
-/* 气泡。我方＝青提绿实心，对方＝白玻璃。
-   施工卡里踩过「文字和底色同色」的坑（.msg-assistant 隐身），
-   所以两边都写死对比色，不依赖继承。 */
+/* 气泡（2026-10-24 用户口径：我方藕粉、对方淡蓝、透明感重一些）。
+   我方＝30% 藕粉半透明 + 深藕粉字 + 细边；对方＝30% 雾蓝半透明 + 细边。
+   色值与 page-char-appearance 的 COLORS.lotus 硬对齐（accent/ink/incoming
+   三处同值）—— 外观页开了/关了必须是同一个颜色，所以两边都得改。
+   ⚠️ 半透明泡上不许用 --on-accent（白字压半透明会透出页面底、混成糊的），
+   也不许加投影（半透明 + 投影 = 脏边）。这两条是老实底方案的遗产。 */
 .msg-user .msg-text,.msg-user .msg-body{
-  /* --on-accent = 压在主色块上的前景色：浅色主题是白，夜灯自动翻成深色。
-     写死 #FFFFFF 的话，夜灯那颗**亮薄荷**主色上白字几乎看不见
-     （对比度 1.4:1），是实打实的看不清。 */
-  color:var(--on-accent,#FFFFFF);
+  color:#6B4552;
 }
 .msg-user .msg-text{
-  /* 渐变末端原来是写死的 #5FA95C（青提绿时代的残留）——
-     于是「配色」只影响起点、终点永远是绿：焦糖/海盐主题下
-     气泡都会滑向同一个绿。改成主题自己的深色档，整条渐变都跟主题走。 */
-  background:linear-gradient(135deg,var(--g-accent) 0%,var(--g-accent-deep,#5FA95C) 100%);
-  border-color:transparent;
-  box-shadow:0 4px 14px rgba(139,108,76,.22);
+  background:color-mix(in srgb,#C5A0AE 30%,transparent);
+  border:0.5px solid color-mix(in srgb,#C5A0AE 45%,transparent);
+  box-shadow:none;
 }
 .msg-assistant .msg-text{
-  background:var(--g-glass-3);
-  border:1px solid var(--g-glass-edge);
+  background:color-mix(in srgb,#A8BFD8 30%,transparent);
+  border:0.5px solid color-mix(in srgb,#A8BFD8 45%,transparent);
   color:var(--g-ink);
+  /* 透明感：对方泡保留 blur（既有行为）。我方泡不加 —— blur 一层半透明
+     浅底等于糊成白灰，立体感反而没了。 */
   backdrop-filter:blur(14px);
   -webkit-backdrop-filter:blur(14px);
 }
 .msg-system .msg-text{background:rgba(139,108,76,.10);color:var(--g-ink-2);}
+
+/* 夜灯适配：我方泡的深藕粉字压深底会糊，翻一盏浅藕粉。
+   （对方泡不用管：淡蓝半透明混上深底仍是暗蓝灰，夜灯的 --g-ink 是浅色，清楚。） */
+#phone[data-theme="night"] .msg-user .msg-text,
+#phone[data-theme="night"] .msg-user .msg-body{color:#EFD9E2;}
 
 /* 弹层与面板 */
 .msg-menu,.hb-panel,.dl-card,.pk-panel{
@@ -2848,12 +2862,10 @@ span.msg-avatar-initial{
   -webkit-backdrop-filter:blur(24px);
 }
 
-/* 发送键：底是青提绿，爪印就得是**浅色**。
-   原来这里写的是 `color:var(--g-accent-deep)`（爪印也绿）——
-   后来 `--amber` 也被重映射成了同一个绿，于是绿底绿爪、爪印整个隐形，
-   用户以为小猫爪丢了。教训：**给底色配字色时，两边不能引用同一个变量**。 */
-.send-btn{color:#FFFDF9;}
-.send-btn.is-busy{color:var(--g-ink-3);}
+/* 发送键爪印色：2026-10-24 无底化之后，原来那条「底是青提绿所以爪印得浅」
+   的覆盖（.send-btn{color:#FFFDF9}）已删除 —— 无底 + 浅爪印在浅色底上
+   直接隐形（这正是当年「绿底绿爪」事故的镜像版）。爪印色统一走上面
+   .send-btn 的 var(--g-accent-deep)，角色外观生效时由 buildPageCss 覆盖。 */
 
 /* 空心纸：夜灯时期是米色便签，浅色主题下要能看见 */
 .empty-paper{
@@ -15708,25 +15720,4 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   text-decoration:underline;
   text-underline-offset:3px;
   cursor:pointer;
-}
-
-/* 内测一键进门（page-license.js 的 BETA 段 —— 下线清单写在那边）
-   用 align-items:stretch 让按钮自己撑满宽度，别写 width:100% —— 宽度 100%
-   的元素进 flex 容器会把固有宽度一起带进来，2026-10-11 右下角那个
-   「边缘框」就是这么来的。 */
-.beta-entry{
-  margin:0 0 20px;
-  padding:16px 14px 13px;
-  border-radius:14px;
-  background:var(--g-accent-pale);
-  display:flex;
-  flex-direction:column;
-  gap:9px;
-  align-items:stretch;
-}
-.beta-entry-hint{
-  margin:0;
-  font-size:12px;
-  line-height:1.65;
-  color:var(--text-faint);
 }

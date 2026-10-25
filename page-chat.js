@@ -6080,20 +6080,16 @@
       }
 
       /* user 侧头像：和输入区那个「我」同一套取图逻辑。
-         捡手机皮肤不要 user 头像 —— 由 CSS（mode-phone）藏。 */
+         捡手机皮肤不要 user 头像 —— 由 CSS（mode-phone）藏。
+         2026-10-24：没头像不再回落「首字圆」—— 同步 v255 幽灵头像
+         （同步铺幽灵图当占位，有图时 setAvatarImg 异步换掉，不闪空白）。 */
       function userAvatarEl() {
         var c = getChat(chatId);
         var u = (Sleepy.core && Sleepy.core.findUser(c && c.userId))
              || (Sleepy.core && Sleepy.core.activeUser());
-        var av;
-        if (u && (u.avatar || u.avatarMedia)) {
-          av = h('img', 'msg-avatar');
-          Sleepy.core.setAvatarImg(av, u);
-        } else {
-          av = h('span', 'msg-avatar msg-avatar-initial');
-          var n = Sleepy.core.labelOfUser(u);
-          av.textContent = n.charAt(0).toUpperCase();
-        }
+        var av = h('img', 'msg-avatar');
+        av.src = 'art/avatar-ghost-user.png';
+        if (Sleepy.core && Sleepy.core.setAvatarImg) Sleepy.core.setAvatarImg(av, u);
         av.alt = '我';
         av.title = '点一下，给自己盖个情绪印章';
         av.style.cursor = 'pointer';
@@ -6107,17 +6103,17 @@
       /* 角色侧头像：**跟账号同步**（用户 2026-09-22：「chat 聊天里气泡旁的
          头像也没同步」）。以前这里写死 `av.src = AVATAR`（一颗灰圆占位），
          不管角色设没设头像都一样 —— 现在本地图 avatarMedia 优先、
-         其次网址头像，两样都没有才回落到那颗占位图。
+         其次网址头像。
+         2026-10-24：两样都没有时回落**幽灵头像**（v255），不再是那颗
+         棕色实心圆占位 —— 幽灵跟「无头像」的语义对齐，也和消息列表/
+         桌面/通讯录等所有走了 setAvatarBg/setAvatarImg 的地方一致。
          setAvatarImg 是**异步**的（本地图要先从 IndexedDB 取 objectURL），
-         所以先挂占位、拿到再换，中间不会闪空白。 */
+         所以先同步铺幽灵、拿到再换，中间不会闪空白。 */
       function charAvatarEl(c) {
         var av = h('img', 'msg-avatar');
+        av.src = 'art/avatar-ghost-char.png';
         var ch = (c && c.characterId) ? findCharacter(c.characterId) : null;
-        if (ch && (ch.avatar || ch.avatarMedia)) {
-          Sleepy.core.setAvatarImg(av, ch);
-        } else {
-          av.src = AVATAR;
-        }
+        if (Sleepy.core && Sleepy.core.setAvatarImg) Sleepy.core.setAvatarImg(av, ch);
         return av;
       }
 

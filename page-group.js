@@ -70,20 +70,18 @@
 
   /* ==================== 通用小组件 ==================== */
 
-  /* 单个头像格：有图用图，没图用首字 + 暖色底。
+  /* 单个头像格：有图用图，没图落**幽灵头像**（2026-10-24，v255 起全库统一
+     口径：不再「首字 + 暖色底」—— 群成员也是 user 侧记录，setAvatarBg 会
+     按 kind 落 user 幽灵并加 has-img/is-default-ava）。
      图的地址走 core.setAvatarImg（avatarMedia 图库优先，回落网址）——
      别直接读 meta.avatar 当 src，本地图会显示不出来。 */
   function tileEl(meta, size) {
     var el = h('span', 'gu-tile' + (size ? ' gu-tile-' + size : ''));
     el.style.background = gs().tileColor(meta.name);
-    if (meta.avatar || meta.avatarMedia) {
-      var img = h('img', 'gu-tile-img');
-      img.alt = '';
-      core.setAvatarImg(img, meta);
-      el.appendChild(img);
-    } else {
-      el.appendChild(h('span', 'gu-tile-tx', meta.initial));
-    }
+    var img = h('img', 'gu-tile-img');
+    img.alt = '';
+    core.setAvatarImg(img, meta);
+    el.appendChild(img);
     return el;
   }
 

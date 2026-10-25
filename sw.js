@@ -602,7 +602,38 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v257';
+var CACHE = 'sleepy-v259';
+
+/* v259（2026-10-24）：**聊天气泡粉蓝半透明 + 轻量爪印 + 头像幽灵补漏**——
+   用户口径：「只改聊天，不改桌面；我方藕粉、对方淡蓝、透明感重一些」。
+   · page-char-appearance.js：COLORS 加 lotus 色板（accent #C5A0AE 藕粉 /
+     ink #6B4552 / incoming #A8BFD8 雾蓝 / alpha 30 半透明），老色板无新字段
+     走老公式（wash 混 --amber）行为不变；PRESETS.default.color 换 lotus；
+     buildCss 半透明我方泡 + 对方淡蓝泡 + 细边；buildPageCss 爪印钮去实底。
+   · style.css：2823 段气泡规则改藕粉/淡蓝半透明（与色板三值硬对齐）+ 去投影；
+     .send-btn 无底爪印（--g-accent-deep，按压/忙碌 pale 底，删旧 #FFFDF9 覆盖）；
+     夜灯下我方泡字翻浅藕粉；reaction 药丸同色系；死规则注释化保留。
+   · page-chat.js：charAvatarEl/userAvatarEl 没头像落 v255 幽灵（同步铺幽灵
+     占位、有图异步换），不再棕色圆点/首字圆。page-group.js tileEl 同。
+   → 必须跳版本：page-char-appearance.js / style.css / page-chat.js /
+     page-group.js / scripts/smoke.js 都变了。 */
+
+/* v258（2026-10-24）：**授权服务多 base 故障转移 + 可读失败文案（A+B）**——
+   诊断结论：校园网/iOA 对 *.workers.dev **定向封锁** —— DNS 投毒返回
+   Facebook IP（face:b00c 段）+ TCP 静默丢包（实测 connect=0.000s 全超时；
+   同网 cloudflare.com 解析正常 ⇒ 按域名清单封锁，不是墙整个 CF）。
+   VPN 能通是因为隧道里 DNS 与流量都不经本地网关。
+   · repo-core.js：DEFAULT_BASE → **DEFAULT_BASES 多 base 顺序故障转移**，
+     **主位待填自定义域名**（CF 后台绑 Custom Domain 后只改这一个字面值；
+     名单外域名，校园网可直连），workers.dev 降级兜底（VPN 用户/自定义
+     域名临时故障）。repoBases() 去重（域名未填时两 base 相同，退化单发
+     不傻等两遍）；repoCfg.base 覆盖通道升级为逗号分隔多入口。
+     licRequest 重写：非最后 base 5s 短超时（AbortController 真取消，
+     老浏览器 race 兜底）主动切下一个；全失败报统一文案
+     LICENSE_NET_HINT（不再把 Failed to fetch 怼给用户）。
+   · scripts/smoke.js：行为级断言（注入双 base 验证自动转移 + 全挂文案
+     硬写基准）+ 静态护栏（结构在/老文案禁复活/去重）。
+   → 必须跳版本：repo-core.js / scripts/smoke.js 都变了。 */
 
 /* v257（2026-10-23 深夜）：**内测一键进门（临时通道）**——
    给激活闸的门面加一个「一键进门」：现场摇领取号 + 默认密码，拿公用激活码

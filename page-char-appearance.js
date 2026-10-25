@@ -24,7 +24,17 @@
 
   /* ---------------------------- 出厂值 ---------------------------- */
 
+  /* 色板字段（2026-10-24 用户口径：我方藕粉、对方淡蓝、透明感重）：
+     accent  = 我方气泡底色（老逻辑：跟 wash% 和 --amber 混）
+     ink     = 我方气泡字色（可选；不给才回落到 inkOn 按亮度判白/深）
+     alpha   = 我方气泡不透明度 %（可选；给了就走 color-mix 半透明，
+               不再跟 --amber 混 —— 实底混色在半透明泡上会发灰）
+     incoming / incomingAlpha = 对方气泡底色与不透明度（可选；不给的
+               老色板不写对方泡色，继续跟主题纸底走，行为不变） */
   var COLORS = {
+    lotus:  { accent: '#C5A0AE', soft: '#F3E7EC', name: '藕粉',
+              ink: '#6B4552', alpha: 30,
+              incoming: '#A8BFD8', incomingAlpha: 30 },
     mist:  { accent: '#708f88', soft: '#dce8e4', name: '雾青' },
     rose:  { accent: '#a77b81', soft: '#eadcdf', name: '旧玫瑰' },
     blue:  { accent: '#71859f', soft: '#dce3ec', name: '雨蓝' },
@@ -49,7 +59,7 @@
   var PRESETS = {
     /* default 的 tail 从 'bottom' 改成 'none'（2026-09-22 用户嫌那个小角丑）——
        企微/捡手机那两套是照参考图逐色抄的，尾巴是它们的特征，不动。 */
-    default: { mode: 'classic', color: 'mist', bgColor: 'none', bubbleR: 16, tail: 'none', tex: 'none', deco: 'none', fontSize: 100, msgGap: 14, wash: 80, bgBlur: 0, bgDim: 0 },
+    default: { mode: 'classic', color: 'lotus', bgColor: 'none', bubbleR: 16, tail: 'none', tex: 'none', deco: 'none', fontSize: 100, msgGap: 14, wash: 80, bgBlur: 0, bgDim: 0 },
     wecom:   { mode: 'wecom',   color: 'mist', bgColor: '#ededee', bubbleR: 10, tail: 'top',    tex: 'none', deco: 'none', fontSize: 97,  msgGap: 10, wash: 80, bgBlur: 0, bgDim: 0 },
     phone:   { mode: 'phone',   color: 'mist', bgColor: '#b9c0cb', bubbleR: 6,  tail: 'top',    tex: 'none', deco: 'none', fontSize: 100, msgGap: 12, wash: 80, bgBlur: 0, bgDim: 0 }
   };
@@ -137,7 +147,12 @@
     var c = COLORS[cfg.color] || COLORS.mist;
     var r = cfg.bubbleR;
     var skin = SKINS[cfg.mode] || null;
-    var uBg = 'color-mix(in srgb, ' + c.accent + ' ' + cfg.wash + '%, var(--amber))';
+    /* 我方气泡底色：新色板（带 alpha）走半透明 color-mix，实底会压掉「透明感」；
+       老色板维持原公式（wash% 跟 --amber 混），已保存的配置行为不变。 */
+    var uBg = (c.alpha != null)
+      ? 'color-mix(in srgb, ' + c.accent + ' ' + c.alpha + '%, transparent)'
+      : 'color-mix(in srgb, ' + c.accent + ' ' + cfg.wash + '%, var(--amber))';
+    var uInk = c.ink || inkOn(c.accent);
     var lines = [];
 
     /* 消息容器：间距 / 背景 */
@@ -221,17 +236,31 @@
       lines.push('.msg-wrap.ap-on .msg-user .msg-text::after{border-left-color:' + uBg + ';}');
       /* 我方气泡的字色跟着**这张色板**翻（见 inkOn 的说明）。
          不给对方气泡写字色 —— 它跟主题走。 */
-      var uInk = inkOn(c.accent);
       lines.push('.msg-wrap.ap-on .msg-user .msg-text,.msg-wrap.ap-on .msg-user .msg-body{color:' + uInk + ';}');
+      /* 对方气泡（2026-10-24 用户口径「对方是淡蓝色」）：色板带了 incoming
+         才写 —— 半透明淡彩 + 同色细边（半透明泡没有边会「化」在底色里）。
+         字色不写：继续跟主题 --g-ink，淡底上可读。老色板没这个字段，
+         走的还是原来的主题纸底，一口价不改。 */
+      if (c.incoming) {
+        var iBg = 'color-mix(in srgb, ' + c.incoming + ' ' + (c.incomingAlpha != null ? c.incomingAlpha : 30) + '%, transparent)';
+        var iEdge = 'color-mix(in srgb, ' + c.incoming + ' 45%, transparent)';
+        lines.push('.msg-wrap.ap-on .msg-assistant .msg-text{background-color:' + iBg +
+          ';border:0.5px solid ' + iEdge + ';box-shadow:none;}');
+      }
     }
 
     return lines.join('\n');
   }
 
-  /* 输入区不在 .msg-wrap 里，单独给聊天页根上一个色变量类 */
+  /* 输入区不在 .msg-wrap 里，单独给聊天页根上一个色变量类。
+     2026-10-24（用户选的「轻量爪印」）：发送钮**去掉实底**，爪印直接
+     用色板的 accent 色 —— 一行控件里只有输入框是「实」的。
+     ⚠️ 皮肤（企微/捡手机）不走这里（applyTo 里 isSkin 时不拼本函数），
+     皮肤里发送键保持自己的实底。 */
   function buildPageCss(cfg) {
     var c = COLORS[cfg.color] || COLORS.mist;
-    return '.page.ap-accented .send-btn{background:' + c.accent + ';color:#fff;}' +
+    return '.page.ap-accented .send-btn{background:transparent;color:' + c.accent + ';}' +
+           '.page.ap-accented .send-btn.is-busy{background:transparent;color:' + c.accent + ';opacity:.55;animation:none;}' +
            '.page.ap-accented .chat-input:focus{border-color:' + c.accent + ';}';
   }
 

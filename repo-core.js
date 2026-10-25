@@ -56,15 +56,41 @@
   }
 
   /* ★ 官方仓库地址：**烤在这里**，所有 user 开箱即用，不在页面上填。
-     Worker 部署后把域名填进 DEFAULT_BASE 即可（repoCfg.base 留作覆盖
-     通道，页面不暴露）。 */
-  var DEFAULT_BASE = 'https://sleepy-repo.sleepy-goodluck.workers.dev';
+     Worker 部署后把自定义域名填进 DEFAULT_BASES 主位即可（repoCfg.base
+     留作覆盖通道，页面不暴露）。
+
+     2026-10-24 改多 base（A 方案）：workers.dev 被校园网/iOA 定向封锁
+     ——DNS 投毒返回 Facebook IP（face:b00c）+ TCP 静默丢包，实测
+     connect=0.000s 全超时（同网 cloudflare.com 正常 ⇒ 按域名清单封锁，
+     与 GitHub HTTPS 被掐同类）。故：**主位放自定义域名**（封锁名单外），
+     workers.dev 降级为兜底（VPN 用户 / 自定义域名临时故障时）。
+     ⚠️ 自定义域名未填入前两个 base 相同，repoBases() 会去重退化成单发，
+     不会傻等两遍；域名在 CF 后台绑 Custom Domain 后，只需改主位一个字面值。 */
+  var DEFAULT_BASES = [
+    'https://sleepy-repo.sleepy-goodluck.workers.dev',
+    'https://sleepy-repo.sleepy-goodluck.workers.dev'
+  ];
+  /* 非最后 base 的短超时：被墙时 5s 就切下一个，别让用户干等浏览器默认超时 */
+  var BASE_FIRST_TRY_MS = 5000;
 
   function get(k, d) { var v = store.get(k); return v === null || v === undefined ? d : v; }
   function set(k, v) { store.set(k, v); }
 
+  /* base 候选（按序故障转移）：repoCfg.base 覆盖通道优先（作者测试/自建
+     反代用，页面不暴露）—— 支持逗号分隔多入口，配几个就按序试几个；
+     否则 DEFAULT_BASES 去重后顺序尝试（域名未填入主位时两 base 相同，
+     去重退化成单发，不会傻等两遍）。 */
+  function repoBases() {
+    var override = String((get('repoCfg', {}) || {}).base || '')
+      .split(',').map(function (s) { return s.trim().replace(/\/+$/, ''); })
+      .filter(function (s) { return !!s; });
+    var list = override.length ? override : DEFAULT_BASES.slice();
+    return list.filter(function (b, i) { return list.indexOf(b) === i; });
+  }
+
+  /* 单 base 语义（仓库公开功能用）：永远取主候选。域名没填时 = 原 workers.dev 行为 */
   function base() {
-    return String((get('repoCfg', {}) || {}).base || DEFAULT_BASE).replace(/\/+$/, '');
+    return repoBases()[0];
   }
 
   /* ---------------- 打包 ---------------- */
@@ -899,23 +925,57 @@
   }
 
 
+  /* 网络层失败统一文案（B 方案）：不再把浏览器原始错误（Failed to fetch /
+     Aborted 之类）怼给用户 —— 直连失败的主因是域名被网络封锁，说清楚该怎么办。
+     断言里登记：本字符串为独立基准，不许引被测常量。 */
+  var LICENSE_NET_HINT =
+    '连不上授权服务器：当前网络可能屏蔽了 Cloudflare 域名（校园网常见），挂 VPN 或换网络再试';
+
+  /* 多 base 顺序尝试（A 方案韧性）：非最后 base 用 5s 短超时主动切下一个，
+     被墙时不用干等浏览器默认超时。安全性：短超时中止的请求未达服务端，
+     不会重复写库；万一「服务端已处理但响应丢包」，users.qq 唯一索引兜底
+     不会造出双账号（最差结果是用户看到一个 409 重摇提示）。 */
   function licRequest(path, method, body, cb) {
     var lic = licGet();
     var headers = { 'Content-Type': 'application/json' };
     if (lic && lic.token) headers['X-Repo-Token'] = lic.token;   /* 与作者令牌同头，CORS 白名单不另开列 */
-    global.fetch(base() + path, {
-      method: method || 'GET',
-      headers: headers,
-      body: body ? JSON.stringify(body) : undefined
-    }).then(function (r) {
-      return r.json().then(function (js) { return { status: r.status, js: js }; });
-    }).then(function (res) {
-      var js = res.js || {};
-      cb({ ok: !!js.ok, status: res.status, message: js.message || '',
-        data: js, devices: js.devices || null });
-    }, function (e) {
-      cb({ ok: false, message: '连不上仓库服务：' + ((e && e.message) || e) });
-    });
+    var bases = repoBases();
+    tryBase(0);
+
+    function tryBase(i) {
+      if (i >= bases.length) { cb({ ok: false, message: LICENSE_NET_HINT }); return; }
+      var last = (i === bases.length - 1);
+      var ctl = (!last && typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = null;
+      var fp = global.fetch(bases[i] + path, {
+        method: method || 'GET',
+        headers: headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctl ? ctl.signal : undefined
+      });
+      if (ctl) {
+        /* 现代浏览器：短超时直接 abort，真取消请求 */
+        timer = setTimeout(function () { ctl.abort(); }, BASE_FIRST_TRY_MS);
+      } else if (!last) {
+        /* 老浏览器退路：race 一个短超时 reject（请求会在后台跑完，
+           users.qq 唯一索引兜底，无重复写库风险） */
+        fp = Promise.race([fp, new Promise(function (_, reject) {
+          timer = setTimeout(function () { reject(new Error('timeout')); }, BASE_FIRST_TRY_MS);
+        })]);
+      }
+      fp.then(function (r) {
+        if (timer) clearTimeout(timer);
+        return r.json().then(function (js) { return { status: r.status, js: js }; });
+      }).then(function (res) {
+        var js = res.js || {};
+        cb({ ok: !!js.ok, status: res.status, message: js.message || '',
+          data: js, devices: js.devices || null });
+      }, function () {
+        if (timer) clearTimeout(timer);
+        if (!last) { tryBase(i + 1); return; }   /* 切下一个 base；全失败才报文案 */
+        cb({ ok: false, message: LICENSE_NET_HINT });
+      });
+    }
   }
 
   /* 登录/激活成功后刷新 lastVerifiedAt —— 7 天离线宽限的计时起点（内测期不设强闸） */

@@ -381,6 +381,28 @@ console.log('--- 依赖挂载 ---');
   ok('Sleepy.' + k + ' 存在', !!S[k]);
 });
 
+/* -------------------- demo-seed：加载期注入验证 + 复位 --------------------
+   demo-seed.js 的 ensure() 挂在 bootHome 里，而加载期 page-chat-settings.js
+   末尾就点一次火（LS 桩预置了激活态，走「已过闸」路径）—— 所以到这里
+   演示岛已经注进去了。先验它真的注了，再把场景复位：
+   下面几千行存量测试是按「一间房都没有」的初始态写的，种子留下的岛、
+   指针和名册会大面积改它们读到的东西（2026-10-25 实测挂 3 条）。
+   演示岛的完整行为由文件末尾的自管清场块覆盖，这里只验「加载期触发」。 */
+t('加载期点火触发了演示岛注入（新用户首启链路）', () => {
+  const hit = S.core.listSandboxes().filter((s) => s.demo === true);
+  if (hit.length !== 1) throw new Error('加载期没注入演示岛：' + hit.length);
+  if (hit[0].name !== '云海工位') throw new Error('岛名不对：' + hit[0].name);
+  return { room: hit[0].name, kind: hit[0].kind };
+});
+(() => {
+  /* 复位到「无岛初始态」：清掉 ensure() 写过的七张表（加载期前全是空的，
+     LS 桩只预置 license）+ 指针归零。之后的世界与加 demo-seed 之前一致。 */
+  ['sandboxes', 'characters', 'userMasks', 'links', 'chats', 'moments', 'worldbooks']
+    .forEach((k) => S.store.set(k, []));
+  S.core.switchTo(null, null);
+  S.core.setActiveSandbox(null);
+})();
+
 console.log('\n--- store ---');
 t('store.exportAll() 读到 schema 与默认值', () => {
   /* exportAll 的外层是 { app, schema, exportedAt, data }，
@@ -2599,8 +2621,11 @@ t('朋友圈引用：qsRef 进 moment；评论不写回群声', () => {
   if (!r.ok) throw new Error('朋友圈分享失败：' + JSON.stringify(r));
   const moments = S.momentsTab.all();
   if (moments.length !== before + 1) throw new Error('moment 没落');
-  const m = moments[moments.length - 1];
-  if (!m.qsRef || m.qsRef.sourcePostId !== p.id) throw new Error('qsRef 没挂上');
+  /* 按 sourcePostId 找刚分享的那条，**不取数组位置** —— moments 的新条是
+     unshift 到表头，「最后一条」恰是最旧的；演示岛种子（demo-seed）也会往
+     本表写动态，占位置的写法会把演示动态当成分享结果（2026-10-25 踩过）。 */
+  const m = moments.filter((x) => x.qsRef && x.qsRef.sourcePostId === p.id)[0];
+  if (!m) throw new Error('qsRef 没挂上');
   const s = JSON.stringify(m.qsRef);
   if (s.indexOf(mainA.id) >= 0) throw new Error('qsRef 泄露账号 id');
   /* 朋友圈评论：只进 moments，不进 forumComments */
@@ -16977,7 +17002,16 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    基准随批 v255 → v256。 */
 /* v257（2026-10-23 深夜）：内测一键进门 —— page-license.js / style.css 变了。
    基准随批 v256 → v257。 */
-const EXPECTED_SW_CACHE = 'sleepy-v257';
+/* v258（2026-10-24）：授权服务多 base 故障转移 + 可读失败文案（A+B 批，
+   校园网封锁 workers.dev 的诊断与对策）—— repo-core.js（DEFAULT_BASES /
+   repoBases / licRequest 重写 + LICENSE_NET_HINT）/ scripts/smoke.js 变了。
+   基准随批 v257 → v258。 */
+/* v259（2026-10-24 晚）：聊天气泡粉蓝半透明 + 轻量爪印 + 头像幽灵补漏 ——
+   page-char-appearance.js（COLORS.lotus + PRESETS.default + buildCss 半透明 /
+   buildPageCss 无底爪印）/ style.css（气泡段 + send-btn）/ page-chat.js /
+   page-group.js（头像落幽灵）/ scripts/smoke.js 变了。
+   基准随批 v258 → v259。 */
+const EXPECTED_SW_CACHE = 'sleepy-v259';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -18116,14 +18150,14 @@ t('账密系统：激活→登录→设备上限→解绑→改密→注销 全�
     body: JSON.stringify({ qq: '12345678', pass: 'newpass1', installId: 'inst-D', ua: 'UA-D' }) });
   if (lAfter.ok !== false) throw new Error('注销后不该还能登');
 
-  /* ---- 8. 发码页出得来（独立小页，带 QQ 用途告知 + 营业口令输入位）---- */
+  /* ---- 8. 发码页出得来（独立小页，带 QQ 用途告知 + 领取口令输入位；2026-10-25 免费化改名）---- */
   const page = await worker.fetch(req('/issue'), env);
   const html = await page.text();
   if (html.indexOf('领取激活码') < 0 || html.indexOf('隐私政策') < 0 || html.indexOf('只能领一次') < 0) {
     throw new Error('发码页内容不对（告知/闸说明缺失）');
   }
-  if (html.indexOf('营业口令') < 0 || html.indexOf("getElementById('key')") < 0) {
-    throw new Error('发码页没有营业口令输入位');
+  if (html.indexOf('领取口令') < 0 || html.indexOf("getElementById('key')") < 0) {
+    throw new Error('发码页没有领取口令输入位');
   }
 
   /* ---- 9. 公用码（codes.status = 2，内测「一键进门」用，2026-10-23 深夜）----
@@ -18262,6 +18296,261 @@ t('授权闸装配：bootHome 先过闸再挂桌面 + 表单一份两用', () =>
   return { 闸序: 'gate→render', 表单复用: '激活x' + nAct + ' 登录x' + nIn, 分步: '激活→登录→进门' };
 });
 
+/* ==================== 授权服务多 base 故障转移（2026-10-24 A+B 批） ====================
+   背景：校园网/iOA 对 *.workers.dev 定向封锁（DNS 投毒 + TCP 丢包），
+   VPN 才通。A = 自定义域名主位（待填）+ workers.dev 兜底；B = 失败文案
+   换成可读指引 + 非最后 base 5s 短超时主动切换。 */
+t('账密网络层行为：第一个 base 被墙自动切第二个，全挂报统一指引文案', async () => {
+  if (typeof S.repo.licenseDevices !== 'function') throw new Error('repo.licenseDevices 未导出');
+  /* repoCfg.base 覆盖通道（页面不暴露）支持逗号分隔多入口 —— 本断言借它注入
+     两个假 base。期望值全硬写：顺序、次数、文案都不许引被测常量。 */
+  S.store.set('repoCfg', { base: 'https://base-a.invalid,https://base-b.invalid' });
+  const calls = [];
+  const old = win.fetch;
+  var r;
+  win.fetch = function (url) {
+    calls.push(String(url));
+    if (String(url).indexOf('base-a.invalid') >= 0) return Promise.reject(new Error('blocked'));
+    return Promise.resolve({ json: async () => ({ ok: true, devices: [] }) });
+  };
+  try {
+    r = await new Promise((res) => S.repo.licenseDevices(res));
+  } finally {
+    win.fetch = old;
+  }
+  if (!r.ok) throw new Error('第一个 base 被墙应自动切第二个并成功，实到：' + JSON.stringify(r));
+  if (calls.length !== 2) throw new Error('fetch 应打 2 个 base，实到 ' + calls.length + '：' + calls.join(' , '));
+  if (calls[0].indexOf('base-a.invalid') < 0 || calls[1].indexOf('base-b.invalid') < 0) {
+    throw new Error('base 顺序不对（应按序转移）：' + calls.join(' , '));
+  }
+  /* 负向：两个 base 全挂 → 统一可读文案（独立基准硬写，2026-10-24 登记；
+     反向证明「浏览器原始错误不许怼给用户」） */
+  const HINT = '连不上授权服务器：当前网络可能屏蔽了 Cloudflare 域名（校园网常见），挂 VPN 或换网络再试';
+  win.fetch = function () { return Promise.reject(new Error('Failed to fetch')); };
+  var r2;
+  try {
+    r2 = await new Promise((res) => S.repo.licenseDevices(res));
+  } finally {
+    win.fetch = old;
+    S.store.set('repoCfg', null);
+  }
+  if (r2.ok !== false) throw new Error('全挂必须回 ok:false：' + JSON.stringify(r2));
+  if (r2.message !== HINT) throw new Error('失败文案不是统一指引基准（独立基准 2026-10-24 登记）：' + r2.message);
+  return { 转移: 'a→b 自动', 全挂文案: 'VPN 指引（硬写基准）' };
+});
+
+t('账密网络层静态护栏：多 base 结构在，浏览器原始错误文案不许复活', () => {
+  const rc = fs.readFileSync(path.join(ROOT, 'repo-core.js'), 'utf8');
+  if (rc.indexOf('var DEFAULT_BASES') < 0) throw new Error('repo-core 缺 DEFAULT_BASES 多 base 结构（A 方案被回退了？）');
+  if (rc.indexOf('function repoBases(') < 0) throw new Error('repo-core 缺 repoBases()（base 候选唯一出处）');
+  if (rc.indexOf('var BASE_FIRST_TRY_MS') < 0) throw new Error('多 base 转移缺短超时常量 BASE_FIRST_TRY_MS（会退化成干等浏览器默认超时）');
+  if (rc.indexOf('new AbortController()') < 0) throw new Error('多 base 转移缺 AbortController 真取消');
+  /* 反向断言：老文案一个字都不许回来（曾把 Failed to fetch 原样怼给用户） */
+  if (rc.indexOf('连不上仓库服务') >= 0) throw new Error('licRequest 又出现浏览器原始错误文案「连不上仓库服务」');
+  /* 去重：域名未填入主位时两 base 相同，必须退化成单发（否则用户傻等两遍） */
+  if (rc.indexOf("list.indexOf(b) === i") < 0) throw new Error('repoBases 缺去重（相同 base 会连打两遍）');
+  return { 结构: 'DEFAULT_BASES/repoBases/5s/abort', 反向: '老文案已禁' };
+});
+
+/* ==================== 聊天气泡粉蓝半透明（2026-10-24 用户口径批） ====================
+   用户原话：「只改聊天，不改桌面；我方藕粉、对方淡蓝、透明感重一些」。
+   色板 lotus 与 style.css 气泡段三值硬对齐 —— 本组断言两边都锁，
+   防「改一处忘另一处 = 外观页开了/关了两个颜色」。 */
+t('聊天气泡默认档：藕粉我方 + 淡蓝对方 + 半透明（applyTo 真生成一遍）', () => {
+  if (!S.charAppearance || typeof S.charAppearance.resolve !== 'function') {
+    throw new Error('Sleepy.charAppearance 未导出（resolve/applyTo/COLORS）');
+  }
+  /* 出厂默认 = lotus（期望值硬写，不引被测常量） */
+  if (S.charAppearance.resolve('不存在的-chat').color !== 'lotus') {
+    throw new Error('气泡默认色板不是 lotus（出厂口径被改了？）');
+  }
+  /* applyTo 真跑一遍，拿它注入的 <style> 说话（桩里 el/wrap/head 都成对）。
+     ⚠️ 不能走 getElementById 找 apStyleCur —— 桩的 getElementById 是
+     「凭空造」池子，跟 appendChild 进树的元素不互通（真实浏览器里是在
+     文档树里找）。从 head.children 里按 id 捞。 */
+  S.charAppearance.applyTo({ el: win.document.querySelector('.page') }, 'smoke-no-chat');
+  var st = win.document.head.children.filter(function (x) { return x.id === 'apStyleCur'; })[0];
+  if (!st || !st.textContent) throw new Error('applyTo 没注入样式（ap-on 路径断了）');
+  var css = st.textContent;
+  /* 我方：藕粉 30% 半透明 + 深藕粉字（硬写，不引 COLORS） */
+  if (css.indexOf('color-mix(in srgb, #C5A0AE 30%, transparent)') < 0) {
+    throw new Error('我方气泡不是藕粉半透明：' + css.slice(0, 400));
+  }
+  if (css.indexOf('color:#6B4552') < 0) throw new Error('我方气泡字色不是深藕粉');
+  /* 对方：淡蓝 30% 半透明 */
+  if (css.indexOf('color-mix(in srgb, #A8BFD8 30%, transparent)') < 0) {
+    throw new Error('对方气泡不是淡蓝半透明');
+  }
+  /* 爪印钮无底（用户选的轻量方案：一行里只有输入框是「实」的） */
+  if (css.indexOf('.page.ap-accented .send-btn{background:transparent;color:#C5A0AE;}') < 0) {
+    throw new Error('发送钮没有去实底（轻量爪印被回退了？）');
+  }
+  /* 反向：老雾青不许出现在默认档里 */
+  if (css.indexOf('#708f88') >= 0) throw new Error('默认档混进了老雾青色板');
+  return { 我方: '藕粉30%', 对方: '淡蓝30%', 爪印: '无底' };
+});
+
+t('聊天气泡静态护栏：style.css 与色板三值硬对齐 + 头像落幽灵', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  /* style.css 侧：我方/对方半透明与深藕粉字（与 COLORS.lotus 同值） */
+  for (const k of ['color-mix(in srgb,#C5A0AE 30%,transparent)',
+                   'color-mix(in srgb,#A8BFD8 30%,transparent)',
+                   'color:#6B4552']) {
+    if (css.indexOf(k) < 0) throw new Error('style.css 气泡段缺关键样式：' + k);
+  }
+  /* 旧实底方案遗产不许复活：accent 渐变底 / 气泡投影 / on-accent 白字压实心泡 */
+  if (/\.msg-user \.msg-text\{[^}]*linear-gradient/.test(css)) {
+    throw new Error('.msg-user .msg-text 又是渐变实底（半透明方案被回退）');
+  }
+  if (css.indexOf('.send-btn{color:#FFFDF9;}') >= 0) {
+    throw new Error('旧爪印浅色覆盖还在（无底后爪印会隐形）');
+  }
+  /* 头像：聊天页双侧落幽灵（同步铺幽灵路径），不再棕色圆点/首字圆 */
+  const chat = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
+  if (chat.indexOf("av.src = 'art/avatar-ghost-char.png'") < 0 ||
+      chat.indexOf("av.src = 'art/avatar-ghost-user.png'") < 0) {
+    throw new Error('聊天页头像没落幽灵（v255 口径漏了）');
+  }
+  if (chat.indexOf('av.src = AVATAR;') >= 0) {
+    throw new Error('charAvatarEl 又回落棕色圆点占位了');
+  }
+  const grp = fs.readFileSync(path.join(ROOT, 'page-group.js'), 'utf8');
+  if (grp.indexOf('gu-tile-tx') >= 0) {
+    throw new Error('群 tileEl 又回落首字了');
+  }
+  return { 对齐: 'style/色板同值', 反向: '实底/浅爪印/圆点已禁' };
+});
+
+/* ---------------------------- demo-seed：演示岛种子 ----------------------------
+   2026-10-25 新增。放在收尾分支里（async 全部落定后）是刻意的：
+   ① 前面的 chats / moments 测试会反复清表重写，把「注入后表还是干净的」
+      当假设必挂（第一版就栽在这）—— 这里自管清场重来，不依赖前置状态；
+   ② 直接放在同步区会踩 async 测试的 await 后续：它们的后半段在同步代码
+      全部跑完后才跑，清场会把它们要读的表清空（实测挂 P4-M3/M11/
+      groupMemory 三条）。期望值全部硬写（引被测常量的断言两边一起变）。 */
+function runDemoSeedBlock() {
+  console.log('\n--- demo-seed：演示岛种子（自管清场）---');
+(() => {
+  /* 清场：七张表 + 三个指针。之后 ensure() 面对的就是「一间房都没有的新用户」。 */
+  ['sandboxes', 'characters', 'userMasks', 'links', 'chats', 'moments', 'worldbooks']
+    .forEach((k) => S.store.set(k, []));
+  S.core.switchTo(null, null);
+  S.core.setActiveSandbox(null);
+
+  const demoSb = t('空库 ensure：注入孤岛「云海工位」（isle + demo 标记）', () => {
+    const r = S.demoSeed.ensure();
+    if (!r || r.ok !== true || r.skipped) throw new Error('ensure 没注入：' + JSON.stringify(r));
+    const hit = S.core.listSandboxes().filter((s) => s.demo === true);
+    if (hit.length !== 1) throw new Error('demo 岛数量不对：' + hit.length);
+    if (hit[0].name !== '云海工位') throw new Error('岛名不对：' + hit[0].name);
+    if (hit[0].kind !== 'isle') throw new Error('房型不是孤岛');
+    return hit[0];
+  });
+  const xmRec = t('小满住进岛：main 大号 + 人设/客服体/红线齐全', () => {
+    const hit = S.core.allChars().filter((c) => c.name === '小满');
+    if (hit.length !== 1) throw new Error('小满数量不对：' + hit.length);
+    const xm = hit[0];
+    if (xm.kind !== 'main') throw new Error('kind 不是 main');
+    if (xm.sandboxId !== demoSb.id) throw new Error('岛章不是演示岛');
+    if (xm.content.indexOf('全心全意地爱您') < 0) throw new Error('人设缺核心自白');
+    if (xm.content.indexOf('淘宝客服') < 0) throw new Error('人设缺客服魂');
+    if (xm.speech.indexOf('好的呢亲亲') < 0) throw new Error('speech 缺客服体锚点');
+    if (xm.neverDo.indexOf('不替用户做决定') < 0) throw new Error('红线没写');
+    return xm;
+  });
+  ok('小满没设头像（渲染侧自动落幽灵，不占图库）', !xmRec.avatar && !xmRec.avatarMedia);
+  t('岛名册回填：charIds/maskIds 各 1（卫兵读人的地基）', () => {
+    if (demoSb.charIds.length !== 1 || demoSb.charIds[0] !== xmRec.id) {
+      throw new Error('charIds 没回填：' + JSON.stringify(demoSb.charIds));
+    }
+    const me0 = S.core.defaultUserOfSandbox(demoSb);
+    if (demoSb.maskIds.length !== 1 || demoSb.maskIds[0] !== (me0 && me0.id)) {
+      throw new Error('maskIds 没回填：' + JSON.stringify(demoSb.maskIds));
+    }
+    return { chars: demoSb.charIds.length, masks: demoSb.maskIds.length };
+  });
+  t('演示岛有默认「我」（isDefault + 盖岛章）', () => {
+    const me = S.core.defaultUserOfSandbox(demoSb);
+    if (!me) throw new Error('没有默认马甲');
+    if (me.isDefault !== true) throw new Error('不是 isDefault');
+    if (me.sandboxId !== demoSb.id) throw new Error('没盖演示岛的章');
+    return { name: me.name };
+  });
+  t('我 ↔ 小满建了关系链接', () => {
+    const me = S.core.defaultUserOfSandbox(demoSb);
+    const lk = S.core.allLinks().filter((l) => l.charId === xmRec.id && l.userId === me.id);
+    if (lk.length !== 1) throw new Error('链接数不对：' + lk.length);
+    return { cognition: lk[0].cognition };
+  });
+  t('指针落岛：activeSandbox + 双卫兵都认', () => {
+    if (S.core.activeSandbox().id !== demoSb.id) throw new Error('activeSandbox 不在演示岛');
+    const c = S.core.activeCharOnIsland();
+    const u = S.core.activeUserOnIsland();
+    if (!c || c.id !== xmRec.id) throw new Error('char 卫兵不认小满');
+    if (!u || u.name !== '我') throw new Error('user 卫兵不认「我」');
+    return { char: c.name, user: u.name };
+  });
+  t('欢迎对话预置一条（assistant，挂小满，盖岛章）', () => {
+    const chats = S.store.get('chats').filter((c) => c.sandboxId === demoSb.id);
+    if (chats.length !== 1) throw new Error('演示岛对话数不对：' + chats.length);
+    const msgs = chats[0].messages;
+    if (msgs.length !== 1 || msgs[0].role !== 'assistant') throw new Error('消息形状不对');
+    if (msgs[0].content.indexOf('很高兴能够为您服务') < 0) throw new Error('欢迎语文案不对');
+    if (chats[0].characterId !== xmRec.id) throw new Error('对话没挂小满');
+    return { messages: msgs.length, role: msgs[0].role };
+  });
+  t('朋友圈 3 条演示动态（时间倒序、无空文案、盖岛章）', () => {
+    const ms = S.store.get('moments').filter((m) => m.sandboxId === demoSb.id);
+    if (ms.length !== 3) throw new Error('动态数不对：' + ms.length);
+    const ats = ms.map((m) => m.at);
+    if (!(ats[0] > ats[1] && ats[1] > ats[2])) throw new Error('不是倒序');
+    if (ms.some((m) => !m.text)) throw new Error('有空动态');
+    return { n: ms.length };
+  });
+  t('功能知识：个人世界书挂小满，8 条全部关键词触发', () => {
+    const books = S.store.get('worldbooks').filter((b) => b.scope === 'personal' && b.characterId === xmRec.id);
+    if (books.length !== 1) throw new Error('个人书数量不对：' + books.length);
+    const es = books[0].entries;
+    if (es.length !== 8) throw new Error('条目数不对：' + es.length);
+    if (es.some((e) => e.always)) throw new Error('有常驻条目（应全部关键词触发）');
+    if (es.some((e) => !e.keys)) throw new Error('有没有关键词的条目');
+    const cfg = es.filter((e) => e.name === '新手配置顺序')[0];
+    if (!cfg || cfg.content.indexOf('唯一硬性必配项') < 0) throw new Error('配置条目内容缺失');
+    return { book: books[0].name, entries: es.length };
+  });
+  t('关键词真能召回（问「朋友圈怎么发」只命中朋友圈条目）', () => {
+    const text = S.promptEngine.compileWorldbook(xmRec.id, '亲亲，朋友圈怎么发一条啊');
+    if (text.indexOf('【朋友圈】') < 0) throw new Error('朋友圈条目没被召回');
+    if (text.indexOf('【新手配置顺序】') >= 0) throw new Error('没问配置却召回了配置条目');
+    return '命中朋友圈';
+  });
+  t('老存档免疫：已有任何真房，ensure 一个字不写', () => {
+    S.core.createSandbox(S.core.KIND_ISLE, '老用户的房');
+    const snap = () => JSON.stringify({
+      sb: S.core.listSandboxes().length,
+      ch: S.core.allChars().length,
+      um: S.core.userMasks().length,
+      lk: S.core.allLinks().length,
+      ct: S.store.get('chats').length,
+      mo: S.store.get('moments').length,
+      wb: S.store.get('worldbooks').length
+    });
+    const before = snap();
+    const r = S.demoSeed.ensure();
+    if (!r || r.skipped !== 'has-rooms') throw new Error('老存档没被免疫：' + JSON.stringify(r));
+    if (snap() !== before) throw new Error('ensure 在跳过分支仍然动了数据');
+    return r.skipped;
+  });
+  t('幂等：重复 ensure 不会注出第二座演示岛', () => {
+    const r = S.demoSeed.ensure();
+    if (!r || r.skipped !== 'has-rooms') throw new Error('二次 ensure 没走跳过分支');
+    const n = S.core.listSandboxes().filter((s) => s.demo === true).length;
+    if (n !== 1) throw new Error('演示岛数量变成 ' + n);
+    return { demoRooms: n };
+  });
+})();
+}
+
 if (asyncPending > 0) {
   /* 被测代码里有 setInterval（状态栏时钟、呼吸光点等），事件循环不会自己空。
      所以不能指望 beforeExit —— 用一个小轮询等异步断言全部落定再收尾。
@@ -18269,10 +18558,12 @@ if (asyncPending > 0) {
   const iv = setInterval(() => {
     if (asyncPending > 0) return;
     clearInterval(iv);
+    runDemoSeedBlock();
     finalReport();
     process.exit(bad ? 1 : 0);
   }, 40);
 } else {
+  runDemoSeedBlock();
   finalReport();
   process.exit(bad ? 1 : 0);
 }

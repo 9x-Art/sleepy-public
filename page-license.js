@@ -20,25 +20,10 @@
   var ui = Sleepy.ui;
   var h = ui.h;
 
-  /* ==================== BETA 临时通道（阶段产物，务必整段下线） ====================
-     内测期给访客一个「一键进门」：不再要求他先去发码页领码，而是现场摇一个
-     领取号（QQ）配默认密码，拿**公用激活码**激活 —— 凭证共用、身份各归各，
-     每个人在系统里仍是独占的一行 user（users.qq 唯一索引一步没让），
-     所以陌生人之间看不到彼此、也不会互相挤占各自的 3 台设备名额。
-
-     ⚠️ 源码里写死的字符串 = 公开：任何拿到站点的人 F12 都能读到，
-     所以它的定位是「方便」，不是「保密」。别用它守任何真东西。
-
-     内测结束要拆的话，**四处理论清单（漏一处就留后门）**：
-       ① 本文件的 BETA_* 常量与 betaClaim() / buildBetaEntry()；
-       ② mount 里接 Button 的那几行（wrap.appendChild(buildBetaEntry(...))）；
-       ③ style.css 的 .beta-entry* 样式；
-       ④ **云端那一行码**（最关键）：UPDATE codes SET status = 0 WHERE code = '…'
-          —— 前端删干净而云端码没作废，知道字面值的人照样能领号。
-     反过来的顺序也一样重要：先让 worker 认这个码（status=2），再去云端插行，
-     否则老 worker 会因为 status !== 1 一律回「激活码不对」。 */
-  var BETA_CODE = 'SLP-BETA';
-  var BETA_PASS = 'sleepy2026';
+  /* （原「内测一键进门」临时通道已于 2026-10-25 整段下线：
+     前端常量/函数/接线/CSS 四处已删；云端那行公用码记得作废
+     UPDATE codes SET status = 0 WHERE code = 'SLP-BETA'。
+     worker 对 status=2 的支持保留没动 —— 只是云端不再有这种码。） */
 
   function qqTail(qq) {
     var s = String(qq || '');
@@ -113,7 +98,7 @@
   function buildGuestForms(onto, hooks) {
     onto.appendChild(buildActivateForm(hooks));
     onto.appendChild(buildLoginForm(hooks));
-    onto.appendChild(h('p', 'set-foot', '还没领激活码？付款后到发码页用 QQ 号领取（地址在购买处）。密码忘了：换设备前先在这台设备上改密；设备全丢了联系群内人工处理。'));
+    onto.appendChild(h('p', 'set-foot', '还没领激活码？到发码页用 QQ 号免费领取（地址在群内公告）。密码忘了：换设备前先在这台设备上改密；设备全丢了联系群内人工处理。'));
   }
 
   Sleepy.register('license', {
@@ -137,7 +122,7 @@
       function renderGuest() {
         var intro = h('div', 'set-group');
         intro.appendChild(h('p', 'set-group-note',
-          'Sleepy 用「激活码」做账号：付款后在发码页用 QQ 号领码（一个 QQ 只能领一次），' +
+          'Sleepy 用「激活码」做账号：到发码页用 QQ 号免费领码（一个 QQ 只能领一次），' +
           '然后在这里激活并设置密码；换设备用 QQ 号 + 密码登录，最多 3 台，可自助解绑。'));
         body.appendChild(intro);
 
@@ -290,11 +275,7 @@
 
       var gateToast = function (msg, kind) { Sleepy.toast(msg, kind); };   /* 全局 toast（app.js），页面栈外没有 ctx.toast */
 
-      /* 内测临时通道（下线清单在文件头）：一键进门压在最上面，往下那份
-         分步表单是给手上已有激活码的人留的。 */
-      wrap.insertBefore(buildBetaEntry({
-        forms: forms, note: note, toast: gateToast, onPass: onPass
-      }), note);
+      /* （原内测一键进门接线已于 2026-10-25 拆除，进门直接走分步表单。） */
 
       /* 分步出（用户 2026-10-23 点名）：像游戏的注册→登录 ——
          第一步激活设完密码**不直接进门**，跳到登录步把 QQ + 密码
@@ -306,7 +287,7 @@
           forms.appendChild(buildLoginForm({ toast: gateToast, onSuccess: onPass }));
           forms.appendChild(stepLink('还没有激活过？', '去激活', function () { show('activate'); }));
         } else {
-          note.textContent = '第一步激活：付款后在发码页用 QQ 号领码（一个 QQ 只能领一次），填进来设个密码。';
+          note.textContent = '第一步激活：到发码页用 QQ 号免费领码（一个 QQ 只能领一次），填进来设个密码。';
           forms.appendChild(buildActivateForm({
             toast: gateToast,
             /* 激活成功 ≠ 进门：转登录步再核一次（注册→登录的仪式感，
@@ -329,74 +310,5 @@
     p.appendChild(document.createTextNode(pre + ' '));
     p.appendChild(a);
     return p;
-  }
-
-  /* ==================== BETA 一键进门（临时通道） ====================
-     整段下线清单写在文件头的 BETA 注释里（含**云端那行码**——最关键的一处）。
-
-     摇一个 9 位领取号：首位取 1–9，免得摇出 0123 这种看着像填错的号。
-     users.qq 有唯一索引，理论上会撞别人领走的号（极小概率），撞了换一个重摇。 */
-  function rollBetaQq() {
-    var s = String(1 + Math.floor(Math.random() * 9));
-    for (var i = 0; i < 8; i++) s += String(Math.floor(Math.random() * 10));
-    return s;
-  }
-
-  /* 用公用码激活。cb({ok, qq, message}) —— 成功时把领到的号带回去给看得见。 */
-  function betaClaim(tries, cb) {
-    if (tries <= 0) {
-      cb({ ok: false, message: '连摇几次都撞上别人领走的号了 —— 用下面的表单自己填一个吧' });
-      return;
-    }
-    var qq = rollBetaQq();
-    repo.licenseActivate(BETA_CODE, qq, BETA_PASS, function (r) {
-      if (r.ok) { cb({ ok: true, qq: r.qq || qq }); return; }
-      /* 409 = 这个 QQ 已经被别人先领走 —— 换一个重摇；别的错误如实报，别硬重试。 */
-      if (r.status === 409) { betaClaim(tries - 1, cb); return; }
-      cb({ ok: false, message: r.message || '激活失败' });
-    });
-  }
-
-  function betaKv(label, val) {
-    var row = h('div', 'vec-row');
-    var main = h('div', 'vec-row-main');
-    main.appendChild(h('div', 'vec-row-name', val));
-    main.appendChild(h('div', 'vec-row-meta', label));
-    row.appendChild(main);
-    return row;
-  }
-
-  /* 领到号之后的「凭证卡」—— 不放 toast：toast 会飘走，而这两行东西他必须存下来。 */
-  function showBetaTicket(opt, qq) {
-    opt.note.textContent = '进门啦 —— 先把这两样存下来';
-    opt.forms.innerHTML = '';
-    var g = h('div', 'set-group');
-    g.appendChild(h('p', 'set-group-title', '你的领取号'));
-    g.appendChild(betaKv('领取号', qq));
-    g.appendChild(betaKv('密码', BETA_PASS));
-    g.appendChild(h('p', 'set-group-note',
-      '换设备、或者清了浏览器数据，要用这两样登录。没有找回密码的入口 —— 真忘了就重领一个新号，' +
-      '聊天记录和角色都在这台机器上，不跟着账号走。'));
-    g.appendChild(ui.button('存好了，进门', 'primary', function () { opt.onPass(); }));
-    opt.forms.appendChild(g);
-  }
-
-  /* 门面上的入口：一键进门在上，下面是给正式用户的分步表单。 */
-  function buildBetaEntry(opt) {
-    var box = h('div', 'beta-entry');
-    var btn = ui.button('内测一键进门', 'primary', function (b) {
-      b.disabled = true;
-      b.textContent = '正在给你领号…';
-      betaClaim(3, function (res) {
-        b.disabled = false;
-        b.textContent = '内测一键进门';
-        if (!res.ok) { opt.toast(res.message || '进门失败'); return; }
-        showBetaTicket(opt, res.qq);
-      });
-    });
-    box.appendChild(btn);
-    box.appendChild(h('p', 'beta-entry-hint',
-      '内测期临时入口：给你摇一个专属领取号 + 默认密码，进门时显示给你。'));
-    return box;
   }
 })(window);

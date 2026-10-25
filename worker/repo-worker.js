@@ -168,15 +168,15 @@ const ISSUE_PAGE = `<!DOCTYPE html>
 <body>
 <div class="card">
   <h1>领取激活码</h1>
-  <p class="sub">付款后在这里登记 QQ 号，当场生成激活码；然后打开 Sleepy，用激活码 + 这个 QQ 号完成激活并设置密码。</p>
+  <p class="sub">在这里登记 QQ 号，当场免费生成激活码；然后打开 Sleepy，用激活码 + 这个 QQ 号完成激活并设置密码。</p>
   <label for="qq">QQ 号（5–12 位数字）</label>
   <input id="qq" inputmode="numeric" maxlength="12" placeholder="例如 123456789">
-  <label for="key" style="margin-top:12px;">营业口令</label>
-  <input id="key" placeholder="随发货说明一起给你的口令">
+  <label for="key" style="margin-top:12px;">领取口令</label>
+  <input id="key" placeholder="随群内说明一起给你的口令">
   <button id="go">领取激活码</button>
   <div class="err" id="err"></div>
   <div class="code" id="code"></div>
-  <p class="note">说明：一个 QQ 号只能领一次。QQ 号仅用于发货对账与登录账号识别，见 App 内「隐私政策」；需要删除时可在 App「我的授权」里注销。激活码只显示这一次，请当场复制保存。</p>
+  <p class="note">说明：一个 QQ 号只能领一次。QQ 号仅用于登录账号识别，见 App 内「隐私政策」；需要删除时可在 App「我的授权」里注销。激活码只显示这一次，请当场复制保存。</p>
 </div>
 <script>
   var go = document.getElementById('go');

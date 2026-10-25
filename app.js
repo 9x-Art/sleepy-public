@@ -973,6 +973,14 @@
       try { Sleepy.repo.licenseMe(function () {}); } catch (e) { /* 静默 */ }
     }
 
+    /* 演示岛种子注入（2026-10-25，demo-seed.js）：一间房都没有的新用户
+       落进预置的「云海工位」。必须排在 render 之前 —— 桌面 render 只跑
+       一次（页面实例缓存复用），晚一步就按空存档画完、再也不纠偏。
+       幂等：已有任何一间房（老存档/用户自建）直接跳过，失败静默不挡启动。 */
+    try {
+      if (Sleepy.demoSeed && Sleepy.demoSeed.ensure) Sleepy.demoSeed.ensure();
+    } catch (e) { /* 种子失败不挡启动：用户手动建房即可 */ }
+
     /* 首页的 body 就是 section 本身（它不需要 .page-inner / .app-head 那套
        标题栏外壳 —— 桌面要占满整屏）。 */
     home.classList.add('is-active');

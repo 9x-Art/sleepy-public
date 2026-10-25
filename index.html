@@ -69,6 +69,10 @@
 <!-- 加载顺序即依赖顺序，不要调换：store → core（世界观数据层）→ ui（组件层）→ app（壳子/页面栈）→ 各页面 -->
 <script src="store.js" defer></script>
 <script src="core.js" defer></script>
+<!-- 演示岛种子（首启自动注入）：纯数据层，只依赖 store/core，
+     排在 core.js 之后即可。调用点在 app.js 的 bootHome（授权闸过后、
+     桌面 render 之前）—— 晚一步桌面就按空存档画完不重画了。 -->
+<script src="demo-seed.js" defer></script>
 <script src="ui.js" defer></script>
 <script src="app.js" defer></script>
 <!-- 消息通知中心（顶部「正在输入」横幅 + 新消息弹窗）：挂在 #phone 上、
