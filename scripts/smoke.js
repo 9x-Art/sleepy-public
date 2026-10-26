@@ -17102,7 +17102,15 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v261（2026-10-25）：反查手机上线 —— revcheck-core.js（新增核心）/
    page-chat.js（接管覆盖层+采样+注入）/ style.css（.rev-*）/ index.html
    （加载核心）变了。基准随批 v260 → v261。 */
-const EXPECTED_SW_CACHE = 'sleepy-v269';
+/* v270（2026-10-26）：聊天手感批 + 帷境滚动批 —— prompt-engine.js（c05
+   放宽 + 情绪外化）/ page-chat.js（拟真节奏揭示 pendingReveal）/
+   wj-data.js（时间落点 +after_user）/ page-wj-read.js（进度落库防抖）/
+   icons/（藕粉底）变了。基准随批 v269 → v270。 */
+/* v271（2026-10-26 晚）：全屏 + 心声星瓶 —— manifest.json（display_override
+   加 fullscreen）/ page-desktop.js（starbottle 渲染器 + islandWhispers /
+   starBottleSvg / starPop）/ page-widgetstore.js（上架 + 缩样）/ style.css
+   （.w-starbottle / .wsb-* / .ws-mock--bottle）变了。基准随批 v270 → v271。 */
+const EXPECTED_SW_CACHE = 'sleepy-v271';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -17118,6 +17126,73 @@ t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必�
     throw new Error('CACHE 已跳到 v197，但文件头缺少 v197 的变更说明');
   }
   return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
+});
+
+/* ---------- PWA 全屏（2026-10-26 用户点名）----------
+   真机上「顶栏很往下」的真相：standalone 下系统状态栏还在，App 自己又画了
+   一条 #statusbar，两条叠着。Android 认 fullscreen（系统栏消失、safe-area
+   归零），iOS Safari 不认 display_override —— 所以 display 仍要 standalone 兜底。
+   ⚠️ 判据落在这两个字段上，不写「全文不得出现 standalone」（会扫到判据自己）。 */
+t('PWA 全屏：display_override 优先 fullscreen，standalone 兜底（2026-10-26）', () => {
+  const raw = fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8');
+  let m;
+  try {
+    m = JSON.parse(raw);   /* JSON 里不许写注释 —— 解析通不过正好把这事挡住 */
+  } catch (e) {
+    throw new Error('manifest.json 不是合法 JSON（多半是加了注释）：' + e.message);
+  }
+  if (m.display !== 'standalone') {
+    throw new Error('display 必须是 standalone（认不了 display_override 的平台靠它兜底），实得 ' + m.display);
+  }
+  const ov = m.display_override;
+  if (!Array.isArray(ov) || ov[0] !== 'fullscreen') {
+    throw new Error('display_override 第一项必须是 fullscreen（真机上要消掉系统状态栏那条），实得 ' + JSON.stringify(ov));
+  }
+  if (ov.indexOf('standalone') < 0) {
+    throw new Error('display_override 里要带 standalone —— 只写 fullscreen 的话，不认的平台会掉回浏览器标签');
+  }
+  return { display: m.display, 优先: ov[0] };
+});
+
+/* ---------- 心声星瓶（2026-10-26 上架件）----------
+   ⚠️ 教训：这一批曾被中断，渲染器写好了、三个依赖函数没写 ——
+   静态检查（check.js）只过语法，照样全绿，真机一进桌面就 ReferenceError。
+   所以这里把「渲染器 + 三个依赖 + 上架 + 样式」当成一件事一起断言。 */
+t('心声星瓶：商城上架 + 渲染器三个依赖都在（2026-10-26）', () => {
+  const wstore = fs.readFileSync(path.join(ROOT, 'page-widgetstore.js'), 'utf8');
+  const desk = fs.readFileSync(path.join(ROOT, 'page-desktop.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+
+  /* ① 上架：商城目录（EXTRA_DEFS）+ 橱窗缩样（MOCKS） */
+  const at = wstore.indexOf("type: 'starbottle'");
+  if (at < 0) throw new Error('组件商城 EXTRA_DEFS 缺 starbottle —— 上架件不在目录里等于没上架');
+  if (!/w: 1, h: 1/.test(wstore.slice(at, at + 120))) {
+    throw new Error('心声星瓶必须是 1×1：默认户型四屏只剩第 6 行那排空格，h=2 的格子 findSpot 找不到落点');
+  }
+  if (wstore.indexOf('starbottle: function (el)') < 0) {
+    throw new Error('组件商城缺 starbottle 橱窗缩样（MOCKS）');
+  }
+
+  /* ② 渲染器与它的三个依赖：少一个就是进桌面即炸 */
+  if (desk.indexOf('starbottle: function (cell, ctx)') < 0) {
+    throw new Error('page-desktop.js 缺 starbottle 渲染器');
+  }
+  for (const k of ['function islandWhispers(', 'function starBottleSvg(', 'function starPop(']) {
+    if (desk.indexOf(k) < 0) throw new Error('page-desktop.js 缺星瓶依赖：' + k);
+  }
+  /* ③ 取数口径：只收本岛角色的心声（跨岛的不进这个瓶子） */
+  if (desk.indexOf('charsOfSandbox') < 0) {
+    throw new Error('islandWhispers 必须走 core.charsOfSandbox 按岛收心声');
+  }
+  if (desk.indexOf('heartbeats') < 0) {
+    throw new Error('islandWhispers 的数据源是 chat.heartbeats，别自己另起一套');
+  }
+
+  /* ④ 样式：瓶身 + 飘出去的星 + 居中那张卡 */
+  for (const k of ['.w-starbottle{', '.wsb-star{', '.wsb-fly{', '.wsb-pop{', '.ws-mock--bottle{']) {
+    if (css.indexOf(k) < 0) throw new Error('style.css 缺星瓶样式：' + k);
+  }
+  return { 目录: 'starbottle', 尺寸: '1×1', 依赖: 3 };
 });
 
 t('链接卡解析三路接线：分享文案本地剥 / apizero 直连 / 旧路兜底（2026-10-06 批）', () => {
@@ -18598,15 +18673,21 @@ function runDemoSeedBlock() {
     if (ms.some((m) => !m.text)) throw new Error('有空动态');
     return { n: ms.length };
   });
-  t('功能知识：个人世界书挂小满，8 条全部关键词触发', () => {
+  t('功能知识：个人世界书挂小满，10 条全部关键词触发（2026-10-26 补帷境/桌游入局贴满）', () => {
     const books = S.store.get('worldbooks').filter((b) => b.scope === 'personal' && b.characterId === xmRec.id);
     if (books.length !== 1) throw new Error('个人书数量不对：' + books.length);
     const es = books[0].entries;
-    if (es.length !== 8) throw new Error('条目数不对：' + es.length);
+    if (es.length !== 10) throw new Error('条目数不对：' + es.length);
     if (es.some((e) => e.always)) throw new Error('有常驻条目（应全部关键词触发）');
     if (es.some((e) => !e.keys)) throw new Error('有没有关键词的条目');
     const cfg = es.filter((e) => e.name === '新手配置顺序')[0];
     if (!cfg || cfg.content.indexOf('唯一硬性必配项') < 0) throw new Error('配置条目内容缺失');
+    const wj = es.filter((e) => e.name === '帷境')[0];
+    if (!wj || wj.content.indexOf('认识 user 之后') < 0) throw new Error('帷境条目缺时间落点新档');
+    const game = es.filter((e) => e.name === '桌游与入局')[0];
+    if (!game || game.content.indexOf('文字麻将') < 0 || game.content.indexOf('以身入局') < 0) {
+      throw new Error('桌游与入局条目缺文字麻将/以身入局');
+    }
     return { book: books[0].name, entries: es.length };
   });
   t('关键词真能召回（问「朋友圈怎么发」只命中朋友圈条目）', () => {

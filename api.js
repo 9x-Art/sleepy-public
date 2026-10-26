@@ -30,7 +30,10 @@
      store.js 的 migrateChatDefaultsGenerative 清掉，见那边注释。 */
   var GEN_DEFAULTS = {
     temperature: 0.85,
-    maxTokens: 1024,
+    /* 2048（2026-10-26 空回维稳）：reasoning 类模型会先烧思考 token 再吐正文，
+       1024 常常思考烧完就到顶、content 全空 —— 是「很多地方空回」的主力
+       嫌犯之一。普通模型多一倍上限只影响极端长回复，不白花钱。 */
+    maxTokens: 2048,
     contextMessages: 40,
     timeoutSec: 60,
     stream: true
@@ -137,7 +140,8 @@
     { key: 'offline',   label: '线下模式' },
     { key: 'talife',    label: 'TA 自主生活推进' },
     { key: 'director',  label: '生图想画面（导演）' },
-    { key: 'book',      label: '以身入局（入世轮 / 行动轮）' }
+    { key: 'book',      label: '以身入局（入世轮 / 行动轮）' },
+    { key: 'wjcurtain', label: '帷境（写章 / 审阅 / 共读回应）' }
   ];
 
   function featureLabel(key) {
@@ -211,6 +215,12 @@
     if (ov && Array.isArray(ov.tools) && ov.tools.length) {
       body.tools = ov.tools;
       body.tool_choice = 'auto';
+    }
+    /* 用量统计（2026-10-26）：只在流式 + ov.askUsage 时带 include_usage
+       —— 有的中转见了陌生字段会挑刺，所以默认不带；接口不认时
+       streamOnce 会去掉它原地重试一次（见那边 !r.ok 分支）。 */
+    if (stream && ov && ov.askUsage) {
+      body.stream_options = { include_usage: true };
     }
     return JSON.stringify(body);
   }
@@ -310,7 +320,9 @@
 
   /* -------------------------- 流式单次请求 -------------------------- */
   /* 手写 SSE 解析：逐行读 data: 块，把 delta.content 交给 handlers.onDelta。
-     handlers: { onDelta(delta, more), onDone(text), onError(err) }
+     handlers: { onDelta(delta, more), onDone(text, usage), onError(err) }
+     —— usage 是响应自带的 token 用量（只在开了 askUsage 时才请求它，
+     接口不认 stream_options 时自动降级重试一次，见 !r.ok 分支）。
      返回 { abort() } 用于用户手动停止。 */
   function streamOnce(cand, messages, handlers, ov) {
     var p = genParams(cand.cfg, ov);
@@ -318,6 +330,7 @@
     var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
     var timer = null;
     var out = '';
+    var usage = null;
     var settled = false;
 
     handlers = handlers || {};
@@ -333,17 +346,13 @@
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (handlers.onDone) handlers.onDone(out);
+      if (handlers.onDone) handlers.onDone(out, usage);
     }
 
-    global.fetch(url, {
-      method: 'POST',
-      headers: requestHeaders(cand.cfg),
-      mode: 'cors',
-      signal: ctrl ? ctrl.signal : undefined,
-      body: bodyFor(cand.cfg, messages, true, ov)
-    }).then(function (r) {
-      if (!r.ok) {
+    /* 流主体读取（首次请求与 stream_options 降级重试共用） */
+    function consume(r, ok) {
+      if (settled) return null;
+      if (!ok) {
         fail({ stage: 'http', status: r.status, error: 'HTTP ' + r.status });
         return null;
       }
@@ -354,6 +363,7 @@
           try { data = JSON.parse(txt); } catch (e) { /* 落下面 */ }
           var content = data && data.choices && data.choices[0] &&
             data.choices[0].message && data.choices[0].message.content;
+          if (data && data.usage) usage = data.usage;
           if (content) {
             out += content;
             if (handlers.onDelta) handlers.onDelta(content, false);
@@ -379,6 +389,8 @@
             if (payload === '[DONE]') continue;
             var data = null;
             try { data = JSON.parse(payload); } catch (e) { continue; }
+            /* include_usage：最后一块通常不带 choices、只带 usage */
+            if (data.usage) usage = data.usage;
             var delta = data.choices && data.choices[0] && data.choices[0].delta &&
                         data.choices[0].delta.content;
             if (delta) {
@@ -392,10 +404,40 @@
         });
       }
       return pump();
-    })['catch'](function (err) {
-      if (err && err.name === 'AbortError') { fail({ stage: 'aborted', error: '已停止' }); return; }
-      fail({ stage: 'network', error: '连不上：网络错误，或接口没有开 CORS' });
-    });
+    }
+
+    function fire(bodyOv) {
+      return global.fetch(url, {
+        method: 'POST',
+        headers: requestHeaders(cand.cfg),
+        mode: 'cors',
+        signal: ctrl ? ctrl.signal : undefined,
+        body: bodyFor(cand.cfg, messages, true, bodyOv)
+      }).then(function (r) {
+        if (!r.ok) {
+          /* 接口不认 stream_options（挑刺报 4xx）：去掉用量请求原地重试一次，
+             不消耗候选轮换的次数（2026-10-26 用量统计的降级路）。 */
+          return r.text().then(function (txt) {
+            if (bodyOv && bodyOv.askUsage && /stream_options/i.test(txt)) {
+              var ov2 = {};
+              for (var k in bodyOv) ov2[k] = bodyOv[k];
+              ov2.askUsage = false;
+              return fire(ov2);
+            }
+            fail({ stage: 'http', status: r.status, error: 'HTTP ' + r.status });
+            return null;
+          })['catch'](function () {
+            fail({ stage: 'http', status: r.status, error: 'HTTP ' + r.status });
+          });
+        }
+        return consume(r, true);
+      })['catch'](function (err) {
+        if (err && err.name === 'AbortError') { fail({ stage: 'aborted', error: '已停止' }); return; }
+        fail({ stage: 'network', error: '连不上：网络错误，或接口没有开 CORS' });
+      });
+    }
+
+    fire(ov);
 
     return {
       abort: function () {
@@ -582,7 +624,19 @@
             if (handlers.onDelta) handlers.onDelta(delta, more);
           },
           onDone: function (text) {
-            if (handlers.onDone) handlers.onDone(cand, text);
+            /* 空流不算成功（2026-10-26 空回维稳）：流走完了但一个字都没吐
+               —— 典型是 reasoning 模型把 max_tokens 烧光、content 为空 ——
+               按失败换候选重试（此时没出过任何字，重试不会有重复内容；
+               出过字的中途失败走 onError，口径不变）。 */
+            if (!String(text || '').trim()) {
+              lastErr = { stage: 'parse', error: '空响应（流式结束但正文是空的）' };
+              tryNext();
+              return;
+            }
+            /* usage：响应自带 token 用量（开了 askUsage 才有）；非流式那边
+               第三个参传的是完整 res —— page-chat 统一从 extra.usage /
+               extra.data.usage 取 */
+            if (handlers.onDone) handlers.onDone(cand, text, usage ? { usage: usage } : null);
           },
           onError: function (err) {
             lastErr = err;
@@ -599,7 +653,16 @@
             });
         loopP.then(function (out) {
           if (out.ok) {
-            if (handlers.onDone) handlers.onDone(cand, out.content, out.res);
+            /* 空响应不算成功（2026-10-26 用户报「很多地方空回」）：
+               HTTP 200 但正文空 → 记为失败换候选重试，全候选都空才 onFail。
+               判的是模型原始输出 —— 合法的「空正文」轮（纯 [撤回] / 纯标签）
+               原文非空，不会被误伤。 */
+            if (String(out.content || '').trim()) {
+              if (handlers.onDone) handlers.onDone(cand, out.content, out.res);
+            } else {
+              lastErr = { stage: 'parse', error: '空响应（HTTP 200 但模型没吐正文）' };
+              tryNext();
+            }
           } else {
             lastErr = out.res;
             tryNext();

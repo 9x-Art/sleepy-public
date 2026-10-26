@@ -1086,6 +1086,125 @@
     return false;
   }
 
+  /* ---------------- 心声星瓶 · 取数与动效 ----------------
+     三个函数都放在渲染表之前：渲染器里只做「取数 → 画瓶 → 点一下飘一颗」，
+     逻辑不塞进渲染函数（桌面重画很频繁，塞进去每重画一次就要扫一遍所有对话）。
+
+     取数口径（用户 2026-10-26 拍板）：只收**本岛**角色对话里的 heartbeats
+     （chat → characterId → char.sandboxId）。瓶子摆在桌上，看见的就该是
+     「这座岛上的人」想过什么，跨岛的不进这瓶子。
+     只读：飘出来的星**不标已读** —— 聊天页自己的未读光点口径不受影响。 */
+  var WSB_SPOTS = [
+    [30, 84], [22, 78], [38, 76], [30, 70], [20, 62], [40, 60], [26, 52],
+    [34, 56], [30, 44], [22, 46], [38, 42], [30, 36], [26, 66], [34, 64]
+  ];
+
+  function islandWhispers() {
+    var cs = Sleepy.chatStore;
+    if (!cs || !cs.chatOf) return [];
+    var sb = core.activeSandbox ? core.activeSandbox() : null;
+    var chars = core.charsOfSandbox ? core.charsOfSandbox(sb) : [];
+    var out = [];
+    chars.forEach(function (ch) {
+      if (!ch || !ch.id) return;
+      var chat = cs.chatOf(ch.id);
+      if (!chat || !Array.isArray(chat.heartbeats)) return;
+      var who = ch.name || '';
+      chat.heartbeats.forEach(function (hb) {
+        if (!hb || !hb.text) return;
+        out.push({
+          id: hb.id || (chat.id + '#' + (hb.at || 0)),
+          chatId: chat.id, text: hb.text,
+          at: hb.at || 0, read: !!hb.read, who: who
+        });
+      });
+    });
+    out.sort(function (a, b) { return a.at - b.at; });
+    return out;
+  }
+
+  /* 瓶子：软木塞 + 颈 + 圆肩玻璃 + 底部水色带 + 双高光；星按条数往里落。
+     落点写在 WSB_SPOTS 里（不是随机的）—— 否则重画一次瓶里的星就换一次位置，
+     看着像「瓶子被晃了一下」。 */
+  function starBottleSvg(n) {
+    var count = Math.max(0, Math.min(n || 0, WSB_SPOTS.length));
+    var s = '<svg viewBox="0 0 60 100" aria-hidden="true">';
+    s += '<rect class="wsb-cork" x="23" y="3" width="14" height="9" rx="3"/>';
+    s += '<path class="wsb-neck" d="M25 11 h10 v8 h-10 z"/>';
+    s += '<path class="wsb-glass" d="M25 18 h10 a13 13 0 0 1 13 13 v46 ' +
+      'a13 13 0 0 1 -13 13 h-10 a13 13 0 0 1 -13 -13 v-46 a13 13 0 0 1 13 -13 z"/>';
+    s += '<path class="wsb-water" d="M12 66 v11 a13 13 0 0 0 13 13 h10 ' +
+      'a13 13 0 0 0 13 -13 v-11 z"/>';
+    s += '<path class="wsb-hi" d="M21 28 v42"/>';
+    s += '<path class="wsb-hi wsb-hi-b" d="M40 30 v36"/>';
+    for (var i = 0; i < count; i++) {
+      s += '<path class="wsb-star" transform="translate(' + WSB_SPOTS[i][0] + ',' +
+        WSB_SPOTS[i][1] + ')" d="M0 -4.4 Q0.8 -0.8 4.4 0 Q0.8 0.8 0 4.4 ' +
+        'Q-0.8 0.8 -4.4 0 Q-0.8 -0.8 0 -4.4 Z"/>';
+    }
+    s += '</svg>';
+    return s;
+  }
+
+  var wsbLastId = '';   /* 只记「上一次飘的是哪条」：连点两下不连着同一颗 */
+
+  function starPop(ctx, box) {
+    var list = islandWhispers();
+    if (!list.length) {
+      ctx.toast('瓶子里还没有星星 · TA 的心声会自己落进来', 'warn');
+      return;
+    }
+    var unread = [];
+    list.forEach(function (x) { if (!x.read) unread.push(x); });
+    var pool = unread.length ? unread : list;
+    if (pool.length > 1) {
+      pool = pool.filter(function (x) { return x.id !== wsbLastId; });
+    }
+    var pick = pool[Math.floor(Math.random() * pool.length)] || list[0];
+    wsbLastId = pick.id;
+
+    var host = (box.closest && box.closest('.page')) ||
+      document.getElementById('phone') || document.body;
+    var r = box.getBoundingClientRect();
+    var hr = host.getBoundingClientRect();
+
+    /* ① 飞出来的那颗星：从瓶口往上飘，飘远了化掉。
+          挂 .page 这一层（同放大态的灯）—— 组件自己是 overflow:hidden，
+          星飘不出格子。 */
+    var fly = h('span', 'wsb-fly');
+    fly.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true">' +
+      '<path d="M6 0.6 Q7 5 11.4 6 Q7 7 6 11.4 Q5 7 0.6 6 Q5 5 6 0.6 Z"/></svg>';
+    fly.style.left = (r.left - hr.left + r.width / 2 - 7) + 'px';
+    fly.style.top = (r.top - hr.top + Math.max(8, r.height * 0.14)) + 'px';
+    host.appendChild(fly);
+    setTimeout(function () {
+      if (fly.parentNode) fly.parentNode.removeChild(fly);
+    }, 1200);
+
+    /* ② 那句话：页面居中（项目口径：弹层一律居中，不贴底）。
+          连点先把上一张收掉，别叠两层 scrim。 */
+    var old = host.querySelector('.wsb-scrim');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var scrim = h('div', 'wsb-scrim');
+    var card = h('div', 'wsb-pop');
+    card.appendChild(h('div', 'wsb-pop-who', (pick.who ? pick.who + ' · ' : '') + '曾想过'));
+    card.appendChild(h('div', 'wsb-pop-text', String(pick.text).slice(0, 140)));
+    if (ui.relativeTime) card.appendChild(h('div', 'wsb-pop-time', ui.relativeTime(pick.at)));
+    scrim.appendChild(card);
+    host.appendChild(scrim);
+
+    var timer = setTimeout(close, 5200);
+    function close() {
+      clearTimeout(timer);
+      scrim.classList.add('is-out');
+      setTimeout(function () {
+        if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
+      }, 220);
+    }
+    scrim.addEventListener('click', close);
+  }
+
   /* 每个 type 一个渲染器。加新组件只要往这里加一项 +
      在 defaultDesktop 里放一格，不需要动别的地方。 */
   var RENDER = {
@@ -1947,6 +2066,30 @@
       add.addEventListener('click', function () { addTodo(ctx); });
       box.appendChild(add);
 
+      return box;
+    },
+
+    /* ---------------- 心声星瓶（组件商城上架件） ----------------
+       TA 的每条心声是一颗星，落在瓶里。当前岛口径：只收本岛角色
+       对话里的 heartbeats（chat → characterId → char.sandboxId）。
+       交互（用户 2026-10-26 拍板）：塞子往下盖住瓶口，**点一下飘一颗** ——
+       随机挑一条（优先未读），星星从瓶口飞出来，浮层显示
+       「TA 曾想过 · 内容 · 时间」。只读不写：不标已读，
+       聊天页自己的未读光点口径不受影响。 */
+    starbottle: function (cell, ctx) {
+      var box = h('button', 'widget w-starbottle');
+      box.type = 'button';
+      box.setAttribute('aria-label', '心声星瓶');
+
+      var list = islandWhispers();
+      var svg = h('span', 'wsb-svg');
+      svg.innerHTML = starBottleSvg(list.length);
+      box.appendChild(svg);
+      var tag = h('span', 'wsb-count', list.length ? String(list.length) : '');
+      box.appendChild(tag);
+      if (!list.length) box.classList.add('is-empty');
+
+      box.addEventListener('click', function () { starPop(ctx, box); });
       return box;
     },
 

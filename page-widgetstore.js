@@ -65,7 +65,15 @@
       note: '手选相册照片 · 白边斜贴' },
     /* ---- 批4 · 慢递信箱 ---- */
     { type: 'slowmail', app: '', label: '慢递信箱', w: 2, h: 2,
-      note: 'ta 写的慢递信 · 到点才能拆' }
+      note: 'ta 写的慢递信 · 到点才能拆' },
+    /* ---- 心声星瓶（2026-10-26 用户拍板）----
+       TA 的每条心声是瓶里的一颗星，点一下飘一颗出来。
+       尺寸 1×1 是**算出来的**，不是随手定的：默认户型四屏里，第 1/2/3 屏
+       只剩第 6 行那一排空格，第 5 行全是满的 —— 任何 h=2 的格子
+       （1×2 / 2×2）findSpot 都找不到落点，上架了也装不上。
+       （同「角色卡」那条注释的教训。） */
+    { type: 'starbottle', app: '', label: '心声星瓶', w: 1, h: 1,
+      note: 'TA 的心声 · 点一下飘一颗星' }
   ];
 
   /* 自定义模板组件（批4）：不在 EXTRA_DEFS 里 —— 它是**动态货架**，
@@ -162,6 +170,11 @@
       el.appendChild(h('div', 'ws-mock ws-mock--smail',
         h('b', null, '✉'),
         h('span', null, '2 封')));
+    },
+    starbottle: function (el) {
+      el.appendChild(h('div', 'ws-mock ws-mock--bottle',
+        h('i', 'ws-mock--bottle-cork'),
+        h('i', 'ws-mock--bottle-star')));
     }
   };
   function mockClock(alt) {

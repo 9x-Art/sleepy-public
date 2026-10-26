@@ -36,13 +36,18 @@
   /* ----------------------- 真机 transport ----------------------- */
   /* 非流式（整章一次拿到才好切段落）；候选失败自动轮换由 runChat 负责。 */
   function apiTransport(messages, ov) {
+    /* 副API分配（2026-10-26）：帷境的模型调用统一挂 feature:'wjcurtain'，
+       设置→副API 勾了「帷境」就只轮询副API，没勾走主链（api.js 口径）。
+       outline / 写章 / 段落重写三个调用点都从这里过 —— 一处收口。 */
+    var o = ov || { maxTokens: 4000 };
+    o.feature = 'wjcurtain';
     return new Promise(function (resolve, reject) {
       var h = Sleepy.api.runChat(messages, {
         onDone: function (cand, text) { resolve(text); },
         onFail: function (list, lastErr) {
           reject(new Error((lastErr && lastErr.error) || '模型没有返回'));
         }
-      }, false, ov || { maxTokens: 4000 });
+      }, false, o);
       if (!h) reject(new Error('还没有可用的模型连接，去 设置 → 模型连接 填 API'));
     });
   }

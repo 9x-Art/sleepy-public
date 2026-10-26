@@ -293,14 +293,20 @@
     });
   }
 
-  /* --------------------------- 已读位置 --------------------------- */
+  /* --------------------------- 已读位置 ---------------------------
+     2026-10-26 用户报「帷境上下滑卡卡的、忽闪忽闪」：以前是节流——
+     只要还在滚，每 700ms 就 saveProgress + touchAnchor 各 mutate 一次，
+     每次都同步 JSON.stringify 整个帷境数据写 localStorage，章节一大
+     滚动就周期性掉帧。改成**防抖**：滚动停稳才落库，且锚点没挪段
+     就不写（同一个段落里来回微滚不再产生写入）。 */
   var scrollTimer = null;
+  var lastSavedAnchor = null;
 
   function trackScroll(ctx, w, ch) {
     var page = ctx.el;
     if (page.__wjrScroll) page.removeEventListener('scroll', page.__wjrScroll);
     page.__wjrScroll = function () {
-      if (scrollTimer) return;
+      if (scrollTimer) clearTimeout(scrollTimer);
       scrollTimer = setTimeout(function () {
         scrollTimer = null;
         var paras = (ch.paras || []).filter(function (p) { return p.kind !== 'scene_break'; });
@@ -309,10 +315,12 @@
         var pct = max > 0 ? page.scrollTop / max : 0;
         var idx = Math.max(0, Math.min(paras.length - 1,
           Math.round(pct * (paras.length - 1))));
+        if (paras[idx].id === lastSavedAnchor) return;
+        lastSavedAnchor = paras[idx].id;
         eng().saveProgress(w.id, ch.id, paras[idx].id);
         var s = liveSession();
         if (s) Sleepy.wjCoread.touchAnchor(s.id, paras[idx].id);
-      }, 700);
+      }, 900);
     };
     page.addEventListener('scroll', page.__wjrScroll);
   }

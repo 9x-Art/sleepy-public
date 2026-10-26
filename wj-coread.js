@@ -232,13 +232,16 @@
      邀请发出去以后 TA 永远不回应（T6 的邀请卡就停在「等 TA 回应」）。
      非流式：一次拿到整个 JSON 才好解析。 */
   function apiTransport(messages, ov) {
+    /* 副API分配（2026-10-26）：共读回应/反应也归「帷境」档（见 wj-engine 同注释） */
+    var o = ov || { maxTokens: 300 };
+    o.feature = 'wjcurtain';
     return new Promise(function (resolve, reject) {
       var h = Sleepy.api.runChat(messages, {
         onDone: function (cand, text) { resolve(text); },
         onFail: function (list, lastErr) {
           reject(new Error((lastErr && lastErr.error) || '模型没有返回'));
         }
-      }, false, ov || { maxTokens: 300 });
+      }, false, o);
       if (!h) reject(new Error('还没有可用的模型连接，去 设置 → 模型连接 填 API'));
     });
   }

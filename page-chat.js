@@ -161,7 +161,10 @@
     flame: '<path fill="currentColor" d="M24 11c3.4 5 6.4 7.4 6.4 13a6.4 6.4 0 0 1-12.8 0c0-3 1.5-5 3-7 .6 2 2 3 3.4 4 .3-3-.3-6 .4-10z"/>',
     drop: '<path fill="currentColor" d="M24 11c4.4 6 7 9 7 13a7 7 0 0 1-14 0c0-4 2.6-7 7-13z"/>',
     star: '<path fill="currentColor" d="M24 11l4.3 8.7 9.6 1.4-7 6.8 1.7 9.5L24 33l-8.6 4.4 1.7-9.5-7-6.8 9.6-1.4z"/>',
-    moon: '<path fill="currentColor" d="M31 13a11 11 0 1 0 0 22 9 9 0 0 1 0-22z"/>',
+    /* 月亮（2026-10-26 用户报「没有图案」）：旧 path 内弧 r9 撑不起 22 的弦长，
+       被浏览器强制放大成半圆 → 画出来是个实心圆，完全看不出是月亮。
+       换标准月牙形（Lucide moon 同构，×2 缩放到 48 格）。 */
+    moon: '<path fill="currentColor" d="M24 6a12 12 0 0 0 18 18 18 18 0 1 1-18-18z"/>',
     heart: '<path fill="currentColor" d="M24 34C13 27 11 21 15 17c3-3.2 8-1 9 3.5C25 16 30 13.8 33 17c4 4 2 10-9 17z"/>'
   };
 
@@ -2408,6 +2411,11 @@
       /* -------- 只活在这一次拜访里的状态，不落盘 -------- */
       var reqSeq = 0;        /* 请求序号，旧回调一律丢弃 */
       var pending = null;    /* { text, timestamp, targetId } */
+      /* 拟真节奏（2026-10-26 用户：「回复啪一下出来，没代入感」）：
+         流式文本照常收，但气泡按真人打字的节奏**逐条**上屏 ——
+         前一条收完（出现了下一个 || 边界）才排下一条，间隔按
+         下一条的字数估打字时长。n = 已上屏的气泡数。 */
+      var pendingReveal = { n: 0, timer: null };
       var handle = null;     /* api.runChat 的句柄，用于停止 */
       var quote = null;      /* { role, content } */
       var selecting = false;
@@ -2583,7 +2591,11 @@
           var ic = h('span', 'mood-pop-ic');
           ic.innerHTML = stampSvg(s.icon, 34);
           item.appendChild(ic);
-          item.appendChild(h('span', 'mood-pop-label', s.name));
+          /* 2026-10-26 用户：「有点看不出每种代表什么情绪」—— 名字下面补情绪小字 */
+          var lbl = h('span', 'mood-pop-label');
+          lbl.appendChild(h('b', null, s.name));
+          lbl.appendChild(h('span', 'mood-pop-feel', s.feel));
+          item.appendChild(lbl);
           item.addEventListener('click', function (e) {
             e.stopPropagation();
             if (pendingMoodStamp && pendingMoodStamp.id === s.id) {
@@ -2732,7 +2744,8 @@
       /* 单条消息渲染（时间分隔线 + 撤回 + 分段气泡），全量/增量共用一套 */
       function renderOneMessage(m, c) {
         var ts = m.timestamp || 0;
-        if (!lastRenderedTs || ts - lastRenderedTs >= 5 * 60 * 1000) {
+        var showSep = !lastRenderedTs || ts - lastRenderedTs >= 5 * 60 * 1000;
+        if (showSep) {
           msgWrap.appendChild(h('div', 'msg-time-sep', timeSepLabel(ts)));
         }
         if (ts) lastRenderedTs = ts;
@@ -2740,7 +2753,9 @@
         var segs = bubbleSegs(m);
         segs.forEach(function (seg, i) {
           msgWrap.appendChild(bubbleFor(m, c, {
-            text: seg.text, trans: seg.trans, idx: i, total: segs.length
+            text: seg.text, trans: seg.trans, idx: i, total: segs.length,
+            /* 2026-10-26 用户：分隔线刚标过时间，气泡下面的时间戳就是复读 —— 藏掉 */
+            hideTime: showSep
           }));
         });
       }
@@ -3376,7 +3391,10 @@
         }
 
         var meta = h('div', 'msg-meta');
-        meta.appendChild(h('span', 'msg-time', timeStr(msg.timestamp)));
+        /* 分隔线刚标过同一时间就不复读（2026-10-26 用户报双时间戳） */
+        if (!(seg && seg.hideTime)) {
+          meta.appendChild(h('span', 'msg-time', timeStr(msg.timestamp)));
+        }
 
         var isLast = c.messages[c.messages.length - 1] === msg;
         if (herePending) {
@@ -3953,8 +3971,42 @@
         var frag = document.createDocumentFragment();
         var segs = pendingSegs();
         if (!segs.length) { frag.appendChild(pendingOne('')); return frag; }
-        segs.forEach(function (t) { frag.appendChild(pendingOne(t)); });
+        segs.forEach(function (t, i) {
+          /* 拟真节奏：只画「已揭示」的段；后面的泡先给打字点等着 */
+          frag.appendChild(pendingOne(i < pendingReveal.n ? t : ''));
+        });
         return frag;
+      }
+      /* ---- 揭示调度（配套 pendingReveal，见状态声明处）---- */
+      function revealDelayOf(text) {
+        var len = String(text || '').length;
+        return Math.max(500, Math.min(2200, 350 + len * 45));
+      }
+      function revealReset() {
+        if (pendingReveal.timer) { clearTimeout(pendingReveal.timer); pendingReveal.timer = null; }
+        pendingReveal.n = 0;
+      }
+      function scheduleReveal(segs) {
+        if (pendingReveal.timer || !pending) return;
+        if (pendingReveal.n > 0 && pendingReveal.n < segs.length) {
+          pendingReveal.timer = setTimeout(revealNext, revealDelayOf(segs[pendingReveal.n]));
+        }
+      }
+      function revealNext() {
+        pendingReveal.timer = null;
+        if (!pending) return;
+        var segs = pendingSegs();
+        if (pendingReveal.n <= 0 || pendingReveal.n >= segs.length) return;
+        pendingReveal.n += 1;
+        /* 新揭示的这泡直接涂文本 —— 气泡和打字点首帧就在身上，不用整页重画 */
+        var lives = msgWrap.querySelectorAll('.msg-bubble.is-pending .msg-text');
+        if (lives.length === segs.length && lives[pendingReveal.n - 1]) {
+          lives[pendingReveal.n - 1].textContent = segs[pendingReveal.n - 1];
+        } else {
+          renderMessages();
+        }
+        msgWrap.scrollTop = msgWrap.scrollHeight;
+        scheduleReveal(segs);
       }
       function pendingOne(text) {
         var bubble = h('div', 'msg-bubble msg-assistant is-pending');
@@ -4536,6 +4588,17 @@
         return mutate(chatId, function (c) {
           c.wm = c.wm || { game: null, pending: null, charLastPlay: null };
           fn(c.wm);
+        });
+      }
+
+      /* 反查手机落库（c.rev = { lastAt, off, note, invite, override }）。
+         2026-10-26 用户真机抓到 Uncaught ReferenceError：v261 接线时
+         5 处调用全写上了，函数本体漏了 —— 一点「反查手机」就炸。
+         形状以 page-chat 各调用点 + revcheck-core 的 state 读法为准。 */
+      function revSave(chatId, fn) {
+        return mutate(chatId, function (c) {
+          c.rev = c.rev || {};
+          fn(c.rev);
         });
       }
 
@@ -5819,6 +5882,7 @@
 
         var mySeq = ++reqSeq;
         /* raw 是模型吐的全部内容（含心声标签）；信封正文一律走 pendingVisible() */
+        revealReset();
         pending = { raw: '', timestamp: Date.now(), targetId: opts.targetId || null };
         renderMessages();
         updateSendUI();
@@ -5828,6 +5892,9 @@
         var ovNow = overridesOf(getChat(chatId));
         var useStream = (ovNow.stream != null) ? ovNow.stream
                       : (store.get('chatDefaults.stream') !== false);
+        /* 用量统计（2026-10-26）：全局开关（对话设置→Token 用量）。
+           开了才在流式请求带 include_usage 换真用量；关着请求体与从前一字不差 */
+        ovNow.askUsage = store.get('chatDefaults.usageStats') === true;
 
         /* MCP 工具（2026-10-06）：对话开了「MCP 工具」且设置里有开着的
            工具时，把 OpenAI tools 清单和执行器塞进 ov，交给 api.runChat ——
@@ -5860,8 +5927,33 @@
                2026-09-26 用户再报「整条挤一个气泡、过一会儿才拆开」——
                拆段挪进流式：按 || 渐进拆，段数没变只改各段文本，
                段数变了才整页重画（一条回复顶多重画几次）。
-               is-pending 气泡首帧就画好（类名、停止键都在身上）。 */
+               is-pending 气泡首帧就画好（类名、停止键都在身上）。
+               2026-10-26 再加拟真节奏：新回复（不挂旧气泡的）不再把
+               所有段同时涂上，而是按打字节奏逐条揭示（见 pendingReveal）；
+               reroll（挂旧气泡重写）不 staging，走旧热路径。 */
             var segs = pendingSegs();
+            if (!segs.length) return;         /* 还在打字点（一段正文都没有）就不动 */
+            if (!pending.targetId) {
+              if (pendingReveal.n === 0) {
+                /* 第一条正文到了：只揭示第一泡，其余的泡给打字点按节奏来 */
+                pendingReveal.n = 1;
+                renderMessages();
+                msgWrap.scrollTop = msgWrap.scrollHeight;
+                scheduleReveal(segs);
+                return;
+              }
+              var liveEls = msgWrap.querySelectorAll('.msg-bubble.is-pending .msg-text');
+              if (liveEls.length === segs.length) {
+                for (var ri = 0; ri < pendingReveal.n && ri < liveEls.length; ri++) {
+                  liveEls[ri].textContent = segs[ri];
+                }
+                msgWrap.scrollTop = msgWrap.scrollHeight;
+              } else {
+                renderMessages();
+              }
+              scheduleReveal(segs);
+              return;
+            }
             var lives = msgWrap.querySelectorAll('.msg-bubble.is-pending .msg-text');
             if (lives.length === (segs.length || 1)) {
               if (segs.length) {
@@ -5873,8 +5965,23 @@
               renderMessages();
             }
           },
-          onDone: function (cand, text) {
+          onDone: function (cand, text, extra) {
             if (mySeq !== reqSeq) return;
+            revealReset();   /* 落库即全量上屏，节奏揭示到此为止 */
+
+            /* Token 用量（2026-10-26）：非流式 extra=res（res.data.usage）；
+               流式 extra={usage}（对话设置开了「用量统计」才带 include_usage，
+               接口不认时 api 层自动降级，拿不到就是 null —— 不阻塞落库） */
+            var usageRec = null;
+            var u0 = (extra && extra.usage) || (extra && extra.data && extra.data.usage) || null;
+            if (u0 && (u0.prompt_tokens != null || u0.total_tokens != null)) {
+              usageRec = {
+                p: Number(u0.prompt_tokens) || 0,
+                c: Number(u0.completion_tokens) || 0,
+                t: Number(u0.total_tokens) ||
+                   ((Number(u0.prompt_tokens) || 0) + (Number(u0.completion_tokens) || 0))
+              };
+            }
 
             /* 这条回复最终挂在哪个气泡上 —— 它自带的心声要挂到同一处，
                reroll 时才知道该删哪条（见下面 commit 那段）。 */
@@ -6026,7 +6133,7 @@
                  [自察] 块单独落库，不进 content（content 会回喂下一轮）。
                  只在开关开过时才有值；长按消息可看。 */
               var insp = split.inspect || null;
-              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId, inspect: insp });
+              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId, inspect: insp, usage: usageRec });
               else {
                 voiceMsgId = newId();
                 addMessage(chatId, {
@@ -6036,7 +6143,8 @@
                   trans: transArr,
                   timestamp: Date.now(),
                   memoryId: memId,
-                  inspect: insp
+                  inspect: insp,
+                  usage: usageRec
                 });
               }
               replyMsgId = voiceMsgId;
@@ -6137,6 +6245,7 @@
             }
             pending = null;
             handle = null;
+            revealReset();
             var why = (err && err.error) ? err.error : '请求失败，检查一下网络或 API 配置';
             ctx.toast('❌ ' + why, 'err');
             renderMessages();
@@ -6160,6 +6269,7 @@
         if (handle) { try { handle.abort(); } catch (e) { /* 忽略 */ } }
         handle = null;
         pending = null;
+        revealReset();                  /* 揭示计时器跟着这轮一起作废 */
         if (Sleepy.msgCenter) Sleepy.msgCenter.typingStop({ chatId: chatId });
 
         if (partial) {

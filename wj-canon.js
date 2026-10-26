@@ -516,13 +516,16 @@
   /* ------------------------- 候选提取（模型） ------------------------- */
 
   function apiTransport(messages, ov) {
+    /* 副API分配（2026-10-26）：正史候选提取也归「帷境」档（见 wj-engine 同注释） */
+    var o = ov || { maxTokens: 1500 };
+    o.feature = 'wjcurtain';
     return new Promise(function (resolve, reject) {
       var h = Sleepy.api.runChat(messages, {
         onDone: function (cand, text) { resolve(text); },
         onFail: function (list, lastErr) {
           reject(new Error((lastErr && lastErr.error) || '模型没有返回'));
         }
-      }, false, ov || { maxTokens: 1500 });
+      }, false, o);
       if (!h) reject(new Error('还没有可用的模型连接，去 设置 → 模型连接 填 API'));
     });
   }

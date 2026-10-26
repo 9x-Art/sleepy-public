@@ -476,6 +476,88 @@
     requestAnimationFrame(function () { wrap.classList.add('show'); });
   }
 
+  /* Token 用量（2026-10-26）：全局开关 + 这通对话的账单。
+     账本跟着回复消息落库（msg.usage = {p,c,t}），这里只读不写。
+     开关写 chatDefaults.usageStats —— 开了流式请求才带 include_usage，
+     接口不认时 api 层自动降级重试（拿不到用量就记不上，不影响聊天）。 */
+  function openUsageSheet(ctx, chat) {
+    /* 挂到 #phone 而不是 ctx.el：.page 上有 transform，fixed 会失效 */
+    var host = document.getElementById('phone') || document.body;
+    var old = host.querySelector('.iol-drawer');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var wrap = h('div', 'iol-drawer');
+    var panel = h('div', 'iol-drawer-panel');
+    panel.appendChild(h('h2', '', 'Token 用量'));
+    panel.appendChild(h('p', 'iol-drawer-desc',
+      '账本记在每条回复上。统计开着的时候，流式请求会多带一个用量字段 —— 个别接口不认就自动退回，那一轮记不上账，聊天不受影响。'));
+
+    var on = store.get('chatDefaults.usageStats') === true;
+    var tgl = h('button', 'iol-drawer-save', on ? '统计开着 · 点关' : '统计关着 · 点开');
+    tgl.addEventListener('click', function () {
+      on = !on;
+      store.set('chatDefaults.usageStats', on);
+      tgl.textContent = on ? '统计开着 · 点关' : '统计关着 · 点开';
+      ctx.toast(on ? '用量统计开了，下一轮开始记账' : '用量统计关了', 'ok');
+    });
+    var tglWrap = h('div', 'iol-field');
+    tglWrap.appendChild(h('label', '', '统计开关（全局，下一轮生效）'));
+    tglWrap.appendChild(tgl);
+    panel.appendChild(tglWrap);
+
+    var msgs = (chat && chat.messages) || [];
+    var rows = [];
+    var sumP = 0, sumC = 0, sumT = 0;
+    msgs.forEach(function (m) {
+      if (m.role === 'assistant' && m.usage && m.usage.t) {
+        rows.push(m);
+        sumP += m.usage.p || 0;
+        sumC += m.usage.c || 0;
+        sumT += m.usage.t || 0;
+      }
+    });
+    var stat = h('div', 'iol-field');
+    stat.appendChild(h('label', '', '这通对话（' + rows.length + ' 轮有账）'));
+    stat.appendChild(h('div', 'iol-drawer-desc', rows.length
+      ? ('输入 ' + sumP + ' + 输出 ' + sumC + ' = 合计 ' + sumT + ' tokens')
+      : '还没有账 —— 开着统计聊一轮就有了'));
+    panel.appendChild(stat);
+
+    var list = h('div', 'iol-field');
+    list.appendChild(h('label', '', '最近 15 轮'));
+    var recent = rows.slice(-15).reverse();
+    if (!recent.length) {
+      list.appendChild(h('div', 'iol-drawer-desc', '（空）'));
+    } else {
+      recent.forEach(function (m) {
+        var d = new Date(m.timestamp || Date.now());
+        var hh = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+        var u = m.usage;
+        list.appendChild(h('div', 'iol-drawer-desc',
+          hh + ' · 入 ' + (u.p || 0) + ' · 出 ' + (u.c || 0) + ' · 计 ' + (u.t || 0)));
+      });
+    }
+    panel.appendChild(list);
+
+    var actions = h('div', 'iol-drawer-actions');
+    var closeB = h('button', 'iol-drawer-cancel', '关掉');
+    actions.appendChild(closeB);
+    panel.appendChild(actions);
+
+    function close() {
+      wrap.classList.remove('show');
+      setTimeout(function () {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }, 240);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    closeB.addEventListener('click', close);
+
+    wrap.appendChild(panel);
+    host.appendChild(wrap);
+    requestAnimationFrame(function () { wrap.classList.add('show'); });
+  }
+
   /* 记忆模型选择抽屉（v5 12.1）：总结/整理走哪个模型。
      候选 = 跟随主 API + 主/副 API 里已启用的（复用线下的 apiChoices）。 */
   function openMemoryApiDrawer(ctx) {
@@ -770,6 +852,15 @@
             }
           });
         }
+      }));
+
+      /* Token 用量（2026-10-26）：开关 + 这通对话的账单（全局开关，抽屉里说明） */
+      secChat.appendChild(demoRow({
+        label: 'Token 用量',
+        note: store.get('chatDefaults.usageStats') === true
+          ? '统计开着 · 看这通对话的账单'
+          : '关闭中 · 点开可开启并看统计',
+        onClick: function () { openUsageSheet(ctx, chat); }
       }));
 
       /* ---- 记忆 ---- */

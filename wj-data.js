@@ -67,10 +67,11 @@
   var TIME_ANCHOR = [
     { id: 'before_known', name: '已知过去之前', hint: '早年经历；需要特别检查年龄与家庭关系。' },
     { id: 'before_user', name: '认识 user 以前', hint: '角色已有独立生活，但尚未与 user 建立关系。' },
+    { id: 'after_user', name: '认识 user 之后', hint: '两人已认识或已建立关系，写这段关系里的某个空白时刻。' },
     { id: 'gap', name: '两段经历之间', hint: '填补现有时间线中的一处空白。' }
   ];
   var TIME_ANCHOR_LABEL = { before_known: '已知过去之前', before_user: '认识 user 以前',
-    gap: '两段经历之间', parallel: '与既有时间线无关' };
+    after_user: '认识 user 之后', gap: '两段经历之间', parallel: '与既有时间线无关' };
 
   var POV = ['跟随主视角', '第三人称多视角', '双线交替'];
   var LENGTH = ['短篇', '中篇', '长篇'];
