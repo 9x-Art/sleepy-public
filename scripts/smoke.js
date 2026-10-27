@@ -17117,7 +17117,10 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    prompt-engine.js（avatarswap 槽）/ page-singleapi.js + page-settings.js
    （视频理解 API）/ style.css（.msg-video* + .av-lib*）变了。
    基准随批 v271 → v272。 */
-const EXPECTED_SW_CACHE = 'sleepy-v272';
+/* v273（2026-10-27 深夜）：TA 换头像时看图再挑 —— page-chat.js
+   （applyCharAvatarSwap 改异步 + 新增 pickAvatarBySight 多模态挑图）变了。
+   基准随批 v272 → v273。 */
+const EXPECTED_SW_CACHE = 'sleepy-v273';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

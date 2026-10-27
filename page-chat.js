@@ -1353,16 +1353,82 @@
     return { text: text, names: names };
   }
 
-  /* 执行换头像。三道闸：开关 / 库里要有图 / 换的那张不能就是当前这张。
-     返回 { name, label } 给调用方落提示，任何一道没过就返回 null（静默）。
-     图**只能来自 TA 自己的头像库** —— 不生图、不联网，纯本地。 */
-  function applyCharAvatarSwap(chatId, names) {
+  /* TA 想换头像，但没指名（或名字没对上）→ 让它**真的看一眼图**再挑。
+     只在「它自己起意要换」的这一刻才发这一次请求 —— 不占每轮装配的 token，
+     也不会因为它看不见图就只能瞎猜一个名字。
+     看什么：先是**对方的头像**（TA 多半就是看见它才想换的），再是 TA 库里
+     每一张（按名字标好）。让它只回一个名字，程序按名字落库。
+     ⚠️ 主 API 不是多模态 / 取图失败 / 回的话对不上 → 退回「挑第一张」，
+        不卡住流程，也不假装它看过。 */
+  function pickAvatarBySight(chatId, ch, lib, want, done) {
+    var fallback = lib[0];
+    function finish(item) { done(item || fallback); }
+    var cfg = null;
+    try { cfg = store.get('mainApi'); } catch (e) { cfg = null; }
+    if (!cfg || !cfg.model || !Sleepy.api || !Sleepy.api.requestOnce ||
+        !Sleepy.media || !Sleepy.media.dataURL) { finish(null); return; }
+
+    var jobs = [];
+    var uMask = null;
+    try { uMask = (core.activeUserOnIsland && core.activeUserOnIsland()) || null; } catch (e) { uMask = null; }
+    if (uMask && uMask.avatarMedia) {
+      jobs.push(Sleepy.media.dataURL(uMask.avatarMedia).then(function (d) {
+        return d ? { tag: '对方的头像', data: d } : null;
+      }, function () { return null; }));
+    }
+    lib.forEach(function (it) {
+      jobs.push(Sleepy.media.dataURL(it.id).then(function (d) {
+        return d ? { tag: String(it.label || ''), data: d } : null;
+      }, function () { return null; }));
+    });
+
+    Promise.all(jobs).then(function (list) {
+      var pics = [];
+      list.forEach(function (p) { if (p) pics.push(p); });
+      if (!pics.length) { finish(null); return; }
+      var labels = [];
+      lib.forEach(function (x) {
+        var n = String((x && x.label) || '').trim();
+        if (n) labels.push(n);
+      });
+      var content = [{
+        type: 'text',
+        text: '你想换一张自己的头像。下面第一张是对方的头像，之后是你头像库里的每一张（按名字标好了）。' +
+          (want ? '你刚才提到想要「' + want + '」。' : '') +
+          '看清楚之后，只回答你要换上的那一张的名字（只能从这几个里选：' +
+          (labels.join('、') || '没有名字的那张') + '），不要解释，不要加别的字。'
+      }];
+      pics.forEach(function (p) { content.push({ type: 'image_url', image_url: { url: p.data } }); });
+      return Sleepy.api.requestOnce({ cfg: cfg }, [{ role: 'user', content: content }], { maxTokens: 24 })
+        .then(function (res) {
+          if (!res || !res.ok) { finish(null); return; }
+          var said = String(res.content || '').trim();
+          for (var i = 0; i < lib.length; i++) {
+            var lb = String(lib[i].label || '').trim();
+            if (lb && said.indexOf(lb) >= 0) { finish(lib[i]); return; }
+          }
+          finish(null);
+        }, function () { finish(null); });
+    }, function () { finish(null); });
+  }
+
+  /* 执行换头像（异步，结果走 done 回调）。三道闸：开关 / 库里要有图 /
+     换的那张不能就是当前这张。任何一道没过 → done(null)，静默什么都不做。
+     图**只能来自 TA 自己的头像库** —— 不生图。
+     指名了（且名字对得上）直接换，省一次调用；没指名或没对上才看图。 */
+  function applyCharAvatarSwap(chatId, names, done) {
+    done = done || function () {};
+    function commit(ch, item) {
+      core.upsertChar({ id: ch.id, avatarMedia: item.id, avatar: '' });
+      return { name: ch.name || '对方', label: item.label || '新头像' };
+    }
+    function refuse() { done(null); }
     var c = getChat(chatId);
     var ch = findCharacter(c ? c.characterId : null);
-    if (!ch) return null;
-    if (!ch.allowSelfAvatar) return null;
+    if (!ch || !ch.allowSelfAvatar) { refuse(); return; }
     var lib = Array.isArray(ch.avatarLib) ? ch.avatarLib : [];
-    if (!lib.length) return null;
+    if (!lib.length) { refuse(); return; }
+
     var key = String((names && names[0]) || '').trim();
     var want = null;
     if (key) {
@@ -1371,11 +1437,17 @@
         if (lb && (lb.indexOf(key) >= 0 || key.indexOf(lb) >= 0)) { want = lib[i]; break; }
       }
     }
-    if (!want) want = lib[0];
-    if (!want || !want.id) return null;
-    if (ch.avatarMedia === want.id) return null;   /* 本来就是这张，不折腾 */
-    core.upsertChar({ id: ch.id, avatarMedia: want.id, avatar: '' });
-    return { name: ch.name || '对方', label: want.label || '新头像' };
+    if (want) {
+      if (ch.avatarMedia === want.id) { refuse(); return; }  /* 本来就是这张 */
+      done(commit(ch, want));
+      return;
+    }
+    /* 没指名 / 名字没对上 → 让 TA 看一眼图再挑 */
+    pickAvatarBySight(chatId, ch, lib, key, function (item) {
+      if (!item || !item.id) { refuse(); return; }
+      if (ch.avatarMedia === item.id) { refuse(); return; }
+      done(commit(ch, item));
+    });
   }
 
   /* 换头像的说明书（给模型看的那一行）。
@@ -6320,8 +6392,9 @@
             /* TA 自己换头像排在动作类后面：它改的是角色记录，不落气泡本体，
                只留一句灰字让对方知道「TA 换了一张」（换不成则什么都不留）。 */
             if (av.names.length) {
-              var sw = applyCharAvatarSwap(chatId, av.names);
-              if (sw) {
+              /* 异步：可能要先发一次「看图挑」的请求，挑完才落灰字 */
+              applyCharAvatarSwap(chatId, av.names, function (sw) {
+                if (!sw) return;
                 addMessage(chatId, {
                   id: newId(), role: 'assistant', type: 'avatar-swap',
                   content: '「' + sw.name + '」换了一张头像' +
@@ -6329,7 +6402,8 @@
                   timestamp: Date.now()
                 });
                 ctx.toast('TA 换头像了', 'ok');
-              }
+                renderMessages();
+              });
             }
             /* HTML 小游戏排在图后面（同是「作品」类附件，一次一条） */
             if (hg.hit) commitHtmlGame(chatId, hg.hit, hg.truncated);
