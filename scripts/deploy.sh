@@ -58,4 +58,10 @@ echo "自查通过：运行时要用的都在，文档/归档/脚本都不在。
 node "$(dirname "$0")/gen-version.js" "$OUT"
 
 cd "$OUT"
-wrangler pages deploy . --project-name sleepy --branch master --commit-hash="$H" --commit-dirty=true
+# ⚠️ --branch 必须是 main（2026-10-27 深夜修正，别再"顺手改成 master"）：
+# CF Pages 的生产域名 sleepy-u17.pages.dev 只认**生产分支**（本项目 = main）。
+# 这个值只是部署标签，跟 git 分支无关 —— 2026-10-27 曾误以为它该跟 git 的
+# master 对齐而改成 master，结果此后所有部署都变成 master.* 预览部署，
+# 生产域名停更在老版本，手机/PWA 全部拿不到新代码（真机已踩）。
+# 想换生产分支要去 CF 后台改项目设置，不是改这里。
+wrangler pages deploy . --project-name sleepy --branch main --commit-hash="$H" --commit-dirty=true
