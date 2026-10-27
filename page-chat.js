@@ -5239,6 +5239,38 @@
         var stopB = h('button', 'rev-cap-btn rev-cap-stop', '×');
         var btnRow = h('span', 'rev-cap-btns');
         btnRow.appendChild(pauseB); btnRow.appendChild(stopB);
+        /* 反查手机：帮 user 换头像（用户 2026-10-27：TA 翻你手机时顺手帮你换）。
+           系统相册选图 → 落图库(kind:'avatar') → 写回当前 user 马甲的 avatarMedia。
+           复用 idcard 头像字段那套 media.shrink+put，不另起炉灶。 */
+        var avB = h('button', 'rev-cap-btn rev-cap-avatar', '头像');
+        avB.title = '让 ' + charName + ' 帮你换头像';
+        avB.addEventListener('click', function () {
+          var core2 = Sleepy.core, media = Sleepy.media;
+          if (!core2 || !media) return;
+          var me2 = (core2.activeUserOnIsland || core2.activeUser)();
+          if (!me2) { ctx.toast('没有可换头像的账号', 'warn'); return; }
+          var fi = h('input');
+          fi.type = 'file'; fi.accept = 'image/*'; fi.style.display = 'none';
+          capsule.appendChild(fi);
+          fi.addEventListener('change', function () {
+            var f = fi.files && fi.files[0];
+            if (!f) { if (fi.parentNode) fi.parentNode.removeChild(fi); return; }
+            ctx.toast('TA 正在帮你挑头像…', 'ok');
+            media.shrink(f, 512).then(function (r) {
+              return media.put(r.blob, { name: '头像', kind: 'avatar', w: r.w, h: r.h });
+            }).then(function (id) {
+              core2.upsertUser({ id: me2.id, avatarMedia: id });
+              if (fi.parentNode) fi.parentNode.removeChild(fi);
+              if (typeof renderMessages === 'function') renderMessages();
+              ctx.toast(charName + ' 帮你换好头像啦', 'ok');
+            }).catch(function (e) {
+              if (fi.parentNode) fi.parentNode.removeChild(fi);
+              ctx.toast('换头像失败了：' + ((e && e.message) || e), 'err');
+            });
+          });
+          fi.click();
+        });
+        btnRow.appendChild(avB);
         capsule.appendChild(btnRow);
         var danmaku = h('div', 'rev-danmaku');
         host.appendChild(capsule);
