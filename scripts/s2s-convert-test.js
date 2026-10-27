@@ -127,6 +127,7 @@ var backup = {
     {
       id: 'c1', name: '小满', description: '猫系店员', systemPrompt: '口癖是喵',
       worldview: '海城', avatar: 'assets/a1',
+      roomConfig: { wallImage: 'https://wall.test/b.png' },
       memories: [{ id: 'f1', date: '2026-10-01', summary: '一起看过海' }],
       mountedWorldbooks: [{ id: 'mw1', title: '禁忌', content: '黑夜规则', key: ['夜'], disable: false }]
     },
@@ -147,7 +148,8 @@ var backup = {
     { id: 'd2', charId: 'c1', kind: 'solo', page: { text: 'solo 的日记' }, timestamp: T_MSG + 172800000 }
   ]),
   'stores/worldbooks.000.json': JSON.stringify([
-    { id: 'w1', title: '世界设定', content: '海城设定全文', key: ['海'], disable: false }
+    { id: 'w1', title: '世界设定', content: '海城设定全文', key: ['海'], keysecondary: ['城'], disable: false },
+    { id: 'w2', title: '常驻规则', content: '永远注入的设定', key: [], constant: true, disable: false }
   ]),
   'stores/user_profile.000.json': JSON.stringify([{ name: '阿宝', bio: '奶凶奶凶' }]),
   'stores/assets.000.json': JSON.stringify([{ id: 'a1', data: 'data:image/png;base64,AAAA' }]),
@@ -230,12 +232,21 @@ if (!S2S) { console.error('S2S 没挂到 window 上'); process.exit(1); }
   eq('日记 3 篇', d.diaries.length, 3);
   ok('solo 日记进了', d.diaries.some(function (x) { return x.content === 'solo 的日记' && x.author === 'char'; }));
 
-  /* 世界书：全局 1 本（1 条）+ 个人 1 本（1 条） */
+  /* 世界书：全局 1 本（2 条）+ 个人 1 本（1 条）
+     2026-10-27 真实包暴露的三处修复锁回归：
+     · constant（常驻）必须映射 always，否则 keys=[] 的常驻条目导进去就是死条目；
+     · keysecondary 并入 keys（sleepy 没有辅助键概念，丢了比命中面变宽更伤）；
+     · 岛封面来自 roomConfig.wallImage（之前恒空，壁纸白白丢）。 */
   eq('世界书 2 本', d.worldbooks.length, 2);
   var gBook = d.worldbooks.find(function (b) { return b.scope === 'global'; });
   var pBook = d.worldbooks.find(function (b) { return b.scope === 'personal'; });
-  ok('全局书有条目', gBook && gBook.entries.length === 1 && gBook.entries[0].content === '海城设定全文');
+  ok('全局书有条目', gBook && gBook.entries.length === 2 && gBook.entries[0].content === '海城设定全文');
+  eq('keysecondary 并入 keys', gBook.entries[0].keys, ['海', '城']);
+  eq('普通条目 always:false', gBook.entries[0].always, false);
+  eq('常驻条目 always:true（constant 映射）', gBook.entries[1].always, true);
+  eq('常驻条目 keys 空不造假', gBook.entries[1].keys, []);
   ok('个人书挂角色', pBook && pBook.characterId === ch.id && pBook.entries[0].content === '黑夜规则');
+  eq('岛封面来自 roomConfig.wallImage', d.sandboxes[0].cover, 'https://wall.test/b.png');
 
   /* 幽灵/不迁清单 */
   ok('向量没进 data', !('memoryVectors' in d) && !('vectors' in d));
@@ -249,11 +260,11 @@ if (!S2S) { console.error('S2S 没挂到 window 上'); process.exit(1); }
   eq('报告 messages', rep.messages, 2);
   eq('报告 memories', rep.memories, 2);
   eq('报告 diaries', rep.diaries, 3);
-  eq('报告 worldbookEntries', rep.worldbookEntries, 2);
+  eq('报告 worldbookEntries', rep.worldbookEntries, 3);
 
   /* DEFLATE 条目路径（世界书分片走了 deflate-raw） */
   var r2 = await S2S.run(new Uint8Array(zipBufDeflate).buffer);
-  ok('DEFLATE 分片也能读（世界书条目数同）', r2.report.worldbookEntries === 2,
+  ok('DEFLATE 分片也能读（世界书条目数同）', r2.report.worldbookEntries === 3,
     '实得 ' + r2.report.worldbookEntries);
 
   /* 非法输入 */

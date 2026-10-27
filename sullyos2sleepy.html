@@ -304,7 +304,18 @@
       var persona = [s(c.description).trim(), s(c.systemPrompt).trim(), s(c.worldview).trim()]
         .filter(function (p) { return p; }).join('\n\n');
       var avatar = resolveImg(c.avatar);
-      if (c.avatar && !avatar) report.warnings.push('「' + name + '」的头像在备份里是空引用（多半是 text_only 备份），导入后落 sleepy 的幽灵头像');
+      if (c.avatar && !avatar) {
+        /* 2026-10-27 真实包暴露：非空但既不是 dataURL 也不在 assets 里
+           （如 "/sully/head.png" 这种 SullyOS 服务端相对路径、或 http 外链）
+           会被当成「空引用」整个丢掉，warning 还说反了。改成：
+           http(s) 外链直接带走；解析不了的引用不留破链，warning 带上实际值。 */
+        var avatarRaw = s(c.avatar);
+        if (/^https?:\/\//i.test(avatarRaw)) {
+          avatar = avatarRaw;
+        } else {
+          report.warnings.push('「' + name + '」的头像引用的是包内嵌资源之外的东西（' + avatarRaw + '），sleepy 解析不了，导入后落幽灵头像');
+        }
+      }
 
       out.characters.push({
         id: mainId, kind: 'main', parentId: null, sandboxId: sbId,
@@ -323,8 +334,14 @@
         id: uid('lk'), sandboxId: sbId, charId: mainId, userId: maskId,
         cognition: 'unaware', barrier: false, createdAt: Date.now()
       });
+      /* 岛封面：SullyOS 的房间壁纸（roomConfig.wallImage）能带走就带走
+         （2026-10-27 真实包：之前 cover 恒空，壁纸白白丢了） */
+      var wallRaw = resolveImg(c.roomConfig && c.roomConfig.wallImage);
+      if (!wallRaw && c.roomConfig && /^https?:\/\//i.test(s(c.roomConfig.wallImage))) {
+        wallRaw = s(c.roomConfig.wallImage);
+      }
       out.sandboxes.push({
-        id: sbId, kind: 'isle', name: name, cover: '',
+        id: sbId, kind: 'isle', name: name, cover: wallRaw || '',
         charIds: [mainId], maskIds: [maskId], theme: null
       });
       report.islands++; report.chars++;
@@ -413,7 +430,17 @@
     });
 
     /* ── 世界书：SullyOS 的 worldbooks 是平铺条目（title+content+key[]），
-       sleepy 是两级（书→entries）。全并成一本全局书。 ── */
+       sleepy 是两级（书→entries）。全并成一本全局书。
+       ⚠️ constant（常驻条目）必须映射成 sleepy 的 always —— 2026-10-27
+          真实包暴露：常驻条目 key 往往为空，转完 keys=[] 又不标常驻，
+          导进去就是**永远不会被触发**的死条目。keysecondary 一并并入 keys
+          （sleepy 没有辅助键概念，丢了比命中面变宽更伤）。 ── */
+    function wbKeysOf(w) {
+      return (Array.isArray(w.key) ? w.key : [])
+        .concat(Array.isArray(w.keysecondary) ? w.keysecondary : [])
+        .filter(Boolean).map(s)
+        .filter(function (v, i, a) { return a.indexOf(v) === i; });
+    }
     var wbEntries = [];
     worldbooks.forEach(function (w) {
       var content = s(w && w.content).trim();
@@ -421,7 +448,8 @@
       wbEntries.push({
         id: uid('wb'),
         name: s(w.title) || s(w.category) || '条目',
-        keys: Array.isArray(w.key) ? w.key.filter(Boolean).map(s) : [],
+        keys: wbKeysOf(w),
+        always: !!w.constant,
         content: content,
         enabled: !w.disable
       });
@@ -442,7 +470,8 @@
         if (!content) return;
         book.entries.push({
           id: uid('wb'), name: s(w.title) || '条目',
-          keys: Array.isArray(w.key) ? w.key.filter(Boolean).map(s) : [],
+          keys: wbKeysOf(w),
+          always: !!w.constant,
           content: content, enabled: !w.disable
         });
         report.worldbookEntries++;
