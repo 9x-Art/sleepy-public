@@ -218,7 +218,8 @@
       var capRows = {};
       [
         { label: '向量记忆 API', hint: '填 embedding 模型，不是对话模型', kind: 'vector' },
-        { label: '总结 API', hint: '便宜模型跑记忆抽取', kind: 'summary' }
+        { label: '总结 API', hint: '便宜模型跑记忆抽取', kind: 'summary' },
+        { label: '视频理解 API', hint: 'OpenAI 兼容 · 抽帧送视觉模型读视频', kind: 'video' }
       ].forEach(function (c) {
         var cfg = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(c.kind) : null;
         capRows[c.kind] = row({
@@ -371,7 +372,7 @@
         setRowBadge(rowImg, im, im === '未配置' ? 'dim' : 'ok');
         /* 单份接口那两行（总结 / 向量）：从它们的配置页回来必须跟着变 ——
            不刷新的话就是「明明配好了，回到设置页还写着未配置」（真机抓到的）。 */
-        ['vector', 'summary'].forEach(function (k) {
+        ['vector', 'summary', 'video'].forEach(function (k) {
           if (!capRows[k]) return;
           var c = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(k) : null;
           setRowBadge(capRows[k], c ? (c.model || '已配置') : '未配置', c ? 'ok' : 'dim');

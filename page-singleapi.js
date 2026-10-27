@@ -76,6 +76,21 @@
       placeholder: 'text-embedding-3-small',
       fallback: '还没配 —— 向量记忆需要它才能开。',
       testChat: false
+    },
+    /* 视频理解 API：单份（无预设），OpenAI 兼容。把视频抽帧后送视觉/多模态
+       模型「看」一遍，角色就能理解用户发的视频。不写死具体模型 —— 走 OpenAI
+       兼容网关，用户自己填 endpoint 和模型（Gemini / Qwen3.5-Omni / GLM-4.5V…）。 */
+    video: {
+      key: 'videoApi',
+      title: '视频理解 API',
+      defaultName: '视频理解模型',
+      eyebrow: 'VIDEO UNDERSTANDING',
+      hint: '把视频抽帧后送视觉/多模态模型「看」一遍，角色就能理解你发的视频。' +
+        '填 OpenAI 兼容的接口（Gemini / Qwen3.5-Omni / GLM-4.5V 这类支持图片输入的都行）。',
+      modelHint: '填一个支持图片输入的模型（多模态 / 视觉模型），不要填纯文本模型',
+      placeholder: 'gemini-2.5-flash / qwen3.5-omni / glm-4.5v',
+      fallback: '还没配 —— 视频能发、能播，但角色暂时读不懂内容。',
+      testChat: true
     }
   };
 
@@ -358,7 +373,7 @@
     var g = group('连接');
     f.baseUrl = textField({
       label: '接口地址 Base URL',
-      hint: '填到 /v1 就行，测试时会自动补 /embeddings',
+      hint: '填到 /v1 就行，测试时会自动补 ' + (k.key === 'vectorApi' ? '/embeddings' : '/chat/completions'),
       value: cur.baseUrl || '',
       placeholder: 'https://api.example.com/v1',
       inputmode: 'url'
@@ -397,7 +412,7 @@
     g.card.appendChild(acts);
     body.appendChild(g.wrap);
 
-    renderVectorTools(ctx, body);
+    if (kind === 'vector') renderVectorTools(ctx, body);
 
     /* 副标题随配置状态刷新：没配 → 提示要配；已配 → 报当前模型（体检 P3-1，2026-10-20：
        之前写死 fallback，配好了还显示「还没配」，误导）。 */
@@ -1032,6 +1047,13 @@
   Sleepy.register('settings-vector', {
     title: '向量记忆 API',
     render: function (ctx) { renderSingle(ctx, 'vector'); },
+    onShow: function (ctx) { if (ctx.__paint) ctx.__paint(); }
+  });
+
+  /* 视频理解也是一页表单（单份，无预设），走 renderSingle */
+  Sleepy.register('settings-video', {
+    title: '视频理解 API',
+    render: function (ctx) { renderSingle(ctx, 'video'); },
     onShow: function (ctx) { if (ctx.__paint) ctx.__paint(); }
   });
 

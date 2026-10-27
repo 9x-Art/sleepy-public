@@ -70,6 +70,10 @@
       '<path d="M6.2 3.6h6.3l5.3 5.3v10.5a1.2 1.2 0 0 1-1.2 1.2H6.2A1.2 1.2 0 0 1 5 19.4V4.8a1.2 1.2 0 0 1 1.2-1.2z"/>' +
       '<path d="M12.4 3.6v5.3h5.4"/></svg>',
 
+    video: '<svg ' + SVG_BODY + '>' +
+      '<rect x="3" y="6" width="18" height="13" rx="2.6"/>' +
+      '<path d="M10 9.2l5 2.8-5 2.8z"/></svg>',
+
     transfer: '<svg ' + SVG_BODY + '>' +
       '<rect x="2.8" y="6.6" width="18.4" height="10.8" rx="2.2"/>' +
       '<circle cx="12" cy="12" r="2.5"/>' +
@@ -1656,6 +1660,12 @@
       return m.role === 'assistant'
         ? '[你发了一张照片：' + (m.caption || m.name || '一张照片') + ']'
         : '[我发了一张照片：' + (m.name || '未命名') + ']';
+    }
+    /* 视频：读懂后 caption 里有「视频内容」，角色据此回应；没读出来就只报发了视频。 */
+    if (m.type === 'video') {
+      var vt = '[我发了一段视频：' + (m.name || '未命名') + ']';
+      if (m.caption) vt += '；视频内容：' + m.caption;
+      return vt;
     }
     if (m.type === 'file') return '[我发了一个文件：' + (m.name || '未命名') + '（' + fmtBytes(m.size || 0) + '）]';
     if (m.type === 'transfer') return transferText(m);
@@ -3865,6 +3875,19 @@
         /* 照片：本体在 IndexedDB 里，现取一个 objectURL 贴上。
            取不到（老消息只存了文件名、或者图库被清过）就退回文件名卡片 ——
            宁可显示「这张图找不到了」，也别留一个破图。 */
+        if (msg.type === 'video' && msg.mediaId && Sleepy.media) {
+          var vbox = h('div', 'msg-video');
+          var vv = h('video', 'msg-video-el');
+          vv.controls = true; vv.preload = 'metadata';
+          vv.setAttribute('playsinline', '');
+          Sleepy.media.url(msg.mediaId).then(function (src) {
+            if (src) vv.src = src;
+          });
+          vbox.appendChild(vv);
+          if (msg.caption) vbox.appendChild(h('div', 'msg-video-cap', msg.caption));
+          return vbox;
+        }
+
         if (msg.type === 'photo' && msg.mediaId && Sleepy.media) {
           /* 拍立得（FlipPolaroid 移植，2026-10-25）：带背面寄语的照片
              渲染成 3D 翻面卡——**点图片区域=放大**（复用 imageViewer），
@@ -6557,11 +6580,38 @@
             });
             return;
           }
+          if (kind === 'video' && Sleepy.media) {
+            /* 视频比图片大得多：设硬上限 + 软提醒，避免把 IndexedDB 撑爆。 */
+            if (f.size > 100 * 1024 * 1024) {
+              ctx.toast('这个视频超过 100MB，发不了', 'err');
+              return;
+            }
+            if (f.size > 50 * 1024 * 1024) ctx.toast('视频较大，存图库会慢一点', 'warn');
+            Sleepy.media.available().then(function (yes) {
+              if (!yes) { send(); return; }
+              Sleepy.media.put(f, { name: f.name, kind: 'video' }).then(function (id) {
+                var m = send({ mediaId: id, size: f.size, mime: f.type || '' });
+                /* 读懂层：抽帧送视频理解 API，回的文字写回这条消息，
+                   并让角色据此回应。没配 API 时 analyzeAndInject 内部优雅跳过。 */
+                if (m && Sleepy.videoUnderstand) {
+                  Sleepy.videoUnderstand.analyzeAndInject(chatId, m.id, id, {
+                    requestReply: requestReply,
+                    patchMessage: patchMessage,
+                    toast: ctx.toast
+                  });
+                }
+              });
+            }).then(null, function () {
+              ctx.toast('视频没能存进图库', 'warn');
+              send();
+            });
+            return;
+          }
           send();
 
           function send(extra) {
             extra = extra || {};
-            addMessage(chatId, {
+            var m = {
               id: newId(),
               role: 'user',
               type: kind,
@@ -6571,12 +6621,14 @@
               mediaId: extra.mediaId || null,
               w: extra.w || 0,
               h: extra.h || 0,
-              content: (kind === 'photo' ? '[照片] ' : '[文件] ') + f.name,
+              content: (kind === 'photo' ? '[照片] ' : (kind === 'video' ? '[视频] ' : '[文件] ')) + f.name,
               timestamp: Date.now()
-            });
+            };
+            addMessage(chatId, m);
             closePanel();
             renderMessages();
-            ctx.toast(kind === 'photo' ? '照片发出去了' : '文件发出去了', 'ok');
+            ctx.toast(kind === 'photo' ? '照片发出去了' : (kind === 'video' ? '视频发出去了' : '文件发出去了'), 'ok');
+            return m;
           }
         });
         document.body.appendChild(input);
@@ -6658,6 +6710,7 @@
 
       var PLUS_ITEMS = [
         { id: 'photo', svg: PLUS_ICON.photo, name: '发照片', run: function () { pickAttachment('image/*', 'photo'); } },
+        { id: 'video', svg: PLUS_ICON.video, name: '发视频', run: function () { pickAttachment('video/*', 'video'); } },
         { id: 'file', svg: PLUS_ICON.file, name: '发文件', run: function () { pickAttachment('', 'file'); } },
         { id: 'transfer', svg: PLUS_ICON.transfer, name: '转账', run: openTransfer },
         { id: 'pat', svg: PLUS_ICON.pat, name: '拍一拍', run: function () { patChar(); } },
