@@ -58,4 +58,4 @@ echo "自查通过：运行时要用的都在，文档/归档/脚本都不在。
 node "$(dirname "$0")/gen-version.js" "$OUT"
 
 cd "$OUT"
-wrangler pages deploy . --project-name sleepy --branch main --commit-hash="$H" --commit-dirty=true
+wrangler pages deploy . --project-name sleepy --branch master --commit-hash="$H" --commit-dirty=true

@@ -168,7 +168,7 @@ const ISSUE_PAGE = `<!DOCTYPE html>
 <body>
 <div class="card">
   <h1>领取激活码</h1>
-  <p class="sub">在这里登记 QQ 号，当场免费生成激活码；然后打开 Sleepy，用激活码 + 这个 QQ 号完成激活并设置密码。</p>
+  <p class="sub">在这里登记 QQ 号，当场生成激活码；然后打开 Sleepy，用激活码 + 这个 QQ 号完成激活并设置密码。</p>
   <label for="qq">QQ 号（5–12 位数字）</label>
   <input id="qq" inputmode="numeric" maxlength="12" placeholder="例如 123456789">
   <label for="key" style="margin-top:12px;">领取口令</label>
