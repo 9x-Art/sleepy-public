@@ -1221,6 +1221,8 @@
       note: '有表情包才注入' },
     { id: 'genimg', slot: 'C04', name: '发图能力', kind: 'program', required: false,
       note: '配置生图接口后才注入（[生图:描述]）' },
+    { id: 'avatarswap', slot: 'C04', name: '换头像能力', kind: 'program', required: false,
+      note: '外观页开关打开 + TA 头像库里有图才注入（[换头像:名字]，纯本地零接口）' },
     { id: 'htmlgame', slot: 'C04', name: 'HTML 小游戏', kind: 'card', required: false,
       note: '常开：[html]…[/html] 送一个能直接玩的小游戏（沙箱渲染，纯本地零接口）' },
     { id: 'phone', slot: 'C04', name: '手机痕迹', kind: 'program', required: false,
@@ -1780,6 +1782,28 @@
     return '';
   }
 
+  /* 换头像说明（2026-10-27）：**开关开着 + 头像库里有图**才注入。
+     关着的时候一个字都不提 —— 换头像是显眼动作，没授权就教模型怎么写
+     标签，等于悄悄把自主权给了它（用户明确要「默认关」）。
+     库里每张的名字都列出来，模型靠名字认图，[换头像:名字] 才指得准。
+     只从 TA 自己的库里挑，不生图、不联网。 */
+  function compileAvatarSwap(charId) {
+    var ch = charId && core.findChar(charId);
+    if (!ch || !ch.allowSelfAvatar) return '';
+    var lib = Array.isArray(ch.avatarLib) ? ch.avatarLib : [];
+    var names = [];
+    lib.forEach(function (x) {
+      var n = String((x && x.label) || '').trim();
+      if (n) names.push(n);
+    });
+    if (!names.length) return '';
+    return '你有一个自己的头像库，里面有：' + names.join('、') + '。' +
+      '什么时候想换头像都可以（比如看见对方的头像，想换成跟它一对的那张），' +
+      '就单独一行写 [换头像:名字]，如 [换头像:' + names[0] + ']。' +
+      '这是你自己的主意，想换才换；不用每条都换，也不用先问对方。' +
+      '写完照常说话就行，不用在正文里解释这个标签。';
+  }
+
   /* 收藏提议说明（We 收藏馆 P2）：当前岛有「可提议」的日程事件才注入。
      候选闭集直接列出（id 来自真实日历），模型只能从里面挑 ——
      伪造 id / 自报标题在程序侧 fail closed（page-we-proposal.js 的
@@ -2153,6 +2177,7 @@
         case 'narr': pushSlot(def, narrCard(ctx.narr)); break;
         case 'stickers': pushSlot(def, compileStickers()); break;
         case 'genimg': pushSlot(def, compileGenimg()); break;
+        case 'avatarswap': pushSlot(def, compileAvatarSwap(charId)); break;
         case 'htmlgame': pushSlot(def, cardBody('htmlgame')); break;
         case 'weproposal': pushSlot(def, compileWeProposal(charId)); break;
         case 'wenote': pushSlot(def, compileWeNote()); break;

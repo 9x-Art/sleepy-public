@@ -1334,6 +1334,72 @@
     return { text: text, patted: hit, suffix: suffix };
   }
 
+  /* TA 自己换头像（2026-10-27）：回复里写 [换头像:名字] = 「我想换成那一
+     张」。名字对的是 TA 头像库里某张的 label（库在编辑角色里存，可起名）；
+     不写名字 = 让 TA 挑，程序取库里第一张。
+     和 [表情:名字] 完全同一套机制 —— 模型只说「想换」，程序去挑图落库。
+     ⚠️ 开关（角色记录 allowSelfAvatar）关着时**照剥不执行**：
+        标签不能留在正文里泄漏，但也不该让 TA 偷偷换掉头像。 */
+  function extractAvatarSwaps(raw) {
+    var names = [];
+    var text = String(raw == null ? '' : raw)
+      .replace(/\[换头像(?:[：:]\s*([^\]\n]*?)\s*)?\]/g, function (_, n) {
+        names.push(String(n || '').trim());
+        return '';
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return { text: text, names: names };
+  }
+
+  /* 执行换头像。三道闸：开关 / 库里要有图 / 换的那张不能就是当前这张。
+     返回 { name, label } 给调用方落提示，任何一道没过就返回 null（静默）。
+     图**只能来自 TA 自己的头像库** —— 不生图、不联网，纯本地。 */
+  function applyCharAvatarSwap(chatId, names) {
+    var c = getChat(chatId);
+    var ch = findCharacter(c ? c.characterId : null);
+    if (!ch) return null;
+    if (!ch.allowSelfAvatar) return null;
+    var lib = Array.isArray(ch.avatarLib) ? ch.avatarLib : [];
+    if (!lib.length) return null;
+    var key = String((names && names[0]) || '').trim();
+    var want = null;
+    if (key) {
+      for (var i = 0; i < lib.length; i++) {
+        var lb = String(lib[i].label || '');
+        if (lb && (lb.indexOf(key) >= 0 || key.indexOf(lb) >= 0)) { want = lib[i]; break; }
+      }
+    }
+    if (!want) want = lib[0];
+    if (!want || !want.id) return null;
+    if (ch.avatarMedia === want.id) return null;   /* 本来就是这张，不折腾 */
+    core.upsertChar({ id: ch.id, avatarMedia: want.id, avatar: '' });
+    return { name: ch.name || '对方', label: want.label || '新头像' };
+  }
+
+  /* 换头像的说明书（给模型看的那一行）。
+     只在**开关开着 + 库里真有图**时才给它 —— 没开就一个字都不提，
+     不然模型照猫画虎，平白多出「我要换头像」这种没由头的动作。
+     库里每张的名字都列出来：模型靠名字认图，写 [换头像:名字] 才指得准。 */
+  function avatarSwapSpec(chatId) {
+    var c = getChat(chatId);
+    var ch = findCharacter(c ? c.characterId : null);
+    if (!ch || !ch.allowSelfAvatar) return '';
+    var lib = Array.isArray(ch.avatarLib) ? ch.avatarLib : [];
+    var names = [];
+    lib.forEach(function (x) {
+      var n = String((x && x.label) || '').trim();
+      if (n) names.push(n);
+    });
+    if (!names.length) return '';
+    return '你有一个自己的头像库，里面有：' + names.join('、') + '。' +
+      '什么时候想换头像都可以（比如看见对方的头像，想换成跟它一对的那张），' +
+      '就单独一行写 [换头像:名字]，如 [换头像:' + names[0] + ']。' +
+      '这是你自己的主意，想换才换；不用每条都换，也不用先问对方。' +
+      '写完照常说话就行，不用在正文里解释这个标签。';
+  }
+
   /* TA 主动发图：回复里写 [生图:一句话中文描述]（说明书在 imggen.replySpec，
      注入逻辑同表情包）。程序抽标签 → 生图 → 落成 assistant 图片消息。
      全角半角冒号都认；一次回复多张也认（发送时最多取 2 张防刷）。 */
@@ -5737,6 +5803,9 @@
           var gspec = Sleepy.imggen.replySpec();
           if (gspec) out.unshift({ role: 'system', content: gspec });
         }
+        /* 换头像说明书：开关开着 + 库里有图才注入（关着时一个字都不提） */
+        var avSpecOld = avatarSwapSpec(chatId);
+        if (avSpecOld) out.unshift({ role: 'system', content: avSpecOld });
         /* 小游戏结算：引擎关掉时也照垫（同引擎路径 gameResultPeekMsg） */
         var gamePeekOld = gameResultPeekMsg(chatId);
         if (gamePeekOld) out.push(gamePeekOld);
@@ -6076,6 +6145,10 @@
             var gi = extractGenimgs(finalText);
             finalText = gi.text;
 
+            /* [换头像:名字] 同样抽掉 —— TA 想换头像，正文里不出现标签 */
+            var av = extractAvatarSwaps(finalText);
+            finalText = av.text;
+
             /* [html]…[/html] 同样抽掉 —— TA 想送一个小游戏。落成 type:'html'
                的正式消息（沙箱渲染，见 commitHtmlGame / htmlGameCard）。
                心声里出现的话只剥不收：游戏是「送给对方玩」的，塞进
@@ -6171,7 +6244,7 @@
 
             if (!finalText && !st.names.length && !pt.patted && !gi.descs.length &&
                 !wp.hit && !pdApplied && !rc.hits.length && !ln.hits.length &&
-                !sm.hits.length && !hg.hit) {
+                !sm.hits.length && !hg.hit && !av.names.length) {
               ctx.toast('这次没出声，要不再试一次？', 'warn');
               renderMessages();
               updateSendUI();
@@ -6244,6 +6317,20 @@
             if (rc.hits.length) applyCharRecalls(chatId, rc.hits, replyMsgId || target);
             /* TA 发的图排在表情后面，一次最多 2 张防刷 */
             gi.descs.slice(0, 2).forEach(function (desc) { charSendPhoto(desc); });
+            /* TA 自己换头像排在动作类后面：它改的是角色记录，不落气泡本体，
+               只留一句灰字让对方知道「TA 换了一张」（换不成则什么都不留）。 */
+            if (av.names.length) {
+              var sw = applyCharAvatarSwap(chatId, av.names);
+              if (sw) {
+                addMessage(chatId, {
+                  id: newId(), role: 'assistant', type: 'avatar-swap',
+                  content: '「' + sw.name + '」换了一张头像' +
+                    (sw.label ? '（' + sw.label + '）' : ''),
+                  timestamp: Date.now()
+                });
+                ctx.toast('TA 换头像了', 'ok');
+              }
+            }
             /* HTML 小游戏排在图后面（同是「作品」类附件，一次一条） */
             if (hg.hit) commitHtmlGame(chatId, hg.hit, hg.truncated);
             /* 收藏提议排在图后面（We 收藏馆 P2）：创建 proposal（校验/去重/

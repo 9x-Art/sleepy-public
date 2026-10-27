@@ -558,11 +558,147 @@
       el: wrap,
       get: function () { return url; },
       getMedia: function () { return mediaId; },
+      /* 给「头像库」用：外面挑好了哪张，直接把这张设为当前头像。
+         走的是和点框选图完全同一条路（改 mediaId + 重画），
+         所以保存/落库的口径一致，不会多出一种头像写回方式。 */
+      setMedia: function (mid) {
+        mediaId = mid || '';
+        url = '';
+        paintBox();
+        repaintActs();
+      },
       setName: function (n) {
         if (existing && existing.avatarMedia) return;   /* 有图就别动首字 */
         initial = (n && String(n).trim()) ? String(n).trim().charAt(0)
           : (opts.initial || opts.empty || '＋');
         paintBox();
+      }
+    };
+  }
+
+  /* 头像库（2026-10-27）：**每个角色自己一份**，存在角色记录里（avatarLib）。
+     以前是「单张头像」—— 每次选一张就把上一张盖掉；想换来回得重选图。
+     现在是：你往库里存好几张，点哪张哪张就是当前头像；角色自己想换的时候
+     也只能从这里头挑（见 page-chat 的 [换头像:…] 与外观页的开关）。
+
+     数据结构：avatarLib = [{ id: mediaId, label: '名字' }]
+       · id    图库里的 mediaId（不存 base64，和别处一个口径）
+       · label 名字，角色自己换头像时靠它认图（[换头像:名字]）
+     用法：f.lib = avatarLibField(existing, { onPick, toast }); 保存时取 f.lib.get()。 */
+  function avatarLibField(existing, opts) {
+    opts = opts || {};
+    var toast = opts.toast || function () {};
+    var lib = (existing && Array.isArray(existing.avatarLib))
+      ? existing.avatarLib.map(function (x) { return { id: x.id, label: x.label || '' }; })
+      : [];
+
+    var wrap = h('div', 'av-lib');
+    var head = h('div', 'av-lib-head');
+    head.appendChild(h('span', 'av-lib-title', '头像库'));
+    head.appendChild(h('span', 'av-lib-note', '存几张，点一下就换成它'));
+    wrap.appendChild(head);
+
+    var grid = h('div', 'av-lib-grid');
+    wrap.appendChild(grid);
+
+    var file = h('input');
+    file.type = 'file';
+    file.accept = 'image/*';
+    file.style.display = 'none';
+    file.addEventListener('change', function () {
+      var picked = file.files && file.files[0];
+      file.value = '';
+      if (!picked) return;
+      if (!Sleepy.media || !Sleepy.media.shrink || !Sleepy.media.put) {
+        toast('图库没就绪，加不了', 'err');
+        return;
+      }
+      toast('正在处理图片…');
+      Sleepy.media.shrink(picked, 320).then(function (r) {
+        return Sleepy.media.put(r.blob, { name: '头像', kind: 'avatar', w: r.w, h: r.h });
+      }).then(function (mid) {
+        lib.push({ id: mid, label: '头像' + (lib.length + 1) });
+        paint();
+        toast('加进库了，别忘了保存', 'ok');
+      }, function () {
+        toast('这张图读不出来', 'err');
+      });
+    });
+    wrap.appendChild(file);
+
+    var addBtn = button('＋ 从相册加一张', 'ghost', function () { file.click(); });
+    addBtn.classList.add('av-lib-add');
+    wrap.appendChild(addBtn);
+
+    function paint() {
+      grid.innerHTML = '';
+      if (!lib.length) {
+        grid.appendChild(h('span', 'av-lib-empty', '还是空的 —— 加几张，TA 也能自己挑着换'));
+        return;
+      }
+      lib.forEach(function (it, i) {
+        var cell = h('button', 'av-lib-cell');
+        cell.type = 'button';
+        var box = h('span', 'av-lib-thumb');
+        core.setAvatarBg(box, { avatarMedia: it.id });
+        cell.appendChild(box);
+        cell.appendChild(h('span', 'av-lib-label', it.label || ('第' + (i + 1) + '张')));
+        /* 点 = 设为当前头像 */
+        cell.addEventListener('click', function () {
+          if (opts.onPick) opts.onPick(it.id);
+          toast('换成这张了，别忘了保存', 'ok');
+        });
+        /* 长按/右键 = 改名字（角色靠名字认图） */
+        cell.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          rename(i);
+        });
+        /* 右上角小叉 = 从库里删掉（不删图库本体？——这里连本体一起删，
+           免得库里没了、图库里还躺着一堆找不到的孤儿图） */
+        var del = h('span', 'av-lib-del', '×');
+        del.title = '从库里删掉';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          lib.splice(i, 1);
+          if (Sleepy.media && Sleepy.media.remove) Sleepy.media.remove(it.id);
+          paint();
+          toast('删掉了');
+        });
+        cell.appendChild(del);
+        grid.appendChild(cell);
+      });
+    }
+
+    function rename(i) {
+      var it = lib[i];
+      if (!it || !ui || !ui.prompt) return;
+      /* 名字是给**角色**看的：它自己想换头像时写 [换头像:名字]，
+         所以这名字要能让它认出是哪张（比如「和你一对的那张」）。 */
+      ui.prompt({
+        title: '给这张头像起个名字',
+        note: '角色自己换头像时靠这个名字认图',
+        value: it.label || '',
+        ok: '就叫这个'
+      }).then(function (v) {
+        if (v === null) return;
+        it.label = String(v).trim().slice(0, 20);
+        paint();
+      });
+    }
+
+    paint();
+
+    return {
+      el: wrap,
+      get: function () { return lib.slice(); },
+      /* 给「角色自己换头像」用：按名字找一张，找不到就返回 null */
+      findByLabel: function (name) {
+        var key = String(name || '').trim();
+        if (!key) return lib.length ? lib[0] : null;
+        for (var i = 0; i < lib.length; i++) {
+          if (String(lib[i].label || '').indexOf(key) >= 0) return lib[i];
+        }
+        return null;
       }
     };
   }
@@ -895,6 +1031,14 @@
     top.appendChild(cols);
     form.appendChild(top);
 
+    /* 头像库：每个角色自己一份，存多张、点哪张哪张就是当前头像。
+       放在头像下面——它是「头像这件事」的一部分，不是另开一页。 */
+    f.lib = avatarLibField(existing, {
+      toast: function (t, k) { ctx.toast(t, k); },
+      onPick: function (mid) { f.avatar.setMedia(mid); }
+    });
+    form.appendChild(f.lib.el);
+
     f.content = textArea({
       label: '人设',
       value: existing ? existing.content : '',
@@ -985,6 +1129,7 @@
         wechatName: String(f.wechatName.get() || '').trim(),
         avatar: String(f.avatar.get() || '').trim(),
         avatarMedia: f.avatar.getMedia(),
+        avatarLib: f.lib ? f.lib.get() : ((existing && existing.avatarLib) || []),
         content: f.content.get()
       };
       /* 大号、皮套、NPC 都按岛建（2026-09-21 拍板：每岛一份，无全局大号）。
@@ -2229,6 +2374,7 @@
   /* 头像字段（网址 + 本地图）—— 岛屿配置台的 NPC 编辑页也用它，
      保证「所有角色都有同一个头像入口」（用户 2026-09-21）。 */
   Sleepy.avatarFieldLocal = avatarFieldLocal;
+  Sleepy.avatarLibField = avatarLibField;
   /* 头像框（点框换图）：编辑页的同学录排版用它，NPC 添加页也走同一个 ——
      头像入口全站只有一个形状 */
   Sleepy.faceField = faceField;

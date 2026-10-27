@@ -566,6 +566,38 @@
       });
       gScope.appendChild(scopeChips);
 
+      /* ---- TA 的自主权：让不让 TA 自己换头像 ----
+         默认**关**：换头像是件很显眼的事（聊天里每张气泡都跟着变），
+         不该让角色自作主张。你打开它，TA 才能在自己想换的时候从
+         「TA 的头像库」里挑一张换上（库在编辑角色里存，每张可以起名字）。
+         开关直接写角色记录（allowSelfAvatar），不混进外观配置。 */
+      var gSelf = groupEl('TA 的自主权');
+      var selfOn = !!(char && char.allowSelfAvatar);
+      var selfRow = h('div', 'cap-chips');
+      var selfBtn = h('button', 'cap-chip' + (selfOn ? ' active' : ''), selfOn ? '开' : '关');
+      selfBtn.type = 'button';
+      selfRow.appendChild(selfBtn);
+      gSelf.appendChild(selfRow);
+      var selfInfo = h('p', 'cap-hint', '');
+      gSelf.appendChild(selfInfo);
+      var libCount = (char && Array.isArray(char.avatarLib)) ? char.avatarLib.length : 0;
+      selfInfo.textContent = '允许 TA 自己换头像（从 TA 的头像库里挑，库里现在有 ' +
+        libCount + ' 张）· 库在「编辑角色」里存';
+
+      selfBtn.addEventListener('click', function () {
+        if (!char) { ctx.toast('这个聊天没有角色', 'warn'); return; }
+        var n = (char && Array.isArray(char.avatarLib)) ? char.avatarLib.length : 0;
+        if (!selfOn && !n) {
+          ctx.toast('TA 的头像库还是空的 —— 先去「编辑角色」里存几张', 'warn');
+          return;
+        }
+        selfOn = !selfOn;
+        Sleepy.core.upsertChar({ id: char.id, allowSelfAvatar: selfOn });
+        selfBtn.classList.toggle('active', selfOn);
+        selfBtn.textContent = selfOn ? '开' : '关';
+        ctx.toast(selfOn ? 'TA 可以自己换头像了' : '已收回，TA 不能自己换了', 'ok');
+      });
+
       /* 恢复默认 */
       var reset = h('button', 'cap-reset', '恢复默认外观');
       reset.type = 'button';
