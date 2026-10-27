@@ -602,7 +602,28 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v271';
+var CACHE = 'sleepy-v272';
+
+/* v272（2026-10-27 晚）：发视频 + 头像库 + char 自主换头像 ——
+   · 新增 video-understand.js（视频读懂：抽帧改自适应「每秒 1 帧，夹到
+     6~24 帧」+ 音轨抽 16k 单声道 WAV 送 input_audio；端点不认音频时
+     自动降级重试一次只发画面）+ index.html 加载列表 +1；
+   · page-chat.js：加号面板「发视频」（存图库 kind:'video'，100MB 硬闸 /
+     50MB 软提醒）、消息 type:'video' 用 <video> 播放、attachText 把
+     caption 带进上下文；新增 [换头像:名字]（extractAvatarSwaps /
+     applyCharAvatarSwap，三道闸：开关 / 库非空 / 不是当前这张），
+     换完落一条 type:'avatar-swap' 灰字；
+   · page-idcard.js：新增 avatarLibField（每 char 一份头像库，
+     avatarLib=[{id,label}]，点选设当前 / 右键改名 / 小叉删除）+
+     faceField 补 setMedia 供外部设图；
+   · page-char-appearance.js：外观页「TA 的自主权」开关（allowSelfAvatar，
+     默认关；库是空的时候点开会拦一把，先去存图）；
+   · prompt-engine.js：ONLINE_SLOTS 加 avatarswap 槽 + compileAvatarSwap
+     （与 page-chat 旧路径双份同款；开关关着时两边都不注入）；
+   · page-singleapi.js / page-settings.js：新增「视频理解 API」
+     （singleApi kind:'video'，OpenAI 兼容，单份一页表单）；
+   · style.css：.msg-video*（视频气泡）+ .av-lib*（头像库网格）。
+   → 必须跳版本：上面这些运行时脚本全变了。 */
 
 /* v271（2026-10-26 晚）：全屏 + 心声星瓶 ——
    · manifest.json：display_override 加 fullscreen（真机上系统状态栏那条

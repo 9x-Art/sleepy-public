@@ -17110,7 +17110,14 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    加 fullscreen）/ page-desktop.js（starbottle 渲染器 + islandWhispers /
    starBottleSvg / starPop）/ page-widgetstore.js（上架 + 缩样）/ style.css
    （.w-starbottle / .wsb-* / .ws-mock--bottle）变了。基准随批 v270 → v271。 */
-const EXPECTED_SW_CACHE = 'sleepy-v271';
+/* v272（2026-10-27 晚）：发视频 + 头像库 + char 自主换头像 ——
+   video-understand.js（新增模块，自适应抽帧 + 音轨）/ index.html（加载列表 +1）/
+   page-chat.js（发视频 + [换头像] 标签）/ page-idcard.js（avatarLibField +
+   faceField.setMedia）/ page-char-appearance.js（TA 的自主权开关）/
+   prompt-engine.js（avatarswap 槽）/ page-singleapi.js + page-settings.js
+   （视频理解 API）/ style.css（.msg-video* + .av-lib*）变了。
+   基准随批 v271 → v272。 */
+const EXPECTED_SW_CACHE = 'sleepy-v272';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
