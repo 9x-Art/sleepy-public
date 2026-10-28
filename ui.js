@@ -257,6 +257,94 @@
     return (n / 1024 / 1024).toFixed(2) + ' MB';
   }
 
+  /* ---------------------------- 受限 markdown 渲染 ----------------------------
+     2026-10-28：从 page-chat.js 提到这一层，做**一份实现**三处共用 ——
+       · 线上聊天气泡（page-chat）
+       · 旁白叙事条（同一页，但走块级渲染）
+       · 线下模式的叙事段落（page-offline）
+     以前线下那边是纯 textContent，模型写的 **粗体** / 换行全变字面，
+     线上这边又把「段内换行」折叠成空格 —— 两头都在掉格式。
+
+     认的语法就这几种（其余原样当文本）：
+       粗体 **x** / 斜体 *x* _x_ / 行内代码 `x` /
+       代码块 ``` / 引用 > / 有序·无序列表 / 安全链接 [t](http(s)://…)
+     禁裸 HTML、<script>、内联事件、javascript: —— 文本走 textContent、
+     结构走 createElement，天然消毒；XSS 无从下手。
+
+     段内换行落成 <br>：模型爱把一句话摊成两行，折叠成一行就等于掉格式。 */
+  var MD_INLINE_RE = /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(_([^_]+)_)|(`([^`]+)`)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g;
+
+  function appendText(node, text) {
+    if (text === undefined || text === null || text === '') return;
+    var parts = String(text).split('\n');
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0) node.appendChild(document.createElement('br'));
+      if (parts[i]) node.appendChild(document.createTextNode(parts[i]));
+    }
+  }
+
+  /* 行内：把 text 里的行内语法渲染进 node（node 已有内容就接着追加） */
+  function mdInline(text, node) {
+    var re = new RegExp(MD_INLINE_RE.source, 'g');
+    var last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) appendText(node, text.slice(last, m.index));
+      if (m[2] !== undefined) { var b = h('b', 'md-b'); b.textContent = m[2]; node.appendChild(b); }
+      else if (m[4] !== undefined) { var it = h('i', 'md-i'); it.textContent = m[4]; node.appendChild(it); }
+      else if (m[6] !== undefined) { var it2 = h('i', 'md-i'); it2.textContent = m[6]; node.appendChild(it2); }
+      else if (m[8] !== undefined) { var cd = h('code', 'md-inline'); cd.textContent = m[8]; node.appendChild(cd); }
+      else if (m[10] !== undefined) {
+        var a = h('a', 'md-a'); a.textContent = m[10];
+        a.href = m[11]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        node.appendChild(a);
+      }
+      last = re.lastIndex;
+    }
+    if (last < text.length) appendText(node, text.slice(last));
+  }
+
+  /* 块级：按行拆段 → 段落 / 代码块 / 引用 / 列表 */
+  function renderMd(text, el) {
+    var lines = String(text === undefined || text === null ? '' : text).split('\n');
+    var para = [], i = 0;
+    function flush() {
+      if (!para.length) return;
+      var p = h('p', 'md-p'); mdInline(para.join('\n'), p); el.appendChild(p); para = [];
+    }
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^\s*```/.test(line)) {
+        flush(); var code = []; i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
+        i++;
+        var pre = h('pre', 'md-pre'), co = h('code', 'md-code');
+        co.textContent = code.join('\n'); pre.appendChild(co); el.appendChild(pre); continue;
+      }
+      if (/^>\s?/.test(line)) {
+        flush(); var q = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(lines[i].replace(/^>\s?/, '')); i++; }
+        var bq = h('blockquote', 'md-quote'); mdInline(q.join('\n'), bq); el.appendChild(bq); continue;
+      }
+      if (/^[-*]\s+/.test(line)) {
+        flush(); var ul = h('ul', 'md-ul');
+        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+          var li = h('li', 'md-li'); mdInline(lines[i].replace(/^[-*]\s+/, ''), li); ul.appendChild(li); i++;
+        }
+        el.appendChild(ul); continue;
+      }
+      if (/^\d+\.\s+/.test(line)) {
+        flush(); var ol = h('ol', 'md-ol');
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+          var li2 = h('li', 'md-li'); mdInline(lines[i].replace(/^\d+\.\s+/, ''), li2); ol.appendChild(li2); i++;
+        }
+        el.appendChild(ol); continue;
+      }
+      if (!line.trim()) { flush(); i++; continue; }
+      para.push(line); i++;
+    }
+    flush();
+  }
+
   /* ---------------------------- 时间 ---------------------------- */
 
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
@@ -832,6 +920,9 @@
     button: button,
     note: note,
     fmtBytes: fmtBytes,
+    /* 受限 markdown 渲染（线上气泡 / 旁白叙事条 / 线下叙事段落共用一份） */
+    mdInline: mdInline,
+    renderMd: renderMd,
     timeStr: timeStr,
     dateStr: dateStr,
     relativeTime: relativeTime,

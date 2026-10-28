@@ -48,6 +48,16 @@
      不会踩「自定义属性在声明处冻结」那个坑。 */
   --ink-halo:0 0 1px rgba(255,255,255,1),0 0 4px rgba(255,255,255,.9),0 1px 9px rgba(255,255,255,.6);
 
+  /* ---- iOS 安全区（2026-10-28 重做）----
+     这两个变量是**全项目安全区的唯一入口**：先给 env 兜底值，
+     iOS 上由 app.js 的探针用**渲染值**覆盖（getComputedStyle 读 env()
+     在 standalone 下恒 0，是 WebKit 的老怪癖；CSS 渲染永远是对的）。
+     消费点一律写 var(--safe-top) / var(--safe-bottom)，
+     **别再直接写 env(...)** —— 那会绕过测量，iOS 26.1 那类
+     「env 被系统收回」的版本就全失效了。 */
+  --safe-top:env(safe-area-inset-top, 0px);
+  --safe-bottom:env(safe-area-inset-bottom, 0px);
+
   /* 字色跟着底色一起转冷：暖深棕压在奶蓝底上会发脏（棕+蓝=灰），
      所以整支换成冷墨蓝灰，对比度不变、但跟底是同一个色系。 */
   --g-ink:#2F3A47;             /* 冷墨：主文字 */
@@ -302,8 +312,8 @@ body{
      代价：所有页面内容会往上移 32px，由 .page-inner 的 padding-top 补回来。 */
   position:absolute;
   top:0;left:0;right:0;
-  padding:calc(env(safe-area-inset-top) + 8px) 24px 0;
-  height:calc(env(safe-area-inset-top) + 32px);
+  padding:calc(var(--safe-top) + 8px) 24px 0;
+  height:calc(var(--safe-top) + 32px);
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -314,6 +324,14 @@ body{
      （同一条规则里后者胜出，改的时候踩过一次：computed 还是 relative）。 */
   z-index:60;
 }
+
+/* iOS（Safari / 加到主屏的 PWA 都一样）：**系统状态栏永远可见**——
+   真实的时间电量由系统画在屏幕最顶上。app 自己再画一条假状态栏，
+   时间就跟系统时间戳叠在一起（用户 2026-10-28 报「和系统时间戳冲突」）。
+   所以 iOS 上整条藏掉，顶部只留系统的那条；安全区让位走 --safe-top。
+   Android 认 manifest 的 fullscreen：系统栏整个不存在，假状态栏必须留。
+   class 由 app.js 启动时按 UA 打（html.ios）。 */
+html.ios #statusbar{display:none;}
 
 #stack{
   position:relative;
@@ -626,7 +644,7 @@ body{
   /* padding-top = 状态栏的高度：状态栏现在是 absolute 浮着的（不占布局），
      所以由这里把位置补回来 —— 这样所有页面的视觉跟以前一模一样，
      而状态栏背后看见的正是「页面自己的顶」。 */
-  padding:calc(env(safe-area-inset-top) + 32px) 22px calc(env(safe-area-inset-bottom) + 22px);
+  padding:calc(var(--safe-top) + 32px) 22px calc(var(--safe-bottom) + 22px);
   display:flex;
   flex-direction:column;
   min-height:100%;
@@ -640,7 +658,7 @@ body{
   /* 吸顶要让开状态栏那一条 —— 状态栏是 absolute 浮着的，
      写 top:0 的话页面一滚，顶栏就钻到状态栏底下跟时间电量叠字。
      这个值跟 .page-inner 的 padding-top 是同一个数，所以起滚时不跳。 */
-  top:calc(env(safe-area-inset-top) + 32px);
+  top:calc(var(--safe-top) + 32px);
   background:var(--surface-solid);
   z-index:5;
 }
@@ -1394,7 +1412,11 @@ body{
    （见下面 chat-detail 那段），.page-inner 的 padding-bottom 已经撤了，
    所以这一条要自己留出刘海屏底部那条的位置。 */
 .input-area{
-  padding:10px 14px calc(env(safe-area-inset-bottom) + 14px);
+  /* 底部：安全区 + 8px。以前是 +14 —— iOS 上安全区本身就有 ~34px
+     （home 条带），加完 48px 观感是「底栏太高、下面空一截」
+     （用户 2026-10-28），收到 8px。桌面/Android fullscreen 下 env=0，
+     这里就是 8px，比原来的 14 稍紧但还在呼吸。 */
+  padding:10px 14px calc(var(--safe-bottom) + 8px);
   background:var(--bg-2);
   border-top:1px solid var(--line);
   display:flex;align-items:flex-end;gap:8px;
@@ -1466,16 +1488,23 @@ body{
 }
 .plus-btn:active{transform:scale(.92);}
 
-/* 面板：贴在输入区上方，靠 .is-open 控制显隐 */
+/* 面板：展开在输入区**下面**（2026-10-28 微信口径），独立小格子网格。
+   一行四个；格子是白色圆角方块、图标住格子里、名字在格子下面。 */
 .plus-panel{
   display:none;
-  flex-wrap:wrap;
-  gap:8px;
-  padding:12px 16px;
+  grid-template-columns:repeat(4,1fr);
+  gap:18px 8px;
+  padding:18px 18px calc(var(--safe-bottom) + 20px);
   background:var(--bg-2);
   border-top:1px solid var(--line);
+  /* flex:none —— 面板是**最后一行**，不该被 flex 压扁（压扁了末行格子会被裁掉）。
+     太高时自己内部滚，腾出的高度让给上面的消息区。 */
+  flex:none;
+  max-height:46vh;overflow-y:auto;
 }
-.plus-panel.is-open{display:flex;}
+.plus-panel.is-open{display:grid;}
+/* 面板开了，安全区让给面板自己（否则输入行下面空一截又垫一次安全区） */
+.chat-foot:has(.plus-panel.is-open) .input-area{padding-bottom:10px;}
 
 /* ---- 情绪印章（2026-10-06）：点「我」的头像选章 → 落输入框 → 发时让角色感知 ---- */
 /* 头像提示可点 */
@@ -1521,28 +1550,47 @@ body{
 .mood-bubble-label{font-size:13px;line-height:1;color:var(--text);opacity:.85;}
 
 .plus-item{
-  flex:1 1 20%;
-  min-width:0;
-  display:flex;flex-direction:column;align-items:center;gap:6px;
-  padding:10px 4px;
-  background:var(--bg-3);
-  border:0;border-radius:12px;
-  color:var(--text-dim);font-family:inherit;font-size:11.5px;
-  cursor:pointer;
-  transition:transform .12s var(--ease), background .15s var(--ease);
+  display:flex;flex-direction:column;align-items:center;gap:7px;
+  padding:0;background:none;border:0;min-width:0;
+  font-family:inherit;cursor:pointer;
+  transition:transform .12s var(--ease);
 }
-.plus-item:active{transform:scale(.95);background:var(--bg-2);}
+.plus-item:active{transform:scale(.93);}
+.plus-item:active .plus-ic{background:var(--bg-3);}
+/* 白色圆角小格子：只住图标；按压/开关状态色都落在格子上 */
+.plus-item .plus-ic{
+  position:relative;
+  display:flex;align-items:center;justify-content:center;
+  width:100%;max-width:58px;aspect-ratio:1/1;
+  border-radius:17px;
+  background:var(--surface);
+  box-shadow:inset 0 0 0 1px var(--g-glass-line,rgba(120,132,156,.10));
+  color:var(--g-ink-2,var(--text-dim));
+  transition:background .15s var(--ease), color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.plus-ic svg{display:block;width:24px;height:24px;}
+.plus-name{
+  font-size:11px;line-height:1;color:var(--text-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
+}
+/* 开关类（翻译等）：状态小徽章贴在格子右上角，格子本身翻主题色 */
+.plus-item .plus-state{
+  position:absolute;top:4px;right:4px;
+  font-size:9px;line-height:1;padding:2px 4px;border-radius:999px;
+  background:var(--bg-3);color:var(--text-faint);
+}
+.plus-item.is-on .plus-ic{
+  background:var(--g-accent-pale);color:var(--g-accent-deep);
+  box-shadow:inset 0 0 0 1.5px var(--g-accent);
+}
+.plus-item.is-on .plus-state{background:var(--g-accent);color:#FFFDF9;}
+.plus-item.is-on .plus-name{color:var(--g-accent-deep);}
 .plus-item.is-soon{opacity:.45;cursor:default;}
-.plus-item.is-soon:active{transform:none;background:var(--bg-3);}
-/* 图标位统一成 22 见方，里面放线性 SVG。
-   （原来是 emoji 文字，各系统渲染不一样，摆一排像拼的） */
-.plus-ic{
-  display:inline-flex;align-items:center;justify-content:center;
-  width:22px;height:22px;
-  font-size:17px;line-height:1;
-}
-.plus-ic svg{display:block;width:100%;height:100%;}
-.plus-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.plus-item.is-soon:active{transform:none;}
+.plus-item.is-soon:active .plus-ic{background:var(--surface);}
+.plus-item.is-na{opacity:.42;cursor:default;}
+.plus-item.is-na:active{transform:none;}
+.plus-item.is-na:active .plus-ic{background:var(--surface);}
 
 /* 图标改用 .plus-ic 文字字形。
    老版这里每个 data-id 都挂了 ::before 的 SVG，但 8 条里有 5 条用的是
@@ -1551,12 +1599,8 @@ body{
 /* 移动端适配 */
 @media (max-width: 480px) {
   .plus-panel {
-    gap: 6px;
-    padding: 10px 12px;
-  }
-  .plus-item {
-    padding: 8px 4px;
-    font-size: 11px;
+    gap: 16px 6px;
+    padding: 16px 14px calc(var(--safe-bottom) + 18px);
   }
 }
 
@@ -2022,14 +2066,16 @@ body{
   line-height:19px;text-align:center;
   box-shadow:0 1px 3px rgba(120,132,156,.32);
 }
+/* 引用条（2026-10-28 微信口径）：泡下一行灰字「名字：内容」，
+   去掉左竖线，字多两行截断省略 —— 紧凑不抢正文。 */
 .msg-quote{
   font-size:11.5px;line-height:1.45;
   color:var(--text-faint);
-  border-left:2px solid var(--line);
-  padding:2px 0 2px 8px;
-  margin-bottom:6px;
+  padding:1px 0;
+  margin-bottom:5px;
   overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow-wrap:anywhere;
 }
 .msg-quote-bar{
   align-items:center;gap:10px;
@@ -2262,7 +2308,11 @@ body{
 .avatar-slot.head-name-slot .hb-dot{top:-2px;right:-4px;}
 
 /* ---------------------- 搜索聊天记录 ---------------------- */
-/* 盖在整个页面上：找的是「这段对话里说过的话」，动作很轻，不开新页面 */
+/* 盖在整个页面上：找的是「这段对话里说过的话」，动作很轻，不开新页面。
+   2026-10-28 微信口径：顶部一条「搜索框 + 取消」，下面「搜索指定内容」
+   分类网格；分类按我们自己的消息类型来。
+   ⚠️ 顶部必须让开状态栏（#statusbar 是绝对定位浮在页面上的，
+   z-index 60）：搜索条要是顶着最上边，「取消」就跟时间/电量叠一起了。 */
 .chat-search{
   position:absolute;inset:0;z-index:40;
   background:var(--surface-solid);
@@ -2271,26 +2321,75 @@ body{
 .chat-search.is-open{display:flex;}
 .chat-search-bar{
   flex:none;
-  display:flex;align-items:center;gap:10px;
-  padding:14px 18px;
-  border-bottom:1px solid var(--bg-3);
+  display:flex;align-items:center;gap:12px;
+  padding:calc(var(--safe-top) + 40px) 16px 12px;
+  background:var(--surface-solid);
+}
+/* 搜索框：圆角浅底 + 放大镜（微信那一行） */
+.chat-search-field{
+  flex:1;min-width:0;
+  display:flex;align-items:center;gap:8px;
+  background:var(--bg-2);
+  border-radius:999px;
+  padding:9px 14px;
+  color:var(--text-faint);
 }
 .chat-search-input{
   flex:1;min-width:0;
-  background:var(--bg-2);
-  border:1px solid var(--bg-3);border-radius:12px;
-  padding:10px 14px;
+  background:none;border:0;padding:0;
   color:var(--text);font:inherit;font-size:14px;
   outline:none;
 }
-.chat-search-input:focus{border-color:var(--accent,var(--bg-3));}
+.chat-search-input::placeholder{color:var(--text-faint);}
 .chat-search-close{
-  flex:none;background:none;border:0;cursor:pointer;
-  color:var(--accent-soft,var(--text-dim));font:inherit;font-size:13px;
+  flex:none;background:none;border:0;cursor:pointer;padding:2px 0;
+  color:var(--g-accent-deep,var(--text-dim));font:inherit;font-size:14px;
 }
+.chat-search-close:active{opacity:.6;}
+
+/* 空态：「搜索指定内容」+ 分类网格 */
+.chat-search-home{flex:none;padding:26px 8px 0;}
+.chat-search-cap{
+  margin:0 0 18px;padding:0 12px;
+  font-size:13px;color:var(--text-faint);text-align:center;
+}
+.chat-search-cats{
+  display:grid;grid-template-columns:repeat(3,1fr);
+  row-gap:20px;column-gap:6px;
+}
+.chat-search-cat{
+  background:none;border:0;padding:6px 4px;cursor:pointer;
+  font-family:inherit;font-size:13.5px;
+  color:var(--g-accent-deep,var(--text-dim));
+  text-align:center;
+  transition:opacity .15s var(--ease);
+}
+.chat-search-cat:active{opacity:.5;}
+.chat-search-cat-name{vertical-align:baseline;}
+/* 分类条数：淡淡的数字，告诉你哪一类值得点 */
+.chat-search-cat-n{
+  display:inline-block;margin-left:4px;
+  font-size:11px;color:var(--text-faint);
+  vertical-align:baseline;
+}
+
+/* 下半屏的对话概览（把空页填上信息，而不是留一大片白） */
+.chat-search-stat{
+  margin:26px 12px 0;
+  padding:14px 16px;
+  background:var(--bg-2);
+  border-radius:14px;
+}
+.chat-search-stat-row{
+  display:flex;align-items:baseline;gap:10px;
+  font-size:12.5px;line-height:2;
+}
+.chat-search-stat-k{flex:none;color:var(--text-faint);width:64px;}
+.chat-search-stat-v{flex:1;min-width:0;color:var(--text-dim);}
+
 .chat-search-results{
   flex:1;overflow-y:auto;
-  padding:10px 18px 24px;
+  padding:12px 16px 24px;
   display:flex;flex-direction:column;gap:8px;
 }
 .chat-search-empty{margin:24px 0;text-align:center;color:var(--text-faint);font-size:13px;}
@@ -2316,7 +2415,12 @@ body{
   0%,60%{box-shadow:0 0 0 2px var(--coral);}
   100%{box-shadow:none;}
 }
-.msg.is-flash{animation:msg-flash 1.6s var(--ease);}
+/* 搜索跳转命中后的高亮闪烁。
+   ⚠️ 选择器要对上气泡的真实类名（msg-bubble）：原来写的是 .msg.is-flash，
+   而气泡身上是 msg-bubble —— 选择器从来没匹配上，点了搜索结果「跳过去了，
+   但那一下没闪」（2026-10-28 修）。群聊气泡另有一套类名（gc-bubble）。 */
+.msg-bubble.is-flash,
+.gc-bubble.is-flash{animation:msg-flash 1.6s var(--ease);}
 
 /* ---------------------- E2 独立渲染层 ---------------------- */
 /* 面板做在**页面正中**，不是底部抽屉。
@@ -2982,7 +3086,7 @@ body{
   --dt-gap:16px;
   --dt-pad-top:26px;
   --dt-pad-bottom:132px;
-  --dt-chrome:calc(env(safe-area-inset-top) + 32px + var(--dt-pad-top) + var(--dt-pad-bottom));
+  --dt-chrome:calc(var(--safe-top) + 32px + var(--dt-pad-top) + var(--dt-pad-bottom));
   --dt-cell-w:calc((100vw - 40px - 3 * var(--dt-gap)) / 4);
   --dt-cell-h:calc((100dvh - var(--dt-chrome) - 5 * var(--dt-gap)) / 6);
   /* 取小：宽屏时按宽度算更小，矮屏时按高度算更小。
@@ -3490,7 +3594,7 @@ body{
 }
 .dt-pull{
   width:min(85%, 330px);
-  margin-top:calc(56px + env(safe-area-inset-top, 0px));
+  margin-top:calc(56px + var(--safe-top));
   padding:16px 14px 10px;
   border-radius:20px 16px 18px 22px / 18px 20px 16px 20px;
   background:var(--g-glass-2, rgba(255,255,255,.92));
@@ -3874,7 +3978,7 @@ body{
 .w-lamp-sign{
   position:absolute;
   left:0;right:0;
-  bottom:calc(18px + env(safe-area-inset-bottom, 0px));
+  bottom:calc(18px + var(--safe-bottom));
   margin:0 auto;
   max-width:86%;
   width:fit-content;
@@ -4804,7 +4908,7 @@ body{
 .dt-dots{
   position:absolute;
   left:0;right:0;
-  bottom:calc(env(safe-area-inset-bottom) + 96px);
+  bottom:calc(var(--safe-bottom) + 96px);
   display:flex;
   justify-content:center;
   gap:8px;
@@ -4828,7 +4932,7 @@ body{
 .dt-dock{
   position:absolute;
   left:20px;right:20px;
-  bottom:calc(env(safe-area-inset-bottom) + 14px);
+  bottom:calc(var(--safe-bottom) + 14px);
   height:74px;
   display:flex;
   align-items:center;
@@ -4889,7 +4993,7 @@ body{
 .sw-panel{
   position:absolute;
   left:12px;right:12px;
-  bottom:calc(env(safe-area-inset-bottom) + 12px);
+  bottom:calc(var(--safe-bottom) + 12px);
   max-height:76%;
   display:flex;
   flex-direction:column;
@@ -5426,7 +5530,7 @@ body{
    top 要给状态栏让位 —— 状态栏是 absolute 浮着的，写 top:0 的话
    「浮岛」和返回键会跟电量时间叠在一起（截图里就是这样）。 */
 .page[data-page="island"] .app-head{
-  position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;z-index:4;
+  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
@@ -5576,7 +5680,7 @@ body{
    （那一段是真云，不是补色的底，见 .isl-art 的注释）。 */
 .isl-foot{
   position:absolute;left:30px;right:30px;z-index:2;
-  bottom:calc(env(safe-area-inset-bottom) + 120px);
+  bottom:calc(var(--safe-bottom) + 120px);
 }
 .isl-enter{
   display:block;width:100%;padding:15px 0;
@@ -5592,7 +5696,7 @@ body{
 
 .isl-dots{
   position:absolute;left:0;right:0;z-index:3;
-  bottom:calc(env(safe-area-inset-bottom) + 30px);
+  bottom:calc(var(--safe-bottom) + 30px);
   display:flex;justify-content:center;gap:7px;
 }
 .isl-dot{
@@ -5845,7 +5949,7 @@ body{
 .tab-bar{
   flex:none;margin:0;                 /* 通栏靠的是一屏自己的 -22px，底栏不用负 margin */
   display:flex;gap:2px;
-  padding:6px 6px calc(env(safe-area-inset-bottom) + 6px);
+  padding:6px 6px calc(var(--safe-bottom) + 6px);
   background:var(--surface-solid);
   border-top:1px solid var(--line);
   z-index:6;
@@ -6128,7 +6232,7 @@ body{
 .fwd-picker.is-open{transform:none;opacity:1;display:flex;}
 .fwd-head{
   display:flex;align-items:center;
-  padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;
+  padding:calc(var(--safe-top) + 10px) 12px 10px;
   border-bottom:1px solid var(--line);
 }
 .fwd-head-title{
@@ -6183,7 +6287,7 @@ body{
 .fwd-empty{padding:40px 0;text-align:center;font-size:13px;color:var(--text-faint);}
 .fwd-foot{
   display:flex;align-items:center;gap:12px;
-  padding:10px 16px calc(env(safe-area-inset-bottom) + 12px);
+  padding:10px 16px calc(var(--safe-bottom) + 12px);
   border-top:1px solid var(--line);
 }
 .fwd-foot-info{flex:1;font-size:12.5px;color:var(--text-dim);}
@@ -6228,7 +6332,7 @@ body{
 .fwd-view.is-open{transform:none;opacity:1;display:flex;}
 .fwd-view-head{
   display:flex;align-items:center;justify-content:center;position:relative;
-  padding:calc(env(safe-area-inset-top) + 12px) 14px 12px;
+  padding:calc(var(--safe-top) + 12px) 14px 12px;
   border-bottom:1px solid var(--line);
 }
 .fwd-view-title{
@@ -6236,12 +6340,12 @@ body{
   max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .fwd-view-close{
-  position:absolute;right:12px;top:calc(env(safe-area-inset-top) + 10px);
+  position:absolute;right:12px;top:calc(var(--safe-top) + 10px);
   background:none;border:0;cursor:pointer;
   font-family:inherit;font-size:14px;color:var(--g-accent);
   padding:4px 6px;
 }
-.fwd-view-body{flex:1;overflow-y:auto;padding:14px 16px calc(env(safe-area-inset-bottom) + 20px);}
+.fwd-view-body{flex:1;overflow-y:auto;padding:14px 16px calc(var(--safe-bottom) + 20px);}
 .fwd-view-row{
   display:flex;flex-direction:column;align-items:flex-start;gap:4px;
   margin-bottom:10px;max-width:78%;
@@ -6316,7 +6420,7 @@ body{
 .gamev-mask.is-open{opacity:1;}
 .gamev-head{
   display:flex;align-items:center;justify-content:center;position:relative;
-  padding:calc(env(safe-area-inset-top) + 12px) 14px 12px;
+  padding:calc(var(--safe-top) + 12px) 14px 12px;
   border-bottom:1px solid var(--line);
 }
 .gamev-title{
@@ -6324,7 +6428,7 @@ body{
   max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .gamev-close{
-  position:absolute;right:12px;top:calc(env(safe-area-inset-top) + 10px);
+  position:absolute;right:12px;top:calc(var(--safe-top) + 10px);
   background:none;border:0;cursor:pointer;
   font-family:inherit;font-size:14px;color:var(--g-accent);
   padding:4px 6px;
@@ -6656,7 +6760,7 @@ body{
      ③ 里面的按钮压在图上看不清，给一层淡黑底 + 白字；
      ④ top 要**让开状态栏那一条**（状态栏现在不占布局了，顶栏得自己避让）。 */
 #phone:has(.page.is-active:not(.is-behind) .tab-panel.is-moments) .app-head{
-  position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;
+  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;
   background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
   z-index:6;
 }
@@ -6849,7 +6953,7 @@ body{
 .stk-panel{
   width:100%;max-height:56vh;
   display:flex;flex-direction:column;gap:10px;
-  padding:14px 16px calc(env(safe-area-inset-bottom) + 14px);
+  padding:14px 16px calc(var(--safe-bottom) + 14px);
   background:var(--surface-solid);
   border-radius:20px 20px 0 0;
   box-shadow:0 -8px 30px rgba(44,62,45,.16);
@@ -7678,7 +7782,7 @@ body{
 
 /* ---- 设置行（谁可以看 / 提醒谁看）—— 微信那种列表行 ---- */
 .mo-set-group{
-  margin:2px -16px calc(env(safe-area-inset-bottom) + 8px);
+  margin:2px -16px calc(var(--safe-bottom) + 8px);
   border-top:1px solid #F0F0F0;
 }
 .mo-set-row{
@@ -7861,9 +7965,16 @@ div.pp-row:active{background:none;}
    避免和现有页面撞名。demo 的 body 级主题类改成 .off-root 上的类。
    ============================================================ */
 .page.is-bleed .page-inner{padding:0;}
+/* 线下场景页（offline-scene）：满屏三段布局（顶栏 / 正文内滚 / 输入条）。
+   以前 .page-inner 只有 min-height:100%，.off-root 一撑高整页跟着滚，
+   顶栏就被正文带走了（用户 2026-10-28 报「线下顶栏不固定，跟着正文滑动」）。
+   页面本身 overflow:hidden，滚动只交给 .off-chat-scroll —— 跟 chat-detail
+   同一个手法。 */
+.page[data-page="offline-scene"]{overflow:hidden;}
+.page[data-page="offline-scene"] .page-inner{height:100%;min-height:0;}
 /* 状态栏区域透明：线下自己的顶栏背景直接顶到最上沿，
    时间电量浮在页面配色上（用户：「直接透出下面的背景」） */
-.off-header{padding-top:calc(env(safe-area-inset-top) + 32px);}
+.off-header{padding-top:calc(var(--safe-top) + 32px);}
 .page.is-bleed .app-head{display:none;}
 
 .off-root{
@@ -8033,7 +8144,7 @@ div.pp-row:active{background:none;}
 /* 开场场景块 */
 .off-scene-block{border-bottom:1px solid var(--border);padding-bottom:18px;}
 .off-scene-prose{
-  font-size:12.5px;line-height:2;
+  font-size:calc(12.5px * var(--fs-scale, 1));line-height:2;
   color:var(--scene-text);
   font-style:italic;letter-spacing:0.03em;
   padding-left:12px;
@@ -8046,18 +8157,18 @@ div.pp-row:active{background:none;}
   align-self:flex-end;max-width:80%;
   display:flex;flex-direction:column;align-items:flex-end;gap:3px;
 }
-.off-user-tag{font-size:9.5px;color:var(--text-faint);letter-spacing:0.05em;}
+.off-user-tag{font-size:calc(9.5px * var(--fs-scale, 1));color:var(--text-faint);letter-spacing:0.05em;}
 .off-user-action-text{
-  font-size:13px;color:var(--text-dim);line-height:1.75;
-  text-align:right;letter-spacing:0.015em;font-style:italic;
+  /* 2026-10-28 用户：user 气泡的字体不要斜体，就正常的 */
+  font-size:calc(13px * var(--fs-scale, 1));color:var(--text-dim);line-height:1.75;
+  text-align:right;letter-spacing:0.015em;font-style:normal;
 }
 
 /* Char 输出块 */
 .off-char-block{
   display:flex;flex-direction:column;gap:0;
   padding-left:13px;position:relative;
-}
-.off-char-block::before{
+}.off-char-block::before{
   content:'';position:absolute;
   left:0;top:4px;bottom:4px;width:1.5px;
   background:linear-gradient(to bottom,var(--warm-mid) 0%,rgba(138,102,64,0.1) 100%);
@@ -8069,7 +8180,7 @@ div.pp-row:active{background:none;}
 }
 .off-char-body{display:flex;flex-direction:column;gap:10px;}
 .off-char-p{
-  font-size:13px;line-height:2;
+  font-size:calc(13px * var(--fs-scale, 1));line-height:2;
   color:var(--scene-text);
   font-style:italic;letter-spacing:0.025em;
   margin:0;
@@ -8077,11 +8188,36 @@ div.pp-row:active{background:none;}
   white-space:pre-line;
 }
 .off-char-q{
-  font-size:14px;line-height:1.8;
+  font-size:calc(14px * var(--fs-scale, 1));line-height:1.8;
   color:var(--char-text);
   letter-spacing:0.02em;font-style:normal;
   font-weight:450;
   margin:0;
+}
+
+/* 线下模式的 markdown 元素（2026-10-28：叙事段落改走 ui.renderMd /
+   ui.mdInline 后，这里补元素级样式，免得浏览器默认外边距把排版顶乱） */
+.off-scene-prose p{margin:0;}
+.off-scene-prose p + p{margin-top:8px;}
+.off-scene-prose .md-b,.off-char-p .md-b,.off-char-q .md-b{font-weight:700;}
+.off-scene-prose .md-i,.off-char-p .md-i,.off-char-q .md-i{font-style:italic;}
+.off-scene-prose .md-inline,.off-char-p .md-inline,.off-char-q .md-inline{
+  font-family:var(--ff-mono,ui-monospace,Menlo,Consolas,monospace);
+  font-size:0.92em;
+  background:var(--bg-3);
+  border-radius:4px;padding:1px 4px;
+}
+.off-scene-prose .md-a,.off-char-p .md-a,.off-char-q .md-a{color:var(--g-accent);text-decoration:underline;}
+.off-scene-prose .md-ul,.off-scene-prose .md-ol,
+.off-char-p .md-ul,.off-char-p .md-ol,
+.off-char-q .md-ul,.off-char-q .md-ol{
+  margin:4px 0;padding-left:20px;
+}
+.off-scene-prose .md-li,.off-char-p .md-li,.off-char-q .md-li{margin:2px 0;}
+.off-scene-prose .md-quote,.off-char-p .md-quote,.off-char-q .md-quote{
+  margin:4px 0;padding:2px 10px;
+  border-left:3px solid var(--warm-dim);
+  color:var(--text-dim);
 }
 
 /* ══ 建议选项 ══ */
@@ -8692,7 +8828,7 @@ div.pp-row:active{background:none;}
   overflow-y:auto;
   scrollbar-width:none;
   /* 顶部让开浮着的状态栏 */
-  padding-top:calc(env(safe-area-inset-top) + 44px);
+  padding-top:calc(var(--safe-top) + 44px);
 }
 .off-sheet-full::-webkit-scrollbar{display:none;}
 .off-sheet-full .off-sheet-handle{margin-bottom:12px;}
@@ -10058,7 +10194,7 @@ div.pp-row:active{background:none;}
 .gg-summary b{color:var(--amber);}
 .gg-bottom{
   position:sticky;bottom:0;flex:none;
-  display:flex;gap:9px;padding:10px 15px calc(12px + env(safe-area-inset-bottom));
+  display:flex;gap:9px;padding:10px 15px calc(12px + var(--safe-bottom));
   background:linear-gradient(180deg,rgba(255,255,255,0),var(--bg) 30%);
 }
 .gg-btn{height:44px;border:0;border-radius:14px;font-weight:650;font-size:13px;
@@ -10080,7 +10216,7 @@ div.pp-row:active{background:none;}
 .gu-sheet{
   position:absolute;left:0;right:0;bottom:0;z-index:30;
   background:var(--paper);border-radius:22px 22px 0 0;
-  padding:10px 14px calc(18px + env(safe-area-inset-bottom));
+  padding:10px 14px calc(18px + var(--safe-bottom));
   transform:translateY(105%);transition:transform .24s ease;
   max-height:78%;overflow-y:auto;
 }
@@ -10194,7 +10330,7 @@ div.pp-row:active{background:none;}
 }
 .gc-dock{
   flex:none;display:flex;align-items:flex-end;gap:8px;
-  padding:8px 10px calc(9px + env(safe-area-inset-bottom));
+  padding:8px 10px calc(9px + var(--safe-bottom));
   border-top:1px solid var(--line);background:var(--bg-2);
 }
 .gc-plus{
@@ -10556,7 +10692,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-root{
   min-height:100%;display:flex;flex-direction:column;
   /* 顶栏给足外壳状态栏的高度：context 条/时钟不能被 20:14 那行压住 */
-  padding:calc(env(safe-area-inset-top) + 40px) 18px calc(env(safe-area-inset-bottom) + 18px);
+  padding:calc(var(--safe-top) + 40px) 18px calc(var(--safe-bottom) + 18px);
   color:#3B342A;
   /* 锁屏右上角的小齿轮（硬翻风险）是 absolute 定位，锚点必须是它自己 ——
      真机截图抓的：没有这条时齿轮跑到时钟下面、浮层被顶出屏幕左缘 */
@@ -10600,7 +10736,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
    ⚠️ top 必须让开 #statusbar（透明状态栏 absolute 盖住顶部，z-index 60），
    不然齿轮看得见点不到 —— 五.17 同款坑，真机脚本抓过。 */
 .ph-root>.ph-flip-wrap{
-  position:absolute;top:calc(env(safe-area-inset-top) + 44px);right:14px;
+  position:absolute;top:calc(var(--safe-top) + 44px);right:14px;
   z-index:3;text-align:left;
 }
 .ph-flip-gear{
@@ -11086,7 +11222,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
   position:sticky;bottom:0;
   left:0;right:0;z-index:3;display:grid;grid-template-columns:repeat(3,1fr);
   /* 负 margin 抵消 .ph-root 的左右/底部内边距，磨砂条才真正通到屏缘 */
-  margin:auto -18px -18px;padding:8px 8px calc(env(safe-area-inset-bottom) + 12px);
+  margin:auto -18px -18px;padding:8px 8px calc(var(--safe-bottom) + 12px);
   background:rgba(250,248,245,.92);backdrop-filter:blur(14px);
   border-top:1px solid #e5ddd5;
 }
@@ -11842,23 +11978,19 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .gof-speaker .msg-trans{margin-top:4px;padding-bottom:4px;}
 
 /* ---- 加号面板里的开关类条目（翻译）----
-   面板本来是一排「点一下就执行」的方块，这条是**开关**：
-   要能一眼看出开/关，所以右上角挂一个字标，开着时整块换成焦糖底。
+   2026-10-28 面板改格子布局：状态徽章住进白色小格子的右上角
+   （.plus-ic 是 position:relative 的定位上下文），开着时格子翻主题色。
    （不靠「图标变个颜色」表达状态 —— 那在一排线稿里读不出来。） */
-.plus-item.is-toggle{position:relative;}
 .plus-item.is-toggle .plus-state{
-  position:absolute;top:6px;right:7px;
-  font-size:9px;line-height:1;padding:2px 4px;border-radius:5px;
-  background:var(--g-glass-2);color:var(--g-ink-3);
+  background:var(--bg-3);color:var(--text-faint);
 }
-.plus-item.is-on{background:var(--g-accent-pale);color:var(--g-accent-deep);}
 .plus-item.is-on .plus-state{background:var(--g-accent);color:var(--on-accent);}
 
 /* 加号面板：这一项当前用不上（他说的是中文）。
    灰掉而不是藏掉 —— 面板的条目数量应当稳定，少一个会让别的方块跳位。
    注意**不是** .is-soon（那是「还没做」），语义不同，别复用。 */
 .plus-item.is-na{opacity:.42;cursor:default;}
-.plus-item.is-na:active{transform:none;background:var(--bg-3);}
+.plus-item.is-na:active{transform:none;}
 
 /* ============================================================
    帷境（Veilscape）—— 以剧院为入口仪式、以剧本为作品单位
@@ -12468,7 +12600,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wjr-mask.show{opacity:1;}
 .wjr-sheet{
   width:100%;background:#1a2440;border-top:1px solid var(--wj-line);
-  border-radius:14px 14px 0 0;padding:12px 16px calc(16px + env(safe-area-inset-bottom));
+  border-radius:14px 14px 0 0;padding:12px 16px calc(16px + var(--safe-bottom));
   display:flex;flex-direction:column;gap:11px;
   transform:translateY(40%);transition:transform .24s cubic-bezier(.3,.7,.3,1);
 }
@@ -12684,7 +12816,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   background:var(--wj-night-2);
   border-top:1px solid var(--wj-line);
   border-radius:14px 14px 0 0;
-  padding:20px 18px calc(20px + env(safe-area-inset-bottom,0px));
+  padding:20px 18px calc(20px + var(--safe-bottom));
   transform:translateY(24px);opacity:0;
   transition:transform .26s var(--ease),opacity .26s var(--ease);
 }
@@ -13066,7 +13198,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   font-size:12.5px;line-height:1.6;color:rgba(255,255,255,.84);
 }
 .imgv-close{
-  position:absolute;top:calc(env(safe-area-inset-top) + 12px);right:14px;
+  position:absolute;top:calc(var(--safe-top) + 12px);right:14px;
   width:34px;height:34px;border-radius:50%;
   border:0;background:rgba(255,255,255,.16);color:#fff;
   font-size:15px;line-height:1;cursor:pointer;
@@ -13168,7 +13300,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
     repeating-linear-gradient(0deg, rgba(27,25,23,.022) 0 1px, transparent 1px 3px),
     var(--we-paper, var(--g-accent-pale));
   margin:0 -22px;               /* 通到屏缘（工作记忆：想贴边用负 margin） */
-  padding:0 22px calc(env(safe-area-inset-bottom) + 30px);
+  padding:0 22px calc(var(--safe-bottom) + 30px);
   min-height:100%;
 }
 
@@ -13430,7 +13562,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   position:absolute;left:0;right:0;bottom:0;
   background:var(--surface-solid);
   border-radius:16px 16px 0 0;
-  padding:20px 22px calc(env(safe-area-inset-bottom) + 18px);
+  padding:20px 22px calc(var(--safe-bottom) + 18px);
   box-shadow:0 -8px 30px rgba(0,0,0,.12);
   max-height:80%;
   overflow-y:auto;
@@ -14121,7 +14253,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
 
 .we-tabbar{
   flex:none;display:flex;align-items:stretch;
-  padding:2px 8px calc(env(safe-area-inset-bottom) + 5px);
+  padding:2px 8px calc(var(--safe-bottom) + 5px);
   background:var(--we-paper, var(--g-accent-pale));
   border-top:1px solid rgba(27,25,23,.4);
   z-index:6;
@@ -14360,7 +14492,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   position:absolute;left:0;right:0;bottom:0;
   background:var(--surface-solid);
   border-radius:16px 16px 0 0;
-  padding:18px 20px calc(env(safe-area-inset-bottom) + 16px);
+  padding:18px 20px calc(var(--safe-bottom) + 16px);
   box-shadow:0 -8px 30px rgba(0,0,0,.12);
   max-height:72%;overflow-y:auto;
 }
@@ -14676,7 +14808,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="ta"] .app-head,
 .page[data-page="ta-item"] .app-head,
 .page[data-page="ta-person"] .app-head{
-  position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;z-index:4;
+  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
@@ -14690,7 +14822,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="ta-item"] .we-page-paper,
 .page[data-page="ta-person"] .we-page-paper{
   /* 顶栏下沉到 safe+32、行高约 46 —— 内容从 safe+90 起才不顶字 */
-  padding-top:calc(env(safe-area-inset-top) + 90px);
+  padding-top:calc(var(--safe-top) + 90px);
 }
 
 /* ---- ta v2（第二批）：详情 kv / 变化线 / 动作行 / 加一行 ---- */
@@ -14740,7 +14872,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="we"] .app-head,
 .page[data-page="we-time"] .app-head,
 .page[data-page="collection"] .app-head{
-  position:absolute;top:calc(env(safe-area-inset-top) + 32px);left:0;right:0;z-index:4;
+  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
@@ -14753,7 +14885,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="we"] .we-page-paper,
 .page[data-page="we-time"] .we-page-paper,
 .page[data-page="collection"] .we-page-paper{
-  padding-top:calc(env(safe-area-inset-top) + 90px);
+  padding-top:calc(var(--safe-top) + 90px);
 }
 .page.has-tabbar[data-page="we"] .app-body,
 .page.has-tabbar[data-page="we-time"] .app-body,
@@ -15411,7 +15543,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   position:absolute;top:0;left:0;right:0;
   z-index:65;                       /* 盖在状态栏(60)之上、页面之上 */
   pointer-events:none;               /* 容器不挡操作，卡片自己接事件 */
-  padding-top:calc(env(safe-area-inset-top, 0px) + 34px);  /* 落进状态栏下方 */
+  padding-top:calc(var(--safe-top) + 34px);  /* 落进状态栏下方 */
   font-family:var(--ff);
   display:flex;flex-direction:column;align-items:stretch;
 }

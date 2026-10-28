@@ -3295,7 +3295,9 @@ ok('三屏的实现都挂上了（消息 / 朋友圈 / 我）',
     sbBlock.indexOf('position:absolute') >= 0 &&
     sbBlock.indexOf('position:relative') < 0 &&
     sbBlock.indexOf('background') < 0);
-  const chrome = 'calc(env(safe-area-inset-top) + 32px)';
+  /* v275 起 chrome 常量改读 --safe-top（iOS 安全区探针测量的变量，
+     env 兜底）—— 直接写 env 会绕过测量，iOS 26.1 那类版本静默失效。 */
+  const chrome = 'calc(var(--safe-top) + 32px)';
   ok('各页面都把状态栏那一条让出来了（padding-top / sticky top 同源）',
     css.split(chrome).length - 1 >= 4);
 }
@@ -5223,6 +5225,202 @@ t('narr 静态接线：消费面剥壳、流式兜底、设置行与叙事条样
   }
   const css = fs.readFileSync('style.css', 'utf8');
   if (css.indexOf('.msg-text .msg-narr') < 0 || css.indexOf('--ff-serif') < 0) throw new Error('叙事条样式缺失');
+  return 'ok';
+});
+
+/* 2026-10-28 线上聊天一轮重做的护栏。
+   判据落在**装配产物**（源码字面 + 渲染结果）上，期望值一律硬写字符串，
+   不引被测常量 —— 两边一起变的话，这条断言就白给了。 */
+t('线上聊天 v274：气泡上不再有停止键 / reroll 键，两者的去处都在加号面板', () => {
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  /* 气泡 meta 里不许再挂停止键：整段「var stopBtn = h('button', 'msg-act', '停止')」
+     应当已经不存在（停止键只在面板里）。 */
+  if (pc.indexOf("'msg-act', '停止'") >= 0) throw new Error('气泡上还有停止键');
+  /* reroll 的旧出口（气泡尾部的 msg-act 按钮）也要没了 */
+  if (pc.indexOf("h('button', 'msg-act', 'reroll')") >= 0) throw new Error('气泡上还有 reroll 键');
+  /* 两者的去处：面板里各有条目 */
+  if (pc.indexOf("id: 'stop'") < 0) throw new Error('加号面板里没有「停止」条目');
+  if (pc.indexOf("id: 'reroll'") < 0) throw new Error('加号面板里没有「重说」条目');
+  /* 停止是**条件项**：只在等回复时出现（when 判据存在且读 pending） */
+  if (!/id: 'stop'[\s\S]{0,240}when: function \(\) \{ return !!pending; \}/.test(pc)) {
+    throw new Error('「停止」没有挂上「只在等回复时出现」的条件判据');
+  }
+  return 'ok';
+});
+
+t('线上聊天 v274：加号面板挂在输入区**下面**（DOM 顺序：inputArea → panel）', () => {
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  const iInput = pc.indexOf('foot.appendChild(inputArea);');
+  const iPanel = pc.indexOf('foot.appendChild(panel);');
+  if (iInput < 0 || iPanel < 0) throw new Error('找不到面板/输入区的挂载点');
+  if (iPanel < iInput) throw new Error('面板又挂回输入区上面了（微信口径是展开在下方）');
+  const css = fs.readFileSync('style.css', 'utf8');
+  /* 面板是网格 + 白色圆角小格子 */
+  if (!/\.plus-panel\{[^}]*grid-template-columns:repeat\(4,1fr\)/.test(css)) {
+    throw new Error('加号面板不是 4 列网格');
+  }
+  if (css.indexOf('.plus-item .plus-ic') < 0) throw new Error('加号面板的小格子样式没了');
+  return 'ok';
+});
+
+t('线上聊天 v274：旁白与线下叙事都走共用 markdown 渲染（掉格式修复）', () => {
+  const ui = fs.readFileSync('ui.js', 'utf8');
+  if (ui.indexOf('mdInline: mdInline') < 0 || ui.indexOf('renderMd: renderMd') < 0) {
+    throw new Error('ui.js 没导出共用的 markdown 渲染');
+  }
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  /* 旁白叙事条必须走**块级**渲染（renderMdText → ui.renderMd），
+     只做行内替换的话旁白里的换行会被 HTML 折叠掉。 */
+  if (!/var d = h\('div', 'msg-narr'\);\s*[\s\S]{0,400}renderMdText\(t, d\)/.test(pc)) {
+    throw new Error('旁白叙事条没走块级渲染（换行会被折叠掉）');
+  }
+  const po = fs.readFileSync('page-offline.js', 'utf8');
+  if (po.indexOf('ui.renderMd(') < 0) throw new Error('线下场景叙事没走共用 markdown 渲染');
+  if (po.indexOf('ui.mdInline(') < 0) throw new Error('线下角色台词没走共用 markdown 渲染');
+  return 'ok';
+});
+
+t('线上聊天 v274：搜索页让开状态栏 + 分类网格 + 修掉三个原有 bug', () => {
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  /* ① 建完面板必须加 is-open（原来漏了，第一次点搜索没反应） */
+  if (!/searchPanel = h\('div', 'chat-search'\);\s*\/\*[\s\S]{0,300}?searchPanel\.classList\.add\('is-open'\)/.test(pc)) {
+    throw new Error('openSearch 建完面板没加 is-open（第一次点搜索会没反应）');
+  }
+  /* ② 搜索结果摘要不许漏协议标记 */
+  if (!/searchHitText[\s\S]{0,2000}stripProtocolTags/.test(pc)) {
+    throw new Error('搜索摘要没剥协议标记（会把 [旁白:…] 露给用户）');
+  }
+  /* ③ 分类网格：按我们自己的消息类型分类 */
+  for (const cat of ['图片与视频', '文件', '链接', '语音', '转账', '表情包', '小游戏', '带引用']) {
+    if (pc.indexOf("name: '" + cat + "'") < 0) throw new Error('搜索分类缺：' + cat);
+  }
+  const css = fs.readFileSync('style.css', 'utf8');
+  /* 顶部必须让开状态栏（#statusbar 是绝对定位浮层，z-index 60）。
+     v275 起安全区走 --safe-top 变量（iOS 探针测量），不再直写 env。 */
+  if (!/\.chat-search-bar\{[^}]*padding:calc\(var\(--safe-top\)/.test(css)) {
+    throw new Error('搜索条没让开状态栏（会跟时间/电量叠一起）');
+  }
+  /* 搜索命中的闪烁选择器要对上气泡的真实类名。
+     先把 CSS 注释整段剥掉再找 —— 注释里提到旧写法不算数
+     （否则改一次注释就红，护栏会变成噪声）。 */
+  const cssNoComment = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  if (cssNoComment.indexOf('.msg.is-flash') >= 0) {
+    throw new Error('搜索闪光的 CSS 选择器还是 .msg.is-flash（气泡类名是 msg-bubble，跳过去不闪）');
+  }
+  if (cssNoComment.indexOf('.msg-bubble.is-flash') < 0) throw new Error('缺 .msg-bubble.is-flash（搜索结果跳转不高亮）');
+  return 'ok';
+});
+
+t('线上聊天 v274：消息引用条是微信口径「名字：内容」（不再是「引用我：…」）', () => {
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  if (pc.indexOf("'引用' + (msg.quote.role === 'user' ? '我' : '对方')") >= 0) {
+    throw new Error('气泡上的引用条还是「引用我：…」口径');
+  }
+  const css = fs.readFileSync('style.css', 'utf8');
+  const m = css.match(/\.msg-quote\{[^}]*\}/);
+  if (!m) throw new Error('缺 .msg-quote 样式');
+  if (m[0].indexOf('border-left') >= 0) throw new Error('引用条还留着左竖线（微信那版没有）');
+  if (m[0].indexOf('-webkit-line-clamp:2') < 0) throw new Error('引用条没做两行截断');
+  return 'ok';
+});
+
+/* v275 iOS 安全区一轮修的护栏。
+   背景：Safari standalone 下 getComputedStyle 读 env() 恒 0（WebKit 老怪癖），
+   iOS 26.1 还有 env 直接归零的回归 —— 所以安全区只能走「探针渲染值」。
+   期望值全部硬写字符串，不许引被测常量。 */
+t('iOS 安全区 v275：探针测量 + 变量唯一入口 + iOS 藏假状态栏', () => {
+  const app = fs.readFileSync('app.js', 'utf8');
+  /* ① 探针：量 env 的**渲染值**（getBoundingClientRect），不是 getComputedStyle */
+  if (app.indexOf('safe-probe-top') < 0 || app.indexOf('safe-probe-bottom') < 0) {
+    throw new Error('app.js 没有安全区探针元素');
+  }
+  if (app.indexOf("setProperty('--safe-top'") < 0 || app.indexOf("setProperty('--safe-bottom'") < 0) {
+    throw new Error('探针没把测量值写进 --safe-top/--safe-bottom');
+  }
+  /* ② iOS 类 + 键盘残留兜底清理 */
+  if (app.indexOf("d.classList.add('ios')") < 0) throw new Error('app.js 没打 html.ios 类');
+  if (app.indexOf("root.style.removeProperty('--kb-inset')") < 0 ||
+      app.indexOf("addEventListener('focusout'") < 0) {
+    throw new Error('没有 focusout 兜底清 --kb-inset（iOS PWA 键盘收起会悬空底栏）');
+  }
+  const css = fs.readFileSync('style.css', 'utf8');
+  /* ③ 变量定义在 :root（带 env 兜底），消费点全部走 var */
+  if (!/--safe-top:env\(safe-area-inset-top, 0px\)/.test(css) ||
+      !/--safe-bottom:env\(safe-area-inset-bottom, 0px\)/.test(css)) {
+    throw new Error(':root 缺 --safe-top/--safe-bottom 的 env 兜底定义');
+  }
+  /* ④ env 直写只允许出现在 :root 定义处（剥掉注释后数：top/bottom 各 1）。
+      谁在消费点直接写 env 就等于绕过测量，iOS 26.1 那类版本会静默失效。 */
+  const cssNoComment = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const envTop = (cssNoComment.match(/env\(safe-area-inset-top/g) || []).length;
+  const envBottom = (cssNoComment.match(/env\(safe-area-inset-bottom/g) || []).length;
+  if (envTop !== 1 || envBottom !== 1) {
+    throw new Error('安全区消费点绕过了变量（env 直写只许在 :root 定义处各 1 次），' +
+      '现在 top=' + envTop + ' bottom=' + envBottom);
+  }
+  /* ⑤ iOS 藏假状态栏（系统状态栏永远可见，假的时间电量只会重复打架） */
+  if (css.indexOf('html.ios #statusbar{display:none;}') < 0) {
+    throw new Error('缺 html.ios #statusbar 藏假状态栏的规则（时间戳会和系统叠）');
+  }
+  /* ⑥ 输入栏底部收窄（iOS 上安全区本身 ~34px，+14 观感「底栏太高」） */
+  const ia = css.match(/\.input-area\{[^}]*\}/);
+  if (!ia || ia[0].indexOf('calc(var(--safe-bottom) + 8px)') < 0) {
+    throw new Error('.input-area 底部不是 var(--safe-bottom) + 8px');
+  }
+  return 'ok';
+});
+
+/* v276 线下一批的护栏（2026-10-28）。 */
+t('线下模式 v276：顶栏固定 / user 去斜体 / 字号接档', () => {
+  const css = fs.readFileSync('style.css', 'utf8');
+  /* ① 场景页满屏三段：页面不滚（滚动只归 .off-chat-scroll） */
+  if (css.indexOf('.page[data-page="offline-scene"]{overflow:hidden;}') < 0 ||
+      css.indexOf('.page[data-page="offline-scene"] .page-inner{height:100%;min-height:0;}') < 0) {
+    throw new Error('线下场景页缺满屏布局约束（顶栏会跟着正文滚）');
+  }
+  /* ② user 行动文本不斜体 */
+  const ua = css.match(/\.off-user-action-text\{[^}]*\}/);
+  if (!ua) throw new Error('缺 .off-user-action-text');
+  if (/font-style:\s*italic/.test(ua[0])) throw new Error('user 行动文本还是斜体');
+  /* ③ 线下字体接 --fs-scale（几处正文类都要吃到） */
+  for (const cls of ['.off-scene-prose{', '.off-char-p{', '.off-char-q{', '.off-user-action-text{']) {
+    const i = css.indexOf(cls);
+    if (i < 0) throw new Error('缺样式：' + cls);
+    const block = css.slice(i, css.indexOf('}', i));
+    if (block.indexOf('var(--fs-scale') < 0) throw new Error('线下字体没接字号档：' + cls);
+  }
+  return 'ok';
+});
+
+t('线下模式 v276：离开（暂停/结束）都向线上交接原文，线上装配注入', () => {
+  const po = fs.readFileSync('page-offline.js', 'utf8');
+  /* ① 暂停和结束两条路都调交接 */
+  if (!/function pauseSession\([\s\S]{0,400}handoffToOnline\(id, 'paused'\)/.test(po)) {
+    throw new Error('暂停路径没调 handoffToOnline');
+  }
+  if (!/function endSession\([\s\S]{0,400}handoffToOnline\(id, 'ended'\)/.test(po)) {
+    throw new Error('结束路径没调 handoffToOnline');
+  }
+  /* ② 去重游标（没有它，重复离开会把同一段原文交接好几遍） */
+  if (po.indexOf('handedUpTo') < 0) throw new Error('交接缺 handedUpTo 去重游标');
+  /* ③ prompt-engine：槽 + 唯一实现并导出 */
+  const pe = fs.readFileSync('prompt-engine.js', 'utf8');
+  if (pe.indexOf("id: 'offhandoff'") < 0) throw new Error('线上槽位缺 offhandoff');
+  if (pe.indexOf('compileOfflineHandoff: compileOfflineHandoff') < 0) {
+    throw new Error('compileOfflineHandoff 没导出（旧组装路径也要用同一份）');
+  }
+  /* ④ page-chat 两条装配路径都接 */
+  const pc = fs.readFileSync('page-chat.js', 'utf8');
+  if (pc.indexOf('offlineHandoff: c.offlineHandoff || null') < 0) {
+    throw new Error('引擎装配没把 offlineHandoff 传进 assembleOnline');
+  }
+  if (pc.indexOf('compileOfflineHandoff(c.offlineHandoff)') < 0) {
+    throw new Error('旧组装路径没注入线下接续');
+  }
+  /* ⑤ 总结卡命名约束：记忆正文禁止 user/char 代号 */
+  if (pe.indexOf('禁止把内部代号「user」「char」写进记忆正文') < 0) {
+    throw new Error('总结卡缺命名约束（记忆里会出现「user」这个词）');
+  }
   return 'ok';
 });
 
@@ -17120,7 +17318,25 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v273（2026-10-27 深夜）：TA 换头像时看图再挑 —— page-chat.js
    （applyCharAvatarSwap 改异步 + 新增 pickAvatarBySight 多模态挑图）变了。
    基准随批 v272 → v273。 */
-const EXPECTED_SW_CACHE = 'sleepy-v273';
+/* v274（2026-10-28 晚）：线上聊天一轮重做 —— page-chat.js（旁白走块级
+   markdown / 停止键与 reroll 挪进加号面板 / 面板改微信小格子并挂到输入区
+   下面 / 引用条改「名字：内容」/ 搜索页重排 + 三个原有 bug）、ui.js
+   （受限 markdown 渲染提到这一层做一份实现）、page-offline.js（叙事段落
+   改走 ui.renderMd / ui.mdInline）、style.css（面板小格子 / 搜索页 /
+   引用条 / markdown 元素样式）变了。
+   基准随批 v273 → v274。 */
+/* v275（2026-10-28 深夜）：iOS 安全区一轮修 —— app.js（安全区探针测量
+   写 --safe-top/--safe-bottom + html.ios 类 + focusout 清 --kb-inset）、
+   style.css（:root 变量定义 + 全部消费点改读变量 + html.ios 藏假状态栏
+   + .input-area 底部收窄）变了。
+   基准随批 v274 → v275。 */
+/* v276（2026-10-28 深夜二批）：线下模式一轮修 + 线下→线上交接 ——
+   style.css（线下场景页三段布局 / user 去斜体 / 字号接档）、
+   page-offline.js（handoffToOnline 交接）、prompt-engine.js（offhandoff
+   槽 + compileOfflineHandoff + 总结卡命名约束）、page-chat.js（ctx 传入
+   + 旧路径 unshift）变了。
+   基准随批 v275 → v276。 */
+const EXPECTED_SW_CACHE = 'sleepy-v276';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

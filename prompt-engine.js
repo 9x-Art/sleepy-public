@@ -1074,6 +1074,7 @@
         '',
         '【角色回忆写作要求】',
         '允许：有角色口吻；写出 char 的情绪变化；对某些细节的特别注意；对 user 的理解（必须保留为主观）。',
+        '命名（2026-10-28 用户：记忆里不许出现「user」这个词）：所有写进记忆正文和角色回忆的文本，提到双方时一律用 TA 们在这段关系里实际的称呼（user 的名字/昵称、char 的名字）；禁止把内部代号「user」「char」写进记忆正文 —— 记忆是 char 的第一人称回忆，里面出现「user」这个词就是穿帮。',
         '不允许：替 user 确认内心、意图或感受；把「我以为你是这样的」写成「你就是这样的」；把暂时观察写成已确认事实；编造原文中没有发生的事件；混入范围外的旧记忆。',
         '线上回忆约 250～500 中文字；线下回忆约 400～900 中文字。没有新内容时可缩短，不必凑满，但禁止省略。',
         '',
@@ -1264,6 +1265,11 @@
        筛选与格式化的唯一实现在 ta-life.compileLivingLife，这里只取用。 */
     { id: 'talife', slot: 'K03e', name: '进行中的生活', kind: 'program', required: false,
       note: '程序生成：ta-life 三表里仍有效的事项/承诺/关注（每类最多 2 条，只作背景）。没数据就不注入' },
+    /* 线下接续（2026-10-28）：离开线下模式（暂停/结束都算）时把当时的
+       原文转录交接给线上 —— 否则线上模型完全不知道线下发生了什么，
+       接续全靠向量碰运气。ctx.offlineHandoff 没传/为空 → 槽不注入。 */
+    { id: 'offhandoff', slot: 'K03b', name: '线下接续', kind: 'program', required: false,
+      note: '程序生成：最近线下见面的原文转录（暂停/结束时交接，最多 3 次）。没离开过线下就不注入' },
     { id: 'worldbook', slot: 'K04', name: '世界书', kind: 'program', required: false,
       note: '常驻条目 + 关键词命中的条目（全局书 + 挂在 TA 身上的书）' },
     { id: 'custom', slot: 'K/S', name: '自定义注入', kind: 'custom', required: false,
@@ -1741,10 +1747,34 @@
     }
   }
 
+  /* 线下接续（2026-10-28）：把离开线下时交接的原文转录编译成注入块。
+     数据在 chat.offlineHandoff（page-offline.handoffToOnline 写入，
+     page-chat 装配时经 ctx 传入）。没有记录 → 返回 ''，槽自动不上。
+     口径：这段经历是**双方都知道**的既成事实 —— 让 TA 自然延续
+     （可以提细节、接未竟之事），不复述流水账、不假装刚发生。 */
+  function compileOfflineHandoff(notes) {
+    if (!Array.isArray(notes) || !notes.length) return '';
+    var parts = [];
+    notes.forEach(function (r) {
+      if (!r || !r.text) return;
+      var head = '▸ 「' + (r.sceneName || '线下') + '」' +
+        (r.nth ? '（第 ' + r.nth + ' 次见面）' : '') +
+        (r.mode === 'ended' ? ' · 已结束' : ' · 中途暂停') +
+        (r.at ? ' · ' + new Date(r.at).toISOString().slice(0, 10) : '');
+      parts.push(head + '\n' + String(r.text));
+    });
+    if (!parts.length) return '';
+    return [
+      '【线下发生的事】下面的聊天记录只覆盖线上；除此之外，你们俩最近还在线下见过面（面对面相处，不是聊消息）。' +
+      '这些经历你们双方都完整经历过、彼此都知道。回复时把它当作真实的共同记忆自然延续：' +
+      '可以提起其中的细节、接着没做完的事往下走；不要复述流水账，也不要当成刚刚才发生。',
+      parts.join('\n\n')
+    ].join('\n\n');
+  }
+
   /* 本轮的「当前输入」：历史里最后一条 user 内容。
      相关性判据要用它 —— 没有它就只能按强弱取，注入会变糊。 */
-  function lastUserText(history) {
-    var h = history || [];
+  function lastUserText(history) {    var h = history || [];
     for (var i = h.length - 1; i >= 0; i--) {
       var m = h[i];
       if (!m || m.role !== 'user' || !m.content) continue;
@@ -2191,6 +2221,8 @@
         case 'taimpact': pushSlot(def, compileTaImpact(charId, userId, lastUserText(history))); break;
         /* 进行中的生活：query 同样取历史末条 user 输入，只用于选序（相关优先） */
         case 'talife': pushSlot(def, compileTaLife(charId, userId, lastUserText(history))); break;
+        /* 线下接续（2026-10-28）：ctx.offlineHandoff = 这条对话的交接记录 */
+        case 'offhandoff': pushSlot(def, compileOfflineHandoff(ctx.offlineHandoff)); break;
         case 'worldbook': {
           var wbText = history.map(function (m) { return m.content || ''; }).join('\n').slice(-4000);
           var wbRes = wbCollect(charId, wbText);
@@ -3097,6 +3129,9 @@
     /* K03e 进行中的生活（本批）：线下/主动消息若要同一份三表投影，
        一律走这里 —— 筛选与格式化的唯一实现在 ta-life.compileLivingLife。 */
     compileTaLife: compileTaLife,
+    /* 线下接续（2026-10-28）：chat.offlineHandoff → 注入块。
+       旧组装路径（引擎关）也用它，别复制第二份。 */
+    compileOfflineHandoff: compileOfflineHandoff,
     cardBody: cardBody,
     offlineSlots: OFFLINE_SLOTS,
     parseOfflineReply: parseOfflineReply,

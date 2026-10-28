@@ -308,6 +308,59 @@
   initBattery();
   if (sbTime) setInterval(tickTime, 15000);
 
+  /* --------------------- iOS 安全区测量（2026-10-28） ---------------------
+
+     为什么不能直接信 env(safe-area-inset-*)：
+       · Safari 在 standalone（加到主屏）模式下，getComputedStyle 读 env()
+         **恒为 0**，但 CSS 渲染出来的值是对的 —— 已知多年的 WebKit 怪癖；
+       · iOS 26.1 还有一版回归（WebKit bug 301994）：PWA 里 env(top) 直接
+         变 0、系统状态栏实体占位（26.2 修回）。
+     两个坑的共性：**getComputedStyle 靠不住，渲染结果永远靠得住**。
+     所以放两个 1px 探针元素，让 CSS 用 env() 撑它们的实际高度，
+     再用 getBoundingClientRect 量渲染值，写进 --safe-top / --safe-bottom。
+     全项目（style.css）的安全区消费点只认这两个变量：
+       · env 正常的设备 → 量出来的就是真实 inset，行为同旧；
+       · env 被系统收回的版本（26.1）→ 量出来是 0 = 系统已经把内容推开
+         了，我们不再补偿，布局自动正确。
+     iOS 上还顺带把 app 自己画的假状态栏藏掉（html.ios）—— iOS 的
+     Safari / PWA 里**系统状态栏永远可见**（真实时间在最顶上），假状态栏
+     的时间电量只会跟它重复或打架（用户报的「和系统时间戳冲突」）。
+     Android 认 manifest 的 fullscreen：系统栏整个消失，假状态栏必须留。 */
+  (function () {
+    var d = document.documentElement;
+    var ua = navigator.userAgent || '';
+    var isIOS = /iP(hone|od|ad)/.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!isIOS) return;
+    d.classList.add('ios');
+    if (navigator.standalone) d.classList.add('ios-pwa');
+
+    function probeEl(id, envCss) {
+      var el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        el.style.cssText = 'position:fixed;left:0;top:0;width:1px;' +
+          'visibility:hidden;pointer-events:none;' + envCss;
+        d.appendChild(el);
+      }
+      return el;
+    }
+    function sync() {
+      try {
+        var top = probeEl('safe-probe-top',
+          'height:env(safe-area-inset-top,0px)').getBoundingClientRect().height || 0;
+        var bottom = probeEl('safe-probe-bottom',
+          'height:env(safe-area-inset-bottom,0px)').getBoundingClientRect().height || 0;
+        d.style.setProperty('--safe-top', top + 'px');
+        d.style.setProperty('--safe-bottom', bottom + 'px');
+      } catch (e) { /* 量不出来就维持 :root 里的 env 兜底，别把壳子搞坏 */ }
+    }
+    sync();
+    if (global.visualViewport) global.visualViewport.addEventListener('resize', sync);
+    global.addEventListener('orientationchange', sync);
+  })();
+
   /* ---------------------------- 页面栈 ---------------------------- */
 
   /* 层级位移与压暗。方案B（纯淡入）下不再做横向位移（STEP 归零），
@@ -882,6 +935,21 @@
         if (document.activeElement !== t) return;   /* 已经点到别处了，别抢 */
         try { pullIntoView(t); } catch (err) { /* 算不出来就别动，别把页面搞坏 */ }
       }, 300);
+    });
+
+    /* 键盘收起的兜底清理（2026-10-28 iOS 用户报「底栏太高，下面空一截」）：
+       iOS PWA 里键盘收起**不一定**触发 visualViewport 的 resize（系统版本
+       之间行为飘），--kb-inset 一旦残留，整条底栏就被悬空顶在键盘高度上，
+       下面留一大截空 —— 而且不重开页面回不去。所以焦点离开输入框之后
+       稍等一拍，确认没有任何输入框拿着焦点，就强制清掉。正常路径上
+       sync() 已经清过了，这里只是兜住「事件没来」的那一类。 */
+    document.addEventListener('focusout', function () {
+      setTimeout(function () {
+        var a = document.activeElement;
+        if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+        if (root.style.getPropertyValue('--kb-inset')) root.style.removeProperty('--kb-inset');
+        root.classList.remove('kb-open');
+      }, 400);
     });
   })();
 

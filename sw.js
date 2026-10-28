@@ -602,7 +602,73 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v273';
+var CACHE = 'sleepy-v276';
+
+/* v276（2026-10-28 深夜二批）：**线下模式一轮修 + 线下→线上交接**（用户真机 5 条）——
+   · style.css：① 线下场景页满屏三段布局（.page[data-page=offline-scene]
+     overflow:hidden + .page-inner height:100%）——以前 .page-inner 只有
+     min-height:100%，.off-root 一撑高整页跟着滚，顶栏被正文带走；
+   ② 线下 user 行动文本去斜体（font-style:normal）；
+   ③ 线下字体接全局字号档 --fs-scale（外观页的字号设置此前线下不吃）。
+   · page-offline.js：**线下→线上交接**（handoffToOnline）——暂停和结束
+     都把「上次交接之后」的原文转录（messageText 逐行，6000 字截尾）写进
+     线上 chat.offlineHandoff（≤3 条），session.handedUpTo 记游标去重；
+     向量侧 kickOfflineSweep 本就逐轮落库，无需重复。
+   · prompt-engine.js：新增 offhandoff 槽（K03b）+ compileOfflineHandoff
+     （唯一实现并导出）——【线下发生的事】块：双方都知道的共同经历，
+     自然延续、不复述流水账；page-chat 引擎路径经 ctx 传入、旧组装路径
+     unshift 同款（同一实现）。总结卡加命名约束：记忆正文禁止出现
+     「user」「char」内部代号，一律用实际称呼。
+   → 必须跳版本：page-offline.js / prompt-engine.js / page-chat.js /
+     style.css 都变了。 */
+
+/* v275（2026-10-28 深夜）：**iOS 安全区一轮修（用户真机：顶栏跟系统时间戳冲突、
+   底栏太高下面空一截）**——
+   · app.js：① 新增 iOS 安全区**探针测量**——两个 1px 隐藏元素分别用
+     env(safe-area-inset-top/bottom) 撑高，getBoundingClientRect 量**渲染值**
+     写进 --safe-top / --safe-bottom（根因：Safari standalone 下
+     getComputedStyle 读 env() 恒 0 是 WebKit 老怪癖；iOS 26.1 还有
+     「env 直接归零、系统状态栏实体占位」的回归，26.2 修回——探针法对
+     所有版本都对：env 正常=量到真实 inset，env 被收回=量到 0=系统已把
+     内容推开，不再补偿）。② html.ios / html.ios-pwa 类按 UA 打。
+     ③ focusout 兜底清 --kb-inset：iOS PWA 键盘收起不一定触发
+     visualViewport resize，残留会把整条底栏悬空顶起（「下面空一截」的
+     另一个来源）；焦点离开输入框 400ms 后确认无聚焦即强制清。
+   · style.css：:root 定义 --safe-top/--safe-bottom（env 兜底），**全部
+     ~50 处 env(safe-area-inset-*) 消费点改读变量**（安全区唯一入口，
+     以后别再直接写 env）；html.ios #statusbar 整条隐藏——iOS 的
+     Safari/PWA 系统状态栏永远可见，假状态栏的时间电量只会跟系统
+     时间戳重复打架（Android fullscreen 无系统栏，保留）；
+     .input-area 底部 +14 → +8（iOS 上安全区本身 ~34px，加完 48px
+     观感「底栏太高」）。
+   → 必须跳版本：app.js / style.css 都变了。 */
+
+/* v274（2026-10-28 晚）：**线上聊天一轮重做（用户真机连提 5 条）**——
+   · page-chat.js：① 旁白叙事条改走**块级** markdown 渲染（原来只做行内
+     替换 → 旁白里的换行被 HTML 折叠成空格，列表/引用也全丢，这就是
+     「掉格式」）；② 气泡上**撤掉停止键**、撤掉 reroll 键 —— 停止键挪进
+     加号面板且**只在等回复时出现**（when 条件项，另有 revcheck 的
+     条件隐藏沿用同一套），reroll 也挪进面板（对最后一条助手回复重说）；
+     ③ 加号面板改微信样式：面板挂到输入区**下面**（DOM 顺序：quoteBar →
+     suggestBar → inputArea → panel）、格子改成独立白色圆角方块 +
+     线性 SVG 图标 + 格子下方的名字（4 列网格，开关类状态徽章住进格子
+     右上角）；④ 消息引用条改微信口径「名字：内容」（去左竖线、两行截断），
+     输入框上方的引用条同步；⑤ 搜索聊天记录页重排：顶部让开状态栏
+     （原来整面 inset:0，搜索条顶着手机框最上头，跟时间/电量叠一起）、
+     搜索框 + 取消一行、「搜索指定内容」分类网格（按我们自己的消息类型
+     分类，带条数）+ 下方对话概览（条数 / 时间跨度 / 最近一条）；
+     ⑥ 顺带修三个原有 bug：openSearch 建完面板**忘了加 is-open**
+     （第一次点顶栏放大镜没反应，得点第二下）、搜索结果闪光的 CSS 选择器
+     写成 `.msg.is-flash` 而气泡类名是 `msg-bubble`（跳过去不闪）、
+     搜索摘要没剥协议标记（把 `[旁白:…]` 原文露给用户）。
+   · ui.js：受限 markdown 渲染提到这一层做**一份实现**三处共用
+     （ui.mdInline / ui.renderMd）—— 线上气泡、旁白叙事条、线下模式的
+     叙事段落（page-offline.js 原来是纯 textContent，**粗体** 全变字面）。
+     段内换行落成 <br>（模型爱把一句话摊成两行，折叠成一行就等于掉格式）。
+   · page-offline.js：场景叙事走 ui.renderMd，角色台词/叙述走 ui.mdInline。
+   · style.css：加号面板小格子、搜索页（栏 / 分类网格 / 概览卡）、
+     引用条、旁白与线下 markdown 元素样式；`.msg-bubble.is-flash` 修正。
+   → 必须跳版本：page-chat.js / page-offline.js / ui.js / style.css / sw.js 都变了。 */
 
 /* v273（2026-10-27 深夜）：TA 换头像时**真的看图再挑** ——
    · page-chat.js：applyCharAvatarSwap 改异步（结果走回调）；新增

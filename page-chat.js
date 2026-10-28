@@ -118,7 +118,16 @@
     /* 反查手机：一只眼睛（TA 在看你手机） */
     revcheck: '<svg ' + SVG_BODY + '>' +
       '<path d="M2.8 12s3.4-5.6 9.2-5.6S21.2 12 21.2 12s-3.4 5.6-9.2 5.6S2.8 12 2.8 12z"/>' +
-      '<circle cx="12" cy="12" r="2.6"/></svg>'
+      '<circle cx="12" cy="12" r="2.6"/></svg>',
+
+    /* 重说（reroll）：两道循环箭头，经典刷新符号 */
+    reroll: '<svg ' + SVG_BODY + '>' +
+      '<path d="M19.4 11a7.5 7.5 0 0 0-13.9-2.6"/><path d="M5.3 4.6v4h4"/>' +
+      '<path d="M4.6 13a7.5 7.5 0 0 0 13.9 2.6"/><path d="M18.7 19.4v-4h-4"/></svg>',
+
+    /* 停止：圆角方块（国际通用「停」符号） */
+    stop: '<svg ' + SVG_BODY + '>' +
+      '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.4"/></svg>'
   };
 
   /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管。
@@ -2485,31 +2494,204 @@
       }
       ensureHeadAvatar();
 
-      /* ---------------- 搜索聊天记录（顶栏放大镜） ---------------- */
-      /* 面板盖在页面上，输入即筛当前对话的消息；点结果跳到那条气泡。
-         （收藏以后是独立的 App，这里只管找。） */
+      /* ---------------- 搜索聊天记录（顶栏放大镜） ----------------
+         2026-10-28 重排（微信口径）：
+           · 面板顶部留出状态栏的高度 —— 以前整面 inset:0，搜索条顶到
+             手机框最上头，跟状态栏的时间/电量叠在一起；
+           · 搜索框 + 「取消」一行，下面「搜索指定内容」分类网格 ——
+             空态不再是一整面白，分类按我们自己的消息类型来；
+           · 点分类 = 筛那一类，打字 = 全文搜，两态互切。
+         面板盖在页面上；点结果跳到那条气泡。（收藏以后是独立的 App。） */
       var searchPanel = null;
+      /* 再次打开搜索时的刷新动作（分类条数 / 概览要跟当下数据一致）。
+         面板只建一次，所以刷新函数要挂在闭包外能拿到。 */
+      var searchRefresh = null;
       var curMode = 'classic';   /* 当前聊天皮肤：classic / wecom / phone */
+      /* 分类：跟着自己的消息类型走（图片/视频都是 type:'photo'?'video'，
+         语音不是独立 type，是 msg.voice 附件，其余看 type 字段）。 */
+      var SEARCH_CATS = [
+        { id: 'media',    name: '图片与视频', match: function (m) { return m.type === 'photo' || m.type === 'video'; } },
+        { id: 'file',     name: '文件',       match: function (m) { return m.type === 'file'; } },
+        { id: 'link',     name: '链接',       match: function (m) { return m.type === 'link-card'; } },
+        { id: 'voice',    name: '语音',       match: function (m) { return !!m.voice; } },
+        { id: 'transfer', name: '转账',       match: function (m) { return m.type === 'transfer'; } },
+        { id: 'sticker',  name: '表情包',     match: function (m) { return m.type === 'sticker'; } },
+        { id: 'html',     name: '小游戏',     match: function (m) { return m.type === 'html'; } },
+        { id: 'quote',    name: '带引用',     match: function (m) { return !!m.quote; } }
+      ];
+      function searchHitText(m) {
+        /* 搜索结果条上的文字：**给人看的**摘要。
+           不复用 attachText —— 那是喂模型的口径（"[你发了一张照片：…]"），
+           摆到结果列表里又长又怪。这里按类型给一句人话。
+           末尾统一压空白：气泡里可能带换行，列表里要是一行。 */
+        var t = '';
+        if (m) {
+          switch (m.type) {
+            case 'photo': t = String(m.caption || m.name || '一张照片'); break;
+            case 'video': t = String(m.caption || m.name || '一段视频'); break;
+            case 'file': t = String(m.name || '一个文件'); break;
+            case 'link-card':
+              t = String((m.link && (m.link.title || m.link.user)) || m.content || '一个链接'); break;
+            case 'transfer': t = transferText(m); break;
+            case 'sticker': t = String(m.name || '一个表情'); break;
+            case 'html': t = String(m.content || '一个小游戏'); break;
+            case 'pat': t = String(m.content || '拍一拍'); break;
+            default:
+              /* 语音：正文仍留在 content 里（只是气泡不显示），搜得到原文 */
+              t = String(m.content || '');
+              if (!t && m.voice) t = '一条语音';
+          }
+        }
+        /* 协议标记必须剥掉（2026-10-28 修）：原文里存着 [旁白:…]，
+           直接摆到结果列表里就是「[旁白:她抬起头…」—— 标记漏给用户看。
+           markdown 的强调号也化掉，列表里要的是人话不是语法。 */
+        t = stripProtocolTags(t);
+        t = t.replace(/\*\*([^*]+)\*\*/g, '$1')
+             .replace(/\*([^*]+)\*/g, '$1')
+             .replace(/`([^`]+)`/g, '$1');
+        return String(t || '').replace(/\s+/g, ' ').trim();
+      }
       function openSearch() {
-        if (searchPanel) { searchPanel.classList.add('is-open'); return; }
+        if (searchPanel) {
+          searchPanel.classList.add('is-open');
+          /* 面板是复用的（只建一次），条数与概览要跟当下的对话对上 */
+          if (searchRefresh) searchRefresh();
+          return;
+        }
         searchPanel = h('div', 'chat-search');
+        /* ⚠️ 建完必须立刻 is-open —— 原来漏了这一句（2026-10-28 修）：
+           第一次点顶栏放大镜只是把面板建出来，屏幕上看不到任何变化，
+           得点第二下才「啪」地弹出来。 */
+        searchPanel.classList.add('is-open');
+
         var bar = h('div', 'chat-search-bar');
+        var field = h('div', 'chat-search-field');
+        field.innerHTML =
+          '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
+          'stroke-width="1.8" stroke-linecap="round" aria-hidden="true">' +
+          '<circle cx="11" cy="11" r="6.2"/><path d="M15.6 15.6L20 20"/></svg>';
         var input = h('input', 'chat-search-input');
         input.type = 'text';
-        input.placeholder = '搜聊天记录';
-        var closeBtn = h('button', 'chat-search-close', '完成');
+        input.placeholder = '搜索';
+        field.appendChild(input);
+        var closeBtn = h('button', 'chat-search-close', '取消');
         closeBtn.type = 'button';
-        bar.appendChild(input);
+        bar.appendChild(field);
         bar.appendChild(closeBtn);
-        var results = h('div', 'chat-search-results');
         searchPanel.appendChild(bar);
+
+        /* 空态：搜索指定内容的分类网格（微信那种，格子按我们的类型来）。
+           每格后面带**条数**（这段对话里那一类有几条）——
+           光一排词确实太空（用户 2026-10-28：「感觉整个搜索界面很空」），
+           带上数字既填了空又告诉人哪一类值得点。 */
+        var home = h('div', 'chat-search-home');
+        home.appendChild(h('p', 'chat-search-cap', '搜索指定内容'));
+        var grid = h('div', 'chat-search-cats');
+        var cntEls = {};
+        SEARCH_CATS.forEach(function (cat) {
+          var b = h('button', 'chat-search-cat');
+          b.type = 'button';
+          b.appendChild(h('span', 'chat-search-cat-name', cat.name));
+          var n = h('span', 'chat-search-cat-n', '');
+          b.appendChild(n);
+          cntEls[cat.id] = n;
+          b.addEventListener('click', function () { runCatSearch(cat); });
+          grid.appendChild(b);
+        });
+        home.appendChild(grid);
+        searchPanel.appendChild(home);
+
+        /* 下半屏：这段对话的概览（微信那一版下半屏是空的，我们填上
+           「这段对话里有什么」—— 条数、时间跨度、最近一条）。
+           空着确实像没做完（用户原话：「感觉整个搜索界面很空」）。 */
+        var stat = h('div', 'chat-search-stat');
+        searchPanel.appendChild(stat);
+        function refreshStat() {
+          var c = getChat(chatId);
+          var msgs = (c && c.messages) || [];
+          stat.innerHTML = '';
+          var rows = [];
+          rows.push(['这段对话', msgs.length + ' 条消息']);
+          if (msgs.length) {
+            var first = msgs[0].timestamp, last = msgs[msgs.length - 1].timestamp;
+            var span = first && last ? (new Date(last) - new Date(first)) / 86400000 : 0;
+            rows.push(['时间跨度', span >= 1 ? ('约 ' + span.toFixed(1) + ' 天') : '同一天']);
+            rows.push(['最近一条', relativeTime(last)]);
+          }
+          rows.forEach(function (r) {
+            var line = h('div', 'chat-search-stat-row');
+            line.appendChild(h('span', 'chat-search-stat-k', r[0]));
+            line.appendChild(h('span', 'chat-search-stat-v', r[1]));
+            stat.appendChild(line);
+          });
+        }
+        refreshStat();
+        /* 再次打开搜索时，这两个都要重算（对话在这期间可能又长了） */
+        searchRefresh = function () { refreshCounts(); refreshStat(); };
+
+        var results = h('div', 'chat-search-results');
         searchPanel.appendChild(results);
+
         /* 挂到 #phone 上而不是页面里：页面自身会滚动，
            absolute 的面板要锚在手机框上才不会跟着内容跑 */
         var phone = document.getElementById('phone');
         (phone || ctx.el).appendChild(searchPanel);
         /* 下一帧再聚焦，避免盖面板的过渡吃掉键盘 */
         setTimeout(function () { input.focus(); }, 60);
+
+        function showHome(on) {
+          home.style.display = on ? '' : 'none';
+        }
+        /* 分类条数：每次打开搜索都重算一次（对话在这期间可能又长了） */
+        function refreshCounts() {
+          var c = getChat(chatId);
+          var msgs = (c && c.messages) || [];
+          SEARCH_CATS.forEach(function (cat) {
+            var n = 0;
+            for (var i = 0; i < msgs.length; i++) { if (cat.match(msgs[i])) n++; }
+            var el = cntEls[cat.id];
+            if (el) el.textContent = n ? String(n) : '';
+          });
+        }
+        refreshCounts();
+        function jumpTo(m) {
+          searchPanel.classList.remove('is-open');
+          var bubble = msgWrap.querySelector('[data-id="' + m.id + '"]');
+          if (bubble) {
+            bubble.scrollIntoView({ block: 'center' });
+            bubble.classList.add('is-flash');
+            setTimeout(function () { bubble.classList.remove('is-flash'); }, 1600);
+          }
+        }
+        function pushHit(c, m, snippet) {
+          var r = h('button', 'chat-search-hit');
+          r.type = 'button';
+          r.appendChild(h('span', 'chat-search-role',
+            m.role === 'user' ? '我' : (charNameOf(c) || '角色')));
+          r.appendChild(h('span', 'chat-search-text', snippet));
+          r.addEventListener('click', function () { jumpTo(m); });
+          results.appendChild(r);
+        }
+
+        /* 分类搜索：不需要关键词，直接筛那一类（最新 50 条） */
+        function runCatSearch(cat) {
+          var c = getChat(chatId);
+          var msgs = (c && c.messages) || [];
+          var hits = [];
+          for (var i = msgs.length - 1; i >= 0 && hits.length < 50; i--) {
+            if (cat.match(msgs[i])) hits.push(msgs[i]);
+          }
+          showHome(false);
+          results.innerHTML = '';
+          if (!hits.length) {
+            results.appendChild(h('p', 'chat-search-empty', '没有「' + cat.name + '」的记录'));
+            return;
+          }
+          hits.forEach(function (m) {
+            var t = searchHitText(m);
+            pushHit(c, m, t ? (t.length > 60 ? t.slice(0, 60) + '…' : t) : cat.name);
+          });
+        }
 
         closeBtn.addEventListener('click', function () {
           searchPanel.classList.remove('is-open');
@@ -2518,12 +2700,13 @@
         input.addEventListener('input', function () {
           var q = String(input.value || '').trim().toLowerCase();
           results.innerHTML = '';
-          if (!q) return;
+          if (!q) { showHome(true); return; }
+          showHome(false);
           var c = getChat(chatId);
           var msgs = (c && c.messages) || [];
           var hits = [];
           for (var i = 0; i < msgs.length && hits.length < 50; i++) {
-            var text = String(msgs[i].content || '');
+            var text = searchHitText(msgs[i]);
             if (text.toLowerCase().indexOf(q) >= 0) hits.push(msgs[i]);
           }
           if (!hits.length) {
@@ -2531,25 +2714,12 @@
             return;
           }
           hits.forEach(function (m) {
-            var r = h('button', 'chat-search-hit');
-            r.type = 'button';
-            var text = String(m.content || '');
+            var text = searchHitText(m);
             var pos = text.toLowerCase().indexOf(q);
             var start = Math.max(0, pos - 18);
             var snippet = (start > 0 ? '…' : '') + text.slice(start, pos + q.length + 30) +
                           (start + q.length + 30 < text.length ? '…' : '');
-            r.appendChild(h('span', 'chat-search-role', m.role === 'user' ? '我' : (c.name || '角色')));
-            r.appendChild(h('span', 'chat-search-text', snippet));
-            r.addEventListener('click', function () {
-              searchPanel.classList.remove('is-open');
-              var bubble = msgWrap.querySelector('[data-id="' + m.id + '"]');
-              if (bubble) {
-                bubble.scrollIntoView({ block: 'center' });
-                bubble.classList.add('is-flash');
-                setTimeout(function () { bubble.classList.remove('is-flash'); }, 1600);
-              }
-            });
-            results.appendChild(r);
+            pushHit(c, m, snippet);
           });
         });
       }
@@ -2597,9 +2767,6 @@
       quoteBar.style.display = 'none';
       foot.appendChild(quoteBar);
 
-      var panel = h('div', 'plus-panel');
-      foot.appendChild(panel);
-
       /* ---- 表情推荐条 ----
          在输入框里打了字，如果匹配到某张表情的**解释**，就在这儿横着排出来
          （左右可滑，防显示不全）。点一张直接发出去。
@@ -2607,6 +2774,11 @@
          并且推荐的表情包可以左右滑动显示，以防显示不完整」。 */
       var suggestBar = h('div', 'stk-suggest');
       foot.appendChild(suggestBar);
+
+      /* 加号面板（2026-10-28 改微信样式）：挂到输入区**下面** ——
+         点加号从输入框底下展开（微信手势），不再盖在输入框上头。
+         ⚠️ 挂载顺序：必须在 inputArea 之后 appendChild，否则又跑到上面去了。 */
+      var panel = h('div', 'plus-panel');
 
       var inputArea = h('div', 'input-area');
       var textarea = h('textarea', 'chat-input');
@@ -2679,6 +2851,8 @@
       inputArea.appendChild(inputWrap);
       inputArea.appendChild(sendBtn);
       foot.appendChild(inputArea);
+      /* 面板挂最后 = 展开在输入框**下方**（微信口径） */
+      foot.appendChild(panel);
 
       /* ---- 情绪印章：点「我」的头像选一枚，章以小图标待在输入框**里面** ----
           （用户 2026-10-06 定稿：不是 chip 条、也不是消息气泡上盖章）
@@ -3014,26 +3188,11 @@
           .replace(/\[旁白[：:][\s\S]*$/, function (mm) { return mm.slice(mm.indexOf(':') + 1); });
       }
 
-      function mdInline(text, node) {
-        var re = /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(_([^_]+)_)|(`([^`]+)`)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g;
-        var last = 0, m, any = false;
-        while ((m = re.exec(text)) !== null) {
-          any = true;
-          if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
-          if (m[2] !== undefined) { var b = h('b', 'md-b'); b.textContent = m[2]; node.appendChild(b); }
-          else if (m[4] !== undefined) { var it = h('i', 'md-i'); it.textContent = m[4]; node.appendChild(it); }
-          else if (m[6] !== undefined) { var it2 = h('i', 'md-i'); it2.textContent = m[6]; node.appendChild(it2); }
-          else if (m[8] !== undefined) { var cd = h('code', 'md-inline'); cd.textContent = m[8]; node.appendChild(cd); }
-          else if (m[10] !== undefined) {
-            var a = h('a', 'md-a'); a.textContent = m[10];
-            a.href = m[11]; a.target = '_blank'; a.rel = 'noopener noreferrer';
-            node.appendChild(a);
-          }
-          last = re.lastIndex;
-        }
-        if (!any) node.textContent = text;
-        else if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
-      }
+      /* markdown 渲染走 ui 层的**共用一份**（2026-10-28 提到 ui.js）：
+         线上气泡 / 旁白叙事条 / 线下叙事段落同一套语法与同一套消毒规则。
+         这里只留两个薄壳，页面内所有调用点不用改。 */
+      function mdInline(text, node) { ui.mdInline(text, node); }
+      function renderMdText(text, el) { ui.renderMd(text, el); }
 
       function renderRichText(raw, el) {
         el.innerHTML = '';
@@ -3050,7 +3209,11 @@
             if (!t) return;
             if (sg.n) {
               var d = h('div', 'msg-narr');
-              mdInline(t, d);
+              /* 走块级渲染而不是 mdInline（2026-10-28 用户报「旁白掉格式」）：
+                 旁白常常一口气写好几行，mdInline 只做行内替换，文本节点里的
+                 \n 会被 HTML 折叠成空格 —— 换行全没。renderMdText 按行拆段，
+                 列表/引用/代码块也一并保得住，叙事条里照样吃 markdown。 */
+              renderMdText(t, d);
               el.appendChild(d);
               narrMade = true;
             } else {
@@ -3064,46 +3227,6 @@
         var text = stripProtocolTags(raw);
         if (!text) return;
         renderMdText(text, el);
-      }
-
-      function renderMdText(text, el) {
-        var lines = text.split('\n'), para = [], i = 0;
-        function flush() {
-          if (!para.length) return;
-          var p = h('p', 'md-p'); mdInline(para.join('\n'), p); el.appendChild(p); para = [];
-        }
-        while (i < lines.length) {
-          var line = lines[i];
-          if (/^\s*```/.test(line)) {
-            flush(); var code = []; i++;
-            while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
-            i++;
-            var pre = h('pre', 'md-pre'), co = h('code', 'md-code');
-            co.textContent = code.join('\n'); pre.appendChild(co); el.appendChild(pre); continue;
-          }
-          if (/^>\s?/.test(line)) {
-            flush(); var q = [];
-            while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(lines[i].replace(/^>\s?/, '')); i++; }
-            var bq = h('blockquote', 'md-quote'); mdInline(q.join('\n'), bq); el.appendChild(bq); continue;
-          }
-          if (/^[-*]\s+/.test(line)) {
-            flush(); var ul = h('ul', 'md-ul');
-            while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
-              var li = h('li', 'md-li'); mdInline(lines[i].replace(/^[-*]\s+/, ''), li); ul.appendChild(li); i++;
-            }
-            el.appendChild(ul); continue;
-          }
-          if (/^\d+\.\s+/.test(line)) {
-            flush(); var ol = h('ol', 'md-ol');
-            while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-              var li2 = h('li', 'md-li'); mdInline(lines[i].replace(/^\d+\.\s+/, ''), li2); ol.appendChild(li2); i++;
-            }
-            el.appendChild(ol); continue;
-          }
-          if (!line.trim()) { flush(); i++; continue; }
-          para.push(line); i++;
-        }
-        flush();
       }
 
       /* 长按菜单里点 emoji → 给**这个气泡**贴/取消表情回应（QQ/企微风）。
@@ -3469,8 +3592,17 @@
         var content = h('div', 'msg-body');
 
         if (msg.quote) {
-          content.appendChild(h('div', 'msg-quote',
-            '引用' + (msg.quote.role === 'user' ? '我' : '对方') + '：' + msg.quote.content));
+          /* 引用样式（2026-10-28 微信口径）：「名字：内容」，字多就两行截断。
+             user 的引用标「我」，角色的引用直接标 TA 的名字 —— 比笼统的
+             「对方」更像微信。 */
+          var qName = '对方';
+          if (msg.quote.role === 'user') qName = '我';
+          else {
+            var qc = getChat(chatId);
+            var qch = qc && qc.characterId ? findCharacter(qc.characterId) : null;
+            if (qch && qch.name) qName = qch.name;
+          }
+          content.appendChild(h('div', 'msg-quote', qName + '：' + msg.quote.content));
         }
 
         /* 捡手机皮肤：头像旁的小昵称标（参考图里 avatar 边上那个小字） */
@@ -3545,16 +3677,9 @@
         }
 
         var isLast = c.messages[c.messages.length - 1] === msg;
-        if (herePending) {
-          var stopBtn = h('button', 'msg-act', '停止');
-          stopBtn.type = 'button';
-          stopBtn.addEventListener('click', function (e) { e.stopPropagation(); stopReply(); });
-          meta.appendChild(stopBtn);
-        } else if (role === 'assistant' && !msg.type && isLast && !pending &&
-                   (!seg || seg.idx === seg.total - 1)) {
-          /* reroll 只挂分段消息的最后一段 —— 挂在每段上会连着出现好几个 */
-          meta.appendChild(rerollBtn(msg));
-        } else if (role === 'assistant' && msg.type === 'photo' && msg.subject && isLast && !pending) {
+        /* 停止按钮已撤（2026-10-28 用户：气泡上不再给停止键，等回复就等）；
+           reroll 也挪进加号面板（「重说」），气泡 meta 只剩时间。 */
+        if (role === 'assistant' && msg.type === 'photo' && msg.subject && isLast && !pending) {
           /* TA 发的图可以重画：同 subject 重新生成，原地替换 */
           meta.appendChild(redrawBtn(msg));
         }
@@ -4184,23 +4309,25 @@
 
         var meta = h('div', 'msg-meta');
         meta.appendChild(h('span', 'msg-time', timeStr(pending.timestamp)));
-        var stopBtn = h('button', 'msg-act', '停止');
-        stopBtn.type = 'button';
-        stopBtn.addEventListener('click', function () { stopReply(); });
-        meta.appendChild(stopBtn);
         content.appendChild(meta);
         bubble.appendChild(content);
         return bubble;
       }
 
-      function rerollBtn(msg) {
-        var b = h('button', 'msg-act', 'reroll');
-        b.type = 'button';
-        b.addEventListener('click', function (e) {
-          e.stopPropagation();
-          startReroll(msg);
-        });
-        return b;
+      /* reroll 挪进加号面板（2026-10-28 用户：气泡上不再挂 reroll）。
+         面板点「重说」= 对**最后一条**助手正文回复发起重说 ——
+         和原来挂气泡尾的条件一致（isLast && !type），只是入口变了。 */
+      function rerollFromPanel() {
+        closePanel();
+        if (pending) { ctx.toast('还在等回复', 'warn'); return; }
+        var c = getChat(chatId);
+        var msgs = (c && c.messages) || [];
+        var last = null;
+        for (var i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant' && !msgs[i].type) { last = msgs[i]; break; }
+        }
+        if (!last) { ctx.toast('还没有可以重说的回复', 'warn'); return; }
+        startReroll(last);
       }
 
       function updateSendUI() {
@@ -4568,8 +4695,15 @@
           return;
         }
         quoteBar.style.display = 'flex';
-        quoteBar.appendChild(h('span', 'msg-quote-text',
-          '引用' + (quote.role === 'user' ? '我' : '对方') + '：' + quote.content));
+        /* 名字口径与气泡上的引用条一致（2026-10-28）：我 / TA 的名字 */
+        var qName = '对方';
+        if (quote.role === 'user') qName = '我';
+        else {
+          var qc0 = getChat(chatId);
+          var qch0 = qc0 && qc0.characterId ? findCharacter(qc0.characterId) : null;
+          if (qch0 && qch0.name) qName = qch0.name;
+        }
+        quoteBar.appendChild(h('span', 'msg-quote-text', qName + '：' + quote.content));
         var x = h('button', 'msg-quote-x', '\u00d7');
         x.type = 'button';
         x.title = '取消引用';
@@ -5781,7 +5915,10 @@
             history: out,
             /* 旁白描述（2026-10-25）：这条对话自己的开关与文风/字数/密度。
                没开 = undefined → narrCard 返回 '' → narr 槽不注入。 */
-            narr: c.narration || null
+            narr: c.narration || null,
+            /* 线下接续（2026-10-28）：离开线下模式时交接的原文转录，
+               没离开过 = undefined → offhandoff 槽不注入。 */
+            offlineHandoff: c.offlineHandoff || null
           });
           /* 候选补丁 2026-10-13：引擎开分支走同一套人物/协议诊断
              （built.protocol 是 c05 槽实际生效正文，文本判空）。 */
@@ -5878,6 +6015,13 @@
         /* 换头像说明书：开关开着 + 库里有图才注入（关着时一个字都不提） */
         var avSpecOld = avatarSwapSpec(chatId);
         if (avSpecOld) out.unshift({ role: 'system', content: avSpecOld });
+        /* 线下接续（2026-10-28）：旧组装路径同款注入（走 prompt-engine 的
+           唯一实现，别复制第二份）。没离开过线下就不加。 */
+        if (Array.isArray(c.offlineHandoff) && c.offlineHandoff.length &&
+            Sleepy.promptEngine && Sleepy.promptEngine.compileOfflineHandoff) {
+          var offOld = Sleepy.promptEngine.compileOfflineHandoff(c.offlineHandoff);
+          if (offOld) out.unshift({ role: 'system', content: offOld });
+        }
         /* 小游戏结算：引擎关掉时也照垫（同引擎路径 gameResultPeekMsg） */
         var gamePeekOld = gameResultPeekMsg(chatId);
         if (gamePeekOld) out.push(gamePeekOld);
@@ -6123,7 +6267,7 @@
                2026-09-26 用户再报「整条挤一个气泡、过一会儿才拆开」——
                拆段挪进流式：按 || 渐进拆，段数没变只改各段文本，
                段数变了才整页重画（一条回复顶多重画几次）。
-               is-pending 气泡首帧就画好（类名、停止键都在身上）。
+               is-pending 气泡首帧就画好（类名都在身上）。
                2026-10-26 再加拟真节奏：新回复（不挂旧气泡的）不再把
                所有段同时涂上，而是按打字节奏逐条揭示（见 pendingReveal）；
                reroll（挂旧气泡重写）不 staging，走旧热路径。 */
@@ -6870,6 +7014,15 @@
       }
 
       var PLUS_ITEMS = [
+        /* 停止（2026-10-28 随气泡上的停止键一起挪进面板）：
+           气泡上不再挂「停止」，但**等回复时得有个地方能掐断** ——
+           长回复掐一半这件事用户一直在用，不能凭空消失。
+           只在「正在等回复」时出现（when: 有 pending 才显示），
+           不占平时面板的位。 */
+        { id: 'stop', svg: PLUS_ICON.stop, name: '停止', when: function () { return !!pending; },
+          run: function () { closePanel(); stopReply(); } },
+        /* 重说（reroll，2026-10-28 从气泡 meta 挪进面板）：对最后一条回复重说 */
+        { id: 'reroll', svg: PLUS_ICON.reroll, name: '重说', run: function () { rerollFromPanel(); } },
         { id: 'photo', svg: PLUS_ICON.photo, name: '发照片', run: function () { pickAttachment('image/*', 'photo'); } },
         { id: 'video', svg: PLUS_ICON.video, name: '发视频', run: function () { pickAttachment('video/*', 'video'); } },
         { id: 'file', svg: PLUS_ICON.file, name: '发文件', run: function () { pickAttachment('', 'file'); } },
@@ -7508,6 +7661,10 @@
       function buildPanel() {
         panel.innerHTML = '';
         PLUS_ITEMS.forEach(function (it) {
+          /* 条件项（如「停止」）：不满足条件就整格不出现。
+             跟 is-soon / is-na 不同 —— 那两个是「在但用不了」，
+             这里是「这一刻根本不该有这一格」。 */
+          if (it.when && !it.when()) return;
           /* 反查总开关关了：格子隐藏（整格拿掉，点不动都没必要留） */
           if (it.id === 'revcheck' && !revEnabled(getChat(chatId))) return;
           var on = it.toggle && it.get ? !!it.get() : false;
@@ -7527,7 +7684,8 @@
           ic.innerHTML = it.svg;
           b.appendChild(ic);
           b.appendChild(h('span', 'plus-name', it.name));
-          if (it.toggle) b.appendChild(h('span', 'plus-state', on ? '开' : '关'));
+          /* 开关状态徽章住进格子右上角（2026-10-28 面板改格子布局） */
+          if (it.toggle) ic.appendChild(h('span', 'plus-state', on ? '开' : '关'));
           b.addEventListener('click', function () {
             if (!it.run) {
               ctx.toast(it.name + ' 留到软装阶段再做', 'warn');
@@ -7554,6 +7712,9 @@
       function togglePanel() {
         if (panel.classList.contains('is-open')) closePanel();
         else {
+          /* 每次打开都重建：条件项（停止）要按当下状态决定出不出现，
+             开关项（翻译）的状态也可能是别的页面改的。 */
+          buildPanel();
           panel.classList.add('is-open');
           renderMessages();
         }

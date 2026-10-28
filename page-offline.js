@@ -308,9 +308,12 @@
   }
 
   /* 「先离开一下」和「保存进度并离开」功能相同（指令卡 6.3），
-     都是 status → paused，不总结、不删任何东西。 */
+     都是 status → paused，不总结、不删任何东西。
+     离开时同时向线上交接原文（2026-10-28：暂停也要接得上）。 */
   function pauseSession(id) {
-    return mutateSession(id, function (s) { s.status = 'paused'; });
+    var r = mutateSession(id, function (s) { s.status = 'paused'; });
+    try { handoffToOnline(id, 'paused'); } catch (e) { /* 交接失败不挡离开 */ }
+    return r;
   }
 
   function resumeSession(id) {
@@ -318,7 +321,58 @@
   }
 
   function endSession(id) {
-    return mutateSession(id, function (s) { s.status = 'ended'; });
+    var r = mutateSession(id, function (s) { s.status = 'ended'; });
+    try { handoffToOnline(id, 'ended'); } catch (e) { /* 交接失败不挡离开 */ }
+    return r;
+  }
+
+  /* ==================== 线下 → 线上交接（2026-10-28） ====================
+
+     用户口径：「离开线下，不管是暂停还是直接结束，都要让线上顺利接续 ——
+     线下发生的原文直接进入（上下文），也进向量。」
+
+     分两半：
+       · 向量：kickOfflineSweep 每轮已经在跑（offline 块落 IDB），不用额外做；
+       · 线上上下文：把「上次交接之后」的线下**原文转录**写进线上 chat 的
+         offlineHandoff（≤3 条），prompt-engine 的 offhandoff 槽在下一轮线上
+         回复时整块注入 —— 模型把这段当双方都知道的共同经历接着演。
+     去重：session.handedUpTo 记上次交接到哪条（createdAt），只交新增的；
+     没有新内容（比如入口页把暂停会话又点了一次「先不去了」）就不重复交接。
+     暂停和结束走同一个通道 —— 用户明确要求两种离开都接得上。 */
+  function handoffToOnline(id, mode) {
+    var s = findSession(id);
+    if (!s || !s.charId || !s.userId) return;
+    var CS = Sleepy.chatStore;
+    if (!CS || !CS.chatOf || !CS.mutate) return;
+    var chat = CS.chatOf(s.charId, s.userId);
+    if (!chat) return;                       /* 入口对话没了（被删过）就不硬塞 */
+    var cut = s.handedUpTo || 0;
+    var msgs = (s.messages || []).filter(function (m) { return (m.createdAt || 0) > cut; });
+    if (!msgs.length) return;                /* 没有新内容，别重复交接 */
+    var charName = charNameOf(s);
+    var lines = [];
+    msgs.forEach(function (m) {
+      var line = messageText(m, charName);
+      if (line) lines.push(line);
+    });
+    if (!lines.length) return;
+    var text = lines.join('\n');
+    if (text.length > 6000) text = '（更早的略）\n' + text.slice(-6000);
+    var rec = {
+      at: Date.now(), sid: s.id,
+      sceneName: s.sceneName || '线下',
+      nth: s.sceneCount || 0,
+      mode: mode || 'paused',
+      text: text
+    };
+    CS.mutate(chat.id, function (cc) {
+      var arr = Array.isArray(cc.offlineHandoff) ? cc.offlineHandoff.slice() : [];
+      arr.push(rec);
+      if (arr.length > 3) arr = arr.slice(-3);   /* 只留最近三次，防 Prompt 无限膨胀 */
+      cc.offlineHandoff = arr;
+    });
+    var lastAt = (msgs[msgs.length - 1] || {}).createdAt || Date.now();
+    mutateSession(id, function (ss) { ss.handedUpTo = lastAt; });
   }
 
   /* showSuggests / timeAdvance 在系统设置和叙事设置两处必须同步
@@ -1403,7 +1457,11 @@
         if (m.parseFailed) return parseFailedBlock(m);
         if (m.role === 'scene') {
           var sb = h('div', 'off-scene-block');
-          sb.appendChild(h('div', 'off-scene-prose', parasText(m.paras)));
+          var sp = h('div', 'off-scene-prose');
+          /* 场景叙事走 markdown 渲染（2026-10-28 修「线下掉格式」）：
+             以前是 textContent，模型写的 **强调** / 换行全变字面。 */
+          ui.renderMd(parasText(m.paras), sp);
+          sb.appendChild(sp);
           return sb;
         }
         if (m.role === 'user') {
@@ -1418,7 +1476,10 @@
         cb.appendChild(h('span', 'off-char-name', charName));
         var bodyEl = h('div', 'off-char-body');
         (m.paras || []).forEach(function (p, pi) {
-          bodyEl.appendChild(h('p', p.type === 'dialogue' ? 'off-char-q' : 'off-char-p', p.text));
+          /* 台词/叙述同样吃 markdown —— 与线上气泡同一份实现（ui.renderMd） */
+          var pe = h('p', p.type === 'dialogue' ? 'off-char-q' : 'off-char-p');
+          ui.mdInline(String(p.text || ''), pe);
+          bodyEl.appendChild(pe);
           /* 海外角色的台词下面挂译文（组件 msg-trans）——
              只在 dialogue 段下，而且开关/语言两道闸门由组件自己判。
              键带段落序号，所以同一段消息第二次看仍是你上次的收起状态。 */

@@ -32,3 +32,4 @@ generated-images/
 
 # 历史调试产物归档（2026-10-25 整理，勿部署勿提交）
 _archive-*/
+_tmp-deploy-conv/
