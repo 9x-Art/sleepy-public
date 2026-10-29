@@ -58,6 +58,20 @@
   --safe-top:env(safe-area-inset-top, 0px);
   --safe-bottom:env(safe-area-inset-bottom, 0px);
 
+  /* ---- 假状态栏占位（2026-10-28 晚补，iOS 顶栏偏下的真凶）----
+     #statusbar 是**浮层不占布局**（它要透明、要让封面顶到屏幕最上边），
+     所以所有页面都得自己往下让 32px —— 以前这个 32 是**硬写**在
+     几十处 calc() 里的。
+
+     可 iOS 上 #statusbar 整条藏掉了（系统自己画时间电量），这 32px 就
+     变成了纯多余：iPhone 安全区本来就有 47~59，再加 32 →
+     搜索框、顶栏整体往下掉一截（用户 2026-10-28 两张截图）。
+     安卓 fullscreen 没有系统栏、假状态栏必须留，所以只在 html.ios 归零。
+
+     消费点一律写 calc(var(--safe-top) + var(--sb-h))，
+     **别再硬写 +32px** —— 写死的 32 在 iOS 上一定是双份。 */
+  --sb-h:32px;
+
   /* 字色跟着底色一起转冷：暖深棕压在奶蓝底上会发脏（棕+蓝=灰），
      所以整支换成冷墨蓝灰，对比度不变、但跟底是同一个色系。 */
   --g-ink:#2F3A47;             /* 冷墨：主文字 */
@@ -227,7 +241,12 @@
   --line:var(--g-glass-line);
 }
 
-html,body{margin:0;padding:0;height:100%;overscroll-behavior:none;}
+/* touch-action:manipulation —— iOS 10+ 无视 user-scalable=no，双击仍会
+   缩放页面。整页一放大，fixed/absolute 在 #phone 里的顶栏、底栏就一起
+   向屏幕中心收（用户 2026-10-28：「切换页面之后底栏往上走、顶栏往下走」
+   的最像的解释 —— 点得太快被 Safari 认成双击）。manipulation 只禁
+   双击缩放，滚动、长按、按压反馈都不受影响。 */
+html,body{margin:0;padding:0;height:100%;overscroll-behavior:none;touch-action:manipulation;}
 
 body{
   background:#FFFFFF;
@@ -313,7 +332,7 @@ body{
   position:absolute;
   top:0;left:0;right:0;
   padding:calc(var(--safe-top) + 8px) 24px 0;
-  height:calc(var(--safe-top) + 32px);
+  height:calc(var(--safe-top) + var(--sb-h));
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -332,6 +351,9 @@ body{
    Android 认 manifest 的 fullscreen：系统栏整个不存在，假状态栏必须留。
    class 由 app.js 启动时按 UA 打（html.ios）。 */
 html.ios #statusbar{display:none;}
+/* 假状态栏藏掉了 → 它占的那 32px 也得一起还回去（--sb-h 的定义见 :root
+   那段注释）。不归零 = 所有页面顶部白吃 32px，iOS 上顶栏/搜索框整体偏下。 */
+html.ios{--sb-h:0px;}
 
 #stack{
   position:relative;
@@ -644,7 +666,7 @@ html.ios #statusbar{display:none;}
   /* padding-top = 状态栏的高度：状态栏现在是 absolute 浮着的（不占布局），
      所以由这里把位置补回来 —— 这样所有页面的视觉跟以前一模一样，
      而状态栏背后看见的正是「页面自己的顶」。 */
-  padding:calc(var(--safe-top) + 32px) 22px calc(var(--safe-bottom) + 22px);
+  padding:calc(var(--safe-top) + var(--sb-h)) 22px calc(var(--safe-bottom) + 22px);
   display:flex;
   flex-direction:column;
   min-height:100%;
@@ -658,7 +680,7 @@ html.ios #statusbar{display:none;}
   /* 吸顶要让开状态栏那一条 —— 状态栏是 absolute 浮着的，
      写 top:0 的话页面一滚，顶栏就钻到状态栏底下跟时间电量叠字。
      这个值跟 .page-inner 的 padding-top 是同一个数，所以起滚时不跳。 */
-  top:calc(var(--safe-top) + 32px);
+  top:calc(var(--safe-top) + var(--sb-h));
   background:var(--surface-solid);
   z-index:5;
 }
@@ -1412,11 +1434,11 @@ html.ios #statusbar{display:none;}
    （见下面 chat-detail 那段），.page-inner 的 padding-bottom 已经撤了，
    所以这一条要自己留出刘海屏底部那条的位置。 */
 .input-area{
-  /* 底部：安全区 + 8px。以前是 +14 —— iOS 上安全区本身就有 ~34px
-     （home 条带），加完 48px 观感是「底栏太高、下面空一截」
-     （用户 2026-10-28），收到 8px。桌面/Android fullscreen 下 env=0，
-     这里就是 8px，比原来的 14 稍紧但还在呼吸。 */
-  padding:10px 14px calc(var(--safe-bottom) + 8px);
+  /* 底部：安全区 + 6px。历史：+14 → +8 → +6（2026-10-28 三连收）。
+     iOS 的安全区本身 ~34px（home 条带）已经把「离底」占掉了，再叠 8
+     用户看到的就是「底栏太高、下面空一截」；6px 是手势条到控件之间
+     的最小呼吸。桌面/Android fullscreen env=0，这里就是 6px。 */
+  padding:10px 14px calc(var(--safe-bottom) + 6px);
   background:var(--bg-2);
   border-top:1px solid var(--line);
   display:flex;align-items:flex-end;gap:8px;
@@ -1489,18 +1511,26 @@ html.ios #statusbar{display:none;}
 .plus-btn:active{transform:scale(.92);}
 
 /* 面板：展开在输入区**下面**（2026-10-28 微信口径），独立小格子网格。
-   一行四个；格子是白色圆角方块、图标住格子里、名字在格子下面。 */
+   一行四个；格子是白色圆角方块、图标住格子里、名字在格子下面。
+   2026-10-28 晚（用户：「高度应该固定，然后在固定高度内可滑动」）：
+   高度从 max-height:46vh（内容少就矮、内容多才滚）改成**固定三行**——
+   常驻 12 项正好 4 列 × 3 行，等回复时多出来的「停止」是第 13 格，
+   跟以后新加的条目一样**在面板内部滚**，不再把上面的消息区顶没了。
+   291 = 上下内边距 16+18 + 三行 (58 格子 + 6 间距 + 11 名字) × 3 + 行间 16 × 2。 */
 .plus-panel{
   display:none;
   grid-template-columns:repeat(4,1fr);
-  gap:18px 8px;
-  padding:18px 18px calc(var(--safe-bottom) + 20px);
+  align-content:start;          /* 行数不足三行时靠上排，别被固定高度拉开 */
+  gap:16px 6px;
+  padding:16px 14px calc(var(--safe-bottom) + 18px);
   background:var(--bg-2);
   border-top:1px solid var(--line);
-  /* flex:none —— 面板是**最后一行**，不该被 flex 压扁（压扁了末行格子会被裁掉）。
-     太高时自己内部滚，腾出的高度让给上面的消息区。 */
+  /* flex:none —— 面板是**最后一行**，不该被 flex 压扁（压扁了末行格子会被裁掉）。 */
   flex:none;
-  max-height:46vh;overflow-y:auto;
+  height:calc(var(--safe-bottom) + 291px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
 }
 .plus-panel.is-open{display:grid;}
 /* 面板开了，安全区让给面板自己（否则输入行下面空一截又垫一次安全区） */
@@ -1596,13 +1626,10 @@ html.ios #statusbar{display:none;}
    老版这里每个 data-id 都挂了 ::before 的 SVG，但 8 条里有 5 条用的是
    同一张对勾图，转账 / 拍一拍 / 生图 / 查岗 / 表情包 长得一模一样，反而看不出是什么。 */
 
-/* 移动端适配 */
-@media (max-width: 480px) {
-  .plus-panel {
-    gap: 16px 6px;
-    padding: 16px 14px calc(var(--safe-bottom) + 18px);
-  }
-}
+/* 移动端适配：手机本来就 ≤480，这条的 gap/padding 已经并进上面
+   .plus-panel 的主定义（2026-10-28 面板改固定高度时合并 ——
+   固定高度的 291px 公式是按主定义的 gap/padding 算的，媒体查询再覆盖
+   一份就会出现「两个真值」，改公式时容易漏这边）。 */
 
 /* 呼吸光动画（用于顶部头像） */
 @keyframes heartbeat {
@@ -2322,7 +2349,7 @@ html.ios #statusbar{display:none;}
 .chat-search-bar{
   flex:none;
   display:flex;align-items:center;gap:12px;
-  padding:calc(var(--safe-top) + 40px) 16px 12px;
+  padding:calc(var(--safe-top) + var(--sb-h) + 8px) 16px 12px;
   background:var(--surface-solid);
 }
 /* 搜索框：圆角浅底 + 放大镜（微信那一行） */
@@ -3086,7 +3113,7 @@ html.ios #statusbar{display:none;}
   --dt-gap:16px;
   --dt-pad-top:26px;
   --dt-pad-bottom:132px;
-  --dt-chrome:calc(var(--safe-top) + 32px + var(--dt-pad-top) + var(--dt-pad-bottom));
+  --dt-chrome:calc(var(--safe-top) + var(--sb-h) + var(--dt-pad-top) + var(--dt-pad-bottom));
   --dt-cell-w:calc((100vw - 40px - 3 * var(--dt-gap)) / 4);
   --dt-cell-h:calc((100dvh - var(--dt-chrome) - 5 * var(--dt-gap)) / 6);
   /* 取小：宽屏时按宽度算更小，矮屏时按高度算更小。
@@ -5530,7 +5557,7 @@ html.ios #statusbar{display:none;}
    top 要给状态栏让位 —— 状态栏是 absolute 浮着的，写 top:0 的话
    「浮岛」和返回键会跟电量时间叠在一起（截图里就是这样）。 */
 .page[data-page="island"] .app-head{
-  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;z-index:4;
+  position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
@@ -6760,7 +6787,7 @@ html.ios #statusbar{display:none;}
      ③ 里面的按钮压在图上看不清，给一层淡黑底 + 白字；
      ④ top 要**让开状态栏那一条**（状态栏现在不占布局了，顶栏得自己避让）。 */
 #phone:has(.page.is-active:not(.is-behind) .tab-panel.is-moments) .app-head{
-  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;
+  position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;
   background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
   z-index:6;
 }
@@ -7974,7 +8001,7 @@ div.pp-row:active{background:none;}
 .page[data-page="offline-scene"] .page-inner{height:100%;min-height:0;}
 /* 状态栏区域透明：线下自己的顶栏背景直接顶到最上沿，
    时间电量浮在页面配色上（用户：「直接透出下面的背景」） */
-.off-header{padding-top:calc(var(--safe-top) + 32px);}
+.off-header{padding-top:calc(var(--safe-top) + var(--sb-h));}
 .page.is-bleed .app-head{display:none;}
 
 .off-root{
@@ -8828,7 +8855,7 @@ div.pp-row:active{background:none;}
   overflow-y:auto;
   scrollbar-width:none;
   /* 顶部让开浮着的状态栏 */
-  padding-top:calc(var(--safe-top) + 44px);
+  padding-top:calc(var(--safe-top) + var(--sb-h) + 12px);
 }
 .off-sheet-full::-webkit-scrollbar{display:none;}
 .off-sheet-full .off-sheet-handle{margin-bottom:12px;}
@@ -10692,7 +10719,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-root{
   min-height:100%;display:flex;flex-direction:column;
   /* 顶栏给足外壳状态栏的高度：context 条/时钟不能被 20:14 那行压住 */
-  padding:calc(var(--safe-top) + 40px) 18px calc(var(--safe-bottom) + 18px);
+  padding:calc(var(--safe-top) + var(--sb-h) + 8px) 18px calc(var(--safe-bottom) + 18px);
   color:#3B342A;
   /* 锁屏右上角的小齿轮（硬翻风险）是 absolute 定位，锚点必须是它自己 ——
      真机截图抓的：没有这条时齿轮跑到时钟下面、浮层被顶出屏幕左缘 */
@@ -10736,7 +10763,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
    ⚠️ top 必须让开 #statusbar（透明状态栏 absolute 盖住顶部，z-index 60），
    不然齿轮看得见点不到 —— 五.17 同款坑，真机脚本抓过。 */
 .ph-root>.ph-flip-wrap{
-  position:absolute;top:calc(var(--safe-top) + 44px);right:14px;
+  position:absolute;top:calc(var(--safe-top) + var(--sb-h) + 12px);right:14px;
   z-index:3;text-align:left;
 }
 .ph-flip-gear{
@@ -14808,7 +14835,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="ta"] .app-head,
 .page[data-page="ta-item"] .app-head,
 .page[data-page="ta-person"] .app-head{
-  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;z-index:4;
+  position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
@@ -14822,7 +14849,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="ta-item"] .we-page-paper,
 .page[data-page="ta-person"] .we-page-paper{
   /* 顶栏下沉到 safe+32、行高约 46 —— 内容从 safe+90 起才不顶字 */
-  padding-top:calc(var(--safe-top) + 90px);
+  padding-top:calc(var(--safe-top) + var(--sb-h) + 58px);
 }
 
 /* ---- ta v2（第二批）：详情 kv / 变化线 / 动作行 / 加一行 ---- */
@@ -14872,7 +14899,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="we"] .app-head,
 .page[data-page="we-time"] .app-head,
 .page[data-page="collection"] .app-head{
-  position:absolute;top:calc(var(--safe-top) + 32px);left:0;right:0;z-index:4;
+  position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
@@ -14885,7 +14912,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="we"] .we-page-paper,
 .page[data-page="we-time"] .we-page-paper,
 .page[data-page="collection"] .we-page-paper{
-  padding-top:calc(var(--safe-top) + 90px);
+  padding-top:calc(var(--safe-top) + var(--sb-h) + 58px);
 }
 .page.has-tabbar[data-page="we"] .app-body,
 .page.has-tabbar[data-page="we-time"] .app-body,
@@ -15543,7 +15570,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   position:absolute;top:0;left:0;right:0;
   z-index:65;                       /* 盖在状态栏(60)之上、页面之上 */
   pointer-events:none;               /* 容器不挡操作，卡片自己接事件 */
-  padding-top:calc(var(--safe-top) + 34px);  /* 落进状态栏下方 */
+  padding-top:calc(var(--safe-top) + var(--sb-h) + 2px);  /* 落进状态栏下方 */
   font-family:var(--ff);
   display:flex;flex-direction:column;align-items:stretch;
 }

@@ -877,6 +877,9 @@
       var kb = Math.max(0, (global.innerHeight || vv.height) - vv.height - vv.offsetTop);
       /* 80px 以内基本是地址栏伸缩，不是键盘 —— 跟着抖会把界面顶得一跳一跳 */
       if (kb < 80) kb = 0;
+      /* 键盘高度在、但没有任何**可见**输入框拿着焦点 = 残留值（iOS 收键盘
+         不发 resize 那一类），当场清掉，别让底栏悬空顶在旧键盘高度上。 */
+      if (kb && !isEditing()) kb = 0;
       if (kb) root.style.setProperty('--kb-inset', kb + 'px');
       else root.style.removeProperty('--kb-inset');
       root.classList.toggle('kb-open', kb > 0);
@@ -937,19 +940,42 @@
       }, 300);
     });
 
+    /* 「此刻真的有输入框拿着焦点吗」—— 只认**当前活动页**里的输入框。
+       页面退场只是 visibility:hidden（build 缓存复用，元素不卸载），
+       退场页的 textarea 仍可能是 activeElement —— 只查 activeElement 的话，
+       切页之后永远判成「有焦点」，下面的清理永远不跑
+       （2026-10-28 用户：「切换页面之后底栏往上走」—— --kb-inset 残留）。 */
+    function isEditing() {
+      var a = document.activeElement;
+      if (!a) return false;
+      if (a.tagName !== 'INPUT' && a.tagName !== 'TEXTAREA' && !a.isContentEditable) return false;
+      var pg = a.closest ? a.closest('.page') : null;
+      if (pg && !pg.classList.contains('is-active')) return false;
+      return !!(a.offsetParent || (a.getClientRects && a.getClientRects().length));
+    }
+    function clearIfIdle() {
+      if (isEditing()) return;
+      if (root.style.getPropertyValue('--kb-inset')) root.style.removeProperty('--kb-inset');
+      root.classList.remove('kb-open');
+    }
+
     /* 键盘收起的兜底清理（2026-10-28 iOS 用户报「底栏太高，下面空一截」）：
        iOS PWA 里键盘收起**不一定**触发 visualViewport 的 resize（系统版本
        之间行为飘），--kb-inset 一旦残留，整条底栏就被悬空顶在键盘高度上，
        下面留一大截空 —— 而且不重开页面回不去。所以焦点离开输入框之后
-       稍等一拍，确认没有任何输入框拿着焦点，就强制清掉。正常路径上
+       稍等一拍，确认没有任何**可见**输入框拿着焦点，就强制清掉。正常路径上
        sync() 已经清过了，这里只是兜住「事件没来」的那一类。 */
     document.addEventListener('focusout', function () {
-      setTimeout(function () {
-        var a = document.activeElement;
-        if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
-        if (root.style.getPropertyValue('--kb-inset')) root.style.removeProperty('--kb-inset');
-        root.classList.remove('kb-open');
-      }, 400);
+      setTimeout(clearIfIdle, 400);
+    });
+    /* 切页兜底：页面栈切换**不产生 focusout**（退场页只是 visibility:hidden，
+       焦点还挂在上面），但那一刻键盘必然已经收掉。借「点击」和「返回」
+       这两个切页必经的信号，稍等一拍查一次 —— 500ms 要盖过切页动画。 */
+    document.addEventListener('click', function () {
+      setTimeout(clearIfIdle, 500);
+    });
+    global.addEventListener('popstate', function () {
+      setTimeout(clearIfIdle, 500);
     });
   })();
 

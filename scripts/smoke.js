@@ -3296,8 +3296,11 @@ ok('三屏的实现都挂上了（消息 / 朋友圈 / 我）',
     sbBlock.indexOf('position:relative') < 0 &&
     sbBlock.indexOf('background') < 0);
   /* v275 起 chrome 常量改读 --safe-top（iOS 安全区探针测量的变量，
-     env 兜底）—— 直接写 env 会绕过测量，iOS 26.1 那类版本静默失效。 */
-  const chrome = 'calc(var(--safe-top) + 32px)';
+     env 兜底）—— 直接写 env 会绕过测量，iOS 26.1 那类版本静默失效。
+     v277 起再拆出 --sb-h（假状态栏占位）：iOS 上 #statusbar 隐藏、
+     32px 归零，所以同源常量必须是 safe-top + sb-h 的组合，
+     谁再硬写 +32px 就会在 iOS 上双份（顶栏/搜索框整体偏下）。 */
+  const chrome = 'calc(var(--safe-top) + var(--sb-h))';
   ok('各页面都把状态栏那一条让出来了（padding-top / sticky top 同源）',
     css.split(chrome).length - 1 >= 4);
 }
@@ -5362,10 +5365,53 @@ t('iOS 安全区 v275：探针测量 + 变量唯一入口 + iOS 藏假状态栏'
   if (css.indexOf('html.ios #statusbar{display:none;}') < 0) {
     throw new Error('缺 html.ios #statusbar 藏假状态栏的规则（时间戳会和系统叠）');
   }
-  /* ⑥ 输入栏底部收窄（iOS 上安全区本身 ~34px，+14 观感「底栏太高」） */
+  /* ⑥ 输入栏底部收窄（iOS 上安全区本身 ~34px 已占掉「离底」，再叠就
+     「底栏太高」；v277 再从 +8 收到 +6） */
   const ia = css.match(/\.input-area\{[^}]*\}/);
-  if (!ia || ia[0].indexOf('calc(var(--safe-bottom) + 8px)') < 0) {
-    throw new Error('.input-area 底部不是 var(--safe-bottom) + 8px');
+  if (!ia || ia[0].indexOf('calc(var(--safe-bottom) + 6px)') < 0) {
+    throw new Error('.input-area 底部不是 var(--safe-bottom) + 6px');
+  }
+  return 'ok';
+});
+
+/* v277 护栏（2026-10-28 深夜三批 → 10-29 早上收尾）：iOS 顶栏偏下真凶
+   （假状态栏补偿没随 #statusbar 一起藏）+ 底栏残留 + 面板固定高度。 */
+t('iOS 安全区 v277：--sb-h 补偿归零 / 面板固定三行 / kb 残留清理升级', () => {
+  const css = fs.readFileSync('style.css', 'utf8');
+  const appJs = fs.readFileSync('app.js', 'utf8');
+  /* ① 假状态栏占位变量：:root 给 32（安卓 fullscreen 必须留），
+     html.ios 归零（iOS 藏了假状态栏，补偿必须跟着还回去）。
+     期望值硬写字符串，不引被测常量 —— 两边一起变就护不住。 */
+  if (css.indexOf('--sb-h:32px;') < 0) {
+    throw new Error(':root 缺 --sb-h:32px 定义（假状态栏占位）');
+  }
+  if (css.indexOf('html.ios{--sb-h:0px;}') < 0) {
+    throw new Error('缺 html.ios{--sb-h:0px}（iOS 上顶栏/搜索框会整体偏下 32px）');
+  }
+  /* ② 顶部消费点不许再硬写 +32px（写了就是 iOS 双份）—— 剥注释后数 */
+  const cssNC = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  if (/var\(--safe-top\)\s*\+\s*32px/.test(cssNC)) {
+    throw new Error('发现硬写 calc(var(--safe-top) + 32px)——顶部补偿必须走 var(--sb-h)');
+  }
+  /* ③ 加号面板固定三行高度 + 内部滚（用户：高度固定，固定高度内可滑动） */
+  const pp = css.match(/\.plus-panel\{[^}]*\}/);
+  if (!pp || pp[0].indexOf('height:calc(var(--safe-bottom) + 291px)') < 0 ||
+      pp[0].indexOf('overflow-y:auto') < 0) {
+    throw new Error('.plus-panel 缺固定三行高度（--safe-bottom + 291px）+ 内部滚动');
+  }
+  /* ④ kb 残留清理升级：只认活动页可见输入框 + 切页兜底 */
+  if (appJs.indexOf('function isEditing()') < 0 ||
+      appJs.indexOf("pg.classList.contains('is-active')") < 0) {
+    throw new Error('app.js 缺 isEditing() 活动页判据（退场页 textarea 会让清理永远不跑）');
+  }
+  if (appJs.indexOf('setTimeout(clearIfIdle, 500)') < 0 ||
+      appJs.indexOf("document.addEventListener('click'") < 0 ||
+      appJs.indexOf("global.addEventListener('popstate'") < 0) {
+    throw new Error('app.js 缺 click/popstate 兜底清理（切页不产生 focusout）');
+  }
+  /* ⑤ 禁双击缩放（iOS 10+ 无视 user-scalable=no，双击缩放 = 顶/底栏向中心收） */
+  if (!/html,body\{[^}]*touch-action:manipulation/.test(css)) {
+    throw new Error('html,body 缺 touch-action:manipulation（双击缩放会让框架漂移）');
   }
   return 'ok';
 });
@@ -17336,7 +17382,13 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    槽 + compileOfflineHandoff + 总结卡命名约束）、page-chat.js（ctx 传入
    + 旧路径 unshift）变了。
    基准随批 v275 → v276。 */
-const EXPECTED_SW_CACHE = 'sleepy-v276';
+/* v277（2026-10-28 深夜三批 → 10-29 早上收尾）：iOS 安全区 / 底栏 / 加号面板 ——
+   style.css（--sb-h 假状态栏占位变量、html.ios 归零、全部顶部消费点改走
+   变量、.input-area +6、.plus-panel 固定三行高度、html touch-action:manipulation）、
+   app.js（--kb-inset 残留清理升级：isEditing 只认活动页可见输入框 +
+   sync 判据 + click/popstate 兜底）变了。
+   基准随批 v276 → v277。 */
+const EXPECTED_SW_CACHE = 'sleepy-v277';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
