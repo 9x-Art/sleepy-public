@@ -471,12 +471,68 @@
     } catch (e) { /* 审计失败不拦写入 */ }
   }
 
+  /* ---- 双会话互覆盖防线（2026-10-29 实锤复现）----
+     同一份数据开两个会话（PWA + 浏览器标签 / 手机+电脑），各自有独立的
+     store 内存缓存：A 写了 TA 的回复 → B（缓存陈旧）任意写一次 chats →
+     B 把 A 的写入整表覆盖，TA 的话凭空消失（探针
+     scripts/probe-2tab-clobber.js 实锤）。修法：每个会话一个 sid，
+     persist('chats') 时发现磁盘上的 tag 不是自己 → 先把磁盘版按对话
+     合并进缓存（谁的 messages 多 / 谁更新采用谁），再落盘 —— 谁也不覆盖谁。
+     已知边界：一边删对话、另一边缓存陈旧再写，删掉的会被复活 ——
+     比「整段聊天记录蒸发」轻得多，先接受。 */
+  var SESSION = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  function mergeChatsFromDisk(disk) {
+    var cur = cache.chats;
+    if (!Array.isArray(cur) || !Array.isArray(disk)) return;
+    var byId = {};
+    cur.forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+    disk.forEach(function (d) {
+      if (!d || !d.id) return;
+      var mine = byId[d.id];
+      if (!mine) { cur.push(d); byId[d.id] = d; return; }   /* 别的会话新建的对话 */
+      /* 消息按 id 并集：两边各写了几条就都保住（聊天是 append-mostly，
+         按 id 去重不会引入重复；删除场景见上面的已知边界）。 */
+      var dm = Array.isArray(d.messages) ? d.messages : [];
+      var mm = Array.isArray(mine.messages) ? mine.messages : [];
+      var seen = {};
+      mm.forEach(function (m) { if (m && m.id) seen[m.id] = 1; });
+      var added = false;
+      dm.forEach(function (m) {
+        if (m && m.id && !seen[m.id]) { mm.push(m); seen[m.id] = 1; added = true; }
+      });
+      if (added) {
+        mm.sort(function (a, b) { return (a.timestamp || 0) - (b.timestamp || 0); });
+        mine.messages = mm;
+      }
+    });
+  }
+
+  function chatsTag() {
+    try { return JSON.parse(global.localStorage.getItem(NS + 'chatsTag') || 'null'); }
+    catch (e) { return null; }
+  }
+
   function persist(top) {
     versions[top] = (versions[top] || 0) + 1;
     try {
+      if (top === 'chats') {
+        /* 落盘前先看看磁盘是不是被别的会话写过了：是就把它的对话并进来 */
+        var tag = chatsTag();
+        if (tag && tag.sid !== SESSION) {
+          try {
+            var disk = JSON.parse(global.localStorage.getItem(NS + 'chats') || 'null');
+            if (disk) mergeChatsFromDisk(disk);
+          } catch (e) { /* 磁盘读不出来就按原样写（老行为） */ }
+        }
+      }
       var jsonStr = JSON.stringify(cache[top]);
       global.localStorage.setItem(NS + top, jsonStr);
-      if (top === 'chats') auditChats(jsonStr);
+      if (top === 'chats') {
+        global.localStorage.setItem(NS + 'chatsTag',
+          JSON.stringify({ sid: SESSION, at: Date.now() }));
+        auditChats(jsonStr);
+      }
       return true;
     } catch (e) {
       var quota = e && (e.name === 'QuotaExceededError' ||
