@@ -5468,27 +5468,20 @@
           }
           targets.push({ id: c.characterId, name: chatDisplayName(c), chatId: c.id });
         });
-        /* 2026-10-29 修（用户报：日记相册啥也没有，TA 却说「全是关于我的事」）：
-           以前不管有没有货，七个面全进计划 → 收尾摘要照报「翻了日记、相册」
-           → 模型拿着面名脑补内容。现在**先数货**：空面根本不进计划
-           （TA 不去翻，摘要也不报）。profile 永远在 —— 账号本身就是内容。 */
-        var facesOf = function (key, keep) {
-          var list = store.get(key);
-          if (!Array.isArray(list)) return 0;
-          var sid2 = sid && Sleepy.core && Sleepy.core.scoped ? Sleepy.core.scoped(list) : list;
-          return (sid2 || []).filter(keep || Boolean).length;
-        };
-        var faces = [{ id: 'chat', targets: targets }];
-        if (facesOf('moments', function (p) { return p && !p.groupId && String(p.content || p.text || '').trim(); }))
-          faces.push({ id: 'moments', name: '朋友圈' });
-        if (facesOf('photos')) faces.push({ id: 'photos', name: '相册' });
-        if (facesOf('diaries', function (d) { return d && String(d.content || '').trim(); }))
-          faces.push({ id: 'diary', name: '日记' });
-        if (facesOf('favorites')) faces.push({ id: 'favorites', name: '收藏' });
-        faces.push({ id: 'profile', name: '微信账号' });
-        if (facesOf('forumPosts', function (p) { return p && p.status !== 'deleted' && String(p.title || p.content || '').trim(); }))
-          faces.push({ id: 'forum', name: '群声' });
-        return faces;
+        /* 七个面全列（v287 回滚 v286 的「先数货」）：用户口径 —— TA 打开
+           空的日记/相册**发现什么都没有**，这件事本身就该告诉模型
+           （「他翻了你的日记，空的，一篇都没写」比「他没看日记」有戏）。
+           空面不再是漏报，采样器（revSample）对空面有显式话术，
+           收尾摘要（revcheck.buildSummary）按面交代翻到了什么。 */
+        return [
+          { id: 'chat', targets: targets },
+          { id: 'moments', name: '朋友圈' },
+          { id: 'photos', name: '相册' },
+          { id: 'diary', name: '日记' },
+          { id: 'favorites', name: '收藏' },
+          { id: 'profile', name: '微信账号' },
+          { id: 'forum', name: '群声' }
+        ];
       }
 
       /** 采样器：真读本岛数据 → {detail, learned}。失败回落通用文案，不阻断浏览。 */
@@ -5513,7 +5506,7 @@
               if (!text) continue;
               lines.unshift((m.role === 'user' ? '你：' : '对方：') + text.slice(0, 40));
             }
-            if (!lines.length) return { detail: '聊天记录（空）', learned: '' };
+            if (!lines.length) return { detail: '空的，什么都没聊', learned: '' };
             /* learned 只提炼**值得知道**的：短应酬（你好/嗯/在吗）不算
                「TA 知道了什么」（2026-10-29 用户「信息很多但没用」）。 */
             var userSays = lines.filter(function (l) { return l.indexOf('你：') === 0; })
@@ -5526,29 +5519,37 @@
               learned: userSays.length ? ('与「' + step.targetName + '」的对话里你说过：' + userSays.join('；')) : ''
             };
           }
+          /* v287 采样口径：detail 是**纯事实描述**（不带面名前缀）——
+             收尾摘要会拼「面名：detail」喂给模型，心声弹幕也会拼
+             「你刚看到（面名）：detail」，前缀重复就是「日记：日记：…」。
+             空面有显式话术：模型拿到的就是「什么都没有」，没得脑补。 */
           if (step.page === 'moments') {
             var posts = scoped('moments').filter(function (p) { return p && !p.groupId; }).slice(-4).reverse();
-            if (!posts.length) return { detail: '朋友圈', learned: '' };
+            if (!posts.length) return { detail: '空的，一条动态都没有', learned: '' };
             return {
-              detail: '朋友圈动态：' + posts.map(function (p) { return String(p.content || p.text || '').slice(0, 30); }).join(' / '),
+              detail: posts.length + ' 条动态：' + posts.map(function (p) { return String(p.content || p.text || '').slice(0, 30); }).join(' / '),
               learned: ''
             };
           }
           if (step.page === 'photos') {
             var ph = scoped('photos');
-            return { detail: '相册（' + ph.length + ' 张）', learned: '' };
+            return { detail: ph.length
+              ? ph.length + ' 张照片'
+              : '空的，一张照片都没有', learned: '' };
           }
           if (step.page === 'diary') {
             var ds = scoped('diaries').slice(-3).reverse();
-            if (!ds.length) return { detail: '日记（空）', learned: '' };
+            if (!ds.length) return { detail: '空的，一篇都没写', learned: '' };
             return {
-              detail: '日记：' + ds.map(function (d) { return String(d.content || '').slice(0, 30); }).join(' / '),
+              detail: '最近几篇：' + ds.map(function (d) { return String(d.content || '').slice(0, 30); }).join(' / '),
               learned: ''
             };
           }
           if (step.page === 'favorites') {
             var fs = scoped('favorites');
-            return { detail: '收藏（' + fs.length + ' 条）', learned: '' };
+            return { detail: fs.length
+              ? fs.length + ' 条收藏'
+              : '空的，什么都没收过', learned: '' };
           }
           if (step.page === 'profile') {
             var mask = null;
@@ -5566,14 +5567,14 @@
           }
           if (step.page === 'forum') {
             var fps = scoped('forumPosts').filter(function (p) { return p && p.status !== 'deleted'; }).slice(-4).reverse();
-            if (!fps.length) return { detail: '群声（空）', learned: '' };
+            if (!fps.length) return { detail: '空的，还没有帖子', learned: '' };
             return {
-              detail: '群声帖子：' + fps.map(function (p) { return String(p.title || p.content || '').slice(0, 24); }).join(' / '),
+              detail: fps.length + ' 条帖子：' + fps.map(function (p) { return String(p.title || p.content || '').slice(0, 24); }).join(' / '),
               learned: ''
             };
           }
         } catch (e) { /* 采样失败不阻断 */ }
-        return { detail: '浏览了「' + step.pageName + '」', learned: '' };
+        return { detail: '空的，什么都没有', learned: '' };
       }
 
       /** 页面切换：nav.open 真页面。页面没注册就跳过这步（返回 false）。 */

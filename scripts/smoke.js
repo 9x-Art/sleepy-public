@@ -11369,8 +11369,32 @@ t('反查手机 2026-10-29：点反查当场开演（遮罩层 + 心声保底 + 
   if (src.indexOf('cand.baseUrl') >= 0 || src.indexOf('cand.apiKey') >= 0) {
     throw new Error('page-chat 还在裸读候选配置（配置在 cand.cfg 里，走 requestOnce）');
   }
-  const av = src.match(/function revAvailable[\s\S]{0,2200}/);
-  if (!av || av[0].indexOf('facesOf') < 0) throw new Error('浏览计划没有先数货（空面过滤缺）');
+  /* v287（用户口径：直接告诉模型翻了什么、里面有什么、什么都没有）：
+     ① revAvailable 七面全列（空面也翻 —— 「发现什么都没有」本身有戏），
+        不许再做「先数货」过滤（那会让 TA 跳过空面，模型永远不知道日记是空的）；
+     ② revSample 空面话术显式（空的，一张照片都没有 / 一篇都没写 …）；
+     ③ 收尾摘要按面交代 pageName：detail，不再只报面名让模型脑补。 */
+  const av = src.match(/function revAvailable[\s\S]{0,1500}/);
+  if (!av) throw new Error('revAvailable 找不到');
+  ['chat', 'moments', 'photos', 'diary', 'favorites', 'profile', 'forum'].forEach((id) => {
+    if (av[0].indexOf("'" + id + "'") < 0) throw new Error('浏览计划缺面：' + id + '（七面必须全列）');
+  });
+  if (av[0].indexOf('facesOf') >= 0) throw new Error('浏览计划还在按货过滤（空面也该翻）');
+  const sp = src.match(/function revSample[\s\S]{0,3600}/);
+  if (!sp || sp[0].indexOf('一张照片都没有') < 0 || sp[0].indexOf('一篇都没写') < 0) {
+    throw new Error('采样器空面话术缺（要显式告诉模型什么都没有）');
+  }
+  const sumOut = S.revcheck.buildSummary('小满', [
+    { pageName: '相册', detail: '空的，一张照片都没有', learned: '' },
+    { pageName: '日记', detail: '最近几篇：今天也想他。', learned: '' }
+  ], ['……原来是这样。']);
+  if (sumOut.indexOf('相册：空的，一张照片都没有') < 0 ||
+      sumOut.indexOf('日记：最近几篇：今天也想他。') < 0 ||
+      sumOut.indexOf('「……原来是这样。」') < 0) {
+    throw new Error('收尾摘要没按面交代翻到了什么：' + sumOut);
+  }
+  const sumEmpty = S.revcheck.buildSummary('小满', [{ pageName: '收藏', detail: '', learned: '' }], []);
+  if (sumEmpty.indexOf('收藏：什么都没有') < 0) throw new Error('空 detail 该兜「什么都没有」：' + sumEmpty);
   const css = fs.readFileSync('style.css', 'utf8');
   if (!css.includes('.rev-scrim{')) throw new Error('遮罩层样式缺');
   if (!css.includes('.msg-revcard{')) throw new Error('收尾卡样式缺');
@@ -17684,7 +17708,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v286';
+const EXPECTED_SW_CACHE = 'sleepy-v287';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

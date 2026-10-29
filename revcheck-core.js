@@ -177,11 +177,22 @@
      展示面另有结构化卡片（msg.rev），这段主要喂给 eventNote/下一轮。 */
 
   function buildSummary(charName, items, thoughts) {
-    var apps = items.map(function (it) { return it.pageName; }).join('、');
-    var out = charName + ' 翻看了你的手机（' + apps + '）';
-    var learned = '';
+    /* 2026-10-29 用户口径（v287）：不报「翻了 A、B、C」这种**面名清单**
+       让模型自己猜里面有什么 —— 空的相册就是被脑补成「全是关于我的事」
+       的（用户实锤）。每面把**翻到了什么**（或「什么都没有」）直接交代。
+       detail 由采样器（page-chat.revSample）生成，空面有显式话术；
+       长内容截 60 字 —— 这段是给模型接话的语境，不是全文搬运。 */
+    var segs = [];
     for (var i = 0; i < items.length; i++) {
-      if (items[i].learned) { learned = items[i].learned; break; }
+      var d = String(items[i] && items[i].detail || '').trim();
+      if (!d) d = '什么都没有';
+      if (d.length > 60) d = d.slice(0, 60) + '…';
+      segs.push((items[i].pageName || '?') + '：' + d);
+    }
+    var out = charName + ' 翻看了你的手机 —— ' + (segs.join('；') || '什么都没翻到');
+    var learned = '';
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].learned) { learned = items[j].learned; break; }
     }
     if (thoughts && thoughts.length) {
       out += '。心里想：「' + thoughts.filter(Boolean).join('」「') + '」';
