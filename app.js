@@ -388,6 +388,17 @@
         bottom = probeEl('safe-probe-bottom',
           'height:env(safe-area-inset-bottom,0px)').getBoundingClientRect().height || 0;
       } catch (e) { return; }      /* 量不出来就等下一轮，别写脏值 */
+      /* PWA standalone 边到边检测（2026-10-29 用户朋友 iPhone 实测）：
+         这一版 WebKit 在 standalone 下 env(top) 渲染恒 0（探针量出来
+         也是 0），内容顶进半透明状态栏 → 顶部文字「虚糊感」。
+         innerHeight ≈ screen.height = 内容没被系统从状态栏下推开 = 需要
+         最小让位（html.ios-pwa-edge 里 CSS 给 47px 兜底）；系统自己推开
+         的版本（iOS 26.1 那类）innerHeight 更小，不加，避免双份。 */
+      try {
+        var edge = navigator.standalone && global.screen &&
+          global.innerHeight >= (global.screen.height - 2);
+        d.classList.toggle('ios-pwa-edge', !!edge);
+      } catch (e) { /* 量不了就不加 */ }
       /* 只有非零才算「可信」：替换该边 fallback 并锁定。
          中间轮次量到 0 不覆盖缓存（顶部先 59 后被 0 打回去 = 首屏跳动）。 */
       if (top > 0) {

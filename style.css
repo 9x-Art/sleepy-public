@@ -60,7 +60,14 @@
      **别直接写 env(...)**。 */
   --safe-top-fb:0px;
   --safe-bottom-fb:0px;
-  --safe-top:max(env(safe-area-inset-top, 0px), var(--safe-top-fb));
+  /* PWA standalone 边到边（2026-10-29 用户朋友 iPhone 实测）：这一版
+     WebKit 在加到主屏后 env(top) 渲染恒 0 —— 顶部让位变 0，内容顶进
+     半透明状态栏，文字看着「虚糊」。app.js 探针发现边到边（innerHeight
+     ≈ screen.height 且系统没自己推开内容）时挂 html.ios-pwa-edge，
+     把最小让位抬到 47px（刘海屏最小值；Dynamic Island 机型 59，env
+     正常的版本 max() 会取大者，不会少让）。env 直写仍只在上面一处。 */
+  --safe-top-min:0px;
+  --safe-top:max(env(safe-area-inset-top, 0px), var(--safe-top-fb), var(--safe-top-min));
   --safe-bottom:max(env(safe-area-inset-bottom, 0px), var(--safe-bottom-fb));
 
   /* ---- 假状态栏占位（2026-10-28 晚补，iOS 顶栏偏下的真凶）----
@@ -224,6 +231,10 @@
      配合 .34s 的时长，压住大屏不透明页滑动时的生硬感。 */
   --ease-page:cubic-bezier(.32,.72,0,1);
 }
+
+/* PWA standalone 边到边：顶部最小让位 47px（变量定义与说明见 ：root 内 --safe-top-min） */
+html.ios-pwa-edge{ --safe-top-min:47px; }
+
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 

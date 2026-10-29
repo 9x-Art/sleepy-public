@@ -5407,14 +5407,19 @@ t('iOS 安全区 v284：fallback 合成 + JS 禁写终值 + 冷启动有限重�
       app.indexOf('function writeFb') < 0) {
     throw new Error('探针没把测量值写进 --safe-top-fb/--safe-bottom-fb（须经 writeFb）');
   }
-  /* ③ CSS 终值必须 env + fallback 合成，fb 有 :root 初始定义 */
-  if (!/--safe-top:max\(env\(safe-area-inset-top, 0px\), var\(--safe-top-fb\)\)/.test(css) ||
+  /* ③ CSS 终值必须 env + fallback 合成，fb 有 :root 初始定义。
+     2026-10-29 起合成是三元的：--safe-top-max 里多一项 --safe-top-min
+     （PWA standalone 边到边的顶部最小让位，见 ：root 内注释）。 */
+  if (!/--safe-top:max\(env\(safe-area-inset-top, 0px\), var\(--safe-top-fb\), var\(--safe-top-min\)\)/.test(css) ||
       !/--safe-bottom:max\(env\(safe-area-inset-bottom, 0px\), var\(--safe-bottom-fb\)\)/.test(css)) {
     throw new Error(':root 缺 max(env, fallback) 合成定义');
   }
   if (!/--safe-top-fb:0px;/.test(css) || !/--safe-bottom-fb:0px;/.test(css)) {
     throw new Error(':root 缺 --safe-top-fb/--safe-bottom-fb 初始定义');
   }
+  /* ③b standalone 边到边的顶部最小让位：探针挂类 + CSS 只经 --safe-top-min 消费 */
+  if (app.indexOf("ios-pwa-edge") < 0) throw new Error('app.js 缺 ios-pwa-edge 边到边检测');
+  if (!/--safe-top-min:47px;/.test(css)) throw new Error('CSS 缺 --safe-top-min:47px 兜底');
   /* ④ iOS 类 + 键盘残留兜底清理 */
   if (app.indexOf("d.classList.add('ios')") < 0) throw new Error('app.js 没打 html.ios 类');
   if (app.indexOf("root.style.removeProperty('--kb-inset')") < 0 ||
@@ -17714,7 +17719,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v290';
+const EXPECTED_SW_CACHE = 'sleepy-v291';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
