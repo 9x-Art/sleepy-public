@@ -327,7 +327,7 @@
   function streamOnce(cand, messages, handlers, ov) {
     var p = genParams(cand.cfg, ov);
     var url = normalizeEndpoint(cand.cfg.baseUrl);
-    var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
+    var ctrl = (typeof global.AbortController === 'function') ? new AbortController() : null;
     var timer = null;
     var out = '';
     var usage = null;
@@ -335,10 +335,32 @@
 
     handlers = handlers || {};
 
+    /* 流空闲看门狗（2026-10-29 「回复可见却没落库」实锤）：
+       网关把内容吐完但不发结束帧（或最后一帧被网络吞掉）时，reader.read()
+       永远不 resolve，done() 永远不触发 —— 回复全文停在 pending 气泡里，
+       刷新即蒸发，且不同网络/机型表现不同。修法：收到首个分块后启动
+       空闲表，**连续 15s 一个分块都没有**就收尾 —— 有内容按完成处理
+       （落库保命），一个字都没有按失败换候选。15s 的沉默对正常生成
+       罕见（思考模型的 reasoning 分块也在持续流动，会不停喂表）。 */
+    var IDLE_MS = 15000;
+    var idleTimer = null;
+    function armIdle() {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(function () {
+        if (settled) return;
+        if (String(out || '').trim()) done();
+        else fail({ stage: 'timeout', error: '流式超时：服务器 15 秒没有任何响应' });
+      }, IDLE_MS);
+    }
+    function disarmIdle() {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    }
+
     function fail(err) {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      disarmIdle();
       if (handlers.onError) handlers.onError(err);
     }
 
@@ -346,6 +368,7 @@
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      disarmIdle();
       if (handlers.onDone) handlers.onDone(out, usage);
     }
 
@@ -391,15 +414,29 @@
             try { data = JSON.parse(payload); } catch (e) { continue; }
             /* include_usage：最后一块通常不带 choices、只带 usage */
             if (data.usage) usage = data.usage;
-            var delta = data.choices && data.choices[0] && data.choices[0].delta &&
-                        data.choices[0].delta.content;
+            var ch0 = data.choices && data.choices[0];
+            var delta = ch0 && ch0.delta && ch0.delta.content;
             if (delta) {
               out += delta;
+              armIdle();                         /* 只有内容分块喂看门狗（keepalive 注释帧不喂） */
               if (handlers.onDelta) handlers.onDelta(delta, true);
+            }
+            /* finish_reason 是模型说完的权威标志（2026-10-29 实锤：有的
+               网关吐完内容既不发 [DONE] 也不关流，还用注释帧保活 ——
+               光等 res.done 会永远等不到）。见到就立即收尾落库，
+               不等流关闭。 */
+            if (ch0 && ch0.finish_reason) {
+              /* 网关还会用注释帧保活，流不会自己关 —— 主动断开 reader 释放连接 */
+              try { reader.cancel(); } catch (e) { /* 忽略 */ }
+              done();
+              return;
             }
           }
           return pump();
         })['catch'](function (err) {
+          if (typeof console !== 'undefined') {
+            console.log('[api-debug] pump throw: ' + ((err && err.stack) || err));
+          }
           fail({ stage: 'network', error: (err && err.message) || String(err) });
         });
       }
@@ -623,7 +660,13 @@
             started = true;
             if (handlers.onDelta) handlers.onDelta(delta, more);
           },
-          onDone: function (text) {
+          /* 第二参 usage 必须在这里接住（v292 修 2026-10-29 丢消息真因）：
+             streamOnce 的 onDone 签名是 (out, usage)，usage 只在 streamOnce
+             作用域里存在。v270/271 批次把下面那行改成引用 `usage` 却没改
+             形参表 → 每次流式成功收尾都抛 ReferenceError: usage is not
+             defined，又被 pump 的 .catch(fail) 静默吞掉（settled 已置位）
+             —— 回复气泡看得见、永不落库、刷新即蒸发。 */
+          onDone: function (text, usage) {
             /* 空流不算成功（2026-10-26 空回维稳）：流走完了但一个字都没吐
                —— 典型是 reasoning 模型把 max_tokens 烧光、content 为空 ——
                按失败换候选重试（此时没出过任何字，重试不会有重复内容；
@@ -759,6 +802,7 @@
   }
 
   Sleepy.api = {
+    __v: 'v292-watchdog',
     normalizeEndpoint: normalizeEndpoint,
     modelsUrl: modelsUrl,
     fetchModels: fetchModels,

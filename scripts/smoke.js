@@ -4479,6 +4479,68 @@ t('MCP 接线静态护栏：api 工具循环 + 对话开关 + 相册选人 + 加
   return { 接线: '齐' };
 });
 
+/* ---------- 流式看门狗（2026-10-29 「回复可见却没落库」实锤）----------
+   有的网关吐完内容不发 [DONE] 也不关流（还用注释帧保活），reader.read()
+   永不 resolve，done() 不触发 → 回复停在 pending 气泡里刷新即蒸发。
+   修法 = streamOnce 里两条收尾路径：①空闲看门狗（连续 15s 没有内容
+   分块：有内容按完成落库、零内容按失败换候选）②见到 finish_reason
+   立即 done（不等流关闭）。这组护栏钉住两条路径都存在、且 fail/done
+   都会摘表（漏摘 = settled 后幽灵定时器再触发一次收尾）。 */
+t('流式看门狗护栏：空闲收尾 + finish_reason 立即落库 + fail/done 摘表', () => {
+  const apiSrc = fs.readFileSync(path.join(ROOT, 'api.js'), 'utf8');
+  /* ① 看门狗本体：armIdle / disarmIdle 两个函数 + 15s 空闲阈值 */
+  if (apiSrc.indexOf('function armIdle()') < 0 || apiSrc.indexOf('function disarmIdle()') < 0) {
+    throw new Error('streamOnce 缺空闲看门狗（armIdle/disarmIdle）');
+  }
+  if (apiSrc.indexOf('15000') < 0) {
+    throw new Error('看门狗空闲阈值 15000 不在（被改小会让正常生成被掐断，改大要同步这里的硬写期望）');
+  }
+  /* ② 内容分块必须喂表（keepalive 注释帧不喂 —— 只有 delta 路径调 armIdle） */
+  if (!/if \(delta\) \{[\s\S]{0,80}armIdle\(\)/.test(apiSrc)) {
+    throw new Error('内容分块没有 armIdle() 喂表');
+  }
+  /* ③ fail 与 done 都必须摘表（防 settled 后幽灵定时器再触发） */
+  const failBody = apiSrc.match(/function fail\(err\) \{[\s\S]*?\n    \}/);
+  const doneBody = apiSrc.match(/function done\(\) \{[\s\S]*?\n    \}/);
+  if (!failBody || failBody[0].indexOf('disarmIdle()') < 0) {
+    throw new Error('fail() 没调 disarmIdle()');
+  }
+  if (!doneBody || doneBody[0].indexOf('disarmIdle()') < 0) {
+    throw new Error('done() 没调 disarmIdle()');
+  }
+  /* ④ finish_reason 立即收尾（不等 [DONE]/流关闭），且收尾时 cancel reader
+     释放保活连接；超时空闲时「有内容按完成、零内容按失败」的双出口必须在 */
+  if (!/finish_reason/.test(apiSrc) || !/try \{ reader\.cancel\(\); \} catch/.test(apiSrc)) {
+    throw new Error('finish_reason 立即收尾 / reader.cancel 释放连接不在');
+  }
+  if (apiSrc.indexOf("String(out || '').trim()) done()") < 0 ||
+      apiSrc.indexOf("fail({ stage: 'timeout', error: '流式超时：服务器 15 秒没有任何响应' })") < 0) {
+    throw new Error('看门狗超时双出口（有内容 done / 零内容 fail）不在');
+  }
+  return { 看门狗: '齐', 空闲阈值: '15s' };
+});
+/* ---------- 丢消息真因护栏（2026-10-29 深夜实锤）----------
+   v270/271 批次把 runChat 流包装的 onDone 改成引用 `usage`，但 usage 只在
+   streamOnce 作用域里存在、形参表没接 → 每次流式成功收尾抛
+   ReferenceError: usage is not defined，又被 pump 的 .catch(fail) 静默吞掉
+   —— 气泡看得见、永不落库、刷新即蒸发（「还是丢」的真因）。
+   护栏钉死：包装回调必须以 (text, usage) 双形参接住 streamOnce 传上来的
+   usage，再把 usage 传给调用方 —— 光有引用行没有形参 = 静默炸。 */
+t('runChat 流包装 usage 透传护栏：onDone 双形参接住再传出', () => {
+  const apiSrc = fs.readFileSync(path.join(ROOT, 'api.js'), 'utf8');
+  if (apiSrc.indexOf('onDone: function (text, usage) {') < 0) {
+    throw new Error('runChat 流包装 onDone 必须是 function (text, usage) 双形参 —— 少了 usage 形参就是 2026-10-29 丢消息真因复发');
+  }
+  if (apiSrc.indexOf('handlers.onDone(cand, text, usage ? { usage: usage } : null)') < 0) {
+    throw new Error('runChat 包装没把 usage 传给调用方（page-chat 的 extra.usage 链会断）');
+  }
+  /* streamOnce 自己的 done() 依旧把 usage 作为第二参传出来（透传源头） */
+  if (apiSrc.indexOf('handlers.onDone(out, usage);') < 0) {
+    throw new Error('streamOnce done() 没把 usage 传出来');
+  }
+  return { 形参: 'text+usage', 透传: '齐' };
+});
+
 console.log('\n--- desktop:布局不重叠 ---');
 /* CSS Grid 会让后插入的格子**静默盖在**先插入的上面，
    不报错、不缺图，只是「有个东西不见了」——
@@ -17719,7 +17781,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v291';
+const EXPECTED_SW_CACHE = 'sleepy-v292';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
