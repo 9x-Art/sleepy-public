@@ -1324,6 +1324,52 @@
     return { text: text, names: names };
   }
 
+  /* 角色引用回复（2026-10-29）：TA 回复里单独一行写 [引用:那句话的关键原文]。
+     程序拿这段原文去最近消息里对号（包含匹配），对上了就把引用条挂到
+     TA 气泡下面（样式同 user 的引用）。全角半角冒号都认，只收第一个
+     标签，其余照剥防泄漏。纯函数。 */
+  function extractReplyQuote(raw) {
+    var hit = null;
+    var text = String(raw == null ? '' : raw)
+      .replace(/\[引用[：:]([^\]\n]*)\]/g, function (_, q) {
+        if (!hit) {
+          var v = String(q || '').trim().slice(0, 140);
+          if (v) hit = v;
+        }
+        return '';
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return { text: text, hit: hit };
+  }
+
+  /* [引用:...] 原文 → 历史消息对号。从新往旧扫最近 30 条（跳过撤回/事件条）：
+     命中规则 = 消息正文包含引用原文，或引用原文包含某个分泡段（模型常
+     只抄半句，正着反着都试试）。返回命中的消息，对不上返回 null ——
+     调用方把引用记成 user 说的（引用着回多半回的是你那句话）。 */
+  function matchQuotedMessage(chatId, quoteText) {
+    var c = getChat(chatId);
+    var list = (c && c.messages) || [];
+    var q = String(quoteText || '').trim();
+    if (!q) return null;
+    for (var i = list.length - 1, seen = 0; i >= 0 && seen < 30; i--, seen++) {
+      var m = list[i];
+      if (!m || m.recalledAt) continue;
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      if (m.type) continue;                       /* 卡片/附件消息不参与对号 */
+      var body = String(m.content || '');
+      if (!body.trim()) continue;
+      if (body.indexOf(q) >= 0) return m;
+      var segs = body.split('||');
+      for (var s = 0; s < segs.length; s++) {
+        var seg = String(segs[s] || '').trim();
+        if (seg.length >= 4 && q.indexOf(seg) >= 0) return m;
+      }
+    }
+    return null;
+  }
+
   /* 角色拍一拍：回复里单独一行写 [拍一拍] 或 [拍一拍:后缀]。
      和 [表情:名字] 同一套机制 —— 模型只说「想做这个动作」，
      落成什么样的消息由这里管。全角半角冒号都认，纯函数。 */
@@ -3591,20 +3637,6 @@
         /* 内容列：引用条 / 正文 / 时间都装在这里，头像才能并排在左边 */
         var content = h('div', 'msg-body');
 
-        if (msg.quote) {
-          /* 引用样式（2026-10-28 微信口径）：「名字：内容」，字多就两行截断。
-             user 的引用标「我」，角色的引用直接标 TA 的名字 —— 比笼统的
-             「对方」更像微信。 */
-          var qName = '对方';
-          if (msg.quote.role === 'user') qName = '我';
-          else {
-            var qc = getChat(chatId);
-            var qch = qc && qc.characterId ? findCharacter(qc.characterId) : null;
-            if (qch && qch.name) qName = qch.name;
-          }
-          content.appendChild(h('div', 'msg-quote', qName + '：' + msg.quote.content));
-        }
-
         /* 捡手机皮肤：头像旁的小昵称标（参考图里 avatar 边上那个小字） */
         if (role === 'assistant' && curMode === 'phone') {
           var nick = c && c.characterId ? findCharacter(c.characterId) : null;
@@ -3668,6 +3700,23 @@
               content.appendChild(vRow);
             }
           }
+        }
+
+        if (msg.quote && (!seg || seg.idx === 0)) {
+          /* 引用条（2026-10-29 用户口径）：挂在**气泡下面**的一行小灰字
+             「名字：内容」，字多两行截断。样式见 .msg-quote —— 它不参与
+             气泡宽度，长引用不会把一两个字的短气泡撑宽。
+             ⚠️ 只挂第一条气泡：一轮回复拆成几段时（a || b || c），
+             引用条跟着整条回复走，不该每段气泡下面都复读一遍。 */
+          var qName = '对方';
+          if (msg.quote.role === 'user') qName = '我';
+          else if (msg.quote.name) qName = msg.quote.name;
+          else {
+            var qc = getChat(chatId);
+            var qch = qc && qc.characterId ? findCharacter(qc.characterId) : null;
+            if (qch && qch.name) qName = qch.name;
+          }
+          content.appendChild(h('div', 'msg-quote', qName + '：' + msg.quote.content));
         }
 
         var meta = h('div', 'msg-meta');
@@ -5516,6 +5565,21 @@
         }).catch(function () { clearTimeout(timer); return ''; });
       }
 
+      /** 心声保底（2026-10-29 用户「没有心声飘过很平淡」）：模型想法没到位
+          （没配 API / 超时 / 空回）也要有一条弹幕 —— 只用情绪模板，
+          绝不编造「看到了什么」（具体内容只来自采样器的 learned）。 */
+      var REV_THOUGHT_FB = [
+        '……这条，看过就记住了。',
+        '（盯着屏幕看了很久，没出声。）',
+        '……原来你是这样。',
+        '嗯，这个有点意思。',
+        '……不告诉你我看了。',
+        '心里轻轻动了一下。'
+      ];
+      function revFallbackThought() {
+        return REV_THOUGHT_FB[Math.floor(Math.random() * REV_THOUGHT_FB.length)];
+      }
+
       /**
        * 接管主流程。consent 已过（或主动触发直接看）。
        * deps 注入便于以后复用；结束回调回聊天页。
@@ -5528,6 +5592,11 @@
         if (!plan.length) { ctx.toast('这台手机上没有 TA 能看的东西', 'warn'); return; }
 
         var host = (Sleepy.el && Sleepy.el.phone) || document.getElementById('phone');
+        /* 遮罩层（2026-10-29 用户点名要的）：轻暗化 + 顶部胶囊 + 弹幕都在
+           这层「接管感」里，底下的真页面照样看得见、照样在滚 —— 是
+           「TA 正在翻」的氛围，不是把手机盖住。pointer-events:none，
+           只有胶囊上的按钮可点。 */
+        var scrim = h('div', 'rev-scrim');
         var capsule = h('div', 'rev-capsule');
         capsule.innerHTML = '<span class="rev-dot"></span><span class="rev-cap-t">👁 ' + charName + ' 在看你手机</span>';
         var pauseB = h('button', 'rev-cap-btn rev-cap-pause', '⏸');
@@ -5568,6 +5637,7 @@
         btnRow.appendChild(avB);
         capsule.appendChild(btnRow);
         var danmaku = h('div', 'rev-danmaku');
+        host.appendChild(scrim);
         host.appendChild(capsule);
         host.appendChild(danmaku);
 
@@ -5598,6 +5668,7 @@
         }
         function teardown() {
           stopLoops();
+          if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
           if (capsule.parentNode) capsule.parentNode.removeChild(capsule);
           if (danmaku.parentNode) danmaku.parentNode.removeChild(danmaku);
           revRunning = false;
@@ -5622,6 +5693,14 @@
             w.lastAt = Date.now();
             w.note = summary;
           });
+          /* 收尾还页：接管途中可能切到了朋友圈/群声……看完要把屏幕还给
+             user —— nav.open 对已在栈里的 id 是「退回那一层」，顺手把
+             浏览途中压上去的页面全弹掉，落回这段聊天本身。 */
+          try {
+            if (Sleepy.nav && Sleepy.nav.top() !== 'chat-detail') {
+              Sleepy.nav.open('chat-detail', { chatId: chatId });
+            }
+          } catch (e) { /* 还页失败不影响播报 */ }
           renderMessages();
           ctx.toast(interrupted ? 'TA 被你抓个正着' : (charName + ' 看完了你的手机'), 'ok');
         }
@@ -5645,10 +5724,11 @@
             item.detail = sampled.detail; item.learned = sampled.learned;
             revThought(charName, persona, { pageName: step.pageName, detail: sampled.detail, learned: sampled.learned })
               .then(function (t) {
-                if (t && !state.done && !state.paused) {
-                  state.thoughts.push(t);
-                  danmu(t);
-                }
+                if (state.done || state.paused) return;
+                /* 模型想法没到位就走保底 —— 每一步都保证有一条心声飘过 */
+                if (!t) t = revFallbackThought();
+                state.thoughts.push(t);
+                danmu(t);
               });
             state.timer = setTimeout(advance, 5000);
           }, opened ? 700 : 200);
@@ -5683,10 +5763,12 @@
         return !(chat && chat.rev && chat.rev.off);
       }
 
-      /** 手动入口（加号面板，v1.2 用户口径）：点格子 = **递手机邀请**。
-          不当场判定同意/拒绝——落一张邀请卡，TA 知道是你邀请的，
-          下一轮回复里自己决定：接（夹 [[REV_ACCEPT]]，管线随即开翻）
-          或拒绝（嘴上说，不夹标签）。判定权在 TA。 */
+      /** 手动入口（加号面板）。2026-10-29 用户口径改版：点格子 = **当场开演** ——
+          落递手机卡 + 「TA 接过了手机」，随即启动接管（遮罩 + 真页面切换 +
+          心声弹幕）。不再等 TA 下一轮回复夹 [[REV_ACCEPT]] —— 上一版等一轮，
+          模型经常不夹标签，user 点完什么都不发生，整个功能就「平淡」掉了。
+          TA 的「反应」不丢：翻看中的心声弹幕 + 收尾播报就是 TA 的反应。
+          [[REV_PEEK]]（TA 自己起意）路径不受影响。 */
       function revManual(ctx2) {
         var rc = Sleepy.revcheck;
         if (!rc) return;
@@ -5699,8 +5781,13 @@
           content: '你把手机递给了「' + ch.name + '」，屏幕朝上——「想看就看吧」',
           timestamp: Date.now()
         });
-        revSave(chatId, function (w) { w.invite = { at: Date.now() }; });
+        addMessage(chatId, {
+          id: newId(), role: 'system', type: 'pat',
+          content: '「' + ch.name + '」接过了你的手机', timestamp: Date.now()
+        });
+        revSave(chatId, function (w) { w.lastAt = Date.now(); });
         renderMessages();
+        revRun(ch.name, revPersonaOf(ch, chat), getChat(chatId));
       }
 
       /** TA 回复里的邀请应答（onDone 链调）：有 [[REV_ACCEPT]] 就当场开翻。
@@ -5877,8 +5964,16 @@
           var text = m.type ? attachText(m) : (m.content || '');
           if (!text) return;
           if (m.quote) {
-            text = '（引用' + (m.quote.role === 'user' ? '我自己' : '你') +
-                   '刚说的：“' + m.quote.content + '”）\n' + text;
+            /* 口径按说话人换算（2026-10-29）：历史回喂是「这条消息的说话人」
+               在讲 —— user 的消息里「我自己」= user；TA 的回复里引用了你，
+               「我自己」= TA、「你」= user，两边别写反。 */
+            if (m.role === 'user') {
+              text = '（引用' + (m.quote.role === 'user' ? '我自己' : '你') +
+                     '刚说的：“' + m.quote.content + '”）\n' + text;
+            } else {
+              text = '（引用' + (m.quote.role === 'user' ? '你' : '我自己') +
+                     '刚说的：“' + m.quote.content + '”）\n' + text;
+            }
           }
           /* 多模态读图：user 的照片带真图进请求（data URL 备好了才带，
              没备好先文字占位 + 异步补，下一轮就能看见）。 */
@@ -6062,6 +6157,10 @@
         /* 撤回说明书：同引擎路径的 msgrecall 卡，文案保持一致（口径同上） */
         out.unshift({ role: 'system', content:
           '刚说的话可以反悔：单独一行写 [撤回:第几条|原因]，如 [撤回:1|说得太冲了想收回来]（1=你上一条发出去的消息，2=再往前一条，最多数到 3）。原因用一句话，对方点那条灰字就能看到。不要常用。' });
+
+        /* 引用说明书：同引擎路径的 quotetag 卡，文案保持一致（口径同上） */
+        out.unshift({ role: 'system', content:
+          '想针对对方刚说的某一句话回应时，可以在回复开头单独一行写 [引用:那句话的关键原文]，如 [引用:今晚不回来吃饭]（截取对方原话里最关键的一截就行，不用全抄）。引用条会显示在你的气泡下面。偶尔用，别每条都带。' });
 
         /* 灯牌说明书：同引擎路径的 lamptag 卡，文案保持一致（口径同上）。
            这是一个随时可用的能力，不是主动消息的附属 —— 40 字是灯牌卡面
@@ -6357,6 +6456,22 @@
             var pt = extractPats(finalText);
             finalText = pt.text;
 
+            /* [引用:那句话] 同样抽掉 —— TA 想引用着回。拿原文去最近消息里
+               对号：对上就取那条消息的 role / id（引用条名字才标得对），
+               对不上就默认记成 user 说的（引用着回多半回的是你那句话）。 */
+            var rq = extractReplyQuote(finalText);
+            finalText = rq.text;
+            var replyQuote = null;
+            if (rq.hit) {
+              var rqSrc = matchQuotedMessage(chatId, rq.hit);
+              replyQuote = {
+                role: rqSrc ? rqSrc.role : 'user',
+                content: rq.hit,
+                msgId: rqSrc ? rqSrc.id : null,
+                bubbleIndex: null
+              };
+            }
+
             /* [生图:描述] 同样抽掉 —— TA 想发照片，正文里不出现标签 */
             var gi = extractGenimgs(finalText);
             finalText = gi.text;
@@ -6477,7 +6592,7 @@
                  [自察] 块单独落库，不进 content（content 会回喂下一轮）。
                  只在开关开过时才有值；长按消息可看。 */
               var insp = split.inspect || null;
-              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId, inspect: insp, usage: usageRec });
+              if (target) patchMessage(chatId, target, { content: finalText, trans: transArr, timestamp: Date.now(), memoryId: memId, inspect: insp, usage: usageRec, quote: replyQuote });
               else {
                 voiceMsgId = newId();
                 addMessage(chatId, {
@@ -6488,7 +6603,8 @@
                   timestamp: Date.now(),
                   memoryId: memId,
                   inspect: insp,
-                  usage: usageRec
+                  usage: usageRec,
+                  quote: replyQuote
                 });
               }
               replyMsgId = voiceMsgId;

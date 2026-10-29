@@ -817,6 +817,16 @@
       body: '刚说的话可以反悔：单独一行写 [撤回:第几条|原因]，如 [撤回:1|说得太冲了想收回来]（1=你上一条发出去的消息，2=再往前一条，最多数到 3）。原因用一句话，对方点那条灰字就能看到。不要常用。'
     },
 
+    /* 引用回复（2026-10-29）：TA 也可以「引用着回」—— 针对你说的某句话
+       回话时，把那句话的关键原文写进 [引用:...]，程序会自动对上原消息，
+       引用条显示在 TA 气泡下面（同你引用 TA 的样式）。跟拍一拍同理，
+       一行就够 —— 写多了模型会句句引用。 */
+    quotetag: {
+      title: '引用回复',
+      locked: true,
+      body: '想针对对方刚说的某一句话回应时，可以在回复开头单独一行写 [引用:那句话的关键原文]，如 [引用:今晚不回来吃饭]（截取对方原话里最关键的一截就行，不用全抄）。引用条会显示在你的气泡下面。偶尔用，别每条都带。'
+    },
+
     /* 灯牌说明书（2026-10-06）：往桌面的挂件灯上留言，是一个随时可用的
        能力，不是主动消息的附属。跟撤回同理，一行就够 —— 写多了模型会
        每条回复都往灯上挂。40 字来自灯牌卡面的实际容量（page-desktop
@@ -1033,9 +1043,10 @@
         '',
         '【输出结构 · 硬约束】',
         '只输出一个 JSON 对象：',
-        '{"plans":[{"entityId":"...","action":"group_reply|observe|defer","accountId":"...","intent":"一句话","publicPosture":"想表现出什么","internalUpdate":"observe/defer 时的心理注记","forbiddenDisclosures":["..."]}],"messages":[{"senderAccountId":"...","content":"...","delayMs":800}],"suggestContinue":false}',
+        '{"plans":[{"entityId":"...","action":"group_reply|observe|defer","accountId":"...","intent":"一句话","publicPosture":"想表现出什么","internalUpdate":"observe/defer 时的心理注记","forbiddenDisclosures":["..."]}],"messages":[{"senderAccountId":"...","content":"...","quote":"要引用的那条消息的关键原文（可选）","delayMs":800}],"suggestContinue":false}',
         '- plans 覆盖全部候选本体（包括不说话的）',
         '- messages 里每条消息的 senderAccountId 必须属于某个 action=group_reply 的本体；同一本体只用一个账号',
+        '- quote 可选：想针对群里某条消息回话时，填那条消息的关键原文（截一段即可，不用全抄），程序会自动对上原消息并在气泡下显示引用条；不引用就不要写这个字段',
         '- delayMs 是这条消息发出前的自然停顿毫秒数（300~4000）',
         '- suggestContinue：这波之后群里是否还有真实的接话动机（true=有，false=没有或只剩重复附和）',
         '- 只输出 JSON 本体，不要 Markdown 代码块，不要 JSON 以外的文字'
@@ -1123,11 +1134,11 @@
         '生活结算模型只提交手机增量提案，不重写整部手机。程序在校验来源、语义和数量后才写入；非法单项被丢弃，不阻塞其他。',
         '',
         '【调用任务】',
-        '对给定时间范围内的角色离屏生活做一次统一结算，产出最多跨五个 App 的少量增量：幕后交流、浏览/搜索、备忘录、健康日记录、购物变化，以及计划的状态变化。',
+        '对给定时间范围内的角色离屏生活做一次统一结算，产出最多跨八个 App 的少量增量：幕后交流、浏览/搜索、备忘录、健康日记录、购物变化、听歌、短信、在读与批注，以及计划的状态变化。',
         '不是每类都必须输出。没有合理内容时返回空数组——禁止为填满手机而编造。',
         '',
         '【输出结构】',
-        '{"v":1,"deltas":[{"app":"messages|browser|notes|health|shop","op":"…","occurredAt":"ISO时间或相对描述","payload":{…}}],"planChanges":[{"title":"…","to":"brewing|preparing|scheduled|done|paused|cancelled|changed","reason":"…"}],"uncertain":[]}',
+        '{"v":1,"deltas":[{"app":"messages|browser|notes|health|shop|music|sms|books","op":"…","occurredAt":"ISO时间或相对描述","payload":{…}}],"planChanges":[{"title":"…","to":"brewing|preparing|scheduled|done|paused|cancelled|changed","reason":"…"}],"uncertain":[]}',
         '',
         '【各 App 的 op 与 payload】',
         'messages/add_derived：{withName,title,lines:[{who:"char|other",text}]} —— 他和合法联系人的幕后交流，lines 至少一来一回；withName 只能是岛里已登记的人（否则整条会被程序丢弃）。',
@@ -1140,16 +1151,22 @@
         'comments 是这天他随手写下的零到三条话。计划和实际可以不一致；不评分，不把夜宵/休息道德化，不做医学结论。',
         'shop/add_order：{title,price,purpose} —— purpose 必须写实（自用/送某人的称呼/备用），不能默认都是送 user。',
         'shop/order_status：{title,status:"shipped|received|refunded|gifted"} —— 只推进已存在订单。',
+        'music/listen：{title,artist,loops,note} —— 他最近在听的歌；loops 是**这段时间单曲循环了几遍**（0=只是听过，3 以上才值得写进 note，上限 99，不许拿大数字装深沉）；note 是一句为什么听这首（可空）。',
+        'music/like：{title,artist,note} —— 他红了心的歌。',
+        'sms/add_sms：{kind:"system|chat",from,text} —— kind=system 是通知噪音（验证码/快递/银行/运营商，from 写发件方代号）；kind=chat 是真人短信，from 只能是岛里已登记的人（否则整条丢弃）。短信短、口语、像真的。',
+        'books/progress：{title,author,progress,note} —— 在读的书推进到百分之几（0~100）；没有这本书就视为开新书。note 是他对这本书目前的一句感觉（可空）。',
+        'books/note：{title,text,think} —— 划线批注：text 是书里被他划下来的原文，think 是他写在旁边自己的话。书名必须和已有在读的书对得上。',
         '',
         '【数量上限（上限不是配额）】',
-        '幕后会话 0～2 段；浏览 0～4 条；备忘录 0～2 条；健康日记录按时间范围合并通常 1 条；购物变化 0～2 条；计划变化 0～1 个。普通结算全部增量合计不超过 12 条。',
+        '幕后会话 0～2 段；浏览 0～4 条；备忘录 0～2 条；健康日记录按时间范围合并通常 1 条；购物变化 0～2 条；听歌 0～3 条；短信 0～2 条（system 类多由程序生成，模型只写有剧情意义的真人短信）；在读进度 0～2 条、划线批注 0～2 条；计划变化 0～1 个。普通结算全部增量合计不超过 12 条。',
         '',
         '【语义红线】',
         '搜索不得写成购买；草稿不得写成已发送；计划不得写成已完成；不得生成未登记的重要亲友；不得替 user 做离屏决定；不得生成未经支持的重大事件、表白、礼物或关系阶段变化。',
+        '听歌循环数要克制（大多数歌 loops=0~2）；划线批注的 text 必须像那本书里的句子，think 是他自己的生活语气，两者不许混；短信正文不许长篇大论——短信没有人写作文。',
         '计划变化必须有原因并写进 reason；礼物/惊喜类计划在兑现前属于私密（secrecy 由程序按 planType 判定，模型不需要输出）。',
         '',
         '【初始底片模式】',
-        '输入带 [MODE]=bootstrap 时是整部手机一生一次的冷启动：只生成低风险的「初始生活底片」——普通联系人的一两段日常、少量浏览、一两篇备忘、最近一两天饮食运动、自用购物。禁止出现 user 相关的重大过去、新亲友、过度深情、礼物与表白计划。',
+        '输入带 [MODE]=bootstrap 时是整部手机一生一次的冷启动：只生成低风险的「初始生活底片」——普通联系人的一两段日常、少量浏览、一两篇备忘、最近一两天饮食运动、自用购物、一两首在听的歌、一本在读的书。禁止出现 user 相关的重大过去、新亲友、过度深情、礼物与表白计划。',
         '',
         '【失败与空态】',
         'JSON 解析失败由程序保留原文待重试；没有合理内容的结算允许 deltas 为空数组——空手机也是真实的生活。'
@@ -1211,6 +1228,7 @@
     { id: 'f1', slot: 'C04', name: 'F1 线上规则', kind: 'card', required: true },
     { id: 'pat', slot: 'C04', name: '拍一拍', kind: 'card', required: false },
     { id: 'msgrecall', slot: 'C04', name: '撤回', kind: 'card', required: false },
+    { id: 'quotetag', slot: 'C04', name: '引用回复', kind: 'card', required: false },
     { id: 'lamptag', slot: 'C04', name: '灯牌', kind: 'card', required: false },
     { id: 'slowmail', slot: 'C04', name: '慢递信箱', kind: 'card', required: false },
     /* 旁白描述（2026-10-25）：线上聊天的 [旁白:描述] 穿插。program 槽 ——
@@ -1283,7 +1301,7 @@
      角色功能」分组展示；功能类 = 挂 C04 的能力说明卡（开关保留、内容上锁），
      其余全归提示词类。唯一出处在这里，页面不自己再列名单。 */
   var FEATURE_IDS = {
-    pat: 1, msgrecall: 1, lamptag: 1, slowmail: 1,
+    pat: 1, msgrecall: 1, quotetag: 1, lamptag: 1, slowmail: 1,
     stickers: 1, genimg: 1, htmlgame: 1, phone: 1,
     weproposal: 1, wenote: 1, forum: 1,
     narr: 1   /* 旁白描述（开关在对话设置，预设页只读展示） */
@@ -2196,6 +2214,7 @@
         case 'f1': pushSlot(def, btDec.ok ? btDec.f1Text : cardBody('f1')); break;
         case 'pat': pushSlot(def, cardBody('pat')); break;
         case 'msgrecall': pushSlot(def, cardBody('msgrecall')); break;
+        case 'quotetag': pushSlot(def, cardBody('quotetag')); break;
         /* 灯牌 / 慢递信箱（2026-10-12 P0-3）：槽注册了但 switch 漏了 case，
            引擎开时模型收不到 [灯:]/[慢递:] 说明书（旧路径反而有，倒挂）。
            同 msgrecall 口径：kind:card + cardEnabled 闸，locked 卡正文常开。

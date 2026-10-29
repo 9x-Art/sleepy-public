@@ -466,7 +466,11 @@
       var delay = Number(m.delayMs);
       if (!isFinite(delay)) delay = 800;
       delay = Math.max(300, Math.min(4000, delay));
-      messages.push({ accountId: acc, ownerId: oid, content: m.content.trim(), delayMs: delay });
+      /* quote（2026-10-29）：模型想引用某条群消息时给的关键原文，可选。
+         这里只做类型清洗和截断；对号成 replyToMessageId 在 deliver 里做
+         （那里拿得到已落库的完整消息表）。 */
+      var q = (typeof m.quote === 'string') ? m.quote.trim().slice(0, 60) : '';
+      messages.push({ accountId: acc, ownerId: oid, content: m.content.trim(), delayMs: delay, quote: q || null });
     });
 
     if (!Object.keys(allowed).length && outMsgs.length) {
@@ -586,7 +590,23 @@
             return mm ? mm.kind : 'char';
           })(),
           senderAccountId: m.accountId,
-          content: m.content
+          content: m.content,
+          /* quote 对号（2026-10-29）：拿模型给的关键原文在最近 30 条里
+             找包含它的那条（正着找：原消息包含引用原文）。对上就挂
+             replyToMessageId（渲染层已有引用条样式）；对不上就丢弃 ——
+             宁可没有引用条，不挂一条对错人的。 */
+          replyToMessageId: (function () {
+            if (!m.quote) return null;
+            var msgs = gs().messagesOf(groupId);
+            for (var k = msgs.length - 1, n = 0; k >= 0 && n < 30; k--, n++) {
+              var src = msgs[k];
+              if (!src || src.recalledAt || src.type === 'system') continue;
+              var sc = String(src.content || '');
+              if (!sc.trim()) continue;
+              if (sc.indexOf(m.quote) >= 0) return src.id;
+            }
+            return null;
+          })()
         });
         if (msg) written.push(msg);
         emit('message', groupId, msg);

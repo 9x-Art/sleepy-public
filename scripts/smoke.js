@@ -5413,6 +5413,12 @@ t('iOS 安全区 v277：--sb-h 补偿归零 / 面板固定三行 / kb 残留清�
   if (!/html,body\{[^}]*touch-action:manipulation/.test(css)) {
     throw new Error('html,body 缺 touch-action:manipulation（双击缩放会让框架漂移）');
   }
+  /* ⑥ 键盘开着时输入栏让位安全区（v278）：home 条被键盘物理盖住，
+     再垫 --safe-bottom 就是输入框悬空键盘上沿 ~40px（只读测量实锤）。
+     期望值硬写字符串；删了这条 iOS 打字时输入框又会浮起来。 */
+  if (css.indexOf('html.kb-open .input-area{padding-bottom:6px;}') < 0) {
+    throw new Error('缺 html.kb-open .input-area{padding-bottom:6px}（键盘开着时安全区没让位）');
+  }
   return 'ok';
 });
 
@@ -11062,7 +11068,7 @@ t('phone 设置：自主生活档位与 phoneApiCfg 读写', () => {
   return { ok: true };
 });
 
-t('查手机页面注册 + 删房清理（十条表进 removeSandbox 名单）', () => {
+t('查手机页面注册 + 删房清理（十三条表进 removeSandbox 名单）', () => {
   const reg = S.registered();
   if (!reg.phonecheck || !reg['phone-view']) throw new Error('phonecheck / phone-view 没注册');
   const sb = S.core.activeSandbox();
@@ -11103,6 +11109,100 @@ t('validateDelta：语义红线（坏 app 拒/幕后须一来一回/草稿只是
   const bad = S.phone.validateDelta({ app: 'shop', op: 'order_status', payload: { title: 'x', status: '已完成' } });
   if (bad) throw new Error('非法状态该拒（语义升级拦截）');
   return { ok: true };
+});
+
+t('查手机 2026-10-29 批：音乐/短信/书架 校验、落库、读口与红线', () => {
+  const sb = S.core.createSandbox('isle', '音乐短信书架岛');
+  S.core.setActiveSandbox(sb.id);
+  const c = S.core.upsertChar({ name: '听歌的人', kind: 'main' }).id;
+  S.core.setSandboxChars(sb.id, [c]);
+  const ph = S.phone.ensurePhone(sb.id, c);
+  /* 新 App 必须在桌面白名单和 PHONE_OPS 里 */
+  ['music', 'sms', 'books'].forEach((a) => {
+    if ((ph.appOrder || []).indexOf(a) < 0) throw new Error('新壳 appOrder 缺 ' + a);
+    if (!S.phone.PHONE_OPS[a]) throw new Error('PHONE_OPS 缺 ' + a);
+  });
+  /* 音乐：listen 落库 + loops 钳制（>99 归 99、负数归 0） */
+  const m1 = S.phone.validateDelta({ app: 'music', op: 'listen',
+    payload: { title: '夜空中最亮的星', artist: '逃跑计划', loops: 999, note: '睡不着' } });
+  if (!m1 || m1.data.loops !== 99) throw new Error('loops 没钳到 99');
+  if (!S.phone.applyDelta(ph, m1, 'run_test')) throw new Error('listen 没落库');
+  if (S.phone.listMusic(ph.id, 'listen').length !== 1) throw new Error('在听列表空');
+  if (!S.phone.validateDelta({ app: 'music', op: 'like', payload: { title: 'x' } })) {
+    throw new Error('红心该过');
+  }
+  if (S.phone.validateDelta({ app: 'music', op: 'listen', payload: { artist: '没歌名' } })) {
+    throw new Error('没歌名的 listen 该拒');
+  }
+  /* 短信：system 随便来；chat 发件人只认岛里已登记的人（凭空编 = 整条丢） */
+  if (!S.phone.validateDelta({ app: 'sms', op: 'add_sms',
+    payload: { kind: 'system', from: '快递柜', text: '取件码 8848' } })) {
+    throw new Error('系统短信该过');
+  }
+  if (S.phone.validateDelta({ app: 'sms', op: 'add_sms',
+    payload: { kind: 'chat', from: '没登记的人', text: '在吗' } })) {
+    throw new Error('凭空编的短信联系人该拒');
+  }
+  const sm = S.phone.validateDelta({ app: 'sms', op: 'add_sms',
+    payload: { kind: 'chat', from: '听歌的人', text: '到家了吗' } });
+  if (!sm) throw new Error('登记联系人的真人短信该过');
+  const smsRec = S.phone.applyDelta(ph, sm, 'run_test');
+  if (!smsRec || smsRec.read) throw new Error('新短信应未读');
+  S.phone.markSmsRead(ph.id, smsRec.id);
+  if (!S.phone.listSms(ph.id).find((x) => x.id === smsRec.id).read) throw new Error('标记已读没落库');
+  /* 书架：progress 开新书 → 同名再推进是 update 不是追加；批注挂书名 */
+  const b1 = S.phone.validateDelta({ app: 'books', op: 'progress',
+    payload: { title: '夜航西飞', author: '柏瑞尔', progress: 30 } });
+  S.phone.applyDelta(ph, b1, 'run_test');
+  S.phone.applyDelta(ph, S.phone.validateDelta({ app: 'books', op: 'progress',
+    payload: { title: '夜航西飞', progress: 58 } }), 'run_test');
+  const shelf = S.phone.listBooks(ph.id);
+  if (shelf.length !== 1 || shelf[0].progress !== 58) {
+    throw new Error('同名书该推进进度而不是开两本');
+  }
+  S.phone.applyDelta(ph, S.phone.validateDelta({ app: 'books', op: 'note',
+    payload: { title: '夜航西飞', text: '有路标的地方不必停留', think: '说得轻巧' } }), 'run_test');
+  if (S.phone.listBookNotes(ph.id, '夜航西飞').length !== 1) throw new Error('批注没挂到书名上');
+  if (S.phone.validateDelta({ app: 'books', op: 'note',
+    payload: { title: '夜航西飞', think: '只有想法没有划线' } })) {
+    throw new Error('没有划线原文的批注该拒');
+  }
+  /* 结算挂上程序侧系统短信 + settledUntil 照常推进 */
+  const stat = S.phone.applySettlement(ph, { deltas: [], planChanges: [] }, 'run_test');
+  if (stat.applied !== 0) throw new Error('空结算不该有 applied');
+  if (!(S.phone.getPhone(ph.id).settledUntil > 0)) throw new Error('settledUntil 没推进');
+  /* 协议卡要让模型知道这三个 App */
+  const life = S.promptEngine.cardBody('phoneLife');
+  ['music/listen', 'sms/add_sms', 'books/progress'].forEach((k) => {
+    if (life.indexOf(k) < 0) throw new Error('phoneLife 卡缺 ' + k);
+  });
+  /* 老壳迁移：新 App 上线前建的壳，ensurePhone 自动补齐（只追加不重排） */
+  const oldPh = S.phone.ensurePhone(sb.id, c);
+  oldPh.appOrder = ['messages', 'taobao'];
+  S.phone.savePhone(oldPh);
+  const migrated = S.phone.ensurePhone(sb.id, c);
+  if (migrated.appOrder.indexOf('music') < 0 || migrated.appOrder[0] !== 'messages') {
+    throw new Error('老壳没补齐新 App 或重排了旧顺序');
+  }
+  return { 音乐: 1, 短信: 2, 书: 1, 批注: 1 };
+});
+
+t('反查手机 2026-10-29：点反查当场开演（遮罩层 + 心声保底 + 收尾还页）', () => {
+  const src = fs.readFileSync('page-chat.js', 'utf8');
+  if (!src.includes('rev-scrim')) throw new Error('遮罩层没接进接管流程');
+  if (!src.includes('revFallbackThought')) throw new Error('心声弹幕没有保底');
+  /* revManual 必须直接启动接管 —— 退回「等 TA 回复夹 [[REV_ACCEPT]]」
+     就是 user 报的「点完什么都不发生、很平淡」那个 bug，不许改回去 */
+  const m = src.match(/function revManual[\s\S]*?function applyRevInvite/);
+  if (!m || !m[0].includes('revRun(')) throw new Error('revManual 没有当场启动接管');
+  if (!/w\.lastAt = Date\.now\(\)/.test(m[0])) throw new Error('revManual 没记 lastAt');
+  if (/w\.invite\s*=/.test(m[0])) throw new Error('revManual 不该再走邀请等待（等一轮就是平淡 bug）');
+  /* 收尾必须还页：接管切走了真页面，看完要落回聊天 */
+  const fin = src.match(/function finish\(interrupted\)[\s\S]{0,2200}/);
+  if (!fin || !fin[0].includes("Sleepy.nav.open('chat-detail'")) throw new Error('收尾没有还页逻辑');
+  const css = fs.readFileSync('style.css', 'utf8');
+  if (!css.includes('.rev-scrim{')) throw new Error('遮罩层样式缺');
+  return { 遮罩: true, 弹幕保底: true, 当场开演: true, 收尾还页: true };
 });
 
 t('密码叙事化：lock/set 设锁换码 + 坏 pin 拒 + 旧密码进 pinHistory + 去锁不清 pin', () => {
@@ -17388,7 +17488,18 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    app.js（--kb-inset 残留清理升级：isEditing 只认活动页可见输入框 +
    sync 判据 + click/popstate 兜底）变了。
    基准随批 v276 → v277。 */
-const EXPECTED_SW_CACHE = 'sleepy-v277';
+/* v278（2026-10-29 上午）：聊天顶栏收紧 + 键盘贴合 —— style.css
+   （.app-head padding 16/18 → 8/10；新增 html.kb-open .input-area
+   键盘让位规则）变了。
+   基准随批 v277 → v278。 */
+/* v279（2026-10-29 中午）：查手机新增音乐/短信/书架三 App + 聊天引用改版与
+   角色引用着回 —— phone.js / page-phone.js / page-phone-ai.js / prompt-engine.js /
+   core.js / page-chat.js / page-group.js / page-group-ai.js / style.css 都变了。
+   基准随批 v278 → v279。 */
+/* v280（2026-10-29 午后）：反查手机「当场开演」改版 —— page-chat.js
+   （revManual 直接启动接管 + rev-scrim 遮罩 + 心声弹幕保底 + finish 还页）、
+   style.css（.rev-scrim）变了。基准随批 v279 → v280。 */
+const EXPECTED_SW_CACHE = 'sleepy-v280';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

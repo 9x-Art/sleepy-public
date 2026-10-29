@@ -675,7 +675,11 @@ html.ios{--sb-h:0px;}
   display:flex;
   align-items:center;
   gap:12px;
-  padding:16px 0 18px;
+  /* 2026-10-29 顶栏收紧（用户拍板 B 候选）：16/18 → 8/10，上下对称收 ——
+     名字槽是 absolute 垂直居中，只收一边标题会在栏内偏斜。
+     标题距 safe-area 底从 24px 收到 16px；栏高 68 → 52。
+     sticky top 与 .page-inner 的安全区 padding 是配对的，都没动。 */
+  padding:8px 0 10px;
   position:sticky;
   /* 吸顶要让开状态栏那一条 —— 状态栏是 absolute 浮着的，
      写 top:0 的话页面一滚，顶栏就钻到状态栏底下跟时间电量叠字。
@@ -1359,6 +1363,9 @@ html.ios{--sb-h:0px;}
      那个 3px 的"小角"就是被嫌的地方。现代聊天 UI 都不带尾巴了。
      想要尾巴的去外观 App：气泡形状 → 尾巴位置（底部/顶部/无尾巴）。 */
   border-radius:18px;
+  /* 引用条挪到泡下后（2026-10-29）：泡按**自己的字**收缩，别跟着引用条
+     的宽度被拉伸 —— 引用长、正文短时正文泡还是小小一坨。 */
+  align-self:flex-end;
 }
 .msg-assistant .msg-text{
   /* 对方淡蓝（同上批次）：30% 雾蓝半透明 + 细边；字色仍跟主题 --g-ink，
@@ -1372,6 +1379,8 @@ html.ios{--sb-h:0px;}
      这里只是把「写死成 #2A2118」这个坑填掉，免得以后有人只改这一处）。 */
   color:var(--g-ink,#2A2118);
   border-radius:18px;
+  /* 同 .msg-user .msg-text：泡按自己的字收缩，不被泡下的引用条撑宽 */
+  align-self:flex-start;
 }
 .msg-text{
   padding:8px 12px 9px;
@@ -1443,6 +1452,13 @@ html.ios{--sb-h:0px;}
   border-top:1px solid var(--line);
   display:flex;align-items:flex-end;gap:8px;
 }
+/* 键盘开着时安全区必须让位（2026-10-29 用户拍板）：.chat-foot 已被
+   --kb-inset 抬到键盘上沿，而键盘物理盖住了 home 条 —— 这时再垫
+   --safe-bottom + 6 就成了输入框悬空键盘上沿 ~40px（只读测量实锤：
+   态2 里 .input-area bottom 544 = chat-foot 底 − kb，padBottom 仍 40）。
+   kb-open 类由 app.js 的 sync/focusout/click/popstate 链维护，此前
+   CSS 零消费。安卓 fullscreen 下 --safe-bottom=0，这条无视觉差异。 */
+html.kb-open .input-area{padding-bottom:6px;}
 /* 输入框 + 框内右侧那枚小笑脸。笑脸绝对定位在框里，所以包一层当定位上下文 */
 .chat-input-wrap{position:relative;flex:1;min-width:0;display:flex;}
 .chat-input{
@@ -2093,17 +2109,23 @@ html.ios{--sb-h:0px;}
   line-height:19px;text-align:center;
   box-shadow:0 1px 3px rgba(120,132,156,.32);
 }
-/* 引用条（2026-10-28 微信口径）：泡下一行灰字「名字：内容」，
-   去掉左竖线，字多两行截断省略 —— 紧凑不抢正文。 */
+/* 引用条（2026-10-29 用户口径）：挂在**气泡下面**的一行灰字「名字：内容」，
+   去掉左竖线，字多两行截断省略 —— 紧凑不抢正文。
+   ⚠️ 不参与气泡宽度：正文泡按自己的字收缩（.msg-text 的 align-self），
+   引用条自己封顶 240px —— 引用再长也不会把一两个字的短气泡撑宽
+   （用户 2026-10-29 报的问题）。user 的引用条靠右，跟自己的泡对齐。 */
 .msg-quote{
   font-size:11.5px;line-height:1.45;
   color:var(--text-faint);
   padding:1px 0;
-  margin-bottom:5px;
+  margin-top:4px;
+  align-self:flex-start;
+  max-width:min(240px,100%);
   overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
   overflow-wrap:anywhere;
 }
+.msg-user .msg-quote{align-self:flex-end;}
 .msg-quote-bar{
   align-items:center;gap:10px;
   padding:8px 16px;
@@ -10336,10 +10358,16 @@ div.pp-row:active{background:none;}
 }
 .gc-mention{color:var(--amber);font-weight:650;}
 .gc-row.is-me .gc-mention{color:inherit;text-decoration:underline;}
+/* 群聊引用条（2026-10-29 用户口径）：挂在气泡**下面**的独立一行，
+   不再拼进气泡里 —— gc-bubble 是 inline-block 按自己的字收缩，
+   引用再长也不会把短气泡撑宽。两行截断省略。 */
 .gc-quote{
-  display:block;margin:-2px -2px 7px;padding:6px 8px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;overflow-wrap:anywhere;box-sizing:border-box;
+  margin:3px 0 0;padding:5px 8px;
   background:var(--bg-3);border-left:2px solid var(--amber);border-radius:8px;
   color:var(--text-dim);font-size:11px;line-height:1.4;
+  max-width:100%;
 }
 .gc-row.is-me .gc-quote{color:#4d4030;}
 .gc-time{font-size:9.5px;color:var(--text-faint);margin:4px 4px 0;}
@@ -11456,6 +11484,29 @@ button.ph-lock-note:active{background:rgba(32,39,37,.68);}
 .ph-item-text small{display:block;color:#94a0a0;font-size:10px;}
 .ph-item-reason{margin:7px 0 0;padding:7px 9px;border-radius:10px;
   background:#eef3f2;color:#5f7376;font-size:10.5px;line-height:1.6;}
+/* 音乐 / 短信 / 书架（2026-10-29 批）：复用 ph-item 骨架，只补三件小东西。
+   ph-loop = 单曲循环徽章（≥10 变焦糖，是「有心事」的信号色）；
+   ph-prog = 在读进度条；ph-unread = 短信未读点。 */
+.ph-loop{flex:none;padding:3px 8px;border-radius:999px;background:#f2e9e3;
+  color:#8c6856;font-size:9.5px;font-weight:600;}
+.ph-loop.is-hot{background:color-mix(in srgb,var(--amber,#C08A52) 22%,transparent);
+  color:#8a5f2e;}
+.ph-item.is-tap{cursor:pointer;font-family:inherit;text-align:left;}
+.ph-item.is-sys{opacity:.82;}
+.ph-unread{flex:none;width:8px;height:8px;border-radius:50%;
+  background:var(--coral,#E8837A);align-self:center;}
+.ph-prog{margin:8px 0 0;height:5px;border-radius:999px;background:#ece4db;
+  overflow:hidden;}
+.ph-prog i{display:block;height:100%;border-radius:999px;
+  background:linear-gradient(90deg,#d9c3a8,#a98468);transition:width .3s var(--ease);}
+.ph-item-reason.is-quote{background:transparent;border-left:2px solid #d9c3a8;
+  border-radius:0;color:#6b5c4e;font-style:normal;}
+.ph-item-think{margin:5px 0 0;color:#8f847c;font-size:10.5px;line-height:1.6;}
+.ph-mark{margin:12px 0 0;padding:11px 13px;border-radius:14px;background:#fff;
+  border:1px solid #e5ddd5;}
+.ph-mark-quote{margin:0;color:#4d4641;font-size:12px;line-height:1.7;}
+.ph-mark-think{margin:7px 0 0;color:#8f847c;font-size:10.5px;line-height:1.6;}
+.ph-mark-meta{margin:6px 0 0;color:#b3a89e;font-size:9px;}
 .ph-bookmarks{display:grid;grid-template-columns:1fr 1fr;gap:9px;padding-bottom:22px;}
 .ph-bookmark{padding:12px;border-radius:18px;background:#fff;border:1px solid #e5ddd5;color:#4d4641;}
 .ph-bookmark-cover{height:48px;margin-bottom:9px;border-radius:13px;
@@ -16171,10 +16222,18 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 .msg-wm-line{color:var(--g-accent-deep);opacity:.85;}
 
 /* ============================================================
-   反查手机（revcheck-core.js · 2026-10-25）
-   接管覆盖层：不遮内容——顶部呼吸胶囊 + 全屏弹幕层（pointer-events:none
-   只留按钮可点），底下是真页面在真滚动（滑到哪显示到哪）。
+   反查手机（revcheck-core.js · 2026-10-25；2026-10-29 加遮罩层）
+   遮罩层 = 轻暗化打底（.rev-scrim，压住「还在自己操作」的错觉但
+   不盖住内容 —— 底下真页面照样在切在滚）+ 顶部呼吸胶囊 + 全屏弹幕层
+   （pointer-events:none 只留按钮可点）。
    ============================================================ */
+.rev-scrim{
+  position:absolute;inset:0;z-index:1198;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 42%,
+    rgba(24,19,16,.10) 0%,rgba(24,19,16,.30) 100%);
+  animation:rev-scrim-in .5s var(--ease) both;
+}
+@keyframes rev-scrim-in{from{opacity:0;}to{opacity:1;}}
 .rev-capsule{
   position:absolute;top:10px;left:50%;transform:translateX(-50%);
   z-index:1200;display:flex;align-items:center;gap:8px;

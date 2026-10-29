@@ -602,7 +602,45 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v277';
+var CACHE = 'sleepy-v280';
+
+/* v280（2026-10-29 午后）：**反查手机「当场开演」改版**——
+   · page-chat.js：revManual 点格子直接落递手机卡 +「TA 接过了手机」+
+     当场启动接管（原 v1.2 要等 TA 下一轮回复夹 [[REV_ACCEPT]]，模型经常
+     不夹 → 点完什么都不发生，user 报「平淡」）；接管加 .rev-scrim 遮罩层
+     （轻暗化打底，底下真页面照切照滚）+ 心声弹幕保底（模型想法空/超时走
+     本地情绪模板，每步必有一条飘过）+ finish 收尾还页（nav.open 退回
+     chat-detail，浏览途中压上去的页面顺手弹掉）；
+   · style.css：.rev-scrim + rev-scrim-in 动画。
+   → 必须跳版本：page-chat.js / style.css 都变了。 */
+
+/* v279（2026-10-29 中午）：**查手机新增三个官方 App（音乐/短信/书架）+ 聊天引用改版**——
+   · 查手机：phone.js 新增 phoneMusic/phoneSms/phoneBooks 三表（PHONE_KEYS+13、
+     removeSandbox 名单同步、老壳 appOrder 自动补齐新 App 只追加不重排）；
+     PHONE_OPS + music(listen/like)/sms(add_sms)/books(progress/note)，
+     validateDelta 校验（短信 chat 发件人只认岛内已登记的人、循环数钳 0~99），
+     applySettlement 顺手跑程序侧系统短信（验证码/快递/银行/运营商，0 模型调用、8h 节流）；
+     page-phone 三张新页面（音乐：最近在听+循环徽章+红心；短信：通知/真人+未读点+详情；
+     书架：在读进度条+划线批注流）+ 锁屏通知接真人短信；
+     page-phone-ai 三份 FOCUS 刷新提示词 + EXIST 防重复 + caughtReaction WHERE；
+     prompt-engine phoneLife 协议卡跨八 App + 语义红线（循环数克制/划线正文与批注分离/短信不写作文）；
+   · 聊天引用条挪到气泡下方且不撑宽短气泡（page-chat/style.css）；
+     角色可引用着回：prompt-engine quotetag 能力卡（[引用:关键原文]），
+     page-chat extractReplyQuote+matchQuotedMessage 对号落 msg.quote；
+     群聊 groupRound 协议 messages[] 加可选 quote → replyToMessageId 对号；
+     page-group 引用条从气泡内挪到气泡下。
+   → 必须跳版本：phone.js / page-phone.js / page-phone-ai.js / prompt-engine.js /
+     core.js / page-chat.js / page-group.js / page-group-ai.js / style.css 都变了。 */
+
+/* v278（2026-10-29 上午）：**聊天顶栏收紧 + 键盘贴合**（同批两件）——
+   · style.css：① .app-head padding 16/18 → 8/10（上下对称收，名字槽
+     absolute 垂直居中，只收一边会偏斜）。标题距 safe-area 底 24 → 16px，
+     栏高 68 → 52。sticky top、page-inner 安全区 padding、探针、--sb-h 全部未动；
+   ② 新增 html.kb-open .input-area{padding-bottom:6px}：键盘物理盖住
+     home 条时安全区必须让位，否则输入框悬空键盘上沿 ~40px
+     （只读测量实锤：kb 模拟态 .input-area padBottom 仍 40）。
+     kb-open 类由 app.js 既有的 sync/focusout/click/popstate 链维护。
+   → 必须跳版本：style.css 变了。 */
 
 /* v277（2026-10-28 深夜三批 → 10-29 早上收尾）：**iOS 安全区 / 底栏 / 加号面板**（用户两张截图）——
    · style.css：① 新增 --sb-h（假状态栏占位 32px，html.ios 归零）——

@@ -103,7 +103,10 @@
     taobao:   '这次**只更新「淘宝」App**：新下单的东西 / 既有订单状态往前推一步 / 收藏 / 加购。deltas 里其他 App 一律不要出现。',
     health:   '这次**只更新「健康打卡」App**：最近一天的三餐零食、运动计划与实际、他自己的短评。deltas 里其他 App 一律不要出现。',
     notes:    '这次**只更新「备忘录」App**：他随手记下的一条备忘（可以带 folder）。deltas 里其他 App 一律不要出现。',
-    browser:  '这次**只更新「浏览器」App**：一次搜索或一个收藏。deltas 里其他 App 一律不要出现。'
+    browser:  '这次**只更新「浏览器」App**：一次搜索或一个收藏。deltas 里其他 App 一律不要出现。',
+    music:    '这次**只更新「音乐」App**：他最近在听的一首歌（loops 是这段时间单曲循环了几遍，多数是 0~2，循环很多遍说明他有心事）或一首红了心的歌。deltas 里其他 App 一律不要出现。',
+    sms:      '这次**只更新「短信」App**：一条有剧情意义的**真人短信**（kind=chat，from 只能是岛里已登记的人）。验证码/快递这类系统通知由程序生成，你不要写。deltas 里其他 App 一律不要出现。',
+    books:    '这次**只更新「书架」App**：在读的书推进了进度（或开了新书）、或一条划线批注（text=书里原文，think=他自己的话，两者别混）。deltas 里其他 App 一律不要出现。'
   };
 
   /* 单 App 已有条目的简表（防重复 —— 模型看不到库，只能喂给它） */
@@ -129,6 +132,24 @@
     } else if (appKey === 'taobao') {
       phone.listShop(ph.id).slice(0, 8).forEach(function (x) {
         out.push('- ' + x.title + '（' + x.status + '）');
+      });
+    } else if (appKey === 'music') {
+      phone.listMusic(ph.id).slice(0, 8).forEach(function (x) {
+        out.push('- ' + (x.kind === 'like' ? '红心：' : '在听：') + x.title +
+          (x.artist ? '（' + x.artist + '）' : '') +
+          (x.loops > 0 ? ' 循环×' + x.loops : ''));
+      });
+    } else if (appKey === 'sms') {
+      phone.listSms(ph.id).slice(0, 6).forEach(function (x) {
+        out.push('- ' + (x.kind === 'chat' ? '短信 ' : '通知 ') + x.from + '：' +
+          String(x.text || '').slice(0, 24));
+      });
+    } else if (appKey === 'books') {
+      phone.listBooks(ph.id).slice(0, 5).forEach(function (x) {
+        out.push('- 在读《' + x.title + '》' + (x.progress != null ? x.progress + '%' : ''));
+      });
+      phone.listBookNotes(ph.id).slice(0, 4).forEach(function (x) {
+        out.push('- 批注《' + x.title + '》：' + String(x.text || '').slice(0, 24));
       });
     }
     return out;
@@ -234,7 +255,8 @@
 
   /* App 页刷新用的中文名（[EXIST] 提示行） */
   var APP_LABEL_OF = {
-    messages: '消息', taobao: '淘宝', health: '健康打卡', notes: '备忘录', browser: '浏览器'
+    messages: '消息', taobao: '淘宝', health: '健康打卡', notes: '备忘录', browser: '浏览器',
+    music: '音乐', sms: '短信', books: '书架'
   };
 
   /* ★ 2026-10-10 单 App 手动刷新（App 页右上角按钮）：
@@ -378,7 +400,10 @@
       taobao: '你正停在「淘宝」里',
       notes: '你正停在「备忘录」里',
       browser: '你正停在「浏览器」里',
-      health: '你正停在「健康打卡」里'
+      health: '你正停在「健康打卡」里',
+      music: '你正停在「音乐」里',
+      sms: '你正停在「短信」里',
+      books: '你正停在「书架」里'
     };
     var sys = [Sleepy.promptEngine.cardBody('phoneCaught')];
     /* 人设唯一出口 compileCharacter；旧 slice(0,800) 截断已删（勘察 P0） */

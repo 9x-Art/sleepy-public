@@ -596,16 +596,10 @@
           var nm = tok.slice(1);
           return names.hasOwnProperty(nm) ? '<span class="gc-mention">' + tok + '</span>' : tok;
         });
-        var q = '';
-        if (msg.replyToMessageId) {
-          var src = gs().findMessage(groupId, msg.replyToMessageId);
-          if (src) {
-            var sm = gs().findMember(groupId, src.senderAccountId);
-            q = '<span class="gc-quote">' + esc(sm ? gs().accountMeta(sm).name : '?') +
-              '：' + esc(src.content).slice(0, 40) + '</span>';
-          }
-        }
-        return q + raw;
+        /* 引用条不再拼进气泡里（2026-10-29 用户口径）：挂气泡下面、
+           不参与气泡宽度 —— 渲染在 renderMessages 里单独出一个 .gc-quote。
+           这里只管正文。 */
+        return raw;
       }
 
       function renderMessages() {
@@ -681,6 +675,18 @@
             bubble.innerHTML = bubbleHtml(msg);
           }
           mid.appendChild(bubble);
+          /* 引用条挂在**气泡下面**（2026-10-29 用户口径）：gc-bubble 是
+             inline-block 按自己的字收缩，引用条单独占一行、有自己的
+             宽度上限 —— 引用再长也不会把一两个字的短气泡撑宽。 */
+          if (msg.replyToMessageId) {
+            var src0 = gs().findMessage(groupId, msg.replyToMessageId);
+            if (src0 && !src0.recalledAt) {
+              var sm0 = gs().findMember(groupId, src0.senderAccountId);
+              mid.appendChild(h('div', 'gc-quote',
+                (sm0 ? gs().accountMeta(sm0).name : '?') + '：' +
+                String(src0.content || '').slice(0, 40)));
+            }
+          }
           mid.appendChild(h('div', 'gc-time', fmtTime(msg.createdAt)));
           row.appendChild(mid);
           list.appendChild(row);

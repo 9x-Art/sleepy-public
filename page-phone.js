@@ -32,24 +32,33 @@
     taobao:   ic('<path d="M5.2 8.6h13.6l-1 9.9a1.7 1.7 0 0 1-1.7 1.5H7.9a1.7 1.7 0 0 1-1.7-1.5z"/><path d="M9.2 8.6V6.9a2.8 2.8 0 0 1 5.6 0v1.7"/>'),
     health:   ic('<path d="M3.6 12h3.2l2-4.4 2.8 9 2.4-6 1.6 3.2h4.8"/>'),
     notes:    ic('<rect x="5" y="4" width="14.5" height="16" rx="2"/><path d="M9 4v16"/><path d="M12.5 8.5H16M12.5 12h3.5"/>'),
-    browser:  ic('<circle cx="12" cy="12" r="8.4"/><path d="M14.8 9.2l-1.6 4-4 1.6 1.6-4z"/>')
+    browser:  ic('<circle cx="12" cy="12" r="8.4"/><path d="M14.8 9.2l-1.6 4-4 1.6 1.6-4z"/>'),
+    music:    ic('<path d="M9 18.5V6.2l9.5-2v12.1"/><circle cx="6.6" cy="18.5" r="2.4"/><circle cx="16.1" cy="16.3" r="2.4"/>'),
+    sms:      ic('<rect x="4" y="5.5" width="16" height="11" rx="2.2"/><path d="M8.5 9h7M8.5 12h4.5"/><path d="M9 16.5L7.5 20l4-3.5"/>'),
+    books:    ic('<path d="M5.5 5A1.5 1.5 0 0 1 7 3.5h11V19H7A1.5 1.5 0 0 0 5.5 20.5z"/><path d="M5.5 20.5V5"/><path d="M9.5 7.5H14M9.5 10.5h3"/>')
   };
   /* 这台手机里有哪些官方 App —— **日历和相册都已经不在了**
      （日历 2026-09-19 改成桌面第 3 屏的独立 App；相册 2026-10-06 下线，
       它一直只是「有壳没内容」的空态，没有专属页面也没有专属数据表）。
      渲染桌面与写 appOrder 都认这一张表，所以老存档里残留的 'calendar'
-     / 'gallery' 会被 on-desk 过滤掉，不用去改存档。 */
-  var PHONE_APPS = ['messages', 'taobao', 'health', 'notes', 'browser'];
+     / 'gallery' 会被 on-desk 过滤掉，不用去改存档。
+     2026-10-29 批新增：music（最近在听+单曲循环）/ sms（短信）/
+     books（书架：在读+批注）。 */
+  var PHONE_APPS = ['messages', 'taobao', 'health', 'notes', 'browser',
+    'music', 'sms', 'books'];
   var APP_LABEL = {
     messages: '消息', taobao: '淘宝', health: '健康打卡', notes: '备忘录',
-    browser: '浏览器'
+    browser: '浏览器', music: '音乐', sms: '短信', books: '书架'
   };
   /* 各 App 的自然空态文案 —— 数据为空就如实说，不造数据填页面 */
   var APP_EMPTY = {
     taobao: '他最近没有留下购物的痕迹。',
     health: '最近几天没有打卡记录。',
     notes: '他还没有写过备忘。',
-    browser: '没有留下搜索或浏览的记录。'
+    browser: '没有留下搜索或浏览的记录。',
+    music: '他最近没有留下听歌的记录。',
+    sms: '短信箱里还是空的。',
+    books: '他还没有在读的书。'
   };
 
   var RISK_WORDS = ['风平浪静', '他离开了有一会儿', '有些不安', '脚步声靠近', '千钧一发'];
@@ -361,6 +370,8 @@
     var msgQuery = '';       /* 消息搜索词 */
     var browserQuery = '';   /* 浏览器搜索词 */
     var shopQuery = '';      /* 淘宝搜索词 */
+    var musicTab = 'listen'; /* 音乐页签：listen 在听 / like 红心 */
+    var bookTab = 'shelf';   /* 书架页签：shelf 书架 / notes 批注 */
 
     var body = ctx.body;
       body.innerHTML = '';
@@ -411,6 +422,14 @@
         if (last) {
           out.push({ app: 'messages', title: chatNameOf(last.chat),
             at: last.msg && last.msg.timestamp, body: '发来了一条新消息' });
+        }
+        /* 最新一条没读过的真人短信：锁屏上最像「真的手机」的那种通知 */
+        var lastSms = phone.listSms(ph.id).filter(function (x) {
+          return x.kind === 'chat' && !x.read;
+        })[0];
+        if (lastSms) {
+          out.push({ app: 'sms', title: lastSms.from || '短信',
+            at: lastSms.at, body: '发来一条短信' });
         }
         var orders = phone.listShop(ph.id).filter(function (o) { return (o.history || []).length; })
           .sort(function (a, b) { return b.at - a.at; });
@@ -1166,6 +1185,15 @@
           else paintNotes(root);
         } else if (curApp === 'browser') paintBrowser(root);
         else if (curApp === 'health') paintHealth(root);
+        else if (curApp === 'music') paintMusic(root);
+        else if (curApp === 'sms') {
+          if (curView && curView.kind === 'sms') paintSmsDetail(root, curView.item);
+          else paintSms(root);
+        }
+        else if (curApp === 'books') {
+          if (curView && curView.kind === 'book') paintBookDetail(root, curView.item);
+          else paintBooks(root);
+        }
         else if (curApp === 'taobao') {
           if (curView && curView.kind === 'order') paintOrderDetail(root, curView.item);
           else {
@@ -1586,6 +1614,188 @@
         });
       }
 
+      /* 音乐（2026-10-29 批）：hero（在听什么 + 循环不会说谎）→ 页签
+         （最近在听 / 红心）→ 歌目行。单曲循环次数是这页的灵魂 ——
+         「这首歌他循环了 47 遍」比任何一句台词都直白。 */
+      function paintMusic(root) {
+        var hero = h('section', 'ph-hero-band');
+        hero.appendChild(h('h1', 'ph-hero-band-t', '他最近在听什么'));
+        hero.appendChild(h('p', 'ph-hero-band-s', '听过什么随缘，循环什么才是心情。'));
+        root.appendChild(hero);
+
+        root.appendChild(tabsBar([
+          { v: 'listen', label: '最近在听' }, { v: 'like', label: '红心' }
+        ], musicTab, function (v) { musicTab = v; paint(); }));
+
+        var songs = phone.listMusic(ph.id, musicTab);
+        var list = h('div', 'ph-items');
+        root.appendChild(list);
+        if (!songs.length) {
+          list.appendChild(emptyBlock(
+            musicTab === 'like' ? '他还没有红心过任何一首歌' : '他最近没有留下听歌的记录',
+            musicTab === 'like' ? '红心是他准备留住的心情 —— 有才会出现。'
+              : '听歌是最私人的事，这里只会有他真的听过的。'));
+          return;
+        }
+        songs.forEach(function (x) {
+          var item = h('div', 'ph-item');
+          var top = h('div', 'ph-item-top');
+          top.appendChild(h('span', 'ph-site', (x.title || '♪').slice(0, 1)));
+          var mid = h('div', 'ph-item-text');
+          var tt = h('b', null, x.title);
+          mid.appendChild(tt);
+          mid.appendChild(h('small', null,
+            (x.artist || '未知歌手') + (x.kind === 'like' ? ' · 红心' : '')));
+          top.appendChild(mid);
+          if (x.loops > 0) {
+            var loop = h('span', 'ph-loop' + (x.loops >= 10 ? ' is-hot' : ''),
+              '循环 ×' + x.loops);
+            top.appendChild(loop);
+          } else {
+            top.appendChild(h('span', 'ph-item-time', dateStrOf(x.at)));
+          }
+          item.appendChild(top);
+          if (x.note) item.appendChild(h('p', 'ph-item-reason', x.note));
+          list.appendChild(item);
+        });
+      }
+
+      /* 短信（2026-10-29 批）：系统通知（程序生成的验证码/快递/银行/运营商，
+         生活噪音）+ 真人短信（模型写，只认岛里已登记的人）。
+         系统行淡化居左小字，真人行带未读点 —— 点开才算看过。 */
+      function paintSms(root) {
+        var list = h('div', 'ph-items');
+        root.appendChild(list);
+        var msgs = phone.listSms(ph.id);
+        if (!msgs.length) {
+          list.appendChild(emptyBlock('短信箱里还是空的',
+            '验证码、快递、银行通知会在日子里自己进来。'));
+          return;
+        }
+        msgs.forEach(function (x) {
+          var sys = x.kind !== 'chat';
+          var item = h('button', 'ph-item is-tap' + (sys ? ' is-sys' : ''));
+          item.type = 'button';
+          var top = h('div', 'ph-item-top');
+          top.appendChild(h('span', 'ph-site', (x.from || '·').slice(0, 1)));
+          var mid = h('div', 'ph-item-text');
+          mid.appendChild(h('b', null, x.from || '通知'));
+          mid.appendChild(h('small', null,
+            String(x.text || '').replace(/\s+/g, ' ').slice(0, 30)));
+          top.appendChild(mid);
+          if (!sys && !x.read) top.appendChild(h('span', 'ph-unread', ''));
+          top.appendChild(h('span', 'ph-item-time', dateStrOf(x.at)));
+          item.appendChild(top);
+          item.addEventListener('click', function () {
+            if (!sys) phone.markSmsRead(ph.id, x.id);
+            curView = { kind: 'sms', item: x };
+            paint();
+          });
+          list.appendChild(item);
+        });
+      }
+      function paintSmsDetail(root, x) {
+        var wrap = h('div', 'ph-read');
+        wrap.appendChild(h('p', 'ph-read-meta',
+          (x.kind === 'chat' ? '来自 ' : '通知 · ') + (x.from || '') + ' · ' +
+          dateStrOf(x.at) + ' ' + timeStr(x.at)));
+        wrap.appendChild(h('p', 'ph-read-b', x.text || ''));
+        root.appendChild(wrap);
+      }
+
+      /* 书架（2026-10-29 批）：在读（进度条 + 批注数）+ 划线批注流。
+         进度条只报百分比，不评分不催更；批注是「他划下来 + 他想说的话」。 */
+      function paintBooks(root) {
+        root.appendChild(tabsBar([
+          { v: 'shelf', label: '在读' }, { v: 'notes', label: '批注' }
+        ], bookTab, function (v) { bookTab = v; paint(); }));
+
+        var list = h('div', 'ph-items');
+        root.appendChild(list);
+
+        if (bookTab === 'shelf') {
+          var books = phone.listBooks(ph.id);
+          if (!books.length) {
+            list.appendChild(emptyBlock('他还没有在读的书',
+              '读什么会留下来 —— 有才会出现。'));
+            return;
+          }
+          books.forEach(function (b) {
+            var notes = phone.listBookNotes(ph.id, b.title);
+            var item = h('button', 'ph-item is-tap');
+            item.type = 'button';
+            var top = h('div', 'ph-item-top');
+            top.appendChild(h('span', 'ph-site', (b.title || '书').slice(0, 1)));
+            var mid = h('div', 'ph-item-text');
+            mid.appendChild(h('b', null, '《' + b.title + '》'));
+            mid.appendChild(h('small', null, (b.author || '佚名') +
+              (notes.length ? ' · ' + notes.length + ' 条批注' : '')));
+            top.appendChild(mid);
+            top.appendChild(h('span', 'ph-item-time', (b.progress || 0) + '%'));
+            item.appendChild(top);
+            var bar = h('div', 'ph-prog');
+            bar.appendChild(h('i', null));
+            bar.firstChild.style.width = Math.max(2, Math.min(100, b.progress || 0)) + '%';
+            item.appendChild(bar);
+            if (b.note) item.appendChild(h('p', 'ph-item-reason', b.note));
+            item.addEventListener('click', function () {
+              curView = { kind: 'book', item: b };
+              paint();
+            });
+            list.appendChild(item);
+          });
+          return;
+        }
+
+        var marks = phone.listBookNotes(ph.id);
+        if (!marks.length) {
+          list.appendChild(emptyBlock('他还没有划过线',
+            '划下来的句子，都是心里正好被说中的那句。'));
+          return;
+        }
+        marks.forEach(function (m) {
+          var item = h('button', 'ph-item is-tap');
+          item.type = 'button';
+          var top = h('div', 'ph-item-top');
+          top.appendChild(h('span', 'ph-site', '「'));
+          var mid = h('div', 'ph-item-text');
+          mid.appendChild(h('b', null, '《' + m.title + '》'));
+          mid.appendChild(h('small', null, dateStrOf(m.at)));
+          top.appendChild(mid);
+          top.appendChild(h('span', 'ph-item-time', timeStr(m.at)));
+          item.appendChild(top);
+          item.appendChild(h('p', 'ph-item-reason is-quote', m.text || ''));
+          if (m.think) item.appendChild(h('p', 'ph-item-think', m.think));
+          item.addEventListener('click', function () {
+            var book = phone.listBooks(ph.id).filter(function (b) {
+              return b.title === m.title;
+            })[0] || { title: m.title };
+            curView = { kind: 'book', item: book };
+            paint();
+          });
+          list.appendChild(item);
+        });
+      }
+      function paintBookDetail(root, b) {
+        var wrap = h('div', 'ph-read');
+        wrap.appendChild(h('p', 'ph-read-meta',
+          (b.author || '佚名') + ' · 读到 ' + (b.progress || 0) + '%'));
+        wrap.appendChild(h('h2', 'ph-read-t', '《' + b.title + '》'));
+        if (b.note) wrap.appendChild(h('p', 'ph-read-b', b.note));
+        var marks = phone.listBookNotes(ph.id, b.title);
+        if (marks.length) {
+          wrap.appendChild(h('div', 'ph-sec', '他的批注 · ' + marks.length + ' 条'));
+          marks.forEach(function (m) {
+            var one = h('div', 'ph-mark');
+            one.appendChild(h('p', 'ph-mark-quote', '「' + (m.text || '') + '」'));
+            if (m.think) one.appendChild(h('p', 'ph-mark-think', m.think));
+            one.appendChild(h('p', 'ph-mark-meta', dateStrOf(m.at)));
+            wrap.appendChild(one);
+          });
+        }
+        root.appendChild(wrap);
+      }
+
       /* 健康打卡（照 Demo 03）：日期切换 → 渐变当日卡 → 方形分段
          （饮食 / 运动 / 随手记）。Demo 的健康评分环不抄 —— 总纲明令禁止。 */
       function paintHealth(root) {
@@ -1922,6 +2132,9 @@
           notes: '你正停在「备忘录」里。',
           browser: '你正停在「浏览器」里。',
           health: '你正停在「健康打卡」里。',
+          music: '你正停在「音乐」里。',
+          sms: '你正停在「短信」里。',
+          books: '你正停在「书架」里。',
           desktop: '他回来的时候，手机就在你手里。'
         }[caughtInfo.where] || '他回来的时候，手机就在你手里。';
 

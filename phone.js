@@ -29,7 +29,7 @@
      core.removeSandbox 里的 scoped 名单保持一致（漏一个就是幽灵数据）。 */
   var PHONE_KEYS = ['phones', 'phonePerms', 'phoneSessions', 'phoneTraces',
     'phonePlans', 'phoneMsgs', 'phoneNotes', 'phoneBrowser', 'phoneShop',
-    'phoneHealth'];
+    'phoneHealth', 'phoneMusic', 'phoneSms', 'phoneBooks'];
 
   function newId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -152,9 +152,24 @@
      ⚠️ pin 是**派生好的备着**，不代表他上了锁：上没上锁只看 lock.enabled
      （见 lockEnabled）。2026-09-21 用户报的「没设密码却被要求输密码」就是
      把「pin 存在」当成了「有锁」。 */
+  /* 官方 App 的完整清单（新壳的初始排列从这来）。**顺序有讲究**：
+     前五个是 2026-10 之前就有的老 App（排列不挪窝），后面三个是
+     2026-10-29 批新增的音乐 / 短信 / 书架。 */
+  var DEFAULT_APP_ORDER = ['messages', 'taobao', 'health', 'notes', 'browser',
+    'music', 'sms', 'books'];
+
   function ensurePhone(sbId, charId) {
     var hit = phoneOf(sbId, charId);
-    if (hit) return hit;
+    if (hit) {
+      /* 老存档补齐新增 App：只**追加到队尾**，已有的排列不重排 ——
+         桌面是他习惯的样子，新装个 App 不该把旧图标全挪位。 */
+      var grown = false;
+      DEFAULT_APP_ORDER.forEach(function (a) {
+        if ((hit.appOrder || []).indexOf(a) < 0) { hit.appOrder.push(a); grown = true; }
+      });
+      if (grown) savePhone(hit);
+      return hit;
+    }
     var h = hashOf(sbId + ':' + charId);
     /* 桌面上的 App 排列。**日历和相册都不在里面** ——
        日历 2026-09-19 用户拍板：它是桌面上的一个独立 App（第 3 屏），
@@ -163,7 +178,7 @@
        ⚠️ 老存档的 phones.appOrder 里可能还有 'calendar' / 'gallery'，
        page-phone 渲染时会按那张白名单过滤掉 —— 不改这里的话
        删记录的写法也得跟着动，别偷懒。 */
-    var order = ['messages', 'taobao', 'health', 'notes', 'browser'];
+    var order = DEFAULT_APP_ORDER.slice();
     /* 排列微调：把第 0 个和第 h%len 个对调，制造「他习惯把常用的放别处」 */
     var k = h % order.length;
     var tmp = order[0]; order[0] = order[k]; order[k] = tmp;
@@ -626,6 +641,11 @@
     notes:    ['add_note'],
     health:   ['add_day'],
     shop:     ['add_order', 'order_status', 'add_fav', 'add_cart'],
+    /* 2026-10-29 批：音乐（最近在听 + 单曲循环）、短信（系统通知 / 真人短信）、
+       书架（在读进度 + 划线批注）。 */
+    music:    ['listen', 'like'],
+    sms:      ['add_sms'],
+    books:    ['progress', 'note'],
     permission: ['grant', 'set'],
     custom:   ['add_record'],
     lock:     ['set']
@@ -744,6 +764,47 @@
       var ct = clipStr(p.title, 40);
       if (!ct) return null;
       out.data = { kind: 'cart', title: ct, price: Number(p.price) || 0 };
+    } else if (app === 'music' && op === 'listen') {
+      /* 最近在听：一首歌 + 这段时间循环了几遍 + 一句为什么听（可空）。
+         loops 是「循环」不是「播放总量」—— 他单曲循环 47 遍是有事的，
+         模型不许拿大数字装深沉，上限由程序钳。 */
+      var mt = clipStr(p.title || p.song, 60);
+      if (!mt) return null;
+      var loops = Math.max(0, Math.min(99, Math.floor(Number(p.loops) || 0)));
+      out.data = { title: mt, artist: clipStr(p.artist, 30), loops: loops,
+        note: clipStr(p.note || p.why, 60) };
+    } else if (app === 'music' && op === 'like') {
+      var lt2 = clipStr(p.title || p.song, 60);
+      if (!lt2) return null;
+      out.data = { title: lt2, artist: clipStr(p.artist, 30),
+        note: clipStr(p.note || p.why, 60) };
+    } else if (app === 'sms' && op === 'add_sms') {
+      /* 短信：kind=system 是通知噪音（验证码/快递/银行，from 是发件方代号）；
+         kind=chat 是真人短信 —— from 必须是岛里已登记的人（含 user 的马甲），
+         凭空编一个短信联系人整条丢弃（同幕后交流的 ③ 号校验）。 */
+      var sk = p.kind === 'chat' ? 'chat' : 'system';
+      var sf = clipStr(p.from || p.sender, 16);
+      if (!sf) return null;
+      var sb2 = clipStr(p.text || p.content, 200);
+      if (!sb2) return null;
+      if (sk === 'chat') {
+        var knownSms = knownPeople();
+        if (knownSms && knownSms.indexOf(sf) < 0) return null;
+      }
+      out.data = { kind: sk, from: sf, text: sb2 };
+    } else if (app === 'books' && op === 'progress') {
+      /* 在读进度：没有这本书就开新书（在读第一本也走这里）。 */
+      var bt = clipStr(p.title || p.book, 40);
+      if (!bt) return null;
+      var pg = Math.max(0, Math.min(100, Math.floor(Number(p.progress) || 0)));
+      out.data = { title: bt, author: clipStr(p.author, 20), progress: pg,
+        note: clipStr(p.note || p.mood, 60) };
+    } else if (app === 'books' && op === 'note') {
+      /* 划线批注：text 是书里的原文（他划下来的那句），think 是他自己的话。 */
+      var bnt = clipStr(p.title || p.book, 40);
+      var line = clipStr(p.text || p.quote, 200);
+      if (!bnt || !line) return null;
+      out.data = { title: bnt, text: line, think: clipStr(p.think || p.note, 200) };
     } else if (app === 'custom' && op === 'add_record') {
       /* 工坊自定义 App：模型不知道实例 id，按模板名匹配该手机上的安装 */
       var an = clipStr(p.appName || p.name, 12);
@@ -873,6 +934,128 @@
     }).sort(function (a, b) { return b.at - a.at; });
   }
 
+  /* ---------------- 2026-10-29 批：音乐 / 短信 / 书架 ---------------- */
+
+  function addListen(phone, o, at) {
+    return insert('phoneMusic', {
+      id: 'pmu_' + newId(), phoneId: phone.id, charId: phone.charId,
+      kind: 'listen', title: o.title, artist: o.artist || '',
+      loops: o.loops || 0, note: o.note || '',
+      at: at || Date.now()
+    });
+  }
+  function addLike(phone, o, at) {
+    return insert('phoneMusic', {
+      id: 'pmu_' + newId(), phoneId: phone.id, charId: phone.charId,
+      kind: 'like', title: o.title, artist: o.artist || '',
+      loops: 0, note: o.note || '',
+      at: at || Date.now()
+    });
+  }
+  function addSms(phone, o, at) {
+    return insert('phoneSms', {
+      id: 'psm_' + newId(), phoneId: phone.id, charId: phone.charId,
+      kind: o.kind === 'chat' ? 'chat' : 'system',
+      from: o.from, text: o.text,
+      read: false,
+      at: at || Date.now()
+    });
+  }
+  /* 在读进度：没有这本书就开新书，有就只推进度（update 语义，不追加记录）。
+     划线批注是独立记录（kind:'note'），挂在书名上。 */
+  function bookProgress(phone, o, at) {
+    var hit = pick('phoneBooks', function (x) {
+      return x.phoneId === phone.id && x.kind === 'book' && x.title === o.title;
+    })[0];
+    if (hit) {
+      hit.progress = (o.progress != null) ? o.progress : hit.progress;
+      if (o.author && !hit.author) hit.author = o.author;
+      hit.updatedAt = at || Date.now();
+      patch('phoneBooks', hit.id, hit);
+      return hit;
+    }
+    return insert('phoneBooks', {
+      id: 'pbk_' + newId(), phoneId: phone.id, charId: phone.charId,
+      kind: 'book', title: o.title, author: o.author || '',
+      progress: (o.progress != null) ? o.progress : 0,
+      note: o.note || '',
+      at: at || Date.now(), updatedAt: at || Date.now()
+    });
+  }
+  function addBookNote(phone, o, at) {
+    return insert('phoneBooks', {
+      id: 'pbk_' + newId(), phoneId: phone.id, charId: phone.charId,
+      kind: 'note', title: o.title,
+      text: o.text, think: o.think || '',
+      at: at || Date.now()
+    });
+  }
+
+  function listMusic(phoneId, kind) {
+    return pick('phoneMusic', function (x) {
+      return x.phoneId === phoneId && (!kind || (x.kind || 'listen') === kind);
+    }).sort(function (a, b) { return b.at - a.at; });
+  }
+  function listSms(phoneId) {
+    return pick('phoneSms', function (x) { return x.phoneId === phoneId; })
+      .sort(function (a, b) { return b.at - a.at; });
+  }
+  /* 标一条短信已读（点开详情时）：真改库，下次进来小圆点就没了 */
+  function markSmsRead(phoneId, id) {
+    var hit = pick('phoneSms', function (x) {
+      return x.phoneId === phoneId && x.id === id;
+    })[0];
+    if (!hit || hit.read) return null;
+    return patch('phoneSms', id, { read: true });
+  }
+  function listBooks(phoneId) {
+    return pick('phoneBooks', function (x) {
+      return x.phoneId === phoneId && x.kind === 'book';
+    }).sort(function (a, b) { return (b.updatedAt || b.at) - (a.updatedAt || a.at); });
+  }
+  function listBookNotes(phoneId, title) {
+    return pick('phoneBooks', function (x) {
+      return x.phoneId === phoneId && x.kind === 'note' && (!title || x.title === title);
+    }).sort(function (a, b) { return b.at - a.at; });
+  }
+
+  /* 系统短信的程序侧生成（settle 时顺手）：验证码 / 快递 / 银行 / 运营商。
+     模板内容全部与具体人物无关 —— 不编人、不编剧情，只是生活噪音。
+     节流：距上一条系统短信不足 8 小时就不发；发了也看运气（0.5），
+     每次结算最多一条。 */
+  var SMS_TPL = [
+    function () {
+      var code = String(100000 + Math.floor(Math.random() * 900000));
+      return { from: '验证码', text: '【登录验证】验证码 ' + code +
+        '，5 分钟内有效。若非本人操作，请忽略本条短信。' };
+    },
+    function () {
+      var pickcode = String(1000 + Math.floor(Math.random() * 9000));
+      return { from: '快递柜', text: '您的包裹已存放至楼下快递柜，取件码 ' + pickcode +
+        '，请于今日 22:00 前取件。' };
+    },
+    function () {
+      var tail = String(1000 + Math.floor(Math.random() * 9000));
+      var amt = (Math.random() * 180 + 8).toFixed(2);
+      return { from: '银行', text: '您尾号 ' + tail + ' 的账户完成一笔消费，金额 ' +
+        amt + ' 元（网上消费）。' };
+    },
+    function () {
+      var left = (Math.random() * 8 + 0.5).toFixed(1);
+      return { from: '运营商', text: '提醒：本月国内通用流量还剩 ' + left +
+        'GB，用完按套餐外资费计费。' };
+    }
+  ];
+  function maybeSystemSms(phone) {
+    var last = pick('phoneSms', function (x) {
+      return x.phoneId === phone.id && x.kind === 'system';
+    }).sort(function (a, b) { return b.at - a.at; })[0];
+    if (last && Date.now() - last.at < 8 * 3600000) return null;
+    if (Math.random() >= 0.5) return null;
+    var tpl = SMS_TPL[Math.floor(Math.random() * SMS_TPL.length)]();
+    return addSms(phone, tpl, Date.now());
+  }
+
   /* 密码叙事化落库（lock/set）。改密码时旧 pin 进 pinHistory ——
      「旧密码作废了」是剧情事实，user 之后拿旧密码去猜，失败也是真实事件。
      pinNote 留他设锁/改密码时说的一句话（OOC 设置页展示，不进提示词）。 */
@@ -921,6 +1104,15 @@
       });
     }
     if (v.app === 'browser') return addHistory(phone, v.data, v.data.kind, at);
+    if (v.app === 'music') {
+      if (v.op === 'like') return addLike(phone, v.data, at);
+      return addListen(phone, v.data, at);
+    }
+    if (v.app === 'sms') return addSms(phone, v.data, at);
+    if (v.app === 'books') {
+      if (v.op === 'note') return addBookNote(phone, v.data, at);
+      return bookProgress(phone, v.data, at);
+    }
     if (v.app === 'notes') return addNote(phone, v.data, at);
     if (v.app === 'health') return addHealthDay(phone, v.data, at);
     if (v.app === 'permission') {
@@ -969,6 +1161,9 @@
       })[0];
       if (hit && PLAN_STATUS.indexOf(pc.to) >= 0) movePlan(hit.id, pc.to, clipStr(pc.reason, 60));
     });
+    /* 程序侧生活噪音：系统短信（验证码/快递/银行/运营商）不劳模型写，
+       结算时顺手补一条 —— 0 模型调用，可信度却最高。 */
+    maybeSystemSms(phone);
     patch('phones', phone.id, { settledUntil: Date.now() });
     return { applied: applied, dropped: dropped };
   }
@@ -1103,6 +1298,16 @@
     listCart: listCart,
     listHealth: listHealth,
     listShop: listShop,
+    addListen: addListen,
+    addLike: addLike,
+    addSms: addSms,
+    bookProgress: bookProgress,
+    addBookNote: addBookNote,
+    listMusic: listMusic,
+    listSms: listSms,
+    markSmsRead: markSmsRead,
+    listBooks: listBooks,
+    listBookNotes: listBookNotes,
     openTraces: openTraces,
     markDetected: markDetected,
     detectedUnaddressed: detectedUnaddressed,
