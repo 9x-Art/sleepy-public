@@ -915,9 +915,44 @@ t('roomTitle 由房里的人推出来（不用起名）', () => {
   return { 空房: empty, 一个人: one };
 });
 
+/* 2026-10-29 修（用户报 APP-05QF）：总览的「我」以前兜 activeUserOnIsland() ——
+   那量的是**活动岛**的马甲。从存档列表看一座名册还空着的新岛时，
+   旧岛的马甲被画进新岛的核心成员，点头像想改被 mask-edit 卫兵
+   fail closed 拦下（「这件马甲不属于这座岛」）。
+   钉住两件事：看别的岛只认本岛名册（空就给「加马甲」）；
+   看活动岛才跟着「此刻戴着的那件」走。 */
+t('总览的「我」只认本岛名册（别岛的马甲不许画过来）', () => {
+  if (S.nav.depth() > 0) S.nav.closeAll();
+  const A = S.core.createSandbox('isle');
+  S.core.setActiveSandbox(A.id);
+  const meA = S.core.upsertUser({ name: '旧岛的我', sandboxId: A.id, isDefault: true });
+  S.core.setSandboxMasks(A.id, [meA.id]);
+  const B = S.core.createSandbox('isle');   /* 新岛：名册空 */
+  const personClasses = (sbId) => {
+    S.nav.open('island-overview', { id: sbId });
+    const ctx = S.nav.topCtx();
+    const root = ctx && (ctx.body || ctx.el);
+    const out = [];
+    (function walk(n) {
+      const cn = (n && n.className) || '';
+      if (cn.indexOf('iol-person') >= 0) out.push(cn);
+      ((n && n.children) || []).forEach(walk);
+    })(root);
+    if (S.nav.depth() > 0) S.nav.closeAll();
+    return out.join(' ');
+  };
+  const inB = personClasses(B.id);
+  if (inB.indexOf('is-me') >= 0) throw new Error('新岛名册空，却把别岛的马甲画成了「我」');
+  if (inB.indexOf('is-add') < 0) throw new Error('新岛空名册该给「加马甲」入口');
+  const inA = personClasses(A.id);
+  if (inA.indexOf('is-me') < 0) throw new Error('活动岛自己的「我」不见了');
+  S.core._purgeSync.sandbox(B.id);
+  S.core._purgeSync.sandbox(A.id);
+  return { 新岛: '加马甲', 活动岛: 'is-me' };
+});
+
 ok('角色导入导出的入口已搬到配置台（Sleepy.charIO）',
-  !!(S.charIO && S.charIO.importInto && S.charIO.exportAll));
-ok('壳子提供了 closeAll（降落要用它清栈回桌面）',
+  !!(S.charIO && S.charIO.importInto && S.charIO.exportAll));ok('壳子提供了 closeAll（降落要用它清栈回桌面）',
   typeof S.nav.closeAll === 'function');
 
 /* 孤岛 = 1 User × 1 Char、绝对封闭。住满之后加人的入口必须关掉 ——
@@ -17637,7 +17672,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v284';
+const EXPECTED_SW_CACHE = 'sleepy-v285';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

@@ -730,9 +730,24 @@
         /* 「我」= 本岛大号（每岛只认一件，core.defaultUserOfSandbox）。
            这里必须拿**真身记录**：以前传的是合成对象 {name:'我'}，
            于是头像永远是那个「我」字、跟着马甲改的图根本不会出现
-           （用户 2026-09-22：「user 头像不变」）。 */
-        var bigMe = (core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null)
-          || core.activeUserOnIsland && core.activeUserOnIsland();
+           （用户 2026-09-22：「user 头像不变」）。
+           ⚠️ 2026-10-29 修（用户报：新开的孤岛总览直接出现上一座岛的
+           user 人设，点头像想改却被 APP-05QF「这件马甲不属于这座岛」拦下）：
+           原来后面还兜了一层 `|| activeUserOnIsland()` —— 它量的是**当前
+           活动岛**（activeSandbox + 本岛名册），不是正在看的这座岛。
+           总览从存档列表能看任何岛：看一座名册还空着的新岛时，
+           这层兜底把旧岛的马甲当成新岛的「我」画进核心成员；
+           点下去 mask-edit 拿着「旧 id + 新岛 sandboxId」，卫兵
+           fail closed 当场拦下 —— 报错本身就是马甲按岛的正确行为，
+           错的是总览不该把别岛的人画过来。
+           「此刻戴着的这件」只在看的就是活动岛时有意义（比如切到了
+           小号，总览该跟着显示小号）；看别的岛只认本岛名册，
+           空名册就老实给「加马甲」。 */
+        var bigMe = (core.defaultUserOfSandbox ? core.defaultUserOfSandbox(sb) : null);
+        if (store.get('activeSandboxId') === sb.id && core.activeUserOnIsland) {
+          var wornMe = core.activeUserOnIsland();
+          if (wornMe) bigMe = wornMe;
+        }
 
         /* ---- 核心成员 ---- */
         body.appendChild(secLabel('核心成员', masks.length + ' user · ' + mains.length + ' char'));
