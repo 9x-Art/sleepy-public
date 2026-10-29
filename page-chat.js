@@ -5468,15 +5468,27 @@
           }
           targets.push({ id: c.characterId, name: chatDisplayName(c), chatId: c.id });
         });
-        return [
-          { id: 'chat', targets: targets },
-          { id: 'moments', name: '朋友圈' },
-          { id: 'photos', name: '相册' },
-          { id: 'diary', name: '日记' },
-          { id: 'favorites', name: '收藏' },
-          { id: 'profile', name: '微信账号' },
-          { id: 'forum', name: '群声' }
-        ];
+        /* 2026-10-29 修（用户报：日记相册啥也没有，TA 却说「全是关于我的事」）：
+           以前不管有没有货，七个面全进计划 → 收尾摘要照报「翻了日记、相册」
+           → 模型拿着面名脑补内容。现在**先数货**：空面根本不进计划
+           （TA 不去翻，摘要也不报）。profile 永远在 —— 账号本身就是内容。 */
+        var facesOf = function (key, keep) {
+          var list = store.get(key);
+          if (!Array.isArray(list)) return 0;
+          var sid2 = sid && Sleepy.core && Sleepy.core.scoped ? Sleepy.core.scoped(list) : list;
+          return (sid2 || []).filter(keep || Boolean).length;
+        };
+        var faces = [{ id: 'chat', targets: targets }];
+        if (facesOf('moments', function (p) { return p && !p.groupId && String(p.content || p.text || '').trim(); }))
+          faces.push({ id: 'moments', name: '朋友圈' });
+        if (facesOf('photos')) faces.push({ id: 'photos', name: '相册' });
+        if (facesOf('diaries', function (d) { return d && String(d.content || '').trim(); }))
+          faces.push({ id: 'diary', name: '日记' });
+        if (facesOf('favorites')) faces.push({ id: 'favorites', name: '收藏' });
+        faces.push({ id: 'profile', name: '微信账号' });
+        if (facesOf('forumPosts', function (p) { return p && p.status !== 'deleted' && String(p.title || p.content || '').trim(); }))
+          faces.push({ id: 'forum', name: '群声' });
+        return faces;
       }
 
       /** 采样器：真读本岛数据 → {detail, learned}。失败回落通用文案，不阻断浏览。 */
@@ -5610,9 +5622,9 @@
           得真的是「他」看到这些东西时会想的话。 */
       function revThought(charName, persona0, view) {
         var api = Sleepy.api;
-        if (!api || !api.candidates) return Promise.resolve('');
+        if (!api || !api.candidates || !api.requestOnce) return Promise.resolve('');
         var cand = api.candidates()[0];
-        if (!cand || !cand.baseUrl || !cand.apiKey) return Promise.resolve('');
+        if (!cand || !cand.cfg || !cand.cfg.baseUrl || !cand.cfg.apiKey) return Promise.resolve('');
         var chat = getChat(chatId);
         var ch = chat && chat.characterId ? findCharacter(chat.characterId) : null;
         var pe = Sleepy.promptEngine;
@@ -5643,22 +5655,18 @@
           (view.learned ? ('\n你注意到：' + view.learned) : '') +
           '\n用一句你这个人此刻真实的内心想法（25 字内，口语，符合你的说话习惯；' +
           '吃醋/好奇/心虚/得意/想装不知道都行，跟人设和你们的关系对上）。只输出想法本身，不要引号。';
-        var ctrl = new AbortController();
-        /* 超时放宽：思维链模型慢（真机实测 2026-10-25），后台弹幕等得起 */
-        var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 45000);
-        return fetch(String(cand.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cand.apiKey },
-          body: JSON.stringify({
-            model: cand.model,
-            messages: [{ role: 'user', content: sys }],
-            temperature: 0.9, max_tokens: 1000, stream: false
-          }),
-          signal: ctrl.signal
-        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-          clearTimeout(timer);
-          return String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim().slice(0, 40);
-        }).catch(function () { clearTimeout(timer); return ''; });
+        /* 2026-10-29 修（用户报「反查手机的弹窗是固定的话语，不是实时生成」）：
+           candidates() 回来的是 {source, label, cfg} —— 配置包在 **cfg** 里，
+           以前直接裸读候选对象上的地址和密钥，全是 undefined，
+           心声调用**一次都没发出去过**，永远走保底模板（收尾卡里那几条
+           「……原来你是这样」就是模板长什么样）。改走 api.requestOnce
+           （跟语音导演同一个口）：端点归一、鉴权头、超时都归它管，
+           失败照旧静默落保底，不阻断浏览。 */
+        return api.requestOnce(cand, [{ role: 'user', content: sys }], {})
+          .then(function (r) {
+            return (r && r.ok) ? String(r.content || '').trim().slice(0, 40) : '';
+          })
+          .catch(function () { return ''; });
       }
 
       /** 心声保底（2026-10-29 用户「没有心声飘过很平淡」）：模型想法没到位
@@ -5998,31 +6006,22 @@
         var acc = tr.pickForAdvance(chat.characterId, chat.sandboxId, now);
         if (!acc) return;
         var api = Sleepy.api;
-        if (!api || !api.candidates) return;
+        if (!api || !api.candidates || !api.requestOnce) return;
+        /* 2026-10-29 修：配置在 cand.cfg 里（同 revThought），以前裸读候选
+           对象上的地址 → 永远 undefined → 关系推进从来没发出去过。改走 requestOnce。 */
         var cand = api.candidates()[0];
-        if (!cand || !cand.baseUrl || !cand.apiKey) return;
+        if (!cand || !cand.cfg || !cand.cfg.baseUrl || !cand.cfg.apiKey) return;
         var recent = (chat.messages || []).slice(-6).map(function (m) {
           return (m.role === 'user' ? '你：' : 'TA：') + String(m.content || '').slice(0, 40);
         }).join('\n');
-        var ctrl = new AbortController();
-        /* 真机实测（xinxiwang 网关，2026-10-25）：思维链模型（如 vertex gemini）
-           一来慢（几百 token 要 1~2 分钟）、二来 reasoning_content 会挤配额——
-           超时和 max_tokens 都放宽，反正这条链是后台 fire-and-forget。 */
-        var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 45000);
-        fetch(String(cand.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cand.apiKey },
-          body: JSON.stringify({
-            model: cand.model,
-            messages: [{ role: 'user', content: tr.buildAdvancePrompt(acc, recent) }],
-            /* 真机实测：max_tokens 600 仍会被思维链挤到 content 截断（半个
-               JSON），2000 才稳。解析失败再走下面宽容提取兜底。 */
-            temperature: 0.8, max_tokens: 2000, stream: false
-          }),
-          signal: ctrl.signal
-        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-          clearTimeout(timer);
-          var raw = String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim();
+        /* 真机实测（xinxiwang 网关，2026-10-25）：思维链模型一来慢、二来
+           reasoning_content 会挤配额 —— requestOnce 的 60s 底线 + 大 maxTokens
+           正合适，后台 fire-and-forget 等得起。 */
+        api.requestOnce(cand, [{ role: 'user', content: tr.buildAdvancePrompt(acc, recent) }],
+          { maxTokens: 2000 })
+          .then(function (r) {
+            if (!r || !r.ok) return;
+            var raw = String(r.content || '').trim();
           var patch = null;
           var m = raw.match(/\{[\s\S]*\}/);
           if (m) { try { patch = JSON.parse(m[0]); } catch (e) { patch = null; } }
@@ -6038,7 +6037,7 @@
             if (!patch.currentState && !patch.learned) return;
           }
           tr.applyAdvance(chat.characterId, chat.sandboxId, acc.id, patch, Date.now());
-        }).catch(function () { clearTimeout(timer); /* 静默 */ });
+        }).catch(function () { /* 静默：requestOnce 不 reject，这里只是兜底 */ });
       }
 
       /** L2 今日块：今天还没有 → 生成一次（一天一次/角色；素材只从账本读；
@@ -6050,31 +6049,24 @@
         if (!chat || !chat.characterId) return;
         if (td.get(chat.characterId, chat.sandboxId)) return;   /* 今天已有 */
         var api = Sleepy.api;
-        if (!api || !api.candidates) return;
+        if (!api || !api.candidates || !api.requestOnce) return;
+        /* 2026-10-29 修：同 revThought —— 配置在 cand.cfg 里，以前裸读
+           候选对象上的地址 → 永远 undefined → 今日块从来没生成过。 */
         var cand = api.candidates()[0];
-        if (!cand || !cand.baseUrl || !cand.apiKey) return;
+        if (!cand || !cand.cfg || !cand.cfg.baseUrl || !cand.cfg.apiKey) return;
         var ch = findCharacter(chat.characterId);
         var material = td.buildMaterial(chat.characterId, chat.sandboxId);
-        var ctrl = new AbortController();
-        var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 60000);
-        fetch(String(cand.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cand.apiKey },
-          body: JSON.stringify({
-            model: cand.model,
-            messages: [{ role: 'user', content: td.buildPrompt(ch ? ch.name : 'TA', material) }],
-            temperature: 0.85, max_tokens: 2000, stream: false
-          }),
-          signal: ctrl.signal
-        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-          clearTimeout(timer);
-          var raw = String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim();
-          var m = raw.match(/\{[\s\S]*\}/);
-          if (!m) return;
-          var fields;
-          try { fields = JSON.parse(m[0]); } catch (e) { return; }
-          td.put(chat.characterId, chat.sandboxId, fields, Date.now());
-        }).catch(function () { clearTimeout(timer); /* 静默：明天再试 */ });
+        api.requestOnce(cand, [{ role: 'user', content: td.buildPrompt(ch ? ch.name : 'TA', material) }],
+          { maxTokens: 2000 })
+          .then(function (r) {
+            if (!r || !r.ok) return;
+            var raw = String(r.content || '').trim();
+            var m = raw.match(/\{[\s\S]*\}/);
+            if (!m) return;
+            var fields;
+            try { fields = JSON.parse(m[0]); } catch (e) { return; }
+            td.put(chat.characterId, chat.sandboxId, fields, Date.now());
+          }).catch(function () { /* 静默：明天再试 */ });
       }
 
       function buildMessages(opts) {

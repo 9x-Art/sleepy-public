@@ -11359,6 +11359,18 @@ t('反查手机 2026-10-29：点反查当场开演（遮罩层 + 心声保底 + 
   const th = src.match(/function revThought[\s\S]{0,2600}/);
   if (!th || th[0].indexOf('compileCharacter') < 0) throw new Error('弹幕没喂全人设');
   if (!th || th[0].indexOf('memoriesOfRoot') < 0) throw new Error('弹幕没喂记忆');
+  /* v286（用户报「弹窗是固定的话语，不是实时生成」+「日记相册啥也没有他说全是我的事」）：
+     ① candidates() 的配置包在 cand.cfg 里 —— 以前 revThought / 关系推进 / 今日块
+        三处裸读 cand.baseUrl，全是 undefined，后台 LLM 三条链一次都没发出去过，
+        心声全落保底模板（收尾卡看着就像写死的）。钉死：全文件不许再出现裸读。
+     ② revAvailable 先数货：空面（空日记/空相册）不进浏览计划 → 收尾摘要
+        不报面名，模型没得脑补。 */
+  if (!th || th[0].indexOf('requestOnce') < 0) throw new Error('心声没走 requestOnce');
+  if (src.indexOf('cand.baseUrl') >= 0 || src.indexOf('cand.apiKey') >= 0) {
+    throw new Error('page-chat 还在裸读候选配置（配置在 cand.cfg 里，走 requestOnce）');
+  }
+  const av = src.match(/function revAvailable[\s\S]{0,2200}/);
+  if (!av || av[0].indexOf('facesOf') < 0) throw new Error('浏览计划没有先数货（空面过滤缺）');
   const css = fs.readFileSync('style.css', 'utf8');
   if (!css.includes('.rev-scrim{')) throw new Error('遮罩层样式缺');
   if (!css.includes('.msg-revcard{')) throw new Error('收尾卡样式缺');
@@ -17672,7 +17684,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v285';
+const EXPECTED_SW_CACHE = 'sleepy-v286';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
