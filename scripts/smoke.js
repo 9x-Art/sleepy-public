@@ -5178,6 +5178,28 @@ t('narr 半截尾巴（流式兜底）：扣标记留内文，[旁白: 三个字
   if (S.promptEngine.narrPlain('干净文本') !== '干净文本') throw new Error('干净文本不该被动');
   return 'ok';
 });
+/* v281（2026-10-29 用户「旁白时不时掉格式」）：模型手滑的三种变体 ——
+   全角括号 / 标记里套方括号 / 标记里写 ||。旧正则任何一种都会漏。 */
+t('narr 加固：全角括号/嵌套方括号/标记里的 || 都不漏', () => {
+  /* 全角方括号 ［旁白：…］ */
+  const p1 = S.promptEngine.narrPlain('说话［旁白：她抬起头］又说话');
+  if (p1 !== '说话她抬起头又说话') throw new Error('全角方括号没剥：' + p1);
+  /* 全角书名号式 【旁白：…】 */
+  const p2 = S.promptEngine.narrPlain('说话【旁白：她抬起头】又说话');
+  if (p2 !== '说话她抬起头又说话') throw new Error('全角【】没剥：' + p2);
+  /* 标记里套一层方括号：旧非贪婪匹配会腰斩 + 漏孤 ] */
+  const segs = S.promptEngine.narrSegments('[旁白:她抬起头[停顿]]嗯？');
+  if (!segs || segs.length !== 2) throw new Error('嵌套拆段数不对：' + JSON.stringify(segs));
+  if (segs[0].text !== '她抬起头[停顿]') throw new Error('嵌套内文被腰斩：' + JSON.stringify(segs[0]));
+  if (segs[1].text !== '嗯？') throw new Error('嵌套尾巴不对：' + JSON.stringify(segs[1]));
+  /* 标记里的 || 不是分泡符：标记不被劈开 */
+  const bs = S.promptEngine.splitBubbles('[旁白:第一句||第二句]对话');
+  if (bs.length !== 1) throw new Error('标记里的 || 被劈了：' + JSON.stringify(bs));
+  if (bs[0].indexOf('第一句||第二句') < 0) throw new Error('标记内文丢了：' + bs[0]);
+  const bs2 = S.promptEngine.splitBubbles('a||[旁白:x||y]b||c');
+  if (bs2.length !== 3) throw new Error('标记外的 || 照切：' + JSON.stringify(bs2));
+  return 'ok';
+});
 t('narr 说明书卡：关/没传=空串；开=含格式、禁词与默认字数密度', () => {
   if (S.promptEngine.narrCard(undefined) !== '') throw new Error('没传应返回空串');
   if (S.promptEngine.narrCard({ on: false }) !== '') throw new Error('关应返回空串');
@@ -5327,32 +5349,44 @@ t('线上聊天 v274：消息引用条是微信口径「名字：内容」（不
   return 'ok';
 });
 
-/* v275 iOS 安全区一轮修的护栏。
+/* v275 → v284 iOS 安全区护栏（稳定化改版）。
    背景：Safari standalone 下 getComputedStyle 读 env() 恒 0（WebKit 老怪癖），
    iOS 26.1 还有 env 直接归零的回归 —— 所以安全区只能走「探针渲染值」。
+   v284 起 JS 只写 fallback（--safe-top-fb / --safe-bottom-fb），终值由
+   CSS 的 max(env, fallback) 合成；探针不再绑死 vv.resize、不碰 vv.scroll。
    期望值全部硬写字符串，不许引被测常量。 */
-t('iOS 安全区 v275：探针测量 + 变量唯一入口 + iOS 藏假状态栏', () => {
+t('iOS 安全区 v284：fallback 合成 + JS 禁写终值 + 冷启动有限重试 + iOS 藏假状态栏', () => {
   const app = fs.readFileSync('app.js', 'utf8');
+  const css = fs.readFileSync('style.css', 'utf8');
   /* ① 探针：量 env 的**渲染值**（getBoundingClientRect），不是 getComputedStyle */
   if (app.indexOf('safe-probe-top') < 0 || app.indexOf('safe-probe-bottom') < 0) {
     throw new Error('app.js 没有安全区探针元素');
   }
-  if (app.indexOf("setProperty('--safe-top'") < 0 || app.indexOf("setProperty('--safe-bottom'") < 0) {
-    throw new Error('探针没把测量值写进 --safe-top/--safe-bottom');
+  /* ② JS 禁止直接写终值 --safe-top / --safe-bottom（fb 的 --safe-top-fb
+      不含 "--safe-top'"，子串不会误伤） */
+  if (app.indexOf("setProperty('--safe-top'") >= 0 ||
+      app.indexOf("setProperty('--safe-bottom'") >= 0) {
+    throw new Error('JS 还在直接写 --safe-top/--safe-bottom（必须只写 -fb fallback）');
   }
-  /* ② iOS 类 + 键盘残留兜底清理 */
+  if (app.indexOf("'--safe-top-fb'") < 0 || app.indexOf("'--safe-bottom-fb'") < 0 ||
+      app.indexOf('function writeFb') < 0) {
+    throw new Error('探针没把测量值写进 --safe-top-fb/--safe-bottom-fb（须经 writeFb）');
+  }
+  /* ③ CSS 终值必须 env + fallback 合成，fb 有 :root 初始定义 */
+  if (!/--safe-top:max\(env\(safe-area-inset-top, 0px\), var\(--safe-top-fb\)\)/.test(css) ||
+      !/--safe-bottom:max\(env\(safe-area-inset-bottom, 0px\), var\(--safe-bottom-fb\)\)/.test(css)) {
+    throw new Error(':root 缺 max(env, fallback) 合成定义');
+  }
+  if (!/--safe-top-fb:0px;/.test(css) || !/--safe-bottom-fb:0px;/.test(css)) {
+    throw new Error(':root 缺 --safe-top-fb/--safe-bottom-fb 初始定义');
+  }
+  /* ④ iOS 类 + 键盘残留兜底清理 */
   if (app.indexOf("d.classList.add('ios')") < 0) throw new Error('app.js 没打 html.ios 类');
   if (app.indexOf("root.style.removeProperty('--kb-inset')") < 0 ||
       app.indexOf("addEventListener('focusout'") < 0) {
     throw new Error('没有 focusout 兜底清 --kb-inset（iOS PWA 键盘收起会悬空底栏）');
   }
-  const css = fs.readFileSync('style.css', 'utf8');
-  /* ③ 变量定义在 :root（带 env 兜底），消费点全部走 var */
-  if (!/--safe-top:env\(safe-area-inset-top, 0px\)/.test(css) ||
-      !/--safe-bottom:env\(safe-area-inset-bottom, 0px\)/.test(css)) {
-    throw new Error(':root 缺 --safe-top/--safe-bottom 的 env 兜底定义');
-  }
-  /* ④ env 直写只允许出现在 :root 定义处（剥掉注释后数：top/bottom 各 1）。
+  /* ⑤ env 直写只允许出现在 :root 定义处（剥掉注释后数：top/bottom 各 1）。
       谁在消费点直接写 env 就等于绕过测量，iOS 26.1 那类版本会静默失效。 */
   const cssNoComment = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const envTop = (cssNoComment.match(/env\(safe-area-inset-top/g) || []).length;
@@ -5361,15 +5395,62 @@ t('iOS 安全区 v275：探针测量 + 变量唯一入口 + iOS 藏假状态栏'
     throw new Error('安全区消费点绕过了变量（env 直写只许在 :root 定义处各 1 次），' +
       '现在 top=' + envTop + ' bottom=' + envBottom);
   }
-  /* ⑤ iOS 藏假状态栏（系统状态栏永远可见，假的时间电量只会重复打架） */
+  /* ⑥ iOS 藏假状态栏（系统状态栏永远可见，假的时间电量只会重复打架） */
   if (css.indexOf('html.ios #statusbar{display:none;}') < 0) {
     throw new Error('缺 html.ios #statusbar 藏假状态栏的规则（时间戳会和系统叠）');
   }
-  /* ⑥ 输入栏底部收窄（iOS 上安全区本身 ~34px 已占掉「离底」，再叠就
+  /* ⑦ 输入栏底部收窄（iOS 上安全区本身 ~34px 已占掉「离底」，再叠就
      「底栏太高」；v277 再从 +8 收到 +6） */
   const ia = css.match(/\.input-area\{[^}]*\}/);
   if (!ia || ia[0].indexOf('calc(var(--safe-bottom) + 6px)') < 0) {
     throw new Error('.input-area 底部不是 var(--safe-bottom) + 6px');
+  }
+  return 'ok';
+});
+
+/* v284 稳定化护栏：探针的监听纪律。
+   键盘 IIFE 允许 vv.resize+scroll（那是键盘的事）；安全区探针只许在
+   冷启动未稳定阶段临时挂 vv.resize，且必须可解除、有限重试。 */
+t('iOS 安全区 v284：监听纪律（不碰 vv.scroll / resize 监听可解除 / 有限重试 / 键盘分离）', () => {
+  const app = fs.readFileSync('app.js', 'utf8');
+  const cssNC = fs.readFileSync('style.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  /* ① 探针不得监听 vv.scroll（把滚动当重测信号 = 安全区跟着页面滚）。
+      键盘 IIFE 用的是 vv.addEventListener('scroll'（变量名 vv），
+      这里断言全文不存在 visualViewport.addEventListener('scroll' 这类
+      直接绑定形式即可区分。 */
+  if (app.indexOf("visualViewport.addEventListener('scroll'") >= 0) {
+    throw new Error('visualViewport.scroll 被直接绑定了（安全区/键盘都不许）');
+  }
+  /* ② 冷启动 resize 监听必须可解除：有 add 就要有对应的 remove */
+  if (app.indexOf("visualViewport.addEventListener('resize'") < 0 ||
+      app.indexOf("visualViewport.removeEventListener('resize'") < 0) {
+    throw new Error('冷启动 vv.resize 监听缺少成对的解除调用（会永久常驻）');
+  }
+  /* ③ 冷启动重试是有限集合：RETRY_MS 时刻表硬编码四轮，无递归自续 */
+  if (!/RETRY_MS\s*=\s*\[120, 500, 1500, 3000\]/.test(app)) {
+    throw new Error('缺 RETRY_MS = [120, 500, 1500, 3000] 有限重试时刻表');
+  }
+  /* ④ orientationchange 能触发重新初始化（唯一重测入口） */
+  if (app.indexOf("global.addEventListener('orientationchange'") < 0 ||
+      app.indexOf('startColdStart') < 0) {
+    throw new Error('orientationchange 没接重新初始化（旋转后安全区永远是旧值）');
+  }
+  /* ⑤ 职责分离：探针 IIFE 不写 --kb-inset / kb-open；
+      键盘 IIFE 不写 fb、不建探针。按变量归属断言。 */
+  const probeZone = app.slice(app.indexOf('iOS 安全区测量'),
+    app.indexOf('/* ---------------------------- 页面栈'));
+  const kbZone = app.slice(app.indexOf('软键盘避让（真机）'),
+    app.indexOf('/* ---------------------------- 对外'));
+  if (probeZone.indexOf('--kb-inset') >= 0 || probeZone.indexOf('kb-open') >= 0) {
+    throw new Error('安全区探针 IIFE 混进了键盘变量（--kb-inset / kb-open）');
+  }
+  if (kbZone.indexOf('--safe-top-fb') >= 0 || kbZone.indexOf('--safe-bottom-fb') >= 0 ||
+      kbZone.indexOf('safe-probe') >= 0) {
+    throw new Error('键盘 IIFE 混进了安全区测量（fb / 探针）');
+  }
+  /* ⑥ 键盘开着时输入栏让位安全区（v278 规则仍在，键盘链路没被本批动过） */
+  if (cssNC.indexOf('html.kb-open .input-area{padding-bottom:6px;}') < 0) {
+    throw new Error('缺 html.kb-open .input-area{padding-bottom:6px}（键盘让位规则丢了）');
   }
   return 'ok';
 });
@@ -11150,6 +11231,29 @@ t('查手机 2026-10-29 批：音乐/短信/书架 校验、落库、读口与�
   if (!smsRec || smsRec.read) throw new Error('新短信应未读');
   S.phone.markSmsRead(ph.id, smsRec.id);
   if (!S.phone.listSms(ph.id).find((x) => x.id === smsRec.id).read) throw new Error('标记已读没落库');
+  /* 短信心声：chat 带 think 透传落库；system 不给心声 */
+  const smThink = S.phone.validateDelta({ app: 'sms', op: 'add_sms',
+    payload: { kind: 'chat', from: '听歌的人', text: '睡了吗', think: '想她了' } });
+  S.phone.applyDelta(ph, smThink, 'run_test');
+  if (S.phone.listSms(ph.id).find((x) => x.think === '想她了')) { /* ok */ }
+  else throw new Error('短信心声没落库');
+  const smSys = S.phone.validateDelta({ app: 'sms', op: 'add_sms',
+    payload: { kind: 'system', from: '验证码', text: 'x', think: '不该有' } });
+  if (smSys.data.think) throw new Error('系统短信不该有心声');
+  /* editRecord：白名单内可改；书名（批注的挂点）不许改；白名单外整条拒 */
+  if (!S.phone.editRecord('phoneSms', smsRec.id, { think: '在门口站了一会儿' })) {
+    throw new Error('editRecord 没改到短信');
+  }
+  if (S.phone.editRecord('phoneSms', smsRec.id, { kind: 'system' })) {
+    throw new Error('editRecord 不该放行白名单外的字段');
+  }
+  const shelfBook = S.phone.listBooks(ph.id)[0];
+  if (shelfBook && S.phone.editRecord('phoneBooks', shelfBook.id, { title: '改名' })) {
+    throw new Error('书名不在白名单里（批注按 title 挂）');
+  }
+  if (S.phone.editRecord('phoneNotes', 'x', { content: 'y' })) {
+    throw new Error('白名单外的表该拒');
+  }
   /* 书架：progress 开新书 → 同名再推进是 update 不是追加；批注挂书名 */
   const b1 = S.phone.validateDelta({ app: 'books', op: 'progress',
     payload: { title: '夜航西飞', author: '柏瑞尔', progress: 30 } });
@@ -11198,11 +11302,33 @@ t('反查手机 2026-10-29：点反查当场开演（遮罩层 + 心声保底 + 
   if (!/w\.lastAt = Date\.now\(\)/.test(m[0])) throw new Error('revManual 没记 lastAt');
   if (/w\.invite\s*=/.test(m[0])) throw new Error('revManual 不该再走邀请等待（等一轮就是平淡 bug）');
   /* 收尾必须还页：接管切走了真页面，看完要落回聊天 */
-  const fin = src.match(/function finish\(interrupted\)[\s\S]{0,2200}/);
+  const fin = src.match(/function finish\(interrupted\)[\s\S]{0,2400}/);
   if (!fin || !fin[0].includes("Sleepy.nav.open('chat-detail'")) throw new Error('收尾没有还页逻辑');
+  /* v282（用户四条反馈）：看完 TA 要开口；收尾卡走结构化渲染；系统条可删 */
+  if (!fin[0].includes('requestReply(')) throw new Error('看完了 TA 没有被要求开口');
+  if (!fin[0].includes('rev: {')) throw new Error('收尾卡没有结构化 rev 数据');
+  if (!src.includes('function revCard(')) throw new Error('收尾卡渲染缺');
+  if (!src.includes('function openSysMenu(')) throw new Error('系统条长按删除菜单缺');
+  if (!/msg\.type === 'revcheck'[\s\S]{0,300}openSysMenu/.test(src)) {
+    throw new Error('revcheck 卡没接长按删除');
+  }
+  /* v283（用户二次口径）：卡片不复述翻了哪（user 全程跟看，清单是复读）；
+     滚屏不再是匀速传送带 —— 随机翻/回/停/甩 + 心声时发呆 */
+  if (fin[0].includes('pages:')) throw new Error('收尾卡还在存页面清单（复读）');
+  if (!src.includes('function revScrollTick(')) throw new Error('滚屏随机节奏缺');
+  if (/setInterval\(function \(\) \{ revSimScroll/.test(src)) {
+    throw new Error('匀速传送带滚屏还在（机械味）');
+  }
+  if (!src.includes('lingerUntil')) throw new Error('心声时的发呆停顿缺');
+  /* 弹幕要有他人味：compileCharacter（全人设）+ 记忆 + 最近对话得喂进去 */
+  const th = src.match(/function revThought[\s\S]{0,2600}/);
+  if (!th || th[0].indexOf('compileCharacter') < 0) throw new Error('弹幕没喂全人设');
+  if (!th || th[0].indexOf('memoriesOfRoot') < 0) throw new Error('弹幕没喂记忆');
   const css = fs.readFileSync('style.css', 'utf8');
   if (!css.includes('.rev-scrim{')) throw new Error('遮罩层样式缺');
-  return { 遮罩: true, 弹幕保底: true, 当场开演: true, 收尾还页: true };
+  if (!css.includes('.msg-revcard{')) throw new Error('收尾卡样式缺');
+  return { 遮罩: true, 弹幕保底: true, 当场开演: true, 收尾还页: true,
+    看完开口: true, 卡片: true, 可删: true };
 });
 
 t('密码叙事化：lock/set 设锁换码 + 坏 pin 拒 + 旧密码进 pinHistory + 去锁不清 pin', () => {
@@ -13172,7 +13298,14 @@ t('P0-1 回复里的 [手机] 痕迹落进查手机（真实数据链路）', ()
   const pcs = fs.readFileSync(path.join(ROOT, 'page-chat.js'), 'utf8');
   ok('P0-1 护栏：回复后处理只调 applyPhoneTrace，不再内联 chat.xxx',
     pcs.indexOf('applyPhoneTrace(chatId, finalText)') >= 0 &&
-    pcs.indexOf('rootIdOf(chat.characterId)') < 0);
+    /* v281 收窄：只看调用点附近（v281 的 revThought 合法用了
+       rootIdOf(chat.characterId)——那里的 chat 是自己 getChat 来的）。
+       调用点前后 300 字内不许再出现内联 chat.xxx。 */
+    (() => {
+      const at = pcs.indexOf('applyPhoneTrace(chatId, finalText)');
+      const near = pcs.slice(Math.max(0, at - 300), at + 300);
+      return near.indexOf('chat.characterId') < 0;
+    })());
 }
 
 /* 静态护栏：多选条是**从上面插进流里**的（append 在 .msg-wrap 之前），
@@ -17499,7 +17632,12 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v280（2026-10-29 午后）：反查手机「当场开演」改版 —— page-chat.js
    （revManual 直接启动接管 + rev-scrim 遮罩 + 心声弹幕保底 + finish 还页）、
    style.css（.rev-scrim）变了。基准随批 v279 → v280。 */
-const EXPECTED_SW_CACHE = 'sleepy-v280';
+/* v284（2026-10-29 下午）：iOS 安全区稳定化候选 —— app.js（探针只写
+   --safe-top-fb/--safe-bottom-fb + 顶底分别缓存 + 冷启动五轮有限重试 +
+   vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
+   style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
+   基准随批 v283 → v284。 */
+const EXPECTED_SW_CACHE = 'sleepy-v284';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

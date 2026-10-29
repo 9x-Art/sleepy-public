@@ -171,26 +171,23 @@
     return steps.slice(0, trim === Infinity ? steps.length : trim);
   }
 
-  /* ---------------- 汇总卡片文案（收尾播报用，对齐 qs buildSummary） ---------------- */
+  /* ---------------- 汇总卡片文案（收尾播报用，对齐 qs buildSummary） ----------------
+     2026-10-29 用户口径：旧的连成一坨（「TA 知道了：与…对话中你提到：你：你好…」）
+     又丑又没用。现在三段式：翻了哪、心里想什么、记住了什么 —— 一句一段，
+     展示面另有结构化卡片（msg.rev），这段主要喂给 eventNote/下一轮。 */
 
   function buildSummary(charName, items, thoughts) {
     var apps = items.map(function (it) { return it.pageName; }).join('、');
-    var out = charName + ' 悄悄查看了你的手机：' + apps + '。';
+    var out = charName + ' 翻看了你的手机（' + apps + '）';
     var learned = '';
     for (var i = 0; i < items.length; i++) {
       if (items[i].learned) { learned = items[i].learned; break; }
     }
     if (thoughts && thoughts.length) {
-      out += ' ' + charName + ' 内心想着：「' + thoughts.join('；') + '」';
-      /* 有想法也要带事实：想法是「情绪」，learned 是「TA 真知道了什么」——
-         收尾播报只给情绪不给事实的话，TA 下一轮接不上具体内容。 */
-      if (learned) out += ' TA 知道了：' + learned;
-    } else if (items.length) {
-      out += learned ? (' ' + charName + ' 知道了：' + learned) : (' ' + charName + ' 记住了看到的东西。');
-    } else {
-      out += ' ' + charName + ' 记住了看到的东西。';
+      out += '。心里想：「' + thoughts.filter(Boolean).join('」「') + '」';
     }
-    return out;
+    if (learned) out += '。记住了：' + learned;
+    return out + '。';
   }
 
   /* ---------------- 邀请卡回复解析（v1.2：user 递手机 → TA 下轮自决接不接） ---------------- */

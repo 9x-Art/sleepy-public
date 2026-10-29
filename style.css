@@ -48,15 +48,20 @@
      不会踩「自定义属性在声明处冻结」那个坑。 */
   --ink-halo:0 0 1px rgba(255,255,255,1),0 0 4px rgba(255,255,255,.9),0 1px 9px rgba(255,255,255,.6);
 
-  /* ---- iOS 安全区（2026-10-28 重做）----
-     这两个变量是**全项目安全区的唯一入口**：先给 env 兜底值，
-     iOS 上由 app.js 的探针用**渲染值**覆盖（getComputedStyle 读 env()
-     在 standalone 下恒 0，是 WebKit 的老怪癖；CSS 渲染永远是对的）。
-     消费点一律写 var(--safe-top) / var(--safe-bottom)，
-     **别再直接写 env(...)** —— 那会绕过测量，iOS 26.1 那类
-     「env 被系统收回」的版本就全失效了。 */
-  --safe-top:env(safe-area-inset-top, 0px);
-  --safe-bottom:env(safe-area-inset-bottom, 0px);
+  /* ---- iOS 安全区（2026-10-29 稳定化：env 主来源 + JS fallback 合成）----
+     最终值仍是**全项目安全区的唯一入口**：--safe-top / --safe-bottom 由
+     max(env(...), fallback) 合成 —— env 正常的设备 env 说了算（主来源）；
+     env 被系统收回的版本（standalone 恒 0 的 WebKit 老怪癖、iOS 26.1
+     回归）由 app.js 探针量**渲染值**写进 fallback 补上。
+     JS 只许写 --safe-top-fb / --safe-bottom-fb（顶底分别缓存、有限重试），
+     **禁止再直接写 --safe-top / --safe-bottom** —— 那会让键盘 resize、
+     聚焦这类事件反复重写终值，首屏「偏上、交互后下移」就是那么来的。
+     消费点照旧只写 var(--safe-top) / var(--safe-bottom)，
+     **别直接写 env(...)**。 */
+  --safe-top-fb:0px;
+  --safe-bottom-fb:0px;
+  --safe-top:max(env(safe-area-inset-top, 0px), var(--safe-top-fb));
+  --safe-bottom:max(env(safe-area-inset-bottom, 0px), var(--safe-bottom-fb));
 
   /* ---- 假状态栏占位（2026-10-28 晚补，iOS 顶栏偏下的真凶）----
      #statusbar 是**浮层不占布局**（它要透明、要让封面顶到屏幕最上边），
@@ -11507,6 +11512,33 @@ button.ph-lock-note:active{background:rgba(32,39,37,.68);}
 .ph-mark-quote{margin:0;color:#4d4641;font-size:12px;line-height:1.7;}
 .ph-mark-think{margin:7px 0 0;color:#8f847c;font-size:10.5px;line-height:1.6;}
 .ph-mark-meta{margin:6px 0 0;color:#b3a89e;font-size:9px;}
+/* 详情页心声块 + 手动修订（2026-10-29 批）：照批注的口吻 ——
+   小标签 + 他的心里话；编辑是白名单小表单，不是另一套界面。 */
+.ph-think{margin:14px 0 0;padding:11px 13px;border-radius:14px;
+  background:#f6f0e8;border-left:2px solid #d9c3a8;}
+.ph-think-tag{display:block;color:#a98468;font-size:9px;font-weight:600;
+  letter-spacing:.08em;}
+.ph-think-t{margin:5px 0 0;color:#6b5c4e;font-size:11.5px;line-height:1.7;
+  white-space:pre-wrap;}
+.ph-read-b.is-dim{color:#b3a89e;}
+.ph-edit-btn{margin:14px 0 0;padding:5px 12px;border-radius:999px;
+  background:transparent;border:1px solid #d9c3a8;color:#8c6856;
+  font-size:10px;font-family:inherit;cursor:pointer;}
+.ph-edit-btn:hover{background:#f2e9e3;}
+.ph-mark-foot{display:flex;align-items:center;gap:9px;}
+.ph-mark-foot .ph-edit-btn{margin:4px 0 0;padding:2px 9px;font-size:9px;}
+.ph-editform{margin:14px 0 0;padding:12px;border-radius:14px;
+  background:#fff;border:1px solid #e5ddd5;}
+.ph-edit-lab{display:block;margin:9px 0 4px;color:#8f847c;font-size:9.5px;
+  font-weight:600;}
+.ph-edit-lab:first-child{margin-top:0;}
+.ph-edit-in{display:block;width:100%;box-sizing:border-box;padding:8px 10px;
+  border-radius:10px;border:1px solid #e5ddd5;background:#faf7f2;
+  color:#4d4641;font-size:12px;line-height:1.6;font-family:inherit;
+  resize:vertical;}
+.ph-edit-in:focus{outline:none;border-color:#c9a882;}
+.ph-edit-row{display:flex;gap:8px;margin:12px 0 0;}
+.ph-edit-row .ph-btn{flex:1;}
 .ph-bookmarks{display:grid;grid-template-columns:1fr 1fr;gap:9px;padding-bottom:22px;}
 .ph-bookmark{padding:12px;border-radius:18px;background:#fff;border:1px solid #e5ddd5;color:#4d4641;}
 .ph-bookmark-cover{height:48px;margin-bottom:9px;border-radius:13px;
@@ -16282,6 +16314,28 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 
 /* 反查播报：同牌桌播报位 */
 .msg-rev-line{color:#8B6FB4;opacity:.9;}
+
+/* 反查收尾卡（2026-10-29 改版）：居中小卡三行——谁翻了 / 翻了哪些面 /
+   他当时的心声。替代以前那坨糊在一起的文字。颜色走紫藤（同 rev 线）。 */
+.msg-rev-row{display:flex;justify-content:center;padding:6px 0;}
+.msg-revcard{
+  max-width:82%;padding:9px 13px;border-radius:14px;
+  background:color-mix(in srgb,#8B6FB4 8%,var(--card-bg,#fff));
+  border:1px solid color-mix(in srgb,#8B6FB4 22%,transparent);
+}
+.msg-revcard-h{display:flex;align-items:center;gap:6px;}
+.msg-revcard-h b{font-size:11.5px;color:#6d5590;}
+.msg-revcard-ic{font-size:12px;}
+.msg-revcard-pages{margin:5px 0 0;font-size:10.5px;color:var(--g-ink-2,#8a8378);
+  line-height:1.6;}
+.msg-revcard-thinks{margin:6px 0 0;padding:6px 9px;border-radius:10px;
+  background:color-mix(in srgb,#8B6FB4 7%,transparent);}
+.msg-revcard-thinks p{margin:3px 0 0;font-size:10.5px;line-height:1.65;
+  color:#7a6698;font-family:var(--ff-serif,inherit);}
+.msg-revcard-thinks p:first-child{margin-top:0;}
+.msg-revcard-flavor{margin:7px 0 0;font-size:10px;line-height:1.6;
+  color:#9a8bb0;font-family:var(--ff-serif,inherit);}
+.msg-revcard-learned{margin:4px 0 0;font-size:9.5px;color:var(--g-ink-faint,#b3a89e);}
 
 /* 递手机邀请卡：居中动作卡（同拍一拍位，加手机感） */
 .msg-rev-invite{

@@ -372,6 +372,9 @@
     var shopQuery = '';      /* 淘宝搜索词 */
     var musicTab = 'listen'; /* 音乐页签：listen 在听 / like 红心 */
     var bookTab = 'shelf';   /* 书架页签：shelf 书架 / notes 批注 */
+    /* 详情页编辑态（2026-10-29 批）：null=在看；'sms'/'music'/'book'/'mark:<id>'
+       =正在编辑那条。返回列表时随 curView 一起清。 */
+    var detailEdit = null;
 
     var body = ctx.body;
       body.innerHTML = '';
@@ -477,7 +480,7 @@
         doAction('openNotice', { where: app, sensitivity: 1.5 }, function () {
           phone.addTrace(session, { type: 'recent', app: app,
             detail: '从锁屏打开了一条「' + (APP_LABEL[app] || app) + '」通知' });
-          curApp = app; curInst = null; curView = null;
+          curApp = app; curInst = null; curView = null; detailEdit = null;
           mode = 'app'; paint();
         });
       }
@@ -615,7 +618,7 @@
             return;
           }
           mode = 'desktop';
-          curApp = null; curView = null;
+          curApp = null; curView = null; detailEdit = null;
           paint();
           if (Sleepy.phoneAI && Sleepy.phoneAI.gateFor(ownerId).allowed) {
             try { Sleepy.phoneAI.settle(sb.id, ownerId); } catch (e) { /* 兜底结算不拦 */ }
@@ -691,7 +694,7 @@
         doAction('openApp', { where: inst ? 'custom' : key }, function () {
           phone.addTrace(session, { type: 'recent', app: key,
             detail: '打开「' + (inst ? inst.templateName : APP_LABEL[key] || key) + '」' });
-          curApp = key; curInst = inst; curView = null;
+          curApp = key; curInst = inst; curView = null; detailEdit = null;
           mode = 'app';
           paint();
         });
@@ -1130,13 +1133,16 @@
         back.addEventListener('click', function () {
           /* 两层返回：会话详情 → App 列表 → 桌面。
              第一版直接跳桌面，把列表层整个跳过了 —— 真机跑出来的。 */
-          if (curView) { curView = null; paint(); return; }
+          if (curView) { curView = null; detailEdit = null; paint(); return; }
           mode = 'desktop'; curApp = null; paint();
         });
         head.appendChild(back);
         head.appendChild(h('span', 'ph-app-title',
           curView && curView.kind === 'real' ? chatNameOf(curView.chat) :
           curView && curView.kind === 'group' ? curView.group.name :
+          curView && curView.kind === 'sms' ? '短信' :
+          curView && curView.kind === 'music' ? '正在播放' :
+          curView && curView.kind === 'book' ? '《' + (curView.item.title || '') + '》' :
           curView ? (curView.item.kind === 'draft' ? '草稿' : '幕后交流') :
           curInst ? curInst.templateName : APP_LABEL[curApp] || ''));
         /* ★ 2026-10-10 App 页右上角刷新：单 App 专属提示词
@@ -1185,7 +1191,10 @@
           else paintNotes(root);
         } else if (curApp === 'browser') paintBrowser(root);
         else if (curApp === 'health') paintHealth(root);
-        else if (curApp === 'music') paintMusic(root);
+        else if (curApp === 'music') {
+          if (curView && curView.kind === 'music') paintMusicDetail(root, curView.item);
+          else paintMusic(root);
+        }
         else if (curApp === 'sms') {
           if (curView && curView.kind === 'sms') paintSmsDetail(root, curView.item);
           else paintSms(root);
@@ -1321,6 +1330,58 @@
         box.appendChild(h('b', null, title));
         if (why) box.appendChild(h('span', null, why));
         return box;
+      }
+
+      /* ----- 详情页心声块 + 手动修订（2026-10-29 批） -----
+         心声块照批注 ph-mark 的口吻：小标签 + 一句他的心里话。
+         编辑只改**已有**记录（phone.editRecord 白名单），不是替他编新的。 */
+      function thinkBlock(tag, text) {
+        var th = h('div', 'ph-think');
+        th.appendChild(h('span', 'ph-think-tag', tag));
+        th.appendChild(h('p', 'ph-think-t', text || ''));
+        return th;
+      }
+      function editBtn(key) {
+        var b = h('button', 'ph-edit-btn', '编辑这条');
+        b.type = 'button';
+        b.addEventListener('click', function () { detailEdit = key; paint(); });
+        return b;
+      }
+      function editForm(fields, table, id, refetch) {
+        var form = h('div', 'ph-editform');
+        var inputs = {};
+        fields.forEach(function (f) {
+          var lab = h('label', 'ph-edit-lab', f.label);
+          var ta = document.createElement('textarea');
+          ta.className = 'ph-edit-in';
+          ta.rows = (f.key === 'text' || f.key === 'think' || f.key === 'note') ? 3 : 1;
+          ta.value = f.value || '';
+          if (f.ph) ta.placeholder = f.ph;
+          inputs[f.key] = ta;
+          form.appendChild(lab);
+          form.appendChild(ta);
+        });
+        var row = h('div', 'ph-edit-row');
+        var save = h('button', 'ph-btn ph-btn-primary', '保存');
+        save.type = 'button';
+        save.addEventListener('click', function () {
+          var changes = {};
+          fields.forEach(function (f) { changes[f.key] = inputs[f.key].value; });
+          var r = phone.editRecord(table, id, changes);
+          if (!r) { ctx.toast('这条改不了', 'err'); return; }
+          /* 保存后用库里的新值换掉 curView 里的旧引用，再重绘 */
+          if (refetch) curView.item = refetch(id) || curView.item;
+          detailEdit = null;
+          ctx.toast('改好了。', 'ok');
+          paint();
+        });
+        var cancel = h('button', 'ph-btn', '取消');
+        cancel.type = 'button';
+        cancel.addEventListener('click', function () { detailEdit = null; paint(); });
+        row.appendChild(save);
+        row.appendChild(cancel);
+        form.appendChild(row);
+        return form;
       }
 
       var ROW_TINTS = ['#E8DCC8', '#EAD6CE', '#DCE2D4', '#E5DFD2', '#E3D8DA'];
@@ -1638,7 +1699,9 @@
           return;
         }
         songs.forEach(function (x) {
-          var item = h('div', 'ph-item');
+          /* 2026-10-29 批：条目可点进详情（心声 + 编辑）—— 以前是一张死卡片 */
+          var item = h('button', 'ph-item is-tap');
+          item.type = 'button';
           var top = h('div', 'ph-item-top');
           top.appendChild(h('span', 'ph-site', (x.title || '♪').slice(0, 1)));
           var mid = h('div', 'ph-item-text');
@@ -1656,8 +1719,41 @@
           }
           item.appendChild(top);
           if (x.note) item.appendChild(h('p', 'ph-item-reason', x.note));
+          item.addEventListener('click', function () {
+            curView = { kind: 'music', item: x };
+            detailEdit = null;
+            paint();
+          });
           list.appendChild(item);
         });
+      }
+
+      /* 音乐详情（2026-10-29 批）：单曲循环数 + 听这首歌时的心声，可编辑 */
+      function paintMusicDetail(root, x) {
+        var wrap = h('div', 'ph-read');
+        wrap.appendChild(h('p', 'ph-read-meta',
+          (x.kind === 'like' ? '红心 · ' : '在听 · ') + (x.artist || '未知歌手') +
+          (x.loops > 0 ? ' · 单曲循环 ×' + x.loops : '') +
+          ' · ' + dateStrOf(x.at) + ' ' + timeStr(x.at)));
+        wrap.appendChild(h('h2', 'ph-read-t', x.title || '（未命名）'));
+        if (detailEdit === 'music') {
+          wrap.appendChild(editForm([
+            { key: 'title', label: '歌名', value: x.title || '' },
+            { key: 'artist', label: '歌手', value: x.artist || '' },
+            { key: 'note', label: '听这首时的心声', value: x.note || '',
+              ph: '为什么单是这一首（可空）' }
+          ], 'phoneMusic', x.id, function (id) {
+            return phone.listMusic(ph.id).filter(function (y) { return y.id === id; })[0];
+          }));
+        } else {
+          if (x.note) {
+            wrap.appendChild(thinkBlock('听这首时的心声', x.note));
+          } else {
+            wrap.appendChild(h('p', 'ph-read-b is-dim', '这首歌他还没留下为什么。'));
+          }
+          wrap.appendChild(editBtn('music'));
+        }
+        root.appendChild(wrap);
       }
 
       /* 短信（2026-10-29 批）：系统通知（程序生成的验证码/快递/银行/运营商，
@@ -1689,6 +1785,7 @@
           item.addEventListener('click', function () {
             if (!sys) phone.markSmsRead(ph.id, x.id);
             curView = { kind: 'sms', item: x };
+            detailEdit = null;
             paint();
           });
           list.appendChild(item);
@@ -1699,7 +1796,25 @@
         wrap.appendChild(h('p', 'ph-read-meta',
           (x.kind === 'chat' ? '来自 ' : '通知 · ') + (x.from || '') + ' · ' +
           dateStrOf(x.at) + ' ' + timeStr(x.at)));
-        wrap.appendChild(h('p', 'ph-read-b', x.text || ''));
+        if (detailEdit === 'sms') {
+          wrap.appendChild(editForm([
+            { key: 'from', label: '发件人', value: x.from || '' },
+            { key: 'text', label: '内容', value: x.text || '' },
+            { key: 'think', label: '他当时的心声', value: x.think || '',
+              ph: '他看到这条时心里在想什么（可空）' }
+          ], 'phoneSms', x.id, function (id) {
+            return phone.listSms(ph.id).filter(function (y) { return y.id === id; })[0];
+          }));
+        } else {
+          wrap.appendChild(h('p', 'ph-read-b', x.text || ''));
+          if (x.think) {
+            wrap.appendChild(thinkBlock('他当时的心声', x.think));
+          } else if (x.kind === 'chat') {
+            wrap.appendChild(h('p', 'ph-read-b is-dim',
+              '他看到这条时的心声还没有留下。'));
+          }
+          wrap.appendChild(editBtn('sms'));
+        }
         root.appendChild(wrap);
       }
 
@@ -1740,6 +1855,7 @@
             if (b.note) item.appendChild(h('p', 'ph-item-reason', b.note));
             item.addEventListener('click', function () {
               curView = { kind: 'book', item: b };
+              detailEdit = null;
               paint();
             });
             list.appendChild(item);
@@ -1771,6 +1887,7 @@
               return b.title === m.title;
             })[0] || { title: m.title };
             curView = { kind: 'book', item: book };
+            detailEdit = null;
             paint();
           });
           list.appendChild(item);
@@ -1781,15 +1898,43 @@
         wrap.appendChild(h('p', 'ph-read-meta',
           (b.author || '佚名') + ' · 读到 ' + (b.progress || 0) + '%'));
         wrap.appendChild(h('h2', 'ph-read-t', '《' + b.title + '》'));
-        if (b.note) wrap.appendChild(h('p', 'ph-read-b', b.note));
+        if (detailEdit === 'book') {
+          /* 书名不给改：批注按 title 挂在书上，改名会留下一批孤儿批注 */
+          wrap.appendChild(editForm([
+            { key: 'author', label: '作者', value: b.author || '' },
+            { key: 'note', label: '他对这本书的感觉', value: b.note || '',
+              ph: '他读到这里的心理话（可空）' }
+          ], 'phoneBooks', b.id, function (id) {
+            return phone.listBooks(ph.id).filter(function (x) { return x.id === id; })[0];
+          }));
+        } else {
+          if (b.note) wrap.appendChild(h('p', 'ph-read-b', b.note));
+          wrap.appendChild(editBtn('book'));
+        }
         var marks = phone.listBookNotes(ph.id, b.title);
         if (marks.length) {
           wrap.appendChild(h('div', 'ph-sec', '他的批注 · ' + marks.length + ' 条'));
           marks.forEach(function (m) {
             var one = h('div', 'ph-mark');
-            one.appendChild(h('p', 'ph-mark-quote', '「' + (m.text || '') + '」'));
-            if (m.think) one.appendChild(h('p', 'ph-mark-think', m.think));
-            one.appendChild(h('p', 'ph-mark-meta', dateStrOf(m.at)));
+            if (detailEdit === 'mark:' + m.id) {
+              one.appendChild(editForm([
+                { key: 'text', label: '划线的原文', value: m.text || '' },
+                { key: 'think', label: '他自己的话', value: m.think || '',
+                  ph: '划下来那一刻他心里被说中的那句' }
+              ], 'phoneBooks', m.id, function () {
+                /* curView.item 是书不是批注 —— 保存后把书重新捞回来 */
+                return phone.listBooks(ph.id).filter(function (x) {
+                  return x.title === b.title;
+                })[0] || curView.item;
+              }));
+            } else {
+              one.appendChild(h('p', 'ph-mark-quote', '「' + (m.text || '') + '」'));
+              if (m.think) one.appendChild(h('p', 'ph-mark-think', m.think));
+              var mfoot = h('div', 'ph-mark-foot');
+              mfoot.appendChild(h('span', 'ph-mark-meta', dateStrOf(m.at)));
+              mfoot.appendChild(editBtn('mark:' + m.id));
+              one.appendChild(mfoot);
+            }
             wrap.appendChild(one);
           });
         }

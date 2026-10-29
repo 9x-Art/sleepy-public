@@ -3224,14 +3224,15 @@
       /* 把协议中不应出现的标签剥掉，避免字面显示在气泡里
          （[译]…[/译] 由 splitBubblesT 抽译文，这里再兜底一遍）。 */
       function stripProtocolTags(s) {
-        return String(s || '')
+        var out = String(s || '')
           .replace(/\[(?:html|sticker|whisper|WHISPER|think|reasoning|img|voice|emotion)\b[^\]]*\]/g, '')
           .replace(/\[\/?译\]/g, '')
-          .replace(/<\/?(?:think|reasoning)>/gi, '')
-          /* 旁白兜底剥壳（2026-10-25）：完整的去括号留内文，流式半截的
-             从标记头吃到结尾扣掉标记 —— [旁白: 三个字绝不给用户看。 */
-          .replace(/\[旁白[：:]([^\]]*)\]/g, '$1')
-          .replace(/\[旁白[：:][\s\S]*$/, function (mm) { return mm.slice(mm.indexOf(':') + 1); });
+          .replace(/<\/?(?:think|reasoning)>/gi, '');
+        /* 旁白兜底剥壳（2026-10-29 起交回引擎同一份扫描器）：全角括号/
+           嵌套方括号/半截尾巴都认 —— 本地不再养第二套旁白正则，
+           两套口径漂移就是「时不时漏一个 [旁白: 出来」的源头。 */
+        var peS = Sleepy.promptEngine;
+        return (peS && peS.narrPlain) ? peS.narrPlain(out) : out;
       }
 
       /* markdown 渲染走 ui 层的**共用一份**（2026-10-28 提到 ui.js）：
@@ -3549,21 +3550,33 @@
         var role = msg.role === 'user' ? 'user'
                  : (msg.role === 'system' ? 'system' : 'assistant');
         /* 拍一拍：微信那种居中灰字，不是气泡。
-           没有头像、没有长按菜单、没有重答 —— 它是个动作记录，不是话。 */
+           没有头像、没有重答 —— 它是个动作记录，不是话。
+           但能删（2026-10-29 用户：系统信息也要能删）—— 长按只给删除。 */
         if (msg.type === 'pat') {
-          return h('div', 'msg-pat', msg.content || '拍了拍');
+          var patEl = h('div', 'msg-pat', msg.content || '拍了拍');
+          patEl.setAttribute('data-id', msg.id);
+          bindLongPress(patEl, function () { openSysMenu(msg, patEl); });
+          return patEl;
         }
         /* 文字麻将牌桌播报：同拍一拍的居中灰字位 —— 是系统播报，不是话。 */
         if (msg.type === 'wm') {
           return h('div', 'msg-pat msg-wm-line', msg.content || '');
         }
-        /* 反查手机播报：同牌桌播报位，居中系统条。 */
+        /* 反查手机播报（2026-10-29 改版）：不再是一坨糊在一起的文字 ——
+           一张小卡：谁翻了 + 翻了哪些面 + 他当时的心声。长按可删。 */
         if (msg.type === 'revcheck') {
-          return h('div', 'msg-pat msg-rev-line', msg.content || '');
+          var revEl = h('div', 'msg-rev-row');
+          revEl.setAttribute('data-id', msg.id);
+          revEl.appendChild(revCard(msg));
+          bindLongPress(revEl, function () { openSysMenu(msg, revEl); });
+          return revEl;
         }
-        /* 递手机邀请卡：居中动作卡（user 的动作记录，不是话）。 */
+        /* 递手机邀请卡：居中动作卡（user 的动作记录，不是话）。长按可删。 */
         if (msg.type === 'rev-invite') {
-          return h('div', 'msg-pat msg-rev-invite', '📱 ' + (msg.content || '递出了手机'));
+          var invEl = h('div', 'msg-pat msg-rev-invite', '📱 ' + (msg.content || '递出了手机'));
+          invEl.setAttribute('data-id', msg.id);
+          bindLongPress(invEl, function () { openSysMenu(msg, invEl); });
+          return invEl;
         }
         /* 查岗：居中「系统镜头」卡（用户 2026-09-29 定稿）—— 这张图不是
            任何人拍的（线上功能的窥视镜头），挂在 user 气泡里会读成
@@ -4715,6 +4728,60 @@
 
       function closeMenu() { ui.closePopover(); }
 
+      /* 反查收尾卡（2026-10-29 二次口径）：**不复述翻了哪** —— user 全程
+         跟着 TA 的视角看，页面清单是复读。卡片只留收尾这一眼的感觉：
+         头一行 + 他的心声 + 一句随机的结尾。旧消息没有 rev 字段，
+         退回显示原文（照样能删）。 */
+      var REV_END_FLAVOR = [
+        '屏幕暗下去，装作什么都没发生。',
+        '放回去之前，多看了一眼。',
+        '他把手机摆回原来的样子 —— 差不多原来的样子。',
+        '走出两步，又回头确认了一下。',
+        '放回去了，呼吸比刚才轻。'
+      ];
+      function revCard(msg) {
+        var d = msg.rev || null;
+        var chat = getChat(chatId);
+        var ch = chat && chat.characterId ? findCharacter(chat.characterId) : null;
+        var card = h('div', 'msg-revcard');
+        var head = h('div', 'msg-revcard-h');
+        head.appendChild(h('span', 'msg-revcard-ic', '👀'));
+        head.appendChild(h('b', null, (ch ? ch.name : 'TA') + ' 把你的手机放了回去'));
+        card.appendChild(head);
+        if (d && d.thoughts && d.thoughts.length) {
+          var tw = h('div', 'msg-revcard-thinks');
+          d.thoughts.forEach(function (t) {
+            if (t) tw.appendChild(h('p', null, '「' + t + '」'));
+          });
+          card.appendChild(tw);
+        } else if (!d) {
+          card.appendChild(h('div', 'msg-revcard-pages',
+            String(msg.content || '').replace(/^🕵️\s*/, '')));
+        }
+        card.appendChild(h('p', 'msg-revcard-flavor',
+          (d && d.end) || REV_END_FLAVOR[Math.floor(Math.random() * REV_END_FLAVOR.length)]));
+        if (d && d.learned) {
+          card.appendChild(h('p', 'msg-revcard-learned', '他好像把什么悄悄记下了。'));
+        }
+        return card;
+      }
+
+      /* 系统卡的长按菜单（2026-10-29 用户：系统信息也要能删）：
+         这些是动作记录/播报，不是话 —— 引用、回复都没有意义，只给删除。 */
+      function openSysMenu(msg, anchorEl) {
+        var pop = ui.anchorPopover(anchorEl, { className: 'msg-pop', arrow: true });
+        var list = h('div', 'msg-pop-list');
+        var del = h('button', 'msg-pop-item is-danger', '删除');
+        del.type = 'button';
+        del.addEventListener('click', function () {
+          pop.close();
+          removeMsg(msg, null);
+        });
+        list.appendChild(del);
+        pop.el.appendChild(list);
+        pop.place();
+      }
+
       function startQuote(msg, idx) {
         var text = bubbleText(msg, idx);
         quote = {
@@ -5435,10 +5502,16 @@
               lines.unshift((m.role === 'user' ? '你：' : '对方：') + text.slice(0, 40));
             }
             if (!lines.length) return { detail: '聊天记录（空）', learned: '' };
-            var userSays = lines.filter(function (l) { return l.indexOf('你：') === 0; }).slice(0, 3);
+            /* learned 只提炼**值得知道**的：短应酬（你好/嗯/在吗）不算
+               「TA 知道了什么」（2026-10-29 用户「信息很多但没用」）。 */
+            var userSays = lines.filter(function (l) { return l.indexOf('你：') === 0; })
+              .map(function (l) { return l.slice(2); })
+              .filter(function (t) { return t.length >= 6; })
+              .slice(0, 2)
+              .map(function (t) { return '「' + t + '」'; });
             return {
               detail: '和「' + step.targetName + '」的聊天：' + lines.slice(0, 4).join(' / '),
-              learned: userSays.length ? ('与「' + step.targetName + '」对话中你提到：' + userSays.join('；')) : ''
+              learned: userSays.length ? ('与「' + step.targetName + '」的对话里你说过：' + userSays.join('；')) : ''
             };
           }
           if (step.page === 'moments') {
@@ -5527,26 +5600,49 @@
         return best;
       }
 
-      /** 模拟手指滚屏：顶→中→底→回顶循环（对齐 qs simulateScrollInApp） */
-      function revSimScroll(scroller) {
-        if (!scroller || !scroller.isConnected) return;
-        var maxTop = scroller.scrollHeight - scroller.clientHeight;
-        if (maxTop <= 0) return;
-        if (scroller.scrollTop >= maxTop - 30) scroller.scrollTo({ top: 0, behavior: 'smooth' });
-        else scroller.scrollTo({ top: Math.min(scroller.scrollTop + scroller.clientHeight * 0.7, maxTop), behavior: 'smooth' });
-      }
+      /* 模拟手指滚屏：v282 起并入 revScrollTick（每拍随机决定翻/回/停/甩），
+         匀速传送带版退役 —— 用户 2026-10-29「不想太机械化」。 */
 
-      /** 内心想法：裸 LLM 一次调用（走主 API 候选首位），失败回 ''（不弹幕不阻断） */
-      function revThought(charName, persona, view) {
+      /** 内心想法：裸 LLM 一次调用（走主 API 候选首位），失败回 ''（不弹幕不阻断）。
+          2026-10-29 用户「弹幕没有他本人的感觉」：以前只喂 400 字人设切片，
+          飘出来的自然是没脸没腔的通用句。现在给全人设（compileCharacter：
+          本体+皮套分层原文）、TA 的记忆、你们最近的对话 —— 飘过来的那句
+          得真的是「他」看到这些东西时会想的话。 */
+      function revThought(charName, persona0, view) {
         var api = Sleepy.api;
         if (!api || !api.candidates) return Promise.resolve('');
         var cand = api.candidates()[0];
         if (!cand || !cand.baseUrl || !cand.apiKey) return Promise.resolve('');
+        var chat = getChat(chatId);
+        var ch = chat && chat.characterId ? findCharacter(chat.characterId) : null;
+        var pe = Sleepy.promptEngine;
+        var persona = (pe && pe.compileCharacter && ch)
+          ? pe.compileCharacter(ch.id)
+          : String(persona0 || '');
+        /* 最近的对话（TA 视角：你=对方，我=TA 自己），只做语境不喂全文 */
+        var dlg = [];
+        ((chat && chat.messages) || []).slice(-10).forEach(function (m) {
+          if (m.role !== 'user' && m.role !== 'assistant') return;
+          var t = String(m.content || '').replace(/\s+/g, ' ').trim();
+          if (!t) return;
+          dlg.push((m.role === 'user' ? '你说：' : '我说：') + t.slice(0, 50));
+        });
+        /* TA 的记忆（标注过来源的那批）—— 他惦记着什么，翻手机时就用什么想 */
+        var memLines = [];
+        try {
+          var rootId = Sleepy.core && Sleepy.core.rootIdOf ? Sleepy.core.rootIdOf(chat.characterId) : null;
+          (Sleepy.core.memoriesOfRoot(rootId) || []).slice(-8).forEach(function (mm) {
+            if (mm && mm.text) memLines.push(String(mm.text).slice(0, 60));
+          });
+        } catch (e) { /* 记忆缺位不拦弹幕 */ }
         var sys = '你在扮演「' + charName + '」，正偷看「你」的手机（这是用户手机里的真实数据，不是演出）。' +
-          '人设：' + String(persona || '').slice(0, 400) + '\n' +
+          (persona ? '你是这样的人：\n' + String(persona).slice(0, 1600) + '\n' : '') +
+          (memLines.length ? '你记着这些事：\n' + memLines.join('\n') + '\n' : '') +
+          (dlg.length ? '你们最近说：\n' + dlg.join('\n') + '\n' : '') +
           '你刚看到（' + view.pageName + '）：' + (view.detail || '') +
           (view.learned ? ('\n你注意到：' + view.learned) : '') +
-          '\n用一句符合人设的内心想法（15 字内，口语，可以有情绪：吃醋/好奇/心虚/得意都行）。只输出想法本身。';
+          '\n用一句你这个人此刻真实的内心想法（25 字内，口语，符合你的说话习惯；' +
+          '吃醋/好奇/心虚/得意/想装不知道都行，跟人设和你们的关系对上）。只输出想法本身，不要引号。';
         var ctrl = new AbortController();
         /* 超时放宽：思维链模型慢（真机实测 2026-10-25），后台弹幕等得起 */
         var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 45000);
@@ -5642,10 +5738,13 @@
         host.appendChild(danmaku);
 
         var state = { idx: -1, paused: false, timer: null, scrollTimer: null, scroller: null,
-          items: [], thoughts: [], done: false, from: Sleepy.nav.top() };
+          items: [], thoughts: [], done: false, lingerUntil: 0, from: Sleepy.nav.top() };
 
         function danmu(text) {
           if (!text) return;
+          /* 心声飘过来时他会停一下 —— 像是站在那里想这句（2026-10-29
+             用户「不想太机械化」：滚屏节奏有心跳，不是匀速传送带）。 */
+          state.lingerUntil = Date.now() + 1500 + Math.random() * 1000;
           var b = h('div', 'rev-bubble', text);
           b.style.left = (8 + Math.random() * 54) + '%';
           b.style.top = (18 + Math.random() * 40) + '%';
@@ -5654,7 +5753,7 @@
         }
         function stopLoops() {
           if (state.timer) { clearTimeout(state.timer); state.timer = null; }
-          if (state.scrollTimer) { clearInterval(state.scrollTimer); state.scrollTimer = null; }
+          if (state.scrollTimer) { clearTimeout(state.scrollTimer); state.scrollTimer = null; }
           /* 打断进行中的 smooth 滚动（qs 的三连补刀：同步赋值 + auto + 下帧再一刀） */
           try {
             var sc = state.scroller;
@@ -5678,12 +5777,21 @@
           state.done = true;
           teardown();
           var summary = rc.buildSummary(charName, state.items, state.thoughts);
+          var learnedAll = state.items.map(function (it) { return it.learned; }).filter(Boolean).join('；');
           addMessage(chatId, {
             id: newId(), role: 'system', type: 'revcheck',
-            content: '🕵️ ' + summary, timestamp: Date.now()
+            content: summary,
+            /* 卡片数据（2026-10-29 二次口径）：**不复述翻了哪** —— user
+               全程跟着 TA 的视角看，页面清单是复读。卡片只留收尾的氛围：
+               心声 + 一句结尾。pages 照旧进 summary（那是给模型接话用的）。 */
+            rev: {
+              thoughts: state.thoughts.slice(0, 3),
+              learned: learnedAll,
+              end: REV_END_FLAVOR[Math.floor(Math.random() * REV_END_FLAVOR.length)]
+            },
+            timestamp: Date.now()
           });
           /* learned 落 TA 记忆（标注来源），TA 下轮起长期记得 */
-          var learnedAll = state.items.map(function (it) { return it.learned; }).filter(Boolean).join('；');
           if (learnedAll) {
             try { commitMemory(chatId, 'assistant', '（翻看了你的手机）' + learnedAll); }
             catch (e) { /* 记忆失败不影响播报 */ }
@@ -5703,7 +5811,46 @@
           } catch (e) { /* 还页失败不影响播报 */ }
           renderMessages();
           ctx.toast(interrupted ? 'TA 被你抓个正着' : (charName + ' 看完了你的手机'), 'ok');
+          /* 看完要有下文（2026-10-29 用户「查完之后他不说话么」）：
+             eventNote 刚挂好，直接让 TA 开口接住这一眼 —— 被打断也一样，
+             被抓个正着更要说话。等回复中就让下一轮自然带。 */
+          requestReply({ proactive: true });
         }
+        /* 模拟手指滚屏 —— 2026-10-29 用户「不想太机械化」：
+           旧版是每 1.2s 匀速滚一格的传送带。现在每拍随机决定：
+           往下翻一截 / 往回再看看 / 停住不动（在读）/ 甩到底或回顶，
+           节奏 700~2200ms 不等；心声飘过来时再停 1.5~2.5s 像在想。 */
+        function revScrollTick(scroller) {
+          if (!scroller || !scroller.isConnected || state.done || state.paused) return;
+          if (Date.now() < state.lingerUntil) {
+            /* 发呆中：不动，只等 */
+            state.scrollTimer = setTimeout(function () { revScrollTick(scroller); }, 300);
+            return;
+          }
+          var maxTop = scroller.scrollHeight - scroller.clientHeight;
+          if (maxTop > 0) {
+            var r = Math.random();
+            if (r < 0.48) {
+              /* 往下翻，翻多少随缘 */
+              var step = scroller.clientHeight * (0.4 + Math.random() * 0.45);
+              scroller.scrollTo({ top: Math.min(scroller.scrollTop + step, maxTop), behavior: 'smooth' });
+            } else if (r < 0.64) {
+              /* 往回再看看（有的地方值得读第二遍） */
+              var back = scroller.clientHeight * (0.2 + Math.random() * 0.35);
+              scroller.scrollTo({ top: Math.max(scroller.scrollTop - back, 0), behavior: 'smooth' });
+            } else if (r < 0.86) {
+              /* 停住读一会儿 */
+              state.lingerUntil = Date.now() + 900 + Math.random() * 1600;
+            } else {
+              /* 甩到底或拉回顶 */
+              scroller.scrollTo({ top: Math.random() < 0.5 ? maxTop : 0, behavior: 'smooth' });
+            }
+          }
+          state.scrollTimer = setTimeout(function () { revScrollTick(scroller); },
+            700 + Math.random() * 1500);
+        }
+        /* 每一步停留时长也随机（3.8~6.4s），别像闹钟一样到点就走 */
+        function revStepDwell() { return 3800 + Math.random() * 2600; }
         function advance() {
           if (state.done || state.paused) return;
           var next = state.idx + 1;
@@ -5714,11 +5861,12 @@
           var item = { pageName: step.pageName, detail: step.detail, learned: '' };
           state.items.push(item);
           state.scroller = null;
+          state.lingerUntil = 0;
           state.timer = setTimeout(function () {
             if (state.done || state.paused) return;
             if (opened) {
               state.scroller = revFindScroller();
-              state.scrollTimer = setInterval(function () { revSimScroll(state.scroller); }, 1200);
+              revScrollTick(state.scroller);
             }
             var sampled = revSample(step);
             item.detail = sampled.detail; item.learned = sampled.learned;
@@ -5730,8 +5878,8 @@
                 state.thoughts.push(t);
                 danmu(t);
               });
-            state.timer = setTimeout(advance, 5000);
-          }, opened ? 700 : 200);
+            state.timer = setTimeout(advance, revStepDwell());
+          }, opened ? 500 + Math.random() * 600 : 200);
         }
         pauseB.addEventListener('click', function () {
           state.paused = !state.paused;
@@ -5740,8 +5888,8 @@
           if (state.paused) { stopLoops(); }
           else {
             state.scroller = revFindScroller();
-            state.scrollTimer = setInterval(function () { revSimScroll(state.scroller); }, 1200);
-            state.timer = setTimeout(advance, 5000);
+            revScrollTick(state.scroller);
+            state.timer = setTimeout(advance, revStepDwell());
           }
         });
         stopB.addEventListener('click', function () { finish(true); });

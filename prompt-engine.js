@@ -1153,12 +1153,12 @@
         'shop/order_status：{title,status:"shipped|received|refunded|gifted"} —— 只推进已存在订单。',
         'music/listen：{title,artist,loops,note} —— 他最近在听的歌；loops 是**这段时间单曲循环了几遍**（0=只是听过，3 以上才值得写进 note，上限 99，不许拿大数字装深沉）；note 是一句为什么听这首（可空）。',
         'music/like：{title,artist,note} —— 他红了心的歌。',
-        'sms/add_sms：{kind:"system|chat",from,text} —— kind=system 是通知噪音（验证码/快递/银行/运营商，from 写发件方代号）；kind=chat 是真人短信，from 只能是岛里已登记的人（否则整条丢弃）。短信短、口语、像真的。',
+        'sms/add_sms：{kind:"system|chat",from,text,think} —— kind=system 是通知噪音（验证码/快递/银行/运营商，from 写发件方代号）；kind=chat 是真人短信，from 只能是岛里已登记的人（否则整条丢弃）。think 是他看到（或发出）这条短信时的一句心声，只给 chat 类写，可空。短信短、口语、像真的。',
         'books/progress：{title,author,progress,note} —— 在读的书推进到百分之几（0~100）；没有这本书就视为开新书。note 是他对这本书目前的一句感觉（可空）。',
         'books/note：{title,text,think} —— 划线批注：text 是书里被他划下来的原文，think 是他写在旁边自己的话。书名必须和已有在读的书对得上。',
         '',
         '【数量上限（上限不是配额）】',
-        '幕后会话 0～2 段；浏览 0～4 条；备忘录 0～2 条；健康日记录按时间范围合并通常 1 条；购物变化 0～2 条；听歌 0～3 条；短信 0～2 条（system 类多由程序生成，模型只写有剧情意义的真人短信）；在读进度 0～2 条、划线批注 0～2 条；计划变化 0～1 个。普通结算全部增量合计不超过 12 条。',
+        '幕后会话 0～2 段；浏览 0～4 条；备忘录 0～2 条；健康日记录按时间范围合并通常 1 条；购物变化 0～2 条；听歌 0～3 条；短信 0～3 条（system 类多由程序生成，模型只写有剧情意义的真人短信）；在读进度 0～2 条、划线批注 0～2 条；计划变化 0～1 个。普通结算全部增量合计不超过 12 条。',
         '',
         '【语义红线】',
         '搜索不得写成购买；草稿不得写成已发送；计划不得写成已完成；不得生成未登记的重要亲友；不得替 user 做离屏决定；不得生成未经支持的重大事件、表白、礼物或关系阶段变化。',
@@ -2918,7 +2918,9 @@
   }
 
   function splitBubblesT(text) {
-    var segs = String(text || '').split('||').map(function (x) { return stripDraftMarks(x); })
+    /* 2026-10-29：切分走旁白感知的 narrGuardSplit —— 标记里的 || 不算分泡符，
+       以前会把 [旁白:…||…] 从中间劈开，两半各漏一边。 */
+    var segs = narrGuardSplit(text).map(function (x) { return stripDraftMarks(x); })
       .filter(function (x) { return !!x; });
     if (!segs.length) segs = [''];
     var trans = segs.map(function (seg) {
@@ -2940,7 +2942,8 @@
 
   function splitBubbles(text) {
     var out = [];
-    String(text || '').split('||').forEach(function (seg) {
+    /* 同 splitBubblesT：旁白标记里的 || 不劈（2026-10-29 加固） */
+    narrGuardSplit(text).forEach(function (seg) {
       var t = seg.trim();
       if (t) out.push(t);
     });
@@ -2963,46 +2966,99 @@
      - 说明书卡是唯一注入点：引擎开走 narr 槽（assembleOnline ctx.narr），
        旧组装路径在 page-chat 里 unshift 同一份文案。两处互斥，别写第二份。 */
 
-  var NARR_RE = /\[旁白[：:]([\s\S]*?)\]/g;
-  var NARR_TAIL_RE = /\[旁白[：:][\s\S]*$/;   /* 流式半截：从标记头一直吃到结尾 */
+  /* ---- 标记扫描器（2026-10-29 加固，替代旧的单一正则） ----
+     用户真机报「旁白时不时掉格式」，根因是模型的手会滑，旧正则只认
+     `[旁白:…]` 一种写法，下面任何一种变体都会让标记漏到气泡上：
+       ① 全角括号：［旁白：…］／【旁白：…】（模型最常滑成的样子）；
+       ② 标记里再套一层方括号：[旁白:她抬起头[停顿]] —— 旧的非贪婪
+          匹配停在第一个 ]，内文被腰斩、尾巴漏出一个孤零零的 ]；
+       ③ 标记里写 ||：分泡符把标记从中间劈开，两半都残。
+     现在统一走 narrScan：认三种开括号、按同型括号配深、流式半截
+     （没等到闭合）从标记头吃到结尾。三件套（narrSegments / narrPlain /
+     分泡）全部从这一份扫描出发 —— 口径只有一份，不会再漂。 */
+  var NARR_OPEN_RE = /[\[［【]\s*旁白[：:]/g;
+  var NARR_CLOSE_OF = { '[': ']', '［': '］', '【': '】' };
+  /* 旁白里出现的 || 不是分泡符 —— 先换占位符，切完泡再换回来 */
+  var NARR_OR_GUARD = '\u0001narrOr\u0001';
+
+  function narrScan(text) {
+    var s = String(text || '');
+    var out = [];
+    NARR_OPEN_RE.lastIndex = 0;
+    var m;
+    while ((m = NARR_OPEN_RE.exec(s)) !== null) {
+      var start = m.index;
+      var ob = m[0].charAt(0);
+      var cb = NARR_CLOSE_OF[ob];
+      var innerStart = start + m[0].length;
+      var i = innerStart, depth = 1, closed = false;
+      while (i < s.length) {
+        var ch = s.charAt(i);
+        if (ch === ob) depth++;
+        else if (ch === cb) {
+          depth--;
+          if (!depth) { closed = true; break; }
+        }
+        i++;
+      }
+      if (closed) {
+        out.push({ start: start, innerStart: innerStart, innerEnd: i, end: i + 1 });
+        NARR_OPEN_RE.lastIndex = i + 1;
+      } else {
+        /* 半截（流式未写完）：从标记头一直吃到结尾 */
+        out.push({ start: start, innerStart: innerStart, innerEnd: s.length, end: s.length });
+        break;
+      }
+    }
+    return out;
+  }
+
+  /* 旁白标记内的 || 不当分泡符：先掩掉再切，切完还原 */
+  function narrGuardSplit(text) {
+    var s = String(text || '');
+    var ranges = narrScan(s);
+    if (!ranges.length) return s.split('||');
+    var masked = '', last = 0;
+    ranges.forEach(function (r) {
+      masked += s.slice(last, r.innerStart) +
+        s.slice(r.innerStart, r.innerEnd).replace(/\|\|/g, NARR_OR_GUARD) +
+        s.slice(r.innerEnd, r.end);
+      last = r.end;
+    });
+    masked += s.slice(last);
+    return masked.split('||').map(function (x) {
+      return x.split(NARR_OR_GUARD).join('||');
+    });
+  }
 
   /* 拆段：[{n:true,text:'旁白内文'}|{n:false,text:'普通文本'}]，顺序保真。
      没有任何旁白标记时返回 null（调用方走原渲染路径，零开销）。 */
   function narrSegments(text) {
     var s = String(text || '');
-    if (s.indexOf('[旁白') < 0) return null;
-    var out = [], last = 0, m;
-    NARR_RE.lastIndex = 0;
-    while ((m = NARR_RE.exec(s)) !== null) {
-      if (m.index > last) out.push({ n: false, text: s.slice(last, m.index) });
-      if (m[1]) out.push({ n: true, text: m[1] });
-      last = m.index + m[0].length;
-    }
-    /* 尾巴：普通文本 or 流式半截 [旁白:xxx……（半截按旁白算，扣掉标记留内文；
-       半截标记前面可能还有普通文本，也要拆开 —— 剥壳红线：[旁白: 三个字
-       任何情况下都不许出现在给用户看的文本里）。 */
-    if (last < s.length) {
-      var tail = s.slice(last);
-      var tm = tail.match(NARR_TAIL_RE);
-      if (tm) {
-        if (tm.index > 0) out.push({ n: false, text: tail.slice(0, tm.index) });
-        var inner = tail.slice(tm.index + tm[0].indexOf(':') + 1);
-        if (inner) out.push({ n: true, text: inner });
-      } else {
-        out.push({ n: false, text: tail });
-      }
-    }
+    var ranges = narrScan(s);
+    if (!ranges.length) return null;
+    var out = [], last = 0;
+    ranges.forEach(function (r) {
+      if (r.start > last) out.push({ n: false, text: s.slice(last, r.start) });
+      if (r.innerEnd > r.innerStart) out.push({ n: true, text: s.slice(r.innerStart, r.innerEnd) });
+      last = r.end;
+    });
+    if (last < s.length) out.push({ n: false, text: s.slice(last) });
     return out.length ? out : null;
   }
 
-  /* 非渲染面用：括号去掉、内文保留；半截尾巴扣掉 [旁白: 标记留内文。
+  /* 非渲染面用：括号去掉、内文保留；半截尾巴扣掉标记留内文。
      永远不返回带 [旁白: 字样的文本 —— 这是观感红线。 */
   function narrPlain(text) {
     var s = String(text || '');
-    if (s.indexOf('[旁白') < 0) return s;
-    s = s.replace(NARR_RE, '$1');
-    s = s.replace(NARR_TAIL_RE, function (mm) { return mm.slice(mm.indexOf(':') + 1); });
-    return s;
+    var ranges = narrScan(s);
+    if (!ranges.length) return s;
+    var out = '', last = 0;
+    ranges.forEach(function (r) {
+      out += s.slice(last, r.start) + s.slice(r.innerStart, r.innerEnd);
+      last = r.end;
+    });
+    return out + s.slice(last);
   }
 
   /* ---- 文风预设 / 字数 / 密度（对话设置页与说明书卡共用的唯一出处）---- */

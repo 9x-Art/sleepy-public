@@ -791,7 +791,9 @@
         var knownSms = knownPeople();
         if (knownSms && knownSms.indexOf(sf) < 0) return null;
       }
-      out.data = { kind: sk, from: sf, text: sb2 };
+      out.data = { kind: sk, from: sf, text: sb2,
+        /* 心声（2026-10-29 批）：他看到/发出这条时的一句心里话，只给 chat 类留 */
+        think: sk === 'chat' ? clipStr(p.think || p.inner, 120) : '' };
     } else if (app === 'books' && op === 'progress') {
       /* 在读进度：没有这本书就开新书（在读第一本也走这里）。 */
       var bt = clipStr(p.title || p.book, 40);
@@ -957,6 +959,7 @@
       id: 'psm_' + newId(), phoneId: phone.id, charId: phone.charId,
       kind: o.kind === 'chat' ? 'chat' : 'system',
       from: o.from, text: o.text,
+      think: o.think || '',
       read: false,
       at: at || Date.now()
     });
@@ -1017,6 +1020,27 @@
     return pick('phoneBooks', function (x) {
       return x.phoneId === phoneId && x.kind === 'note' && (!title || x.title === title);
     }).sort(function (a, b) { return b.at - a.at; });
+  }
+
+  /* 手动修订（2026-10-29 批）：详情页可以改这条记录。这是 user 对
+     **已有**记录的修订（改错字、补一句心声），不是替他编新的 ——
+     所以只做白名单 + 截断，不走 validateDelta 那套来源校验。
+     ⚠️ phoneBooks 的书名不在白名单里：批注是按 title 挂在书上的，
+     改书名会把一批批注变成孤儿。 */
+  var EDITABLE = {
+    phoneSms:   { fields: { from: 16, text: 200, think: 120 } },
+    phoneMusic: { fields: { title: 60, artist: 30, note: 60 } },
+    phoneBooks: { fields: { author: 20, note: 60, text: 200, think: 200 } }
+  };
+  function editRecord(table, id, changes) {
+    var rule = EDITABLE[table];
+    if (!rule) return null;
+    var clean = {};
+    Object.keys(rule.fields).forEach(function (f) {
+      if (changes && changes[f] != null) clean[f] = clipStr(changes[f], rule.fields[f]);
+    });
+    if (!Object.keys(clean).length) return null;
+    return patch(table, id, clean);
   }
 
   /* 系统短信的程序侧生成（settle 时顺手）：验证码 / 快递 / 银行 / 运营商。
@@ -1308,6 +1332,7 @@
     markSmsRead: markSmsRead,
     listBooks: listBooks,
     listBookNotes: listBookNotes,
+    editRecord: editRecord,
     openTraces: openTraces,
     markDetected: markDetected,
     detectedUnaddressed: detectedUnaddressed,

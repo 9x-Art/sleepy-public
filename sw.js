@@ -602,7 +602,57 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v280';
+var CACHE = 'sleepy-v284';
+
+/* v284（2026-10-29 下午）：**iOS 安全区稳定化（候选批）**——
+   ①app.js 探针改造：不再直接写 --safe-top/--safe-bottom 终值（旧版绑死
+   visualViewport.resize，键盘一弹就重测重写，首屏「偏上、交互后下移」
+   的根因），只写 fallback --safe-top-fb/--safe-bottom-fb；顶底分别缓存、
+   拿到非零值单独锁定；冷启动五轮有限重试（立即/120/500/1500/3000ms），
+   期间临时挂 vv.resize、稳定或重试用尽即解除；此后安全区只认
+   orientationchange 重测，focusin/focusout/键盘/vv.scroll/切页一概不碰。
+   ②style.css :root：--safe-top/--safe-bottom 改 max(env, fallback) 合成，
+   新增 --safe-top-fb/--safe-bottom-fb 初始定义；消费点全部不变。
+   → 必须跳版本：app.js / style.css / scripts/smoke.js 都变了。 */
+
+/* v283（2026-10-29 夜三批）：**反查手机二次口径**——
+   ①收尾卡不复述翻了哪（user 全程跟着 TA 的视角看，页面清单是复读）：
+   卡片只留「TA 把你的手机放了回去」+ 心声引用 + 一句随机收尾氛围
+   （落卡时定死，重绘不换词）；learned 存在时补一句「他好像把什么悄悄
+   记下了」。翻了哪些面照旧进 summary/eventNote（那是给模型接话的）。
+   ②滚屏去机械化：revSimScroll 匀速传送带（每 1.2s 滚一格）退役，
+   revScrollTick 每拍随机决定往下翻/往回再看/停住读/甩到底回顶，
+   节奏 700~2200ms；每步停留 3.8~6.4s 随机；心声飘过来时停 1.5~2.5s
+   像在想。→ 必须跳版本：page-chat.js / style.css / scripts/smoke.js。 */
+
+/* v282（2026-10-29 夜二批）：**旁白加固 + 反查手机四反馈返修**——
+   ①旁白「时不时掉格式」根治：旧正则只认 [旁白:…] 一种写法，模型手滑的
+   全角括号（［旁白：…］【旁白：…】）、标记里套方括号（旧非贪婪匹配腰斩
+   内文+漏孤 ]）、标记里写 ||（分泡符把标记劈开）全都会漏。prompt-engine
+   换成 narrScan 扫描器（三型开括号+同型配深+半截吃尾），narrSegments /
+   narrPlain / 分泡全部同一份口径；page-chat 的 stripProtocolTags 兜底
+   也交回这份扫描器，不再养第二套正则。
+   ②反查手机看完 TA 开口：finish() 里 requestReply({proactive:true}) ——
+   eventNote 刚挂好，直接接住这一眼（被抓个正着更要说话）。
+   ③弹幕有人味：revThought 从 400 字人设切片升级为 compileCharacter
+   全人设 + TA 记忆（memoriesOfRoot）+ 最近对话。
+   ④收尾卡改版：msg.rev 结构化（pages/thoughts/learned），居中小卡
+   三行摆完；buildSummary 三段式；learned 过滤「你好/嗯」级短应酬。
+   ⑤系统条可删：revcheck 卡 / 递手机卡 / 拍一拍灰字长按 → 只给「删除」。
+   → 必须跳版本：prompt-engine.js / page-chat.js / revcheck-core.js /
+   style.css / scripts/smoke.js 都变了。 */
+
+/* v281（2026-10-29 夜）：**查手机三反馈返修**——
+   ①单 App 刷新只出一条：page-phone-ai 的 [FOCUS] 对新三 App 用的是
+   单数措辞（「一首歌」「一条短信」），和「必须 1~3 条」的硬性要求打架，
+   全改复数口径；协议卡短信上限 0~2→0~3。
+   ②详情页心声：短信加 think 字段（他看到/发出这条时的一句心里话，
+   协议卡同步），详情页心声块展示；音乐条目可点进详情（以前是死卡片）。
+   ③详情可编辑：phone.editRecord 白名单修订口（phoneSms/phoneMusic/
+   phoneBooks，书名不在白名单 —— 批注按 title 挂书，改名会留孤儿），
+   短信/音乐/书详情与批注全部可编辑，编辑态随返回/换 App 重置。
+   → 必须跳版本：phone.js / page-phone.js / page-phone-ai.js /
+   prompt-engine.js / style.css / scripts/smoke.js 都变了。 */
 
 /* v280（2026-10-29 午后）：**反查手机「当场开演」改版**——
    · page-chat.js：revManual 点格子直接落递手机卡 +「TA 接过了手机」+

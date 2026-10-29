@@ -308,24 +308,41 @@
   initBattery();
   if (sbTime) setInterval(tickTime, 15000);
 
-  /* --------------------- iOS 安全区测量（2026-10-28） ---------------------
+  /* --------------------- iOS 安全区测量（2026-10-29 稳定化） ---------------------
 
-     为什么不能直接信 env(safe-area-inset-*)：
+     测量原理不变——为什么不能直接信 env(safe-area-inset-*)：
        · Safari 在 standalone（加到主屏）模式下，getComputedStyle 读 env()
          **恒为 0**，但 CSS 渲染出来的值是对的 —— 已知多年的 WebKit 怪癖；
        · iOS 26.1 还有一版回归（WebKit bug 301994）：PWA 里 env(top) 直接
          变 0、系统状态栏实体占位（26.2 修回）。
      两个坑的共性：**getComputedStyle 靠不住，渲染结果永远靠得住**。
      所以放两个 1px 探针元素，让 CSS 用 env() 撑它们的实际高度，
-     再用 getBoundingClientRect 量渲染值，写进 --safe-top / --safe-bottom。
-     全项目（style.css）的安全区消费点只认这两个变量：
-       · env 正常的设备 → 量出来的就是真实 inset，行为同旧；
-       · env 被系统收回的版本（26.1）→ 量出来是 0 = 系统已经把内容推开
-         了，我们不再补偿，布局自动正确。
-     iOS 上还顺带把 app 自己画的假状态栏藏掉（html.ios）—— iOS 的
-     Safari / PWA 里**系统状态栏永远可见**（真实时间在最顶上），假状态栏
-     的时间电量只会跟它重复或打架（用户报的「和系统时间戳冲突」）。
-     Android 认 manifest 的 fullscreen：系统栏整个消失，假状态栏必须留。 */
+     再用 getBoundingClientRect 量渲染值。
+
+     v284 起的稳定化改造（学 SullyOS 的原则，不搬它的代码）：
+       · JS **不再直接写 --safe-top / --safe-bottom**（旧版绑在
+         visualViewport.resize 上，键盘一弹就重测重写终值 —— 首屏
+         「偏上、交互后下移」就是这么来的），只写 fallback 变量
+         --safe-top-fb / --safe-bottom-fb，终值由 CSS 的
+         max(env, fallback) 合成；
+       · 顶底**分别缓存**（cachedTop / cachedBottom）：任意一边量到
+         非零值就单独锁定，另一边继续有限重试，互不牵连；
+       · 冷启动测量时序：立即、120ms、500ms、1500ms、3000ms 共五轮；
+         期间**临时**监听 visualViewport.resize（只为抓「第一帧还没
+         布局完」的晚到 inset），顶底都锁定或重试用尽后立即解除；
+       · 冷启动结束后安全区不再监听任何东西。focusin/focusout/键盘
+         开关/vv.scroll/切页/聊天滚动一概**不重测**、不清缓存；
+       · 唯一的重测信号是 orientationchange：**只清内部测量缓存**，
+         已发布的 fallback 保持不动（新姿态可信值到达前屏幕上的旧值
+         继续用 —— 旋转瞬间就把 fallback 清 0 等于自己制造顶底栏
+         跳变）；非零新值到达才替换该边，最终一轮仍为 0 才把该边
+         正式发布成 0px；顶底独立处理；
+       · 每轮测量带 generation 代次：旧轮的定时器回调 / resize 回调
+         凭代次自证过期，过期回调不测量、不写 fallback、不清零、
+         不停表、不摘新轮监听；
+       · 3000ms 后仍为 0 就接受 0（iOS 26.1 那类「系统已把内容推开」
+         的版本，0 本来就是对的）—— 不硬编码 59/34，不无限重试。
+       · 相同数值不重复 setProperty（省一次无意义重排）。 */
   (function () {
     var d = document.documentElement;
     var ua = navigator.userAgent || '';
@@ -334,6 +351,17 @@
     if (!isIOS) return;
     d.classList.add('ios');
     if (navigator.standalone) d.classList.add('ios-pwa');
+
+    /* 冷启动有限重试时刻表（首 immediate 已跑，这里是后续四轮）。
+       到点全跑完仍未锁定 = 接受 0，停表停监听。 */
+    var RETRY_MS = [120, 500, 1500, 3000];
+    var generation = 0;        /* 测量轮代次：每开一轮 +1，旧轮回调凭它自证过期 */
+    var cachedTop = null;      /* 本轮内部缓存；null = 该边本轮还没锁定。
+                                  只在轮内/换轮时清，**不是**已发布的 fallback */
+    var cachedBottom = null;
+    var vvResizeOn = false;    /* 当前是否有活的 vv.resize 监听（最多一个） */
+    var currentVvHandler = null;
+    var timers = [];
 
     function probeEl(id, envCss) {
       var el = document.getElementById(id);
@@ -346,19 +374,91 @@
       }
       return el;
     }
-    function sync() {
-      try {
-        var top = probeEl('safe-probe-top',
-          'height:env(safe-area-inset-top,0px)').getBoundingClientRect().height || 0;
-        var bottom = probeEl('safe-probe-bottom',
-          'height:env(safe-area-inset-bottom,0px)').getBoundingClientRect().height || 0;
-        d.style.setProperty('--safe-top', top + 'px');
-        d.style.setProperty('--safe-bottom', bottom + 'px');
-      } catch (e) { /* 量不出来就维持 :root 里的 env 兜底，别把壳子搞坏 */ }
+    /* 只写 fallback。值没变就不写 —— 少一次无意义的样式重算。 */
+    function writeFb(name, val, cache) {
+      if (cache === val) return;
+      d.style.setProperty(name, val + 'px');
     }
-    sync();
-    if (global.visualViewport) global.visualViewport.addEventListener('resize', sync);
-    global.addEventListener('orientationchange', sync);
+    function measureRound(gen) {
+      if (gen !== generation) return;   /* 过期轮：不测、不写、不清、不停 */
+      var top = 0, bottom = 0;
+      try {
+        top = probeEl('safe-probe-top',
+          'height:env(safe-area-inset-top,0px)').getBoundingClientRect().height || 0;
+        bottom = probeEl('safe-probe-bottom',
+          'height:env(safe-area-inset-bottom,0px)').getBoundingClientRect().height || 0;
+      } catch (e) { return; }      /* 量不出来就等下一轮，别写脏值 */
+      /* 只有非零才算「可信」：替换该边 fallback 并锁定。
+         中间轮次量到 0 不覆盖缓存（顶部先 59 后被 0 打回去 = 首屏跳动）。 */
+      if (top > 0) {
+        writeFb('--safe-top-fb', top, cachedTop);
+        cachedTop = top;
+      }
+      if (bottom > 0) {
+        writeFb('--safe-bottom-fb', bottom, cachedBottom);
+        cachedBottom = bottom;
+      }
+      if (cachedTop !== null && cachedBottom !== null) stopColdStart();
+    }
+    function stopColdStart() {
+      for (var i = 0; i < timers.length; i++) clearTimeout(timers[i]);
+      timers = [];
+      if (vvResizeOn && global.visualViewport && currentVvHandler) {
+        global.visualViewport.removeEventListener('resize', currentVvHandler);
+      }
+      vvResizeOn = false;
+      currentVvHandler = null;
+    }
+    /* 最终一轮跑完仍未锁定（一直 0）的边：这时才把 fallback 正式发布
+       成 0px。某边的新姿态 inset 可能真的是 0（横屏顶部 / 全面屏底部），
+       只有测量证明它是 0，才允许把上一姿态的旧值替换掉。 */
+    function zeroFb(name) {
+      if (d.style.getPropertyValue(name) !== '0px') d.style.setProperty(name, '0px');
+    }
+    /* immediate=false：旋转后的新一轮不立即测 —— 旋转瞬间 env 可能还是
+       旧姿态值，立即测会把旧值当成新值锁死；靠重试轮和晚到的 resize
+       收敛。旋转时已发布的 fallback 保持不动。 */
+    function startColdStart(immediate) {
+      stopColdStart();                       /* 旧轮 timers + 旧监听全清 */
+      generation++;                          /* 新轮代次 */
+      var gen = generation;
+      if (immediate !== false) measureRound(gen);  /* 冷启动立即一轮 */
+      /* forEach 给每一轮单独的 last 闭包（var 在 for 里会全部串成 true） */
+      RETRY_MS.forEach(function (ms, idx) {
+        var last = idx === RETRY_MS.length - 1;
+        timers.push(setTimeout(function () {
+          if (gen !== generation) return;    /* 旧轮回调：什么都不碰 */
+          measureRound(gen);
+          /* 本轮最后一轮跑完仍未锁定的边：正式发布 0，停表停监听。 */
+          if (gen === generation && last) {
+            if (cachedTop === null) zeroFb('--safe-top-fb');
+            if (cachedBottom === null) zeroFb('--safe-bottom-fb');
+            stopColdStart();
+          }
+        }, ms));
+      });
+      /* 待测才需要监听（立即轮就双锁则不挂）；同一时刻最多一个。 */
+      if (!vvResizeOn && global.visualViewport &&
+          (cachedTop === null || cachedBottom === null)) {
+        currentVvHandler = function () {
+          if (gen !== generation) return;    /* 旧轮回调：不测 */
+          if (cachedTop === null || cachedBottom === null) measureRound(gen);
+        };
+        global.visualViewport.addEventListener('resize', currentVvHandler);
+        vvResizeOn = true;
+      }
+    }
+    /* 旋转是唯一允许的重测信号（此刻键盘必然收起、inset 换了一套值）。
+       只清内部测量缓存，**不动已发布的 fallback** —— 新姿态可信值到达
+       前屏幕继续用旧值，顶底栏不跳；不立即测（旋转瞬间 env 可能还是
+       旧姿态值），靠重试轮和晚到的 resize 收敛。 */
+    global.addEventListener('orientationchange', function () {
+      cachedTop = null;
+      cachedBottom = null;
+      startColdStart(false);
+    });
+
+    startColdStart(true);
   })();
 
   /* ---------------------------- 页面栈 ---------------------------- */
