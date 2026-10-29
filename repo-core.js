@@ -70,8 +70,14 @@
     'https://sleepy-repo.sleepy-goodluck.workers.dev',
     'https://sleepy-repo.sleepy-goodluck.workers.dev'
   ];
-  /* 非最后 base 的短超时：被墙时 5s 就切下一个，别让用户干等浏览器默认超时 */
+  /* 非最后 base 的短超时：被墙时 5s 就切下一个，别让用户干等浏览器默认超时。
+     最后一个 base 也要有超时（2026-10-29 用户朋友 iPhone 实测「卡在激活
+     卡很久」）：以前最后一个 base 靠浏览器默认超时（iOS 上能挂 60s+），
+     墙内 DNS 污染 + TCP 静默丢包时表现为「转圈转到天荒地老」。统一
+     AbortController 硬超时：最后一个给 20s（正常请求远用不到），到点
+     明确失败并弹出网络提示。 */
   var BASE_FIRST_TRY_MS = 5000;
+  var BASE_LAST_TRY_MS = 20000;
 
   function get(k, d) { var v = store.get(k); return v === null || v === undefined ? d : v; }
   function set(k, v) { store.set(k, v); }
@@ -85,6 +91,17 @@
       .split(',').map(function (s) { return s.trim().replace(/\/+$/, ''); })
       .filter(function (s) { return !!s; });
     var list = override.length ? override : DEFAULT_BASES.slice();
+    /* 同源代理优先（2026-10-29，iPhone 卡激活的根治）：Pages 部署自带
+       functions/[[path]].js 把 /account 等反代到 worker —— 同源零 CORS，
+       且用户连 workers.dev 被墙时 pages.dev 一定是通的（app 本体就是它
+       伺服的）。本地 dev 没有 functions → 404 秒败 → 自然落到后面。
+       只在 https 生产环境启用（file:// / http localhost 不掺和）。 */
+    try {
+      if (global.location && global.location.protocol === 'https:' &&
+          global.navigator && !/electron/i.test(global.navigator.userAgent)) {
+        list = [global.location.origin].concat(list);
+      }
+    } catch (e) { /* location 缺位就按老列表走 */ }
     return list.filter(function (b, i) { return list.indexOf(b) === i; });
   }
 
@@ -945,7 +962,9 @@
     function tryBase(i) {
       if (i >= bases.length) { cb({ ok: false, message: LICENSE_NET_HINT }); return; }
       var last = (i === bases.length - 1);
-      var ctl = (!last && typeof AbortController !== 'undefined') ? new AbortController() : null;
+      /* 全部 base 都带硬超时（2026-10-29：最后一个以前裸奔，iOS 干等浏览器
+         默认超时 = 「卡激活很久」）；最后一个给 20s，前面 5s 快速切换 */
+      var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       var timer = null;
       var fp = global.fetch(bases[i] + path, {
         method: method || 'GET',
@@ -954,8 +973,7 @@
         signal: ctl ? ctl.signal : undefined
       });
       if (ctl) {
-        /* 现代浏览器：短超时直接 abort，真取消请求 */
-        timer = setTimeout(function () { ctl.abort(); }, BASE_FIRST_TRY_MS);
+        timer = setTimeout(function () { ctl.abort(); }, last ? BASE_LAST_TRY_MS : BASE_FIRST_TRY_MS);
       } else if (!last) {
         /* 老浏览器退路：race 一个短超时 reject（请求会在后台跑完，
            users.qq 唯一索引兜底，无重复写库风险） */
