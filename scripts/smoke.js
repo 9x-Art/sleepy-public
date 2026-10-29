@@ -11380,6 +11380,12 @@ t('反查手机 2026-10-29：点反查当场开演（遮罩层 + 心声保底 + 
     if (av[0].indexOf("'" + id + "'") < 0) throw new Error('浏览计划缺面：' + id + '（七面必须全列）');
   });
   if (av[0].indexOf('facesOf') >= 0) throw new Error('浏览计划还在按货过滤（空面也该翻）');
+  /* v288（用户实测「飘出来的只有一条」）：心声改真模型后，想法回包比
+     翻页步进慢（思维链更慢）—— 以前收尾 state.done 一落，迟到的想法
+     全被丢。钉住：末步先等在途请求落地（revFinishSoon + inflight 计数）。 */
+  if (!/state\.inflight\+\+/.test(src) || src.indexOf('function revFinishSoon(') < 0) {
+    throw new Error('收尾不等在途心声（迟到的想法会被丢）');
+  }
   const sp = src.match(/function revSample[\s\S]{0,3600}/);
   if (!sp || sp[0].indexOf('一张照片都没有') < 0 || sp[0].indexOf('一篇都没写') < 0) {
     throw new Error('采样器空面话术缺（要显式告诉模型什么都没有）');
@@ -17708,7 +17714,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v287';
+const EXPECTED_SW_CACHE = 'sleepy-v288';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

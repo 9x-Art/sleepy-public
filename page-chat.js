@@ -5747,7 +5747,8 @@
         host.appendChild(danmaku);
 
         var state = { idx: -1, paused: false, timer: null, scrollTimer: null, scroller: null,
-          items: [], thoughts: [], done: false, lingerUntil: 0, from: Sleepy.nav.top() };
+          items: [], thoughts: [], done: false, lingerUntil: 0, from: Sleepy.nav.top(),
+          inflight: 0, waitUntil: 0 };
 
         function danmu(text) {
           if (!text) return;
@@ -5860,10 +5861,23 @@
         }
         /* 每一步停留时长也随机（3.8~6.4s），别像闹钟一样到点就走 */
         function revStepDwell() { return 3800 + Math.random() * 2600; }
+        /* 末步收尾先等在途心声（v288）：真模型的想法有延迟（思维链更慢），
+           翻页每步只停几秒 —— 以前 state.done 一落，迟到的想法全被丢，
+           用户实测「飘出来的只有一条」（其余都死在了回包路上）。
+           翻完翻页先等在途请求落地（上限 20s，防接口挂起拖死收尾），
+           等待期间该飘的照飘。手动 × 打断不等 —— 用户要的就是立刻停。 */
+        function revFinishSoon(interrupted) {
+          if (!state.waitUntil) state.waitUntil = Date.now() + 20000;
+          if (state.inflight > 0 && Date.now() < state.waitUntil) {
+            state.timer = setTimeout(function () { revFinishSoon(interrupted); }, 400);
+            return;
+          }
+          finish(interrupted);
+        }
         function advance() {
           if (state.done || state.paused) return;
           var next = state.idx + 1;
-          if (next >= plan.length) { finish(false); return; }
+          if (next >= plan.length) { revFinishSoon(false); return; }
           state.idx = next;
           var step = plan[next];
           var opened = revOpenPage(step);
@@ -5879,13 +5893,17 @@
             }
             var sampled = revSample(step);
             item.detail = sampled.detail; item.learned = sampled.learned;
+            state.inflight++;
             revThought(charName, persona, { pageName: step.pageName, detail: sampled.detail, learned: sampled.learned })
               .then(function (t) {
-                if (state.done || state.paused) return;
-                /* 模型想法没到位就走保底 —— 每一步都保证有一条心声飘过 */
+                state.inflight--;
+                /* 模型想法没到位就走保底 —— 每一步都保证有一条心声飘过。
+                   收尾等待期（done 还没落）迟到的想法照收；暂停期间收进
+                   卡片但不再飘（弹幕层还在，只是人按了暂停）。 */
+                if (state.done) return;
                 if (!t) t = revFallbackThought();
                 state.thoughts.push(t);
-                danmu(t);
+                if (!state.paused) danmu(t);
               });
             state.timer = setTimeout(advance, revStepDwell());
           }, opened ? 500 + Math.random() * 600 : 200);
