@@ -506,6 +506,7 @@ html.ios{--sb-h:0px;}
   transition:opacity .22s var(--ease),transform .22s var(--ease);
   pointer-events:none;
   z-index:200;
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
 }
@@ -1697,6 +1698,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   justify-content: space-between;
   padding: 8px 12px;
   background: rgba(255,255,255,0.8);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   border-bottom: 1px solid rgba(214,199,172,0.3);
   z-index: 9;
@@ -2870,6 +2872,7 @@ html.kb-open .input-area{padding-bottom:6px;}
    每一处的 border-radius / box-shadow —— 那种改法漏一处就花一块。
 
    玻璃的三个必备件（少一个就变成「半透明色块」而不是玻璃）：
+     -webkit-backdrop-filter: blur()   —— 透过去的东西要虚;
      backdrop-filter: blur()   —— 透过去的东西要虚
      border: 亮边              —— 玻璃有厚度
      inset 高光                —— 玻璃是弧面，顶上有反光
@@ -2888,6 +2891,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   border:1px solid var(--g-glass-edge);
   border-radius:20px;
   box-shadow:var(--g-ring),var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
   position:relative;
@@ -2910,6 +2914,7 @@ html.kb-open .input-area{padding-bottom:6px;}
 
 .app-head{
   background:transparent;
+  -webkit-backdrop-filter:blur(14px);
   backdrop-filter:blur(14px);
   -webkit-backdrop-filter:blur(14px);
 }
@@ -2924,6 +2929,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:var(--g-glass);
   border:1px solid var(--g-glass-edge);
   color:var(--g-ink-2);
+  -webkit-backdrop-filter:blur(10px);
   backdrop-filter:blur(10px);
   -webkit-backdrop-filter:blur(10px);
 }
@@ -2934,6 +2940,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   border:1px solid var(--g-glass-edge);
   border-radius:18px;
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
 }
@@ -2969,12 +2976,14 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:var(--g-glass);
   border:1px solid var(--g-glass-edge);
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:blur(30px);
   backdrop-filter:blur(30px);
   -webkit-backdrop-filter:blur(30px);
 }
 .chat-foot{
   background:var(--g-glass);
   border-top:1px solid var(--g-glass-edge);
+  -webkit-backdrop-filter:blur(24px);
   backdrop-filter:blur(24px);
   -webkit-backdrop-filter:blur(24px);
 }
@@ -2985,6 +2994,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   border:1px solid var(--g-glass-edge);
   border-radius:16px;
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
 }
@@ -3018,6 +3028,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   color:var(--g-ink);
   /* 透明感：对方泡保留 blur（既有行为）。我方泡不加 —— blur 一层半透明
      浅底等于糊成白灰，立体感反而没了。 */
+  -webkit-backdrop-filter:blur(14px);
   backdrop-filter:blur(14px);
   -webkit-backdrop-filter:blur(14px);
 }
@@ -3033,12 +3044,14 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:var(--g-glass-2);
   border:1px solid var(--g-glass-edge);
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:blur(30px);
   backdrop-filter:blur(30px);
   -webkit-backdrop-filter:blur(30px);
 }
 .plus-panel{
   background:var(--g-glass);
   border-top:1px solid var(--g-glass-edge);
+  -webkit-backdrop-filter:blur(24px);
   backdrop-filter:blur(24px);
   -webkit-backdrop-filter:blur(24px);
 }
@@ -3294,6 +3307,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   border:1px solid var(--g-glass-edge);
   border-radius:20px;
   box-shadow:var(--g-ring),var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
   display:flex;
@@ -3340,6 +3354,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:transparent !important;
   border:none !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
   cursor:pointer;
@@ -3395,6 +3410,7 @@ html.kb-open .input-area{padding-bottom:6px;}
     var(--tk-c) 78%,
     var(--tk-d) 100%);
   border:1px solid var(--tk-line);
+  -webkit-backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
   backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
   -webkit-backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
   /* 直接引 --g-ink（不抽 --tk-ink）—— 理由见 :root 里那组变量的注释 */
@@ -3471,6 +3487,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:none !important;
   border:0 !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
   align-items:stretch;
@@ -3581,6 +3598,7 @@ html.kb-open .input-area{padding-bottom:6px;}
     0 3px 8px rgba(120,132,156,.20),
     0 9px 16px -7px rgba(120,132,156,.34),
     inset 0 1px 1px var(--tk-glare);
+  -webkit-backdrop-filter:blur(12px) saturate(130%);
   backdrop-filter:blur(12px) saturate(130%);
   -webkit-backdrop-filter:blur(12px) saturate(130%);
   overflow:hidden;
@@ -3876,6 +3894,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:none !important;
   border:0 !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
   overflow:visible;
@@ -3916,6 +3935,7 @@ html.kb-open .input-area{padding-bottom:6px;}
       rgba(255,255,255,.58) 0%,
       rgba(246,249,255,.34) 46%,
       rgba(238,244,253,.42) 100%);
+  -webkit-backdrop-filter:blur(18px) saturate(150%) brightness(1.06);
   backdrop-filter:blur(18px) saturate(150%) brightness(1.06);
   -webkit-backdrop-filter:blur(18px) saturate(150%) brightness(1.06);
   -webkit-mask-size:100% 100%;
@@ -3995,6 +4015,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:none !important;
   border:0 !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
   padding:0;
@@ -4108,6 +4129,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:none !important;
   border:0 !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
 }
@@ -4358,6 +4380,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:none !important;
   border:0 !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
 }
@@ -4549,6 +4572,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:none !important;
   border:0 !important;
   box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
 }
@@ -4886,6 +4910,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   position:absolute;
   inset:0;
   background:rgba(28,38,28,.62);
+  -webkit-backdrop-filter:blur(10px);
   backdrop-filter:blur(10px);
   -webkit-backdrop-filter:blur(10px);
   opacity:0;
@@ -4996,6 +5021,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:var(--g-glass);
   border:1px solid var(--g-glass-edge);
   box-shadow:var(--g-ring),var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
   z-index:6;
@@ -5056,6 +5082,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   background:var(--g-glass-2);
   border:1px solid var(--g-glass-edge);
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:blur(30px);
   backdrop-filter:blur(30px);
   -webkit-backdrop-filter:blur(30px);
   z-index:91;
@@ -5217,6 +5244,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   border:1px solid var(--g-glass-edge);
   background:var(--g-glass);
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
   font-family:inherit;text-align:left;
@@ -5236,6 +5264,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   border:1px solid var(--g-glass-edge);
   background:var(--g-glass);
   box-shadow:var(--g-glass-shadow);
+  -webkit-backdrop-filter:var(--g-glass-blur);
   backdrop-filter:var(--g-glass-blur);
   -webkit-backdrop-filter:var(--g-glass-blur);
   overflow:hidden;
@@ -5578,6 +5607,13 @@ html.kb-open .input-area{padding-bottom:6px;}
 }
 /* 浮岛不要标题栏那一横条：整片天空才是标题。
    **顶栏在这一页必须彻底隐形** —— 项目默认的 .app-head 是一块玻璃
+   -webkit-backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），
+   （`backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），;
+   -webkit-backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），
+   （`backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），;
+   -webkit-backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），
+   （`backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），;
+   -webkit-backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），;
    （`backdrop-filter:blur(14px)` + `::after` 一条渐变细线，见文件上方 2502 行），
    压在插画上会把最上面一条天空糊掉、还横着一道分界线。
    （diary 页同样处理。）
@@ -5586,6 +5622,7 @@ html.kb-open .input-area{padding-bottom:6px;}
 .page[data-page="island"] .app-head{
   position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
 .page[data-page="island"] .app-head::after{display:none;}
@@ -6815,12 +6852,17 @@ html.kb-open .input-area{padding-bottom:6px;}
      ④ top 要**让开状态栏那一条**（状态栏现在不占布局了，顶栏得自己避让）。 */
 #phone:has(.page.is-active:not(.is-behind) .tab-panel.is-moments) .app-head{
   position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;
+  -webkit-backdrop-filter:none
+  background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
+  background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
+  background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
   background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
   z-index:6;
 }
 #phone:has(.page.is-active:not(.is-behind) .tab-panel.is-moments) .app-head::after{display:none;}
 #phone:has(.page.is-active:not(.is-behind) .tab-panel.is-moments) .back-btn{
   background:rgba(0,0,0,.18);border-color:transparent;color:#fff;
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
 #phone:has(.page.is-active:not(.is-behind) .tab-panel.is-moments) .head-act{background:rgba(0,0,0,.18);color:#fff;}
@@ -7714,6 +7756,7 @@ html.kb-open .input-area{padding-bottom:6px;}
 [data-icstyle="line"] .lk-preview-ic{
   background:rgba(255,255,255,.34);
   border:1.2px solid var(--g-ink-3,#B7AC9C);
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
   color:var(--g-ink);
 }
@@ -7722,6 +7765,7 @@ html.kb-open .input-area{padding-bottom:6px;}
 [data-icstyle="paper"] .lk-preview-ic{
   background:linear-gradient(160deg,#F3EADC,#E9DBC4);
   border:1px solid rgba(122,96,66,.22);
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
   color:#6B5842;
 }
@@ -7730,6 +7774,7 @@ html.kb-open .input-area{padding-bottom:6px;}
 [data-icstyle="night"] .lk-preview-ic{
   background:linear-gradient(160deg,#2E3A3C,#3D4B4A);
   border:1px solid rgba(255,255,255,.12);
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
   color:#EDE7DC;
 }
@@ -10774,6 +10819,13 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-lock-note{
   margin:26px auto 0;width:min(320px,88%);text-align:left;
   padding:12px 16px;border-radius:14px;
+  -webkit-backdrop-filter:blur(6px)
+  background:rgba(255,255,255,.55);backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px)
+  background:rgba(255,255,255,.55);backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px)
+  background:rgba(255,255,255,.55);backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px)
   background:rgba(255,255,255,.55);backdrop-filter:blur(6px);
 }
 .ph-lock-note-t{font-size:12px;font-weight:600;opacity:.75;}
@@ -10807,6 +10859,13 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-flip-gear svg{width:16px;height:16px;}
 .ph-flip-pop{
   position:absolute;top:38px;right:0;width:230px;
+  -webkit-backdrop-filter:blur(8px)
+  background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px)
+  background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px)
+  background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px)
   background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
   border-radius:14px;padding:12px;box-shadow:0 8px 24px rgba(59,52,42,.18);
   /* 别继承锁屏的 #FFFDF6 —— 白底白字，真机截图抓的 */
@@ -10971,6 +11030,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
   margin:24px auto 0;width:min(320px,88%);text-align:left;
   padding:11px 15px;border-radius:14px;color:#F2EDE2;
   background:rgba(32,39,37,.5);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(12px);
   backdrop-filter:blur(12px);
 }
 .ph-lock-note-t{font-size:11px;font-weight:600;opacity:.75;}
@@ -10981,6 +11041,13 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
   display:block;width:min(320px,88%);margin:9px auto 0;padding:12px 18px;
   border-radius:14px;border:1px solid rgba(255,255,255,.18);
   font-size:15px;cursor:pointer;color:#FFFDF6;
+  -webkit-backdrop-filter:blur(10px)
+  background:rgba(255,255,255,.14);backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px)
+  background:rgba(255,255,255,.14);backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px)
+  background:rgba(255,255,255,.14);backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px)
   background:rgba(255,255,255,.14);backdrop-filter:blur(10px);
 }
 .ph-btn-primary{background:rgba(255,253,246,.22);border-color:rgba(255,255,255,.3);}
@@ -11006,6 +11073,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-widget{
   min-height:74px;padding:11px 12px;border-radius:16px;color:#F4F0E6;
   background:rgba(30,41,38,.42);border:1px solid rgba(255,255,255,.15);
+  -webkit-backdrop-filter:blur(12px);
   backdrop-filter:blur(12px);
 }
 .ph-widget-t{display:block;font-size:10px;opacity:.75;}
@@ -11058,6 +11126,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 /* 被抓现场（深色纱 + 深玻璃卡） */
 .ph-caught-card{
   background:rgba(32,39,37,.72);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(12px);color:#F2EDE2;
   backdrop-filter:blur(12px);color:#F2EDE2;
 }
 .ph-caught-k{color:#E8C9A8;opacity:1;}
@@ -11283,6 +11352,13 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
   left:0;right:0;z-index:3;display:grid;grid-template-columns:repeat(3,1fr);
   /* 负 margin 抵消 .ph-root 的左右/底部内边距，磨砂条才真正通到屏缘 */
   margin:auto -18px -18px;padding:8px 8px calc(var(--safe-bottom) + 12px);
+  -webkit-backdrop-filter:blur(14px)
+  background:rgba(250,248,245,.92);backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px)
+  background:rgba(250,248,245,.92);backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px)
+  background:rgba(250,248,245,.92);backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px)
   background:rgba(250,248,245,.92);backdrop-filter:blur(14px);
   border-top:1px solid #e5ddd5;
 }
@@ -11339,6 +11415,7 @@ button.gof-state-row{border:0;width:100%;background:none;font:inherit;color:inhe
 .ph-lock-note{
   text-align:left;padding:11px 15px;border-radius:14px;color:#F2EDE2;
   background:rgba(32,39,37,.5);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(12px);
   backdrop-filter:blur(12px);
 }
 button.ph-lock-note{font:inherit;cursor:pointer;}
@@ -11380,6 +11457,7 @@ button.ph-lock-note:active{background:rgba(32,39,37,.68);}
 .ph-perm-note{
   margin:16px auto 0;width:min(320px,88%);padding:10px 13px;border-radius:14px;
   background:rgba(32,39,37,.62);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(12px);color:#EDE7DE;font-size:10.5px;line-height:1.6;
   backdrop-filter:blur(12px);color:#EDE7DE;font-size:10.5px;line-height:1.6;
 }
 .ph-perm-note b{display:block;font-size:11.5px;margin-bottom:2px;}
@@ -11655,6 +11733,13 @@ button.ph-lock-note:active{background:rgba(32,39,37,.68);}
   display:flex;align-items:center;justify-content:center;
   padding:9px 12px;border-radius:22px;
   border:1px solid rgba(255,255,255,.22);
+  -webkit-backdrop-filter:blur(15px)
+  background:rgba(233,230,222,.26);backdrop-filter:blur(15px);
+  -webkit-backdrop-filter:blur(15px)
+  background:rgba(233,230,222,.26);backdrop-filter:blur(15px);
+  -webkit-backdrop-filter:blur(15px)
+  background:rgba(233,230,222,.26);backdrop-filter:blur(15px);
+  -webkit-backdrop-filter:blur(15px)
   background:rgba(233,230,222,.26);backdrop-filter:blur(15px);
 }
 .ph-desk-dock .ph-btn{width:auto;min-width:158px;margin:0;}
@@ -11691,6 +11776,7 @@ button.ph-lock-note:active{background:rgba(32,39,37,.68);}
 .ph-mini-note{
   padding:8px 11px;border-radius:12px;
   background:rgba(32,39,37,.5);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(10px);
   backdrop-filter:blur(10px);
 }
 .ph-mini-note-h{display:flex;align-items:baseline;}
@@ -12131,6 +12217,7 @@ button.cal-ev:active{background:var(--g-glass-2);}
   background:linear-gradient(160deg,
     var(--tk-a) 0%,var(--tk-b) 42%,var(--tk-c) 78%,var(--tk-d) 100%);
   border-color:var(--tk-line);
+  -webkit-backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
   backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
   -webkit-backdrop-filter:blur(18px) saturate(165%) brightness(1.10);
   color:var(--g-ink);
@@ -12807,6 +12894,10 @@ button.cal-ev:active{background:var(--g-glass-2);}
 .wjk-whisper{
   position:absolute;left:14px;right:14px;bottom:18px;z-index:20;
   border:1px solid var(--wj-line);border-radius:8px;
+  -webkit-backdrop-filter:blur(8px)
+  background:#16203366;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  background:#16203366;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  background:#16203366;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   background:#16203366;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   background:#162033f2;
   padding:12px 14px;cursor:pointer;
@@ -14920,6 +15011,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="ta-person"] .app-head{
   position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
 .page[data-page="ta"] .app-head::after,
@@ -14984,6 +15076,7 @@ button.ta-row:active{background:rgba(124,168,214,.07)}
 .page[data-page="collection"] .app-head{
   position:absolute;top:calc(var(--safe-top) + var(--sb-h));left:0;right:0;z-index:4;
   padding:12px 18px 0;background:transparent;
+  -webkit-backdrop-filter:none;-webkit-backdrop-filter:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;
 }
 .page[data-page="we"] .app-head::after,
@@ -15400,6 +15493,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   background:linear-gradient(160deg,var(--tk-a),var(--tk-b) 52%,var(--tk-c) 78%,var(--tk-d));
   border:1px solid var(--tk-line);
   border-radius:16px;
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
   backdrop-filter:blur(18px) saturate(160%);
   -webkit-backdrop-filter:blur(18px) saturate(160%);
   cursor:pointer;
@@ -15445,6 +15539,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   font-size:11px;color:var(--g-ink-3);
   background:linear-gradient(160deg,var(--tk-a),var(--tk-b) 52%,var(--tk-c) 78%,var(--tk-d));
   border:1px solid var(--tk-line);border-radius:16px;
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
   backdrop-filter:blur(18px) saturate(160%);
   -webkit-backdrop-filter:blur(18px) saturate(160%);
 }
@@ -15501,6 +15596,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   border-radius:16px;overflow:hidden;
   background:linear-gradient(160deg,var(--tk-a),var(--tk-b) 52%,var(--tk-c) 78%,var(--tk-d));
   border:1px solid var(--tk-line);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
   backdrop-filter:blur(18px) saturate(160%);
   -webkit-backdrop-filter:blur(18px) saturate(160%);
 }
@@ -15515,6 +15611,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   background:linear-gradient(160deg,var(--tk-a),var(--tk-b) 52%,var(--tk-c) 78%,var(--tk-d));
   border:1px solid var(--tk-line);
   border-radius:16px;
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
   backdrop-filter:blur(18px) saturate(160%);
   -webkit-backdrop-filter:blur(18px) saturate(160%);
   cursor:pointer;overflow:hidden;
@@ -15586,6 +15683,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   background:var(--g-glass-3);
   border:1px solid var(--g-glass-edge);
   box-shadow:0 14px 40px rgba(60,50,40,.22);
+  -webkit-backdrop-filter:blur(18px);
   backdrop-filter:blur(18px);
   -webkit-backdrop-filter:blur(18px);
   text-align:center;
@@ -16270,6 +16368,13 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   position:absolute;top:10px;left:50%;transform:translateX(-50%);
   z-index:1200;display:flex;align-items:center;gap:8px;
   padding:7px 10px 7px 14px;border-radius:999px;
+  -webkit-backdrop-filter:blur(20px)
+  background:rgba(47,58,71,.88);backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px)
+  background:rgba(47,58,71,.88);backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px)
+  background:rgba(47,58,71,.88);backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px)
   background:rgba(47,58,71,.88);backdrop-filter:blur(20px);
   box-shadow:0 4px 18px rgba(47,58,71,.35),0 0 12px rgba(194,94,110,.25);
   animation:rev-pulse 2s ease-in-out infinite;
@@ -16426,3 +16531,21 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   font-size:8px;color:#b5ac99;letter-spacing:.3em;
 }
 .pld.is-missing{cursor:default;}
+
+/* ===== 滚动手感批（2026-10-29）=====
+   长聊天 / 长章节往下滑卡，是因为浏览器每一帧都在给整列内容排版。
+   content-visibility:auto 让滚出屏幕的气泡 / 段落不参与布局与绘制，
+   滚到哪算到哪；contain-intrinsic-size 给个估算高度，防滚动条跳动。 */
+.msg-body{content-visibility:auto;contain-intrinsic-size:auto 72px;}
+.wjr-para{content-visibility:auto;contain-intrinsic-size:auto 90px;}
+
+/* ===== iPhone 适配批（2026-10-29）=====
+   「页面会飘一下」的头号元凶：iOS 上聚焦字号 <16px 的输入框会强制
+   放大视口（自动缩放），键盘弹起时整页看起来跳一下。聚焦瞬间抬到
+   16px（iOS 只认这个值），失焦回落原字号；pointer:coarse 只圈触屏，
+   桌面鼠标不动。 */
+@media (pointer: coarse) {
+  input:focus,
+  textarea:focus,
+  select:focus { font-size: 16px; }
+}

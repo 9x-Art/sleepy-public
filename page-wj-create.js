@@ -526,7 +526,9 @@
     },
     onShow: function (ctx) {
       /* 从文风设置台返回：文风已经改过了，重画一次把新的名字带回来 */
-      if (ctx.__paint) ctx.__paint();
+      /* 数据版本没变就不整页重画（手感批 2026-10-29，见 page-wj-foyer.wjUI.freshPaint） */
+      if (Sleepy.wjUI && Sleepy.wjUI.freshPaint) Sleepy.wjUI.freshPaint(ctx);
+      else if (ctx.__paint) ctx.__paint();
     }
   });
 

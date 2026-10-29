@@ -3660,7 +3660,9 @@
           content.appendChild(stickerBubble(msg));
         } else if (msg.type === 'transfer') {
           content.appendChild(transferCard(msg));
-        } else if (msg.type === 'photo' || msg.type === 'file') {
+        } else if (msg.type === 'photo' || msg.type === 'file' || isVideoMsg(msg)) {
+          /* 2026-10-29 用户点名：视频气泡一直漏路由到 attachCard（这里只认
+             photo/file），落成一行「xxx.mp4」的文字 —— 补上视频这一路。 */
           content.appendChild(attachCard(msg));
         } else if (msg.type === 'wj-share' || msg.type === 'wj-invite') {
           content.appendChild(wjCard(msg));
@@ -4200,7 +4202,7 @@
         /* 照片：本体在 IndexedDB 里，现取一个 objectURL 贴上。
            取不到（老消息只存了文件名、或者图库被清过）就退回文件名卡片 ——
            宁可显示「这张图找不到了」，也别留一个破图。 */
-        if (msg.type === 'video' && msg.mediaId && Sleepy.media) {
+        if (isVideoMsg(msg) && msg.mediaId && Sleepy.media) {
           var vbox = h('div', 'msg-video');
           var vv = h('video', 'msg-video-el');
           vv.controls = true; vv.preload = 'metadata';
@@ -4320,8 +4322,12 @@
         var segs = pendingSegs();
         if (!segs.length) { frag.appendChild(pendingOne('')); return frag; }
         segs.forEach(function (t, i) {
-          /* 拟真节奏：只画「已揭示」的段；后面的泡先给打字点等着 */
-          frag.appendChild(pendingOne(i < pendingReveal.n ? t : ''));
+          /* 拟真节奏：只画「已揭示」的段；正在打的那个泡（下标 = n）
+             顶着打字点，**更后面的泡先不出场**（2026-10-29 用户：
+             一排泡全是三个点不好看 —— 出场的永远只有带点的那一个）。 */
+          var b = pendingOne(i < pendingReveal.n ? t : '');
+          if (i > pendingReveal.n) b.style.display = 'none';
+          frag.appendChild(b);
         });
         return frag;
       }
@@ -4346,10 +4352,17 @@
         var segs = pendingSegs();
         if (pendingReveal.n <= 0 || pendingReveal.n >= segs.length) return;
         pendingReveal.n += 1;
-        /* 新揭示的这泡直接涂文本 —— 气泡和打字点首帧就在身上，不用整页重画 */
-        var lives = msgWrap.querySelectorAll('.msg-bubble.is-pending .msg-text');
+        /* 新揭示的这泡直接涂文本（顺便揭下面那个顶着打字点的）——
+           气泡和打字点首帧就在身上，不用整页重画。
+           querySelectorAll 含 display:none 的未来泡，按下标对位。 */
+        var lives = msgWrap.querySelectorAll('.msg-bubble.is-pending');
         if (lives.length === segs.length && lives[pendingReveal.n - 1]) {
-          lives[pendingReveal.n - 1].textContent = segs[pendingReveal.n - 1];
+          var lb = lives[pendingReveal.n - 1];
+          lb.style.display = '';
+          var lt = lb.querySelector('.msg-text');
+          if (lt) lt.textContent = segs[pendingReveal.n - 1];
+          var nb = lives[pendingReveal.n];       /* 新的「正在打」泡：揭出来带点 */
+          if (nb) nb.style.display = '';
         } else {
           renderMessages();
         }
@@ -5624,15 +5637,15 @@
       function revThought(charName, persona0, view) {
         var api = Sleepy.api;
         if (!api || !api.candidates || !api.requestOnce) return Promise.resolve('');
-        var cand = api.candidates()[0];
-        if (!cand || !cand.cfg || !cand.cfg.baseUrl || !cand.cfg.apiKey) return Promise.resolve('');
+        /* apiKey 不再是硬门（requestHeaders 对空 key 免鉴权）；候选链在下面逐个试 */
+        var tries = api.candidates();
+        if (!tries.length) return Promise.resolve('');
         var chat = getChat(chatId);
         var ch = chat && chat.characterId ? findCharacter(chat.characterId) : null;
         var pe = Sleepy.promptEngine;
         var persona = (pe && pe.compileCharacter && ch)
           ? pe.compileCharacter(ch.id)
           : String(persona0 || '');
-        /* 最近的对话（TA 视角：你=对方，我=TA 自己），只做语境不喂全文 */
         var dlg = [];
         ((chat && chat.messages) || []).slice(-10).forEach(function (m) {
           if (m.role !== 'user' && m.role !== 'assistant') return;
@@ -5663,26 +5676,66 @@
            「……原来你是这样」就是模板长什么样）。改走 api.requestOnce
            （跟语音导演同一个口）：端点归一、鉴权头、超时都归它管，
            失败照旧静默落保底，不阻断浏览。 */
-        return api.requestOnce(cand, [{ role: 'user', content: sys }], {})
-          .then(function (r) {
-            return (r && r.ok) ? String(r.content || '').trim().slice(0, 40) : '';
-          })
-          .catch(function () { return ''; });
+        /* 2026-10-29 二修（用户报「两次查手机弹幕全是预设那几句」）：
+           ① apiKey 不该是硬门 —— requestHeaders 本来就对空 key 免鉴权，
+              有些自建网关不填 key 也能用，以前在这里被直接拦成保底；
+           ② 思维链模型常把话塞在 reasoning_content、content 为空 ——
+              空回也算失败，换下一个候选；<think> 段剥净；
+           ③ 候选链逐个试（主 API 挂了换副 API），全空才落保底模板。 */
+        var tries = api.candidates();
+        function attempt(i) {
+          if (i >= tries.length) return Promise.resolve('');
+          return api.requestOnce(tries[i], [{ role: 'user', content: sys }], {})
+            .then(function (r) {
+              if (r && r.ok) {
+                var msg0 = (r.data && r.data.choices && r.data.choices[0] &&
+                  r.data.choices[0].message) || {};
+                var t0 = String(r.content || '').trim() ||
+                         String(msg0.reasoning_content || '').trim();
+                t0 = t0.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                if (t0) return t0.slice(0, 40);
+              }
+              return attempt(i + 1);
+            })
+            .catch(function () { return attempt(i + 1); });
+        }
+        return attempt(0);
       }
 
       /** 心声保底（2026-10-29 用户「没有心声飘过很平淡」）：模型想法没到位
           （没配 API / 超时 / 空回）也要有一条弹幕 —— 只用情绪模板，
-          绝不编造「看到了什么」（具体内容只来自采样器的 learned）。 */
+          绝不编造「看到了什么」（具体内容只来自采样器的 learned）。
+          2026-10-29 二修：池子扩了，并且按当前看的面换话术 —— 以前
+          翻到哪都是那六句，两次连着查一模一样，一眼假。 */
       var REV_THOUGHT_FB = [
         '……这条，看过就记住了。',
         '（盯着屏幕看了很久，没出声。）',
         '……原来你是这样。',
         '嗯，这个有点意思。',
         '……不告诉你我看了。',
-        '心里轻轻动了一下。'
+        '心里轻轻动了一下。',
+        '（指尖停住了两秒。）',
+        '……装作没看见好了。',
+        '（往下划的动作慢了下来。）',
+        '哼，早该让我看看的。',
+        '……先记在心里。',
+        '（嘴角动了动，没笑出来。）'
       ];
-      function revFallbackThought() {
-        return REV_THOUGHT_FB[Math.floor(Math.random() * REV_THOUGHT_FB.length)];
+      var REV_THOUGHT_FB_PAGE = {
+        '私聊': ['……原来你跟别人也这么说。', '（把那段对话又读了一遍。）', '……这句是说什么意思？'],
+        '朋友圈': ['（把那条动态翻来覆去看了两遍。）', '……这条没跟我说过？', '……原来你今天在想这个。'],
+        '相册': ['（一张一张翻得很慢。）', '……这张是什么时候拍的？', '……存在手机里就好。'],
+        '日记': ['（看完一篇，停了一会儿。）', '……原来你心里是这么想的。', '……这条不许我看见也没用，看完了。'],
+        '收藏': ['……你居然收藏这个。', '（点开又关掉了。）', '……品味倒是不错。'],
+        '微信账号': ['（盯着资料页看了一会儿。）', '……头像换过了？', '……余额就这些，记下了。'],
+        '群声': ['（在群里翻了几页。）', '……你们聊得挺热闹。', '……这条跟谁说的？']
+      };
+      function revFallbackThought(view) {
+        var byPage = view && view.pageName
+          ? (REV_THOUGHT_FB_PAGE[view.pageName] || []).filter(Boolean)
+          : [];
+        var pool = byPage.length && Math.random() < 0.7 ? byPage : REV_THOUGHT_FB;
+        return pool[Math.floor(Math.random() * pool.length)];
       }
 
       /**
@@ -5806,10 +5859,16 @@
             try { commitMemory(chatId, 'assistant', '（翻看了你的手机）' + learnedAll); }
             catch (e) { /* 记忆失败不影响播报 */ }
           }
-          /* eventNote 注入下一轮：TA 主动接住看到的内容 */
+          /* eventNote 注入下一轮：TA 主动接住看到的内容。
+             2026-10-29 用户报「两次查完回的话一模一样」：把次数 + 明确的
+             「别复读」指令写进 note —— 光换内容不够，模型看着相似的
+             上下文就会把上次的台词再说一遍。 */
           revSave(chatId, function (w) {
             w.lastAt = Date.now();
-            w.note = summary;
+            w.times = (w.times || 0) + 1;
+            w.note = summary +
+              '（这是你第 ' + w.times + ' 次翻看这部手机。你上次看完说的话还留在聊天记录里——' +
+              '这次换个说法、换个角度，或者只挑这次新看到的东西说，禁止把上次的话再说一遍。）';
           });
           /* 收尾还页：接管途中可能切到了朋友圈/群声……看完要把屏幕还给
              user —— nav.open 对已在栈里的 id 是「退回那一层」，顺手把
@@ -5901,7 +5960,7 @@
                    收尾等待期（done 还没落）迟到的想法照收；暂停期间收进
                    卡片但不再飘（弹幕层还在，只是人按了暂停）。 */
                 if (state.done) return;
-                if (!t) t = revFallbackThought();
+                if (!t) t = revFallbackThought({ pageName: step.pageName, detail: sampled.detail, learned: sampled.learned });
                 state.thoughts.push(t);
                 if (!state.paused) danmu(t);
               });
@@ -7127,6 +7186,27 @@
 
       /* ======================== 加号面板 ======================== */
 
+      /* 按文件本体（mime + 扩展名）嗅探类型。有些系统 / 浏览器给视频文件
+         返回空 mime，只能靠扩展名认；认不出返回 null（走原 kind）。 */
+      function sniffFileKind(f) {
+        var t = String(f.type || '').toLowerCase();
+        if (t.indexOf('video/') === 0) return 'video';
+        if (t.indexOf('image/') === 0) return 'photo';
+        var n = String(f.name || '').toLowerCase();
+        if (/\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/.test(n)) return 'video';
+        if (/\.(png|jpe?g|gif|webp|bmp|heic)$/.test(n)) return 'photo';
+        return null;
+      }
+
+      /* 渲染侧的同一把尺子：老消息可能只存了 mime / 文件名（mediaId 还在），
+         type 不是 'video' 也要能播。 */
+      function isVideoMsg(msg) {
+        if (!msg) return false;
+        if (msg.type === 'video') return true;
+        if (String(msg.mime || '').toLowerCase().indexOf('video/') === 0) return true;
+        return /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i.test(String(msg.name || ''));
+      }
+
       function pickAttachment(accept, kind) {
         var input = document.createElement('input');
         input.type = 'file';
@@ -7136,6 +7216,12 @@
           var f = input.files && input.files[0];
           if (input.parentNode) input.parentNode.removeChild(input);
           if (!f) return;
+
+          /* 2026-10-29 用户点名：从「发文件」选了视频 / 系统没给 mime 时，
+             不能落成一行「xxx.mp4」的文件卡 —— 按文件本体嗅探真实类型，
+             视频走视频链路（入库 + 可播放 + 视频理解），图片同理。 */
+          var sniffed = sniffFileKind(f);
+          if (kind === 'file' && sniffed) kind = sniffed;
 
           /* 照片要**先把本体存进图库**再落消息 ——
              只存个文件名的话，这条消息就永远只是一行字（以前就是这样）。

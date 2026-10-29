@@ -99,17 +99,16 @@
      只产出这个 App 的 deltas —— 限定范围写在 [FOCUS]，本体协议卡不变）。
      每页的「新提示词」= 共同协议卡 + 该 App 的专属指令 + 已有条目防重复。 */
   var APP_FOCUS_ASK = {
-    messages: '这次**只更新「消息」App**：他和合法联系人的幕后交流（一来一回）、或一条没发出去的草稿。deltas 里其他 App 一律不要出现。',
-    taobao:   '这次**只更新「淘宝」App**：新下单的东西 / 既有订单状态往前推一步 / 收藏 / 加购。deltas 里其他 App 一律不要出现。',
-    health:   '这次**只更新「健康打卡」App**：最近一天的三餐零食、运动计划与实际、他自己的短评。deltas 里其他 App 一律不要出现。',
-    notes:    '这次**只更新「备忘录」App**：他随手记下的一条备忘（可以带 folder）。deltas 里其他 App 一律不要出现。',
-    browser:  '这次**只更新「浏览器」App**：一次搜索或一个收藏。deltas 里其他 App 一律不要出现。',
-    /* 2026-10-29 用户反馈：新上的三个 App 单数措辞（「一首歌」「一条短信」）
-       把模型摁死在每次只出一条 —— 和下面「必须 1~3 条」的硬性要求打架。
-       全部改成复数口径，条数以硬性要求为准。 */
-    music:    '这次**只更新「音乐」App**：给出 **1～3 条** deltas —— 他最近在听的几首歌（loops 是这段时间单曲循环了几遍，多数是 0~2，循环很多遍说明他有心事）、或红了心的歌。note 是他为什么单听这首的一句心声（可空）。deltas 里其他 App 一律不要出现。',
-    sms:      '这次**只更新「短信」App**：给出 **1～3 条**有剧情意义的**真人短信**（kind=chat，from 只能是岛里已登记的人）；think 写他看到（或发出）这条短信时的一句心声，可空。验证码/快递这类系统通知由程序生成，你不要写。deltas 里其他 App 一律不要出现。',
-    books:    '这次**只更新「书架」App**：给出 **1～3 条** deltas —— 在读的书推进了进度（或开了新书）、和/或一两条划线批注（text=书里原文，think=他自己的话，两者别混）。deltas 里其他 App 一律不要出现。'
+    /* 2026-10-29 用户反馈：每个 App 每次刷新要「五个左右」，1~3 太抠 ——
+       硬性条数统一改成 3~5。 */
+    messages: '这次**只更新「消息」App**：给出 **3～5 条** deltas —— 他和合法联系人的幕后交流（一来一回）、或一条没发出去的草稿。deltas 里其他 App 一律不要出现。',
+    taobao:   '这次**只更新「淘宝」App**：给出 **3～5 条** deltas —— 新下单的东西 / 既有订单状态往前推一步 / 收藏 / 加购。deltas 里其他 App 一律不要出现。',
+    health:   '这次**只更新「健康打卡」App**：给出 **3～5 条** deltas —— 最近几天里挑有内容的日子写：三餐零食、运动计划与实际、他自己的短评（一个 App 页一条日记录即可）。deltas 里其他 App 一律不要出现。',
+    notes:    '这次**只更新「备忘录」App**：给出 **3～5 条** deltas —— 他随手记下的几条备忘（可以带 folder）。deltas 里其他 App 一律不要出现。',
+    browser:  '这次**只更新「浏览器」App**：给出 **3～5 条** deltas —— 几次搜索或几个收藏。deltas 里其他 App 一律不要出现。',
+    music:    '这次**只更新「音乐」App**：给出 **3～5 条** deltas —— 他最近在听的几首歌（loops 是这段时间单曲循环了几遍，多数是 0~2，循环很多遍说明他有心事）、或红了心的歌。note 是他为什么单听这首的一句心声（可空）。deltas 里其他 App 一律不要出现。',
+    sms:      '这次**只更新「短信」App**：给出 **3～5 条**有剧情意义的**真人短信**（kind=chat，from 只能是岛里已登记的人或已登记的背景联系人）；think 写他看到（或发出）这条短信时的一句心声，可空。验证码/快递这类系统通知由程序生成，你不要写。deltas 里其他 App 一律不要出现。',
+    books:    '这次**只更新「书架」App**：给出 **3～5 条** deltas —— 在读的书推进了进度（或开了新书）、和/或几条划线批注（text=书里原文，think=他自己的话，两者别混）。deltas 里其他 App 一律不要出现。'
   };
 
   /* 单 App 已有条目的简表（防重复 —— 模型看不到库，只能喂给它） */
@@ -158,21 +157,39 @@
     return out;
   }
 
-  function contactsOf(sbId, charId) {
+  function contactsOf(sbId, charId, ph) {
     var out = [];
+    function push(name) {
+      if (name && out.indexOf(name) < 0) out.push(name);
+    }
     try {
       /* 岛里的合法联系人：NPC（岛内全体，唯一口径 core.npcsOfRoom）
-         + 其他主角色（群岛）。
+         + 其他主角色（群岛）+ 皮套（挂角色名下的小号）+ user 的马甲。
          ⚠️ 以前这里把 charId 当岛 id 传了进去（npcsOfRoom 找不到这段存档
-         返回空），岛级 NPC 一直进不了联系人池 —— 2026-09-21 修掉。 */
+         返回空），岛级 NPC 一直进不了联系人池 —— 2026-09-21 修掉。
+         2026-10-29：皮套和马甲也进池（校验池 phone.knownPeople 本来就认，
+         提示词池却一直缺 —— 模型明明可以写却被告知不许）。 */
       if (core.npcsOfRoom) {
         core.npcsOfRoom(sbId).forEach(function (n) {
-          if (n && n.name) out.push(n.name + (n.speech ? '（' + String(n.speech).slice(0, 40) + '）' : ''));
+          if (n && n.name) push(n.name + (n.speech ? '（' + String(n.speech).slice(0, 40) + '）' : ''));
         });
       }
       core.charsOfSandbox(sbId).forEach(function (c) {
-        if (c.id !== charId && (c.kind || 'main') === 'main' && c.name) out.push(c.name);
+        if (!c || !c.name) return;
+        if (c.id !== charId && (c.kind || 'main') === 'main') push(c.name);
+        if (c.id === charId) {
+          (Sleepy.island
+            ? Sleepy.island.childrenOf(sbId, c.id, 'sub', 'char')
+            : core.subChars(c.id)).forEach(function (s) {
+              if (s && s.name) push(s.name);
+            });
+        }
       });
+      (core.masksOfSandbox ? core.masksOfSandbox(sbId) : []).forEach(function (u) {
+        if (u && u.name) push(u.name);
+      });
+      /* 已登记的背景联系人也在池里（首次登记见 settle → applySettlement） */
+      ((ph && ph.bgContacts) || []).forEach(push);
     } catch (e) { /* 联系人缺位不拦结算 */ }
     return out.slice(0, 10);
   }
@@ -205,10 +222,19 @@
     if (opts.mode === 'bootstrap') sys.push('[MODE]\nbootstrap —— 初始生活底片，一生一次，遵守卡内「初始底片模式」一节。');
     if (opts.appOnly) sys.push('[MODE]\napp-refresh —— 手动单 App 刷新：只允许产出 [FOCUS] 指定 App 的 deltas，其余 App 一律为空。');
 
-    var contacts = contactsOf(sbId, char.id);
+    var contacts = contactsOf(sbId, char.id, ph);
+    /* 2026-10-29 用户点名：user 没设 NPC 时，消息/短信不该一直是空的 ——
+       允许模型根据人设和聊天记录编 1~2 个背景联系人，程序会登记
+       （phone.applySettlement 的 allowBgContacts 口子）。 */
+    var allowBg = contacts.length === 0;
+    opts.allowBg = allowBg;   /* 回带给 settle —— 落库校验用同一把尺子 */
     var user = [];
     user.push('[WORLD]\n岛屿：' + ((core.findSandbox(sbId) || {}).name || '') +
-      '。合法联系人（幕后交流对象只能从里面选）：' + (contacts.join('、') || '暂无（不要编造新亲友）'));
+      '。合法联系人（幕后交流对象只能从里面选）：' + (contacts.join('、') || '暂无') +
+      (allowBg
+        ? '\n联系人池是空的：你可以根据他的人设、职业和最近的聊天，安排 1～2 个**背景联系人**' +
+          '（朋友 / 同事 / 家人，名字要像真人、符合他的背景）。程序会把他们登记进通讯录，之后的结算继续认。'
+        : ''));
     var plans = phone.plansOf(ph.id).filter(function (p) {
       return ['brewing', 'preparing', 'scheduled'].indexOf(p.status) >= 0;
     });
@@ -231,17 +257,17 @@
          是模型偷懒的出口（真机连点全弹「没有新动静」）。单 App 刷新改成
          硬性 1～3 条；实在想不出大事就写他今天最可能做的小事。
          整段结算（else 分支）仍允许空 —— 那是后台自动跑，不该硬凑。 */
-      user.push('请按输出协议产出这个 App 的新内容（**必须给出 1～3 条 deltas，禁止返回空 deltas** —— ' +
-        '这是 user 手动点的刷新，一定要有新东西；想不出大事，就写他今天最可能做的一件小事）。');
+      user.push('请按输出协议产出这个 App 的新内容（**必须给出 3～5 条 deltas，五个左右，禁止返回空 deltas** —— ' +
+        '这是 user 手动点的刷新，一定要有新东西；想不出大事，就写他今天最可能做的几件小事）。');
       if (opts.nudge) {
-        user.push('[RETRY]\n上一轮你返回了空 deltas（或全部无效），已被退回。这一轮**必须**给出 1～3 条能落地的 deltas。');
+        user.push('[RETRY]\n上一轮你返回了空 deltas（或全部无效），已被退回。这一轮**必须**给出 3～5 条能落地的 deltas。');
       }
     } else {
       user.push(opts.mode === 'bootstrap'
         ? (BOOTSTRAP_ASK[opts.level] || BOOTSTRAP_ASK.light)
         : '请按输出协议结算这段时间的生活（没有合理内容就返回空 deltas）。');
       if (opts.nudge) {
-        user.push('[RETRY]\n上一轮你返回了空 deltas（或全部无效），已被退回。这一轮**必须**给出 1～3 条能落地的 deltas —— ' +
+        user.push('[RETRY]\n上一轮你返回了空 deltas（或全部无效），已被退回。这一轮**必须**给出 3～5 条能落地的 deltas —— ' +
           '从这段时间里他最可能做的小事里挑着写，不许再返回空。');
       }
     }
@@ -296,6 +322,9 @@
       nudge: opts.nudge,          /* 空手退回后的补写轮（2026-10-23） */
       from: opts.mode === 'bootstrap' ? null : from
     });
+    /* buildMessages 判定了这回合是否开了「背景联系人」口子（联系人池为空
+       才开），结算落库时用同一把尺子 —— 提示词和校验必须一致。 */
+    var allowBg = !!opts.allowBg;
     var runId = 'run_' + Date.now().toString(36);
 
     running[charId] = true;
@@ -317,7 +346,7 @@
       if (opts.mode === 'bootstrap') {
         if (ph.bootstrapStatus === 'completed') return { ok: false, error: '已经初始化过了' };
       }
-      var stat = phone.applySettlement(ph, parsed, runId);
+      var stat = phone.applySettlement(ph, parsed, runId, { allowBgContacts: allowBg });
       var patch = { settledUntil: Date.now() };
       if (opts.mode === 'bootstrap') {
         patch.bootstrapStatus = 'completed';

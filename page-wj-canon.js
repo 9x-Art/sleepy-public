@@ -430,7 +430,9 @@
       ctx.__paint = function () { paint(ctx); };
       paint(ctx);
     },
-    onShow: function (ctx) { if (ctx.__paint) ctx.__paint(); }
+    onShow: function (ctx) { /* 数据版本没变就不整页重画（手感批 2026-10-29，见 page-wj-foyer.wjUI.freshPaint） */
+ if (Sleepy.wjUI && Sleepy.wjUI.freshPaint) Sleepy.wjUI.freshPaint(ctx);
+ else if (ctx.__paint) ctx.__paint(); }
   });
 
 })(window);

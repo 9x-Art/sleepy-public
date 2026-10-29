@@ -423,18 +423,72 @@
     return val;
   }
 
-  function persist(top) {
+  /* 写盘版本号（2026-10-29 手感批）：每次 persist 计数 +1。
+     给 onShow 防重画用 —— 页面比对版本，数据没变就跳过整页重建，
+     不必自己记「上次画完之后有没有人写过」。写盘失败也算数：
+     cache 已经改了，读侧拿到的是新数据。 */
+  var versions = {};
+  function ver(top) { return versions[top] || 0; }
+
+  /* 2026-10-29 用户实锤「退出后再进聊天，消息没了」（多个 user 都遇到）：
+     最可疑的就是 localStorage 写满 —— 聊天全量住在一个键里，写满之后
+     每次 persist 都失败，**当时看不出任何异常**（内存里明明有），
+     app 一重启就从旧存档读 —— 中间那几条消息就像「凭空消失」。
+     所以写失败必须让人看见：节流 toast，别再静默。 */
+  var lastQuotaToastAt = 0;
+  function quotaToast(msg) {
+    var now = Date.now();
+    if (now - lastQuotaToastAt < 30000) return;   /* 30 秒最多提醒一次 */
+    lastQuotaToastAt = now;
     try {
-      global.localStorage.setItem(NS + top, JSON.stringify(cache[top]));
+      if (Sleepy.toast) Sleepy.toast(msg, 'err');
+      else if (global.console && global.console.error) global.console.error('[Sleepy 存储] ' + msg);
+    } catch (e) { /* 提醒失败不能拦写入 */ }
+  }
+
+  /* chats 写入审计（2026-10-29「退出重进消息没了」取证）：
+     每次写 chats 成功，顺带记一条 {n: 总消息数, bytes} 小账本。
+     下一次会话第一次写 chats 时对账：比上次少了 10 条以上 = 磁盘真的
+     发生了回退（不是渲染问题），当场弹出来告诉用户。
+     成本：一个几百字节的键，跟在本来就全量 stringify 的 chats 写后面。 */
+  function auditChats(jsonStr) {
+    try {
+      var list = cache.chats;
+      var n = 0;
+      if (Array.isArray(list)) {
+        for (var i = 0; i < list.length; i++) {
+          n += (list[i] && Array.isArray(list[i].messages)) ? list[i].messages.length : 0;
+        }
+      }
+      var prev = null;
+      try { prev = JSON.parse(global.localStorage.getItem(NS + 'chatsAudit') || 'null'); } catch (e) {}
+      if (prev && typeof prev.n === 'number' && prev.n >= n + 10) {
+        quotaToast('检测到聊天记录比上次少了 ' + (prev.n - n) + ' 条（上次 ' + prev.n + '、现在 ' + n +
+          '）。如果不是你自己删的，请到 设置 → 数据与备份 导出存档并反馈 —— 这是定位「消息消失」的关键证据。');
+      }
+      global.localStorage.setItem(NS + 'chatsAudit',
+        JSON.stringify({ at: Date.now(), n: n, bytes: jsonStr ? jsonStr.length : 0 }));
+    } catch (e) { /* 审计失败不拦写入 */ }
+  }
+
+  function persist(top) {
+    versions[top] = (versions[top] || 0) + 1;
+    try {
+      var jsonStr = JSON.stringify(cache[top]);
+      global.localStorage.setItem(NS + top, jsonStr);
+      if (top === 'chats') auditChats(jsonStr);
       return true;
     } catch (e) {
+      var quota = e && (e.name === 'QuotaExceededError' ||
+        /quota|exceed/i.test(String(e.message || '')));
       lastError = {
         type: 'write',
         key: top,
-        message: (e && e.name === 'QuotaExceededError')
+        message: quota
           ? '本地存储空间已满，请先导出备份再清理数据'
           : ((e && e.message) ? e.message : String(e))
       };
+      if (quota) quotaToast('本地存储空间已满：刚才的内容可能没存上（重启后会消失）。请到 设置 → 备份 导出存档，再清理旧数据。');
       return false;
     }
   }
@@ -725,6 +779,9 @@
         delete cache[cleared[j]];
         ls.removeItem(NS + cleared[j]);
       }
+      /* 审计账本跟着清：不清的话恢复/清空后的第一笔写入会对着旧账
+         报「少了 N 条」（假警报） */
+      ls.removeItem(NS + 'chatsAudit');
     } catch (e) {
       lastError = { type: 'clear', key: null, message: (e && e.message) || String(e) };
       return { ok: false, cleared: cleared.length, message: (e && e.message) || String(e) };
@@ -1068,6 +1125,7 @@
     defaults: function () { return clone(DEFAULTS); },
     get: get,
     set: set,
+    ver: ver,
     setMany: setMany,
     remove: remove,
     exportAll: exportAll,

@@ -181,13 +181,34 @@
     },
     onShow: function (ctx) {
       /* 从创建流程 / 详情页回来要看到最新的：新建的草稿、改过的标题、
-         刚写完的章节，全都落在这里。 */
-      if (ctx.__paint) ctx.__paint();
+         刚写完的章节，全都落在这里 —— 但数据版本没变就不必整页重画
+         （2026-10-29 用户报「来回切换白屏等一下」）。 */
+      wjFreshPaint(ctx);
     }
   });
 
+  /* ------------------------ onShow 防重画 ------------------------
+     2026-10-29 用户报手感：帷境各页 onShow 一律整页 innerHTML 重建，
+     返回 / 关弹层都要白屏等一下。改成比对 store 写盘版本号：数据没动
+     就跳过 paint，页面原样留着（app.js 的页面栈本来就只藏不销毁）。
+     数据动了（写作品 / 写同席 session / 改文风）版本必然 +1，照样重画，
+     不会漏更新。render 和首次 onShow 之间没有写入，版本相同自然跳过
+     —— 顺便把「首次展示画两遍」也省了。 */
+  function wjFreshPaint(ctx, tops) {
+    if (!ctx || !ctx.__paint) return;
+    var v = '';
+    if (Sleepy.store && Sleepy.store.ver) {
+      (tops || ['wjWorks', 'wjSessions', 'wjTickets', 'wjStyleCfg'])
+        .forEach(function (t) { v += t + ':' + Sleepy.store.ver(t) + '|'; });
+    }
+    if (ctx.__wjVer === v) return;
+    ctx.__wjVer = v;
+    ctx.__paint();
+  }
+
   /* 别的页面也要用这套小工具，挂出去省得各写一遍 */
   Sleepy.wjUI = { btn: btn, coverEl: coverEl,
-    statusText: statusText, progressLine: progressLine };
+    statusText: statusText, progressLine: progressLine,
+    freshPaint: wjFreshPaint };
 
 })(window);

@@ -690,8 +690,23 @@
     return names.length ? names : null;
   }
 
-  /* 单条 delta 校验 + 归一化。不合法返回 null（丢弃单项不阻塞其他）。 */
-  function validateDelta(d) {
+  /* 背景联系人（2026-10-29 用户点名）：user 没设 NPC 时，允许模型根据
+     人设 / 聊天记录编 1~2 个背景联系人（朋友 / 同事 / 家人）。首次出现
+     时在这里登记进 phone 记录，之后每次校验都认 —— 不是凭空一次性。 */
+  function registerBgContact(phoneId, name) {
+    var ph = getPhone(phoneId);
+    if (!ph || !name) return;
+    var list = ph.bgContacts || [];
+    if (list.indexOf(name) >= 0) return;
+    list.push(name);
+    ph.bgContacts = list.slice(-12);   /* 池子上限，防无限膨胀 */
+    savePhone(ph);
+  }
+
+  /* 单条 delta 校验 + 归一化。不合法返回 null（丢弃单项不阻塞其他）。
+     allowBg = 本次结算允许登记新背景联系人（只有 buildMessages 在
+     联系人池为空时才开这个口子）。命中时 out.bgNew = 新登记的名字。 */
+  function validateDelta(d, ph, allowBg) {
     if (!d || typeof d !== 'object') return null;
     var app = d.app;
     var op = d.op;
@@ -701,14 +716,21 @@
     if (app === 'messages' && op === 'add_derived') {
       var withName = clipStr(p.withName || p.with || '', 20);
       if (!withName) return null;
-      /* 不认得这个名字 = 模型在编联系人，整条丢弃 */
+      /* 不认得这个名字：要么丢弃，要么（本回合允许背景联系人时）登记。
+         ph.bgContacts 里已有的背景联系人永远放行。 */
       var known = knownPeople();
-      if (known && known.indexOf(withName) < 0) return null;
+      var bgHit = ph && (ph.bgContacts || []).indexOf(withName) >= 0;
+      var bgNew = null;
+      if (known && known.indexOf(withName) < 0 && !bgHit) {
+        if (!allowBg) return null;
+        bgNew = withName;
+      }
       var lines = (p.lines || []).slice(0, 6).map(function (ln) {
         return { who: ln && ln.who === 'other' ? 'other' : 'char', text: clipStr(ln && ln.text, 200) };
       }).filter(function (ln) { return ln.text; });
       if (lines.length < 2) return null;    /* 一来一回才算一段交流 */
       out.data = { kind: 'derived', withName: withName, title: clipStr(p.title, 30), lines: lines };
+      out.bgNew = bgNew;
     } else if (app === 'messages' && op === 'add_draft') {
       var t = clipStr(p.text || p.content, 300);
       if (!t) return null;
@@ -789,7 +811,11 @@
       if (!sb2) return null;
       if (sk === 'chat') {
         var knownSms = knownPeople();
-        if (knownSms && knownSms.indexOf(sf) < 0) return null;
+        var smsBgHit = ph && (ph.bgContacts || []).indexOf(sf) >= 0;
+        if (knownSms && knownSms.indexOf(sf) < 0 && !smsBgHit) {
+          if (!allowBg) return null;
+          out.bgNew = sf;
+        }
       }
       out.data = { kind: sk, from: sf, text: sb2,
         /* 心声（2026-10-29 批）：他看到/发出这条时的一句心里话，只给 chat 类留 */
@@ -1169,12 +1195,15 @@
 
   /* 结算落库：校验 → 逐条写入 → 推进 settledUntil（幂等的关键：
      写失败不推进，下一轮补结算 —— 架构 v1 §12）。 */
-  function applySettlement(phone, parsed, runId) {
+  function applySettlement(phone, parsed, runId, opts) {
+    opts = opts || {};
     var deltas = (parsed && Array.isArray(parsed.deltas)) ? parsed.deltas : [];
     var applied = 0, dropped = 0;
     deltas.slice(0, 12).forEach(function (d) {
-      var v = validateDelta(d);
+      var v = validateDelta(d, phone, !!opts.allowBgContacts);
       if (!v) { dropped++; return; }
+      /* 首次出现的背景联系人登记进手机，下次不用再开口子也认 */
+      if (v.bgNew) registerBgContact(phone.id, v.bgNew);
       if (applyDelta(phone, v, runId)) applied++; else dropped++;
     });
     (parsed.planChanges || []).slice(0, 2).forEach(function (pc) {
