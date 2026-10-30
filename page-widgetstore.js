@@ -37,6 +37,21 @@
   function cols() { return (Sleepy.desktop && Sleepy.desktop.COLS) || 4; }
   function rows() { return (Sleepy.desktop && Sleepy.desktop.ROWS) || 6; }
   function keyOf(c) { return c.type + '|' + (c.app || '') + '|' + (c.label || ''); }
+  /* 宽松键：只看型号（app 入口的身份是 app，label 改名不该算两件）。
+     只对 app 型生效 —— 自定义组件大家都是 custom|''，宽松匹配会把
+     别的模板误判成「在桌上」。 */
+  function coreKeyOf(c) { return c.type + '|' + (c.app || ''); }
+  function isAppCell(c) { return !!(c && c.type === 'app' && c.app); }
+
+  /* 当前岛 id。回收站的记录带 sandboxId 章（rememberRemoved 盖的），
+     只列**本岛**删的 —— A 岛删的东西跑到 B 岛「你删过的」里、
+     还能装进 B 岛，是 2026-10-30 体检实锤的跨岛串账。 */
+  function scopeIdNow() {
+    try {
+      var sb = core.activeSandbox();
+      return (sb && sb.id) || '';
+    } catch (e) { return ''; }
+  }
 
   /* 上架、但**不在默认户型里**的型号（2026-09-22 用户「人1」）。
 
@@ -224,15 +239,27 @@
     /* 已经回到桌面上的不列 —— 户型**版本升级**会以新户型为骨架补齐组件，
        之前删掉的可能被迁移带了回来（实测：删掉的照片墙升 v5 时回来了），
        这时再列着「装回来」，点了只会「放不下」。 */
+    var sid = scopeIdNow();
     var onDesk = {};
+    var onDeskLoose = {};
     Sleepy.desktop.getDesktop().pages.forEach(function (l) {
-      (l || []).forEach(function (c) { onDesk[keyOf(c)] = 1; });
+      (l || []).forEach(function (c) {
+        onDesk[keyOf(c)] = 1;
+        if (isAppCell(c)) onDeskLoose[coreKeyOf(c)] = 1;
+      });
     });
     var seen = {};
     var out = [];
     list.slice().reverse().forEach(function (r) {
+      /* 盖了**别的岛**章的不列（A 岛删的跑到 B 岛「你删过的」是
+         2026-10-30 体检实锤的跨岛串账）；没盖章 = 全局删的/老数据，
+         照旧显示 —— 老记录补不上章，不能一刀切。 */
+      if (r.sandboxId && r.sandboxId !== sid) return;
       var key = keyOf(r);
       if (seen[key] || onDesk[key]) return;
+      /* app 入口用宽松键对账：label 改名（仓库→御膳房）后旧记录
+         不该再列出来装回一个重复入口 */
+      if (isAppCell(r) && onDeskLoose[coreKeyOf(r)]) return;
       seen[key] = 1;
       out.push(r);
     });
@@ -351,6 +378,8 @@
           label: r.label || ''
         };
         if (r.app) cell.app = r.app;
+        /* 模板链接跟走（批1 在 rememberRemoved 记了账，这里接住） */
+        if (r.tplId) cell.tplId = r.tplId;
         d.pages[r.pi].push(cell);
         Sleepy.desktop.setDesktop(d);
         return { ok: true, cell: cell, page: r.pi, home: true };

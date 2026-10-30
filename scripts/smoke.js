@@ -7397,6 +7397,194 @@ t('组件商城批3链路：上架新件→应用→计数→移除→rememberRe
   return { 上架: 4, 应用: true, 移除记账: true, 原位装回: [rec.x, rec.y, rec.pi] };
 });
 
+/* ============ 2026-10-30 全面体检修复批（八项实锤） ============ */
+
+/* 体检#1【高】：migrateDesktop 从默认户型起骨架，用户自装组件（newId('w')）
+   不在骨架里 → 升级 LAYOUT_VERSION 时静默蒸发。修复后必须原位搬回。 */
+t('体检#1：户型升级不丢自装组件（tplId 跟着走）', () => {
+  const old = S.desktop.defaultDesktop();
+  old.version = S.desktop.LAYOUT_VERSION - 1;
+  old.pages[2].push({ i: 'wAudit1', type: 'custom', tplId: 'tplAudit1',
+    label: '体检组件', x: 1, y: 6, w: 1, h: 1 });
+  S.store.set('desktop', old);
+  S.store.set('desktopRemoved', []);
+  const d = S.desktop.getDesktop();
+  let found = null;
+  d.pages.forEach((l) => (l || []).forEach((c) => {
+    if (c.type === 'custom' && c.i === 'wAudit1') found = c;
+  }));
+  S.store.set('desktop', null);
+  if (!found) throw new Error('户型升级把自装组件蒸发了（id 不在骨架里就丢）');
+  if (found.tplId !== 'tplAudit1') throw Error('tplId 没跟走');
+  return { 保留了: found.label, tplId: found.tplId };
+});
+
+/* 体检#1b：搬回时撞了/放不下 → 记回收站，绝不静默丢。
+   空壳（blank）不占格子直接剥；4×6 的自装件在默认户型里哪儿都塞不下。 */
+t('体检#1b：放不下时进回收站（不蒸发），blank 壳不搬', () => {
+  const full = [];
+  for (let y = 1; y <= S.desktop.ROWS; y++) {
+    for (let x = 1; x <= S.desktop.COLS; x++) {
+      full.push({ i: 'b' + y + x, type: 'blank', x, y, w: 1, h: 1 });
+    }
+  }
+  const pages = [full.slice(), full.slice(), full.slice(), full.slice()];
+  pages[1].push({ i: 'wAudit2', type: 'custom', tplId: 'tplAudit2',
+    label: '没地方了', x: 1, y: 1, w: 4, h: 6 });
+  S.store.set('desktop', { version: S.desktop.LAYOUT_VERSION - 1, pages });
+  S.store.set('desktopRemoved', []);
+  S.desktop.getDesktop();
+  const recs = S.store.get('desktopRemoved') || [];
+  const rec = recs.filter((r) => r.type === 'custom' && r.label === '没地方了')[0];
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', []);
+  if (!rec) throw new Error('放不下的自装组件蒸发了（既没上桌也没进回收站）');
+  if (rec.tplId !== 'tplAudit2') throw new Error('进回收站也丢了 tplId');
+  return { 记账: rec.label, tplId跟走: true };
+});
+
+/* 体检#3【中】：rememberRemoved 漏 tplId → 自制组件删了再装回必显示
+   「模板不见了」。修复：记账带 tplId，restoreWidget 装回接住。 */
+t('体检#3：自制组件删→装回，模板链接不断', () => {
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', []);
+  S.desktop.rememberRemoved({ type: 'custom', tplId: 'tplAudit3',
+    label: '我的模板', w: 1, h: 1, x: 1, y: 1 }, 2);
+  const rec = (S.store.get('desktopRemoved') || []).pop();
+  if (!rec || rec.tplId !== 'tplAudit3') throw new Error('记账还是没带 tplId');
+  const back = S.widgetStore.restoreWidget(rec);
+  if (!back.ok) throw new Error('装回失败：' + back.message);
+  if (back.cell.tplId !== 'tplAudit3') throw new Error('装回的格子丢了 tplId');
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', []);
+  return { 记账: true, 装回tplId: back.cell.tplId };
+});
+
+/* 体检#4【中】：stripRetired 只洗桌面不洗回收站 → 下架件记录阴魂不散，
+   装回即被剥（toast 说成功格子却没了）。修复：回收站一并洗。 */
+t('体检#4：下架件的回收站记录一并剥掉', () => {
+  const sid = S.core.scopeId();
+  S.store.set('desktopRemoved', [
+    { type: 'starbottle', label: '心声星瓶', w: 1, h: 1, at: 1 },
+    { type: 'char', label: '角色卡', w: 1, h: 1, at: 2, sandboxId: sid }
+  ]);
+  S.desktop.getDesktop();          /* 读档即清洗 */
+  const recs = S.store.get('desktopRemoved') || [];
+  S.store.set('desktopRemoved', []);
+  if (recs.some((r) => r.type === 'starbottle')) {
+    throw new Error('回收站里的下架件还在（装回即蒸发的陷阱还在）');
+  }
+  if (!recs.some((r) => r.type === 'char')) throw new Error('误伤了正常记录');
+  return { 星瓶记录: '已剥', 角色卡记录: '健在' };
+});
+
+/* 体检#2【中高】：desktopRemoved 跨岛串账 —— A 岛删的跑到 B 岛。
+   修复后：盖了**别的岛**章的不列；没盖章（全局/老数据）照旧显示。 */
+t('体检#2：回收站不跨岛串账（别岛章隐藏、无章照旧）', () => {
+  S.store.set('desktop', null);
+  const sid = S.core.scopeId();
+  S.store.set('desktopRemoved', [
+    { type: 'char', label: '本岛删的', w: 1, h: 1, at: 1, sandboxId: sid },
+    { type: 'char', label: '别岛删的', w: 1, h: 1, at: 2, sandboxId: 'sb-not-this-island' },
+    { type: 'char', label: '老记录无章', w: 1, h: 1, at: 3 }
+  ]);
+  const list = S.widgetStore.removed().map((r) => r.label);
+  S.store.set('desktopRemoved', []);
+  if (list.indexOf('别岛删的') >= 0) throw new Error('别岛的账还串过来');
+  if (list.indexOf('本岛删的') < 0) throw new Error('本岛的账反而不见了');
+  if (list.indexOf('老记录无章') < 0) throw new Error('无章老记录被一刀切没了');
+  return { 列出: list };
+});
+
+/* 体检#6【低】：app 入口改名（仓库→御膳房）后旧账用 label 对不上，
+   会列出旧 label 的重复入口。修复：app 型用 type|app 宽松键对账。 */
+t('体检#6：app 改名后旧账不再装回重复入口', () => {
+  S.store.set('desktop', null);
+  S.store.set('desktopRemoved', [
+    { type: 'app', app: 'repo', label: '仓库', w: 1, h: 1, at: 1 }
+  ]);
+  const labels = S.widgetStore.removed().map((r) => r.label);
+  S.store.set('desktopRemoved', []);
+  if (labels.indexOf('仓库') >= 0) {
+    throw new Error('改名前的旧账还在列（装回就是重复入口）');
+  }
+  return { 旧账: '已按 app 对账隐去' };
+});
+
+/* 体检#5【中】：chatsAudit/chatsTag 是本机会话运行痕迹，不该进用户备份
+   （以前靠兜底扫描混进包里，导入侧清了账又被写回）。 */
+t('体检#5：审计账本不进用户备份，导入也忽略', () => {
+  S.store.set('chatsAudit', { n: 42, at: 1 });
+  S.store.set('chatsTag', { sid: 'sForeign', at: 1 });
+  const pack = S.store.exportUserData();
+  if ('chatsAudit' in pack.data || 'chatsTag' in pack.data) {
+    throw new Error('审计账本混进了用户备份');
+  }
+  const res = S.store.importAll({ app: 'sleepy', data: {
+    chatsAudit: { n: 999, at: 2 }, chatsTag: { sid: 'sForeign2', at: 2 }
+  } });
+  const audit = S.store.get('chatsAudit');
+  S.store.remove('chatsAudit');
+  S.store.remove('chatsTag');
+  if (!(res.skipped || []).some((k) => k === 'chatsAudit' || k === 'chatsTag')) {
+    throw new Error('导入侧没把账本当过程数据忽略');
+  }
+  if (audit && audit.n === 999) throw new Error('异机旧账被写回来了');
+  return { 导出不带: true, 导入忽略: true };
+});
+
+/* 体检#7+#8：setDesktop 首次自定义落岛覆盖 —— ①整份复制不得裹进别的岛
+   （岛套岛数据膨胀）②非骨架格子重新发 id、widgetCfg 条目迁移
+   （否则倒计时日子/拍立得照片跨岛共享一份，A 岛改 B 岛跟着变）。
+   注意 addWidget 自己就会给「当前岛」落一次覆盖，所以要换一座**新岛**
+   再落一次，才能踩到「首次自定义」的 remap 分支。 */
+t('体检#7/#8：落岛覆盖剥 islands + widgetCfg 按岛重键', () => {
+  S.store.set('desktop', null);
+  S.store.set('widgetCfg', {});
+  /* 直接把倒计时摆上**全局底座**（addWidget 会塞进活动岛的覆盖层，
+     踩不到「全局布局带自装件」这个前提） */
+  const base = S.desktop.getDesktop();
+  base.pages[2].push({ i: 'wGlobalCd', type: 'countdown',
+    label: '倒数日方', x: 1, y: 6, w: 2, h: 1 });
+  S.store.set('desktop', base);
+  S.store.set('widgetCfg', { wGlobalCd: { target: '2027-01-01', label: '体检' } });
+  const globalId = 'wGlobalCd';
+  const sbNew = S.core.createSandbox('archipelago', '体检岛');
+  const prev = (S.core.activeSandbox() || {}).id || null;
+  S.core.setActiveSandbox(sbNew.id);
+  let ov = null, novId = null, novCfg = null, gcfg = null;
+  try {
+    /* 该岛首次自定义：当前（全局）布局整份复制进覆盖层并 remap */
+    S.desktop.setDesktop(S.desktop.getDesktop());
+    const b2 = S.store.get('desktop');
+    ov = b2.islands && b2.islands[sbNew.id];
+    if (ov) {
+      ov.pages.forEach((l) => (l || []).forEach((c) => {
+        if (c.type === 'countdown') novId = c.i;
+      }));
+    }
+    const cfgNow = S.store.get('widgetCfg') || {};
+    novCfg = novId ? cfgNow[novId] : null;    /* 岛上那份：迁过来的 */
+    gcfg = cfgNow[globalId];                  /* 全局那份：原地不动的 */
+  } finally {
+    if (prev) S.core.setActiveSandbox(prev);
+    S.core._purgeSync.sandbox(sbNew.id);
+    S.store.set('widgetCfg', {});
+    S.store.set('desktop', null);
+  }
+  if (!ov) throw new Error('覆盖层没落上');
+  if (ov.islands) throw new Error('覆盖层里裹进了 islands（岛套岛）');
+  if (!novId || novId === globalId) {
+    throw new Error('非骨架格子没重发 id（跨岛共享配置的洞还在）');
+  }
+  if (!novCfg || novCfg.target !== '2027-01-01') {
+    throw new Error('widgetCfg 条目没迁到新 id 下');
+  }
+  /* remap 是复制不是搬走：全局那份的配置必须还在 */
+  if (!gcfg || gcfg.target !== '2027-01-01') throw new Error('全局配置被 remap 搬走了');
+  return { 重发id: true, 配置跟迁: true, 全局配置健在: true, 无岛套岛: true };
+});
+
 console.log('\n--- page:朋友圈（微信式发布 + 四档可见 + 赞的反应）---');
 
 console.log('\n--- page:朋友圈（反应决策步 · 活人感）---');
@@ -17781,7 +17969,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v296';
+const EXPECTED_SW_CACHE = 'sleepy-v297';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

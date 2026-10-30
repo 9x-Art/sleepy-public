@@ -426,6 +426,13 @@
     });
     return hit;
   }
+  /* 回收站里的下架件记录也剥（2026-10-30 体检实锤）：留着只会
+     「装回来 toast 说成功、下次读档又被剥掉」——白开心一场。 */
+  function stripRetiredRemoved() {
+    var list = store.get('desktopRemoved') || [];
+    var keep = list.filter(function (r) { return !(r && RETIRED_TYPES[r.type]); });
+    if (keep.length !== list.length) store.set('desktopRemoved', keep);
+  }
 
   function getDesktop() {
     var d = store.get('desktop');
@@ -434,6 +441,7 @@
     if (!d || !Array.isArray(d.pages) || d.pages.length !== PAGES) {
       d = defaultDesktop();
       store.set('desktop', d);
+      stripRetiredRemoved();
       return withIslandOverlay(d);
     }
 
@@ -445,8 +453,10 @@
       d = migrateDesktop(d, LAYOUT_VERSION);
       store.set('desktop', d);
     }
-    /* 下架件清洗：全局底座剥完落盘（岛覆盖层在 withIslandOverlay 里洗） */
+    /* 下架件清洗：全局底座剥完落盘（岛覆盖层在 withIslandOverlay 里洗）
+       + 回收站里的下架件记录一并剥 */
     if (stripRetired(d)) store.set('desktop', d);
+    stripRetiredRemoved();
     return withIslandOverlay(d);
   }
 
@@ -490,11 +500,24 @@
       base = defaultDesktop();
     }
     base.islands = base.islands || {};
+    /* 岛套岛防线（2026-10-30 体检实锤）：无岛时 getDesktop() 返回的 base
+       自带别的岛的 islands，整份复制进本岛覆盖层会把它们一起裹进来 ——
+       数据膨胀 + 幽灵覆盖。岛的布局就是几屏格子，永远不该再含 islands。 */
+    function sanitize(d) {
+      if (!d || !d.islands) return d;
+      var cp = JSON.parse(JSON.stringify(d));
+      delete cp.islands;
+      return cp;
+    }
     var ov = base.islands[sbId];
-    if (!ov || !Array.isArray(ov.pages) || ov.pages.length !== PAGES) {
-      /* 这座岛第一次自定义：当前生效的布局（多半是全局那份 + 这次的改动）
-         整份复制下来当岛的底 —— 全局那份保持不动，别的岛不受牵连。 */
-      base.islands[sbId] = JSON.parse(JSON.stringify(d));
+    var firstCustom = !ov || !Array.isArray(ov.pages) || ov.pages.length !== PAGES;
+    if (firstCustom) {
+      /* 首次自定义：整份复制 + 非骨架格子重新发 id、widgetCfg 条目跟着迁
+         （体检实锤：同一份全局布局复制进多座岛后 w-id 相同，
+         倒计时日子/拍立得照片跨岛共享一份，A 岛改 B 岛跟着变）。 */
+      base.islands[sbId] = remapForOverlay(d);
+    } else if (d && d.islands) {
+      base.islands[sbId] = sanitize(d);
     } else {
       base.islands[sbId] = d;
     }
@@ -543,8 +566,101 @@
       }
     });
 
+    /* 第三步（2026-10-30 体检实锤）：用户自装的组件（商城摆出去、
+       id 是 newId('w') 生成的）不在骨架里 —— 以前走到这里直接蒸发，
+       注释明明写着「保住自定义」。修：原位搬回；撞了/放不下就找空位；
+       真没地方就记进回收站，绝不静默丢。 */
+    var kept = {};
+    fresh.pages.forEach(function (cells) {
+      cells.forEach(function (c) { if (c && c.i) kept[c.i] = 1; });
+    });
+    var orphans = [];
+    (old.pages || []).forEach(function (cells) {
+      (cells || []).forEach(function (c) {
+        if (!c || !c.i || kept[c.i]) return;
+        if (c.type === 'blank') return;    /* 空壳不值得占格子 */
+        kept[c.i] = 1;
+        orphans.push(c);
+      });
+    });
+    orphans.forEach(function (c) {
+      var w = Math.min(c.w || 1, COLS), hh = Math.min(c.h || 1, ROWS);
+      var spot = null;
+      /* 原位：重叠只查**本屏**（照片墙在第 0 屏占满 4×6，跨屏查的话
+         它会跟任何坐标都「撞」，孤儿永远落不了位 —— 第一版就栽在这） */
+      var origPi = -1;
+      for (var pi = 0; pi < (old.pages || []).length; pi++) {
+        if ((old.pages[pi] || []).some(function (o) { return o && o.i === c.i; })) { origPi = pi; break; }
+      }
+      if (origPi >= 0 && c.x >= 1 && c.y >= 1 &&
+          c.x + w - 1 <= COLS && c.y + hh - 1 <= ROWS &&
+          !pageHits(fresh.pages[origPi], { x: c.x, y: c.y, w: w, h: hh })) {
+        spot = { pi: origPi, x: c.x, y: c.y };
+      } else {
+        spot = findFreeSpot(fresh.pages, w, hh);
+      }
+      if (spot) {
+        while (fresh.pages.length <= spot.pi) fresh.pages.push([]);
+        fresh.pages[spot.pi].push({
+          i: c.i, type: c.type, app: c.app || '', label: c.label || '',
+          tplId: c.tplId,
+          x: spot.x, y: spot.y, w: w, h: hh
+        });
+      } else {
+        rememberRemoved(c, null);
+      }
+    });
+
     fresh.version = toVersion;
     return fresh;
+  }
+
+  /* 单屏内是否有人跟 probe 重叠 */
+  function pageHits(pageCells, probe) {
+    var hit = false;
+    (pageCells || []).forEach(function (c) { if (overlap(probe, c)) hit = true; });
+    return hit;
+  }
+
+  /* 岛覆盖首次落底：非骨架格子（商城装出去的 w-id 格）重新发 id，
+     widgetCfg 条目迁到新 id 下 —— 骨架格（p1-head 这些）每岛同 id 是
+     有意的（渲染器按 id 找皮肤），不动。 */
+  function remapForOverlay(d) {
+    var cp = JSON.parse(JSON.stringify(d));
+    delete cp.islands;
+    var skeleton = {};
+    defaultDesktop().pages.forEach(function (cells) {
+      (cells || []).forEach(function (c) { if (c && c.i) skeleton[c.i] = 1; });
+    });
+    var cfg = store.get('widgetCfg') || {};
+    var moved = null;
+    cp.pages.forEach(function (cells) {
+      (cells || []).forEach(function (c) {
+        if (!c || !c.i || skeleton[c.i]) return;
+        var nid = core.newId('w');
+        if (cfg[c.i]) {
+          if (!moved) moved = {};
+          moved[nid] = cfg[c.i];
+        }
+        c.i = nid;
+      });
+    });
+    if (moved) store.set('widgetCfg', Object.assign({}, cfg, moved));
+    return cp;
+  }
+
+  /* 找第一块放得下的空位（跨屏找；widgetstore 的 findSpot 同思路，
+     这里不能反过来依赖它 —— 脚本加载顺序 page-desktop 在前）。
+     重叠只跟**当前扫到的这一屏**比，别拿全桌面的格子来撞。 */
+  function findFreeSpot(pages, w, h) {
+    for (var pi = 0; pi < pages.length; pi++) {
+      for (var y = 1; y + h - 1 <= ROWS; y++) {
+        for (var x = 1; x + w - 1 <= COLS; x++) {
+          if (!pageHits(pages[pi], { x: x, y: y, w: w, h: h })) return { pi: pi, x: x, y: y };
+        }
+      }
+    }
+    return null;
   }
 
   function overlap(A, B) {
@@ -1080,6 +1196,9 @@
       x: cell.x, y: cell.y, pi: typeof pi === 'number' ? pi : null,
       at: Date.now()
     };
+    /* 自制组件的模板链接必须跟走（2026-10-30 体检实锤：漏了它，
+       装回来永远「模板不见了」——模板明明还在）。 */
+    if (cell.tplId) rec.tplId = cell.tplId;
     if (core.tagScope) core.tagScope(rec);
     list.push(rec);
     store.set('desktopRemoved', list.slice(-60));

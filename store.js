@@ -660,8 +660,14 @@
        · **用户导入**忽略它们 —— 本机的迁移事务状态只由本机的迁移流程管，
          旧备份不能把它带回来、更不能覆盖掉。（sleepy.rb.* 不在 store 的
          命名空间里，本来就进不了导出，也不需要在这里排除。） */
-  var PROCESS_KEYS = ['charMemMigrationState', 'vecEpoch'];
+  var PROCESS_KEYS = ['charMemMigrationState', 'vecEpoch',
+    'chatsAudit', 'chatsTag'];
   var PROCESS_PREFIXES = ['charMemBackup:', 'vecCursor', 'vecFail:'];
+  /* chatsAudit / chatsTag（2026-10-30 体检实锤）：双会话防线的会话标记
+     和「少了 N 条」对账账本都是**本机会话的运行痕迹** —— 以前不在
+     DEFAULTS 里，靠兜底扫描混进了用户备份；导入侧 clearUserData 特意
+     清了账，importAll 又从备份写回去，清账白做。归入过程数据：
+     导出不带、导入忽略，内部快照（回滚）照常带着。 */
 
   /* ---- 设备本地键（2026-10-07 协议同意标记带出来的）----
      「这台设备上发生过什么」：协议同意标记 legalAgreedAt 属于这一类。
@@ -836,8 +842,10 @@
         ls.removeItem(NS + cleared[j]);
       }
       /* 审计账本跟着清：不清的话恢复/清空后的第一笔写入会对着旧账
-         报「少了 N 条」（假警报） */
+         报「少了 N 条」（假警报）。会话标记一起清：导入后它留着别的
+         会话的 sid，下一笔写入会白跑一次磁盘合并。 */
       ls.removeItem(NS + 'chatsAudit');
+      ls.removeItem(NS + 'chatsTag');
     } catch (e) {
       lastError = { type: 'clear', key: null, message: (e && e.message) || String(e) };
       return { ok: false, cleared: cleared.length, message: (e && e.message) || String(e) };
