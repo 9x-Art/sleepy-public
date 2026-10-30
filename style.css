@@ -232,8 +232,11 @@
   --ease-page:cubic-bezier(.32,.72,0,1);
 }
 
-/* PWA standalone 边到边：顶部最小让位 47px（变量定义与说明见 ：root 内 --safe-top-min） */
-html.ios-pwa-edge{ --safe-top-min:47px; }
+/* PWA standalone 边到边：顶部最小让位 59px（变量定义与说明见 ：root 内 --safe-top-min）。
+   47 → 59（2026-10-30 真机反馈「上面还是虚糊」）：47 是刘海屏口径，灵动岛
+   机器真实 inset 是 59 —— 垫 47 差 12px，内容还是顶进状态栏。刘海机在这条
+   兜底下会多垫 12px（顶部稍空），比「时钟压在内容上」划算，纯外观取舍。 */
+html.ios-pwa-edge{ --safe-top-min:59px; }
 
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -5039,10 +5042,12 @@ html.kb-open .input-area{padding-bottom:6px;}
   border-radius:3px;
 }
 
+/* 底部让位 14 → 8（2026-10-30 真机「下面太宽」）：home 条带 34px 砍不掉，
+   dock 自己再让 14 就凑成 48px 空带；8px 是手势条到控件的最小呼吸。 */
 .dt-dock{
   position:absolute;
   left:20px;right:20px;
-  bottom:calc(var(--safe-bottom) + 14px);
+  bottom:calc(var(--safe-bottom) + 8px);
   height:74px;
   display:flex;
   align-items:center;

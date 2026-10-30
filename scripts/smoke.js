@@ -5481,7 +5481,7 @@ t('iOS 安全区 v284：fallback 合成 + JS 禁写终值 + 冷启动有限重�
   }
   /* ③b standalone 边到边的顶部最小让位：探针挂类 + CSS 只经 --safe-top-min 消费 */
   if (app.indexOf("ios-pwa-edge") < 0) throw new Error('app.js 缺 ios-pwa-edge 边到边检测');
-  if (!/--safe-top-min:47px;/.test(css)) throw new Error('CSS 缺 --safe-top-min:47px 兜底');
+  if (!/--safe-top-min:59px;/.test(css)) throw new Error('CSS 缺 --safe-top-min:59px 兜底');
   /* ④ iOS 类 + 键盘残留兜底清理 */
   if (app.indexOf("d.classList.add('ios')") < 0) throw new Error('app.js 没打 html.ios 类');
   if (app.indexOf("root.style.removeProperty('--kb-inset')") < 0 ||
@@ -18012,7 +18012,9 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    基准随批 v283 → v284。 */
 /* v300（2026-10-30）：注释去外部项目名（sw.js 本体注释变）——
    基准随批 v299 → v300。 */
-const EXPECTED_SW_CACHE = 'sleepy-v300';
+/* v301（2026-10-30 二）：PWA 边到边真机返修（safe-top-min 47→59 护栏
+   同步 + dt-dock 14→8 无钉）—— 基准随批 v300 → v301。 */
+const EXPECTED_SW_CACHE = 'sleepy-v301';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
