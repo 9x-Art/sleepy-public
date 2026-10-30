@@ -339,6 +339,19 @@
          空 = 跟随主题，把覆盖摘掉 */
       if (a.textColor) phone.style.setProperty('--g-ink', a.textColor);
       else phone.style.removeProperty('--g-ink');
+      /* PWA 底条（2026-10-30 用户反馈「加到主屏后下面空一截」）：
+         iOS standalone 下系统把内容区从 home 条上方推开时，App（100dvh）
+         到不了物理屏幕底，下面露的是 body 画布的底色 —— 而它写死
+         #FFFFFF，夜灯下就是刺眼白条。body 画布跟主题底色走；
+         html 同步兜 overscroll 回弹露出的边。主题变量挂在
+         #phone[data-theme] 上，body 够不着，所以在这里直接读现成值。 */
+      try {
+        var base = getComputedStyle(phone).getPropertyValue('--g-base').trim();
+        if (base) {
+          document.body.style.background = base;
+          document.documentElement.style.background = base;
+        }
+      } catch (e) { /* 忽略：量不出就保持原样 */ }
     }
     applyFont(a.fontUrl);
     applyDesktop();

@@ -4679,61 +4679,76 @@
 
         var list = h('div', 'msg-pop-list');
 
-        var items = [
+        /* 2026-10-30 菜单瘦身：以前全项竖排一列，条件项一多就顶得很长。
+           现在常用项走两列网格，低频项收进「更多」展开，删除独占一整行。 */
+        function menuBtn(label, run) {
+          var b = h('button', 'msg-pop-item', label);
+          b.type = 'button';
+          b.addEventListener('click', function () {
+            pop.close();               /* 先收菜单再动作，免得弹层叠弹层 */
+            run();
+          });
+          return b;
+        }
+        var primary = [
           { label: '引用', run: function () { startQuote(msg, idx); } },
           { label: '复制', run: function () { copyMsg(msg, idx); } },
           { label: '转发', run: function () { forwardOne(msg, idx); } },
-          { label: '收藏', run: function () { favorite(msg, idx); } },
-          { label: '编辑', run: function () { editMsg(msg, idx); } },
-          /* 多选 / 删除都带上**这个气泡**：一条回复拆成几段时，
-             用户在哪个气泡上长按，就该选中 / 删掉哪一个（2026-09-23）。 */
-          { label: '多选', run: function () { enterSelect(msg.id, idx); } },
-          { label: '删除', kind: 'danger', run: function () { removeMsg(msg, idx); } }
+          { label: '收藏', run: function () { favorite(msg, idx); } }
         ];
-        /* 撤回（2026-10-06）：只给自己发的**纯文字**消息 —— 表情/转账/
-           拍一拍是动作记录，撤回没有意义；照片涉及相册清理，也不开。
-           塞在「删除」前面（删都没删，先给个反悔的机会）。 */
-        if (msg.role === 'user' && !msg.type && !msg.recalledAt) {
-          items.splice(items.length - 1, 0,
-            { label: '撤回', run: function () { recallMine(msg); } });
-        }
-        /* 「留在灯上」（2026-10-06）：纯文字消息，双方向都可以。
-           插在「编辑」前面 —— 它是"把这句话送去别处"，跟引用/转发是一路的。
-           ★ 2026-10-12：带 idx —— 长按哪个气泡就挂哪个气泡的话，
+        /* 低频项进「更多」：留在灯上（把话送去别处）、编辑、朗读、TA 的自察。
+           「留在灯上」带 idx —— 长按哪个气泡就挂哪个气泡的话，
            不是整条 '||' 原文（用户报「带上分割符了」）。 */
+        var extra = [];
         if (!msg.type && !msg.recalledAt && String(msg.content || '').trim()) {
-          items.splice(4, 0,
-            { label: '留在灯上', run: function () { leaveOnLamp(msg, idx); } });
+          extra.push({ label: '留在灯上', run: function () { leaveOnLamp(msg, idx); } });
         }
+        extra.push({ label: '编辑', run: function () { editMsg(msg, idx); } });
         /* 「朗读」（2.15）：只在角色的话、纯文字、且角色开着「长按给朗读」时出现。
-           已经在长按的那一条上读了就写成「重读」—— 同一句话偶尔想再听一遍。 */
+           已经在长按的那一条上读了就写成「重读」。 */
         if (Sleepy.tts && msg.role === 'assistant' && !msg.type &&
             Sleepy.tts.voiceConfigOf(curCharId()).manualRead) {
-          items.splice(5, 0, {
+          extra.push({
             label: msg.voice ? '重读' : '朗读',
             run: function () { readAloud(msg, seg); }
           });
         }
-        /* 「TA 的自察」（方案-预设页分类与自察-v1 C2）：开了自察的轮次
-           才有这条 —— 看 TA 汇报本轮用了哪些设定条目、改了什么话。
-           没有（关着/旧消息）就不出现，不占菜单位。 */
+        /* 「TA 的自察」（方案-预设页分类与自察-v1 C2）：开了自察的轮次才有。 */
         if (msg.role === 'assistant' && !msg.type && msg.inspect) {
-          items.splice(5, 0, {
+          extra.push({
             label: 'TA 的自察',
             run: function () {
               ui.confirm({ title: 'TA 的自察', note: String(msg.inspect), ok: '知道了' });
             }
           });
         }
-        items.forEach(function (it) {
-          var b = h('button', 'msg-pop-item' + (it.kind ? ' is-' + it.kind : ''), it.label);
-          b.type = 'button';
-          b.addEventListener('click', function () {
-            pop.close();               /* 先收菜单再动作，免得弹层叠弹层 */
-            it.run();
+        /* 多选 / 删除都带上**这个气泡**：一条回复拆成几段时，
+           用户在哪个气泡上长按，就该选中 / 删掉哪一个（2026-09-23）。 */
+        primary.push({ label: '多选', run: function () { enterSelect(msg.id, idx); } });
+        /* 撤回（2026-10-06）：只给自己发的**纯文字**消息 —— 表情/转账/
+           拍一拍是动作记录，撤回没有意义；照片涉及相册清理，也不开。
+           排在删除前面：删都没删，先给个反悔的机会。 */
+        if (msg.role === 'user' && !msg.type && !msg.recalledAt) {
+          primary.push({ label: '撤回', run: function () { recallMine(msg); } });
+        }
+        primary.forEach(function (it) { list.appendChild(menuBtn(it.label, it.run)); });
+        /* 低频项默认收起，「更多」只展开/收起，不关菜单 */
+        if (extra.length) {
+          var extraWrap = h('div', 'msg-pop-extra');
+          extra.forEach(function (it) { extraWrap.appendChild(menuBtn(it.label, it.run)); });
+          var more = h('button', 'msg-pop-item is-wide msg-pop-more', '更多 ▾');
+          more.type = 'button';
+          more.addEventListener('click', function () {
+            var open = extraWrap.classList.toggle('is-open');
+            more.textContent = open ? '收起 ▴' : '更多 ▾';
           });
-          list.appendChild(b);
-        });
+          list.appendChild(more);
+          list.appendChild(extraWrap);
+        }
+        /* 删除独占一整行（danger），和上面隔开 */
+        var delBtn = menuBtn('删除', function () { removeMsg(msg, idx); });
+        delBtn.classList.add('is-wide', 'is-danger');
+        list.appendChild(delBtn);
         pop.el.appendChild(list);
         pop.place();
       }
@@ -6270,7 +6285,7 @@
               var relSum = Sleepy.taRelations.buildSummary(c.characterId, c.sandboxId);
               if (relSum) built.messages.push({ role: 'system', content: relSum });
             }
-            /* L2 今日状态块：挂最前（SullyOS 口径——今天的底色比一切都新） */
+            /* L2 今日状态块：挂最前（今天的底色比一切都新） */
             if (Sleepy.taToday) {
               var tdCtx = Sleepy.taToday.buildContext(c.characterId, c.sandboxId);
               if (tdCtx) built.messages.unshift({ role: 'system', content: tdCtx });

@@ -157,21 +157,35 @@
             main.appendChild(h('div', 'vec-row-name', shortUa(d.ua) + (isSelf(d) ? ' · 本机' : '')));
             main.appendChild(h('div', 'vec-row-meta', '上次活跃 ' + fmtTime(d.last_seen)));
             row.appendChild(main);
-            if (!isSelf(d)) {
-              row.appendChild(ui.button('解绑', 'danger', function () {
-                ui.confirm({
-                  title: '解绑这台设备？',
-                  note: shortUa(d.ua) + ' 上的登录会立刻失效。解绑后腾出的名额可以给新设备用。',
-                  ok: '解绑', danger: true
-                }).then(function (yes) {
-                  if (!yes) return;
-                  repo.licenseRevoke(d.id, function (rr) {
-                    ctx.toast(rr.ok ? '解绑了' : (rr.message || '没解绑成'), rr.ok ? 'ok' : 'warn');
-                    if (rr.ok) build();
-                  });
+            /* 解绑钮：别的设备和本机都给 —— 2026-10-30 用户实锤的 UX 陷阱：
+               本机那行以前没有解绑钮，想腾出本机名额只能去别的设备操作；
+               在本机只能「退出登录」，而那**只杀会话不解绑**，设备数不动
+               （云端 D1 时间线实锤：登录→64 秒后退出→设备行仍 status=1）。 */
+            row.appendChild(ui.button(isSelf(d) ? '解绑本机' : '解绑', 'danger', function () {
+              ui.confirm({
+                title: isSelf(d) ? '解绑本机？' : '解绑这台设备？',
+                note: isSelf(d)
+                  ? '本机的登录会立刻失效，名额即刻释放；之后想在这台设备用，重新登录一次就行。'
+                  : shortUa(d.ua) + ' 上的登录会立刻失效。解绑后腾出的名额可以给新设备用。',
+                ok: '解绑', danger: true
+              }).then(function (yes) {
+                if (!yes) return;
+                repo.licenseRevoke(d.id, function (rr) {
+                  if (rr.ok && isSelf(d)) {
+                    /* 本机解绑 = 会话跟着一起没；照 logout 把本地凭据清掉。
+                       logout 那一发请求会 401（会话已死），但本地照样清 ——
+                       licLogout 本来就是「请求失败也清」。 */
+                    repo.licenseLogout(function () {
+                      ctx.toast('解绑了，本机登录已失效', 'ok');
+                      build();
+                    });
+                    return;
+                  }
+                  ctx.toast(rr.ok ? '解绑了' : (rr.message || '没解绑成'), rr.ok ? 'ok' : 'warn');
+                  if (rr.ok) build();
                 });
-              }));
-            }
+              });
+            }));
             devList.appendChild(row);
           });
         });
@@ -195,7 +209,7 @@
 
         /* 登出 / 注销 */
         var gOut = h('div', 'set-group');
-        gOut.appendChild(ui.button('退出登录（本机）', 'ghost', function () {
+        gOut.appendChild(ui.button('退出登录（本机，名额不释放）', 'ghost', function () {
           repo.licenseLogout(function () {
             ctx.toast('退出了', 'ok');
             build();

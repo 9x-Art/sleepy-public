@@ -319,7 +319,7 @@
      所以放两个 1px 探针元素，让 CSS 用 env() 撑它们的实际高度，
      再用 getBoundingClientRect 量渲染值。
 
-     v284 起的稳定化改造（学 SullyOS 的原则，不搬它的代码）：
+     v284 起的稳定化改造（原则照旧：自己写，不搬外部代码）：
        · JS **不再直接写 --safe-top / --safe-bottom**（旧版绑在
          visualViewport.resize 上，键盘一弹就重测重写终值 —— 首屏
          「偏上、交互后下移」就是这么来的），只写 fallback 变量

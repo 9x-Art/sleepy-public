@@ -602,7 +602,19 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v299';
+var CACHE = 'sleepy-v300';
+
+/* v300（2026-10-30）：**注释去外部项目名 + PWA 底条跟主题色**——
+   ① app.js / page-chat.js / ta-today.js / ta-relations.js / wm-core.js /
+   sw.js 注释里引用外部项目出处的话全部抹掉，口径改成本库自己的话；
+   ② iOS PWA「加到主屏后下面空一截」：standalone 下系统把内容区从
+   home 条上方推开时，App(100dvh) 到不了屏幕底，露出的 body 画布是
+   写死的 #FFFFFF —— page-appearance.apply() 现在把 body/html 画布
+   刷成当前主题的 --g-base，夜灯下不再露白条。
+   ③ 设备管理 UX：本机那行补「解绑本机」钮（以前本机只能退出登录，
+   只杀会话不解绑、名额不释放）；「退出登录」标签注明名额不释放。
+   → 必须跳版本：page-appearance.js / page-license.js 变了，
+   sw.js 注释也变了。 */
 
 /* v299（2026-10-30 六）：**真机验收修复批**——
    ① ui.h 支持可变子节点：以前第三参只收一个孩子，写成
@@ -977,7 +989,7 @@ var CACHE = 'sleepy-v299';
    index.html 加载 revcheck-core.js。→ 必须跳版本：page-chat.js / style.css /
    index.html 变了，revcheck-core.js 新增。 */
 
-/* v260（2026-10-25）：**文字麻将上线**——SullyOS「文字打马吊」1v1 移植到私聊：
+/* v260（2026-10-25）：**文字麻将上线**——「文字打马吊」1v1 移植到私聊：
    wm-core.js（引擎+牌库，纯逻辑零依赖）+ page-chat.js 接线（牌局状态挂 c.wm
    按对话存 / buildMessages 两路径每轮垫牌局上下文 / 回复链解析 WM 标签动牌
    并剥净 / 牌桌播报 type:'wm' 居中灰条 / 加号面板「文字麻将」入口 + 牌桌

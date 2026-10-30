@@ -1,11 +1,10 @@
 /* ============================================================
-   ta-relations.js — 活人系统 · L1 关系人账户表（2026-10-25，自 SullyOS
-   relationshipAccounts/relationshipFeed 移植）
+   ta-relations.js — 活人系统 · L1 关系人账户表（2026-10-25）
 
    TA 认识的第三人的第一方持久关系网。用户填骨架（name/relation/bond/note），
    系统养近况（currentState / openThreads / learned / lastMentioned）。
 
-   ─── 三条铁律（SullyOS 原文照抄，一条不能松）─────────────────
+   ─── 三条铁律（定稿照抄，一条不能松）─────────────────
    1. note：用户手写确立事实，系统推进**永不覆盖**；
    2. learned：TA 对此人的「印象」——注入时强制「未必属实」措辞兜底，
       就算模型写歪了也升不成既定事实；
@@ -33,7 +32,7 @@
   var store = Sleepy.store;
 
   var KEY = 'taRelations';
-  /** 一个角色的关系网建议骨架数量上限（SullyOS 原口径：3~6 个够，别贪多） */
+  /** 一个角色的关系网建议骨架数量上限（3~6 个够，别贪多） */
   var SOFT_LIMIT = 6;
   /** 同账户近况推进节流：3 天内不重复喂 */
   var NEAR_STATE_GAP_MS = 3 * 86400000;
@@ -154,7 +153,7 @@
     if (patch.currentState) hit.currentState = String(patch.currentState).slice(0, 120);
     if (patch.learned) {
       var add = String(patch.learned).slice(0, 80);
-      /* learned 累积不覆盖旧印象（SullyOS 原口径），追加去重 */
+      /* learned 累积不覆盖旧印象，追加去重 */
       hit.learned = hit.learned ? (hit.learned + '；' + add) : add;
       if (hit.learned.length > 200) hit.learned = hit.learned.slice(-200);
     }
