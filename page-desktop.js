@@ -489,7 +489,43 @@
       base.islands[sbId] = ov;
       store.set('desktop', base);
     }
+    /* 存量自愈（v298）：v297 的两道防线只管**新写入**，老存档里已经
+     躺着的遗留要在这里修 —— ①覆盖层内嵌 islands（岛套岛存量）
+     ②覆盖层与全局底座共用同一个 w-id（倒计时/拍立得配置跨岛共享）。
+     都是读档一次性修，修完落盘。 */
+    var healed = false;
+    if (ov.islands) { delete ov.islands; healed = true; }
+    if (overlayClashesGlobal(base, ov)) {
+      ov = remapForOverlay(ov);
+      healed = true;
+    }
+    if (healed) {
+      base.islands[sbId] = ov;
+      store.set('desktop', base);
+    }
     return ov;
+  }
+
+  /* 覆盖层里有没有非骨架格子跟全局底座撞同一个 id
+     （撞了 = 这份 widgetCfg 两座岛共享着，得 remap） */
+  function overlayClashesGlobal(base, ov) {
+    var skeleton = {};
+    defaultDesktop().pages.forEach(function (cells) {
+      (cells || []).forEach(function (c) { if (c && c.i) skeleton[c.i] = 1; });
+    });
+    var globalIds = {};
+    (base.pages || []).forEach(function (cells) {
+      (cells || []).forEach(function (c) {
+        if (c && c.i && !skeleton[c.i]) globalIds[c.i] = 1;
+      });
+    });
+    var clash = false;
+    ov.pages.forEach(function (cells) {
+      (cells || []).forEach(function (c) {
+        if (c && c.i && globalIds[c.i]) clash = true;
+      });
+    });
+    return clash;
   }
 
   function setDesktop(d) {

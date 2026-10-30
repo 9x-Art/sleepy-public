@@ -7585,6 +7585,47 @@ t('体检#7/#8：落岛覆盖剥 islands + widgetCfg 按岛重键', () => {
   return { 重发id: true, 配置跟迁: true, 全局配置健在: true, 无岛套岛: true };
 });
 
+/* 批6（v298 存量自愈）：v297 的两道防线只管新写入，老存档里已经躺着的
+   嵌套 islands 和跨岛共享 w-id 要在读档时一次性修掉。 */
+t('体检批6：读档自愈存量遗留（嵌套 islands + 共享 w-id）', () => {
+  S.store.set('desktop', null);
+  S.store.set('widgetCfg', {});
+  const base = S.desktop.getDesktop();
+  base.pages[2].push({ i: 'wSharedCd', type: 'countdown',
+    label: '倒数日方', x: 1, y: 6, w: 2, h: 1 });
+  /* 造一份「老存档」：覆盖层复制了全局（同 w-id）+ 嵌着 islands */
+  const sid = S.core.scopeId();
+  const ov = JSON.parse(JSON.stringify(base));
+  ov.islands = { sbLegacyNested: { version: 1, pages: [[], [], [], []] } };
+  base.islands = base.islands || {};
+  base.islands[sid] = ov;
+  S.store.set('desktop', base);
+  S.store.set('widgetCfg', { wSharedCd: { target: '2027-02-02', label: '存量' } });
+
+  const prev = (S.core.activeSandbox() || {}).id || null;
+  let healed = null, novId = null, novCfg = null, gcfg = null;
+  try {
+    if (prev && prev !== sid) S.core.setActiveSandbox(sid);
+    healed = S.desktop.getDesktop();
+    healed.pages.forEach((l) => (l || []).forEach((c) => {
+      if (c.type === 'countdown') novId = c.i;
+    }));
+    const cfgNow = S.store.get('widgetCfg') || {};
+    novCfg = novId ? cfgNow[novId] : null;
+    gcfg = cfgNow.wSharedCd;
+  } finally {
+    if (prev && prev !== sid) S.core.setActiveSandbox(prev);
+    S.store.set('widgetCfg', {});
+    S.store.set('desktop', null);
+  }
+  if (!healed) throw new Error('覆盖层没读出来');
+  if (healed.islands) throw new Error('存量嵌套 islands 没被剥掉');
+  if (!novId || novId === 'wSharedCd') throw new Error('存量共享 w-id 没有自愈重发');
+  if (!novCfg || novCfg.target !== '2027-02-02') throw new Error('存量配置没迁到新 id 下');
+  if (!gcfg || gcfg.target !== '2027-02-02') throw new Error('全局配置被搬走了');
+  return { 嵌套已剥: true, 重发id: true, 配置跟迁: true, 全局健在: true };
+});
+
 console.log('\n--- page:朋友圈（微信式发布 + 四档可见 + 赞的反应）---');
 
 console.log('\n--- page:朋友圈（反应决策步 · 活人感）---');
@@ -17969,7 +18010,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    vv.resize 临时监听可解除 + orientationchange 唯一重测入口）、
    style.css（:root 改 max(env, fallback) 合成 + fb 初始定义）变了。
    基准随批 v283 → v284。 */
-const EXPECTED_SW_CACHE = 'sleepy-v297';
+const EXPECTED_SW_CACHE = 'sleepy-v298';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
