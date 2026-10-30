@@ -2866,9 +2866,8 @@
       /* ---- 表情包：挪进输入框**里面**（用户五.2 要的新布局）----
          以前是「笑脸 + 加号」两个 40px 圆钮并排在输入框左边：一行里塞了
          两个同尺寸的大圆坨，既挤又分不清哪个是哪个，还白白吃掉 88px 宽度。
-         现在是 —— **最左加号、中间输入框、最右发送**，表情包做成框内右侧
-         一枚 30px 的纯图标小钮：不占行上的宽度，又离手最近。
-         放右侧而不是左侧：打字是从左往右长的，右边才是「还没用到的空间」。
+         现在是 —— **最左输入框、加号贴在输入框右边、最右发送**（2026-10-30 用户定的），
+         表情包做成框内右侧一枚 30px 的纯图标小钮：不占行上的宽度，又离手最近。
          （切换账号不在聊天页做了，去「我」那一页。） */
       var inputWrap = h('div', 'chat-input-wrap');
       var emoBtn = h('button', 'emo-btn');
@@ -2893,8 +2892,8 @@
       });
       inputWrap.appendChild(moodBtn);
 
-      inputArea.appendChild(plusBtn);
       inputArea.appendChild(inputWrap);
+      inputArea.appendChild(plusBtn);
       inputArea.appendChild(sendBtn);
       foot.appendChild(inputArea);
       /* 面板挂最后 = 展开在输入框**下方**（微信口径） */
