@@ -17825,45 +17825,36 @@ t('PWA 全屏：display_override 优先 fullscreen，standalone 兜底（2026-10
   return { display: m.display, 优先: ov[0] };
 });
 
-/* ---------- 心声星瓶（2026-10-26 上架件）----------
-   ⚠️ 教训：这一批曾被中断，渲染器写好了、三个依赖函数没写 ——
-   静态检查（check.js）只过语法，照样全绿，真机一进桌面就 ReferenceError。
-   所以这里把「渲染器 + 三个依赖 + 上架 + 样式」当成一件事一起断言。 */
-t('心声星瓶：商城上架 + 渲染器三个依赖都在（2026-10-26）', () => {
+/* ---------- 心声星瓶（2026-10-26 上架 → 2026-10-30 整体下架）----------
+   用户：「那个花瓶好丑，下掉吧干脆」。下架后反向断言：
+   渲染器 / MOCKS / 样式 / 商城目录一处都不许残留（防死灰复燃），
+   page-desktop 必须带 RETIRED_TYPES 清洗（不然老用户存档里的旧格子
+   会变成「看得见删不掉」的幽灵 —— 光摘目录不够）。 */
+t('心声星瓶：整体下架干净 + 存档清洗在位（2026-10-30）', () => {
   const wstore = fs.readFileSync(path.join(ROOT, 'page-widgetstore.js'), 'utf8');
   const desk = fs.readFileSync(path.join(ROOT, 'page-desktop.js'), 'utf8');
   const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
 
-  /* ① 上架：商城目录（EXTRA_DEFS）+ 橱窗缩样（MOCKS） */
-  const at = wstore.indexOf("type: 'starbottle'");
-  if (at < 0) throw new Error('组件商城 EXTRA_DEFS 缺 starbottle —— 上架件不在目录里等于没上架');
-  if (!/w: 1, h: 1/.test(wstore.slice(at, at + 120))) {
-    throw new Error('心声星瓶必须是 1×1：默认户型四屏只剩第 6 行那排空格，h=2 的格子 findSpot 找不到落点');
+  /* ① 商城目录与缩样：摘干净 */
+  if (wstore.indexOf("type: 'starbottle'") >= 0) throw new Error('组件商城 EXTRA_DEFS 还挂着 starbottle —— 下架没下干净');
+  if (wstore.indexOf('starbottle: function (el)') >= 0) throw new Error('组件商城 MOCKS 还留着 starbottle 缩样');
+  /* ② 渲染器与依赖：撤干净 */
+  for (const k of ['starbottle: function (cell, ctx)', 'function islandWhispers(', 'function starBottleSvg(', 'function starPop(']) {
+    if (desk.indexOf(k) >= 0) throw new Error('page-desktop.js 还残留星瓶代码：' + k);
   }
-  if (wstore.indexOf('starbottle: function (el)') < 0) {
-    throw new Error('组件商城缺 starbottle 橱窗缩样（MOCKS）');
+  /* ③ 样式：撤干净 */
+  for (const k of ['.w-starbottle', '.wsb-', '.ws-mock--bottle']) {
+    if (css.indexOf(k) >= 0) throw new Error('style.css 还残留星瓶样式：' + k);
   }
-
-  /* ② 渲染器与它的三个依赖：少一个就是进桌面即炸 */
-  if (desk.indexOf('starbottle: function (cell, ctx)') < 0) {
-    throw new Error('page-desktop.js 缺 starbottle 渲染器');
-  }
-  for (const k of ['function islandWhispers(', 'function starBottleSvg(', 'function starPop(']) {
-    if (desk.indexOf(k) < 0) throw new Error('page-desktop.js 缺星瓶依赖：' + k);
-  }
-  /* ③ 取数口径：只收本岛角色的心声（跨岛的不进这个瓶子） */
-  if (desk.indexOf('charsOfSandbox') < 0) {
-    throw new Error('islandWhispers 必须走 core.charsOfSandbox 按岛收心声');
-  }
-  if (desk.indexOf('heartbeats') < 0) {
-    throw new Error('islandWhispers 的数据源是 chat.heartbeats，别自己另起一套');
-  }
-
-  /* ④ 样式：瓶身 + 飘出去的星 + 居中那张卡 */
-  for (const k of ['.w-starbottle{', '.wsb-star{', '.wsb-fly{', '.wsb-pop{', '.ws-mock--bottle{']) {
-    if (css.indexOf(k) < 0) throw new Error('style.css 缺星瓶样式：' + k);
-  }
-  return { 目录: 'starbottle', 尺寸: '1×1', 依赖: 3 };
+  /* ④ 存档清洗：RETIRED_TYPES 必须"在位"——全局底座和岛覆盖层都要洗 */
+  if (desk.indexOf('RETIRED_TYPES') < 0) throw new Error('page-desktop.js 缺 RETIRED_TYPES —— 老存档里的星瓶格子会变成删不掉的幽灵');
+  if (desk.indexOf('stripRetired(ov)') < 0) throw new Error('岛覆盖层没过 stripRetired —— 岛上的旧格子洗不到');
+  if (desk.indexOf('stripRetired(d)') < 0) throw new Error('全局底座没过 stripRetired —— 全局旧格子洗不到');
+  /* ⑤ 幽灵格兜底：removeCell 找不到格子时必须重画对齐，不许静默装死 */
+  if (desk.indexOf('已经不在桌上了') < 0) throw new Error('removeCell 缺幽灵格兜底 —— 点×碰到幽灵格还是「删不掉」');
+  /* ⑥ 桌面自动跟数据：desktop 写入要触发重画（首页是基底页，回来自动不重画） */
+  if (desk.indexOf("__desktopStoreWatchOff = store.onChange") < 0) throw new Error('page-desktop 缺 store.onChange 重画订阅 —— 商城加/删组件回桌面 DOM 还是旧的');
+  return { 目录: '已摘', 样式: '已撤', 清洗: 'RETIRED_TYPES', 兜底: 'repaint' };
 });
 
 t('链接卡解析三路接线：分享文案本地剥 / apizero 直连 / 旧路兜底（2026-10-06 批）', () => {
