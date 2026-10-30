@@ -15389,6 +15389,10 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   border:1.5px dashed rgba(124,168,214,.7);color:rgba(124,168,214,.9);
   display:flex;align-items:center;justify-content:center;font-size:13px;
 }
+.ws-mock--stamp::before{
+  content:'';position:absolute;inset:3px;border-radius:50%;
+  border:1px dashed rgba(124,168,214,.35);
+}
 .ws-mock--char{display:flex;flex-direction:column;align-items:center;gap:4px;}
 .ws-mock--ava{width:26px;height:26px;border-radius:50%;background:#DEECFC;border:1px solid var(--tk-line);}
 .ws-mock--bar{width:26px;height:4px;border-radius:2px;background:rgba(255,255,255,.6);}
@@ -15396,8 +15400,29 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 .ws-mock--hdr b{display:block;font-size:12px;font-weight:500;}
 .ws-mock--hdr span{font-size:9px;color:var(--g-ink-3);}
 .ws-mock--wj{
-  width:30px;height:38px;border-radius:15px 15px 4px 4px;
-  background:rgba(255,255,255,.5);border:1px solid var(--tk-line);
+  width:72px;height:30px;border-radius:8px;
+  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.3));
+  border:1px solid var(--tk-line);
+  display:flex;align-items:center;justify-content:center;
+  position:relative;overflow:hidden;
+}
+.ws-mock--wj-curtain{
+  position:absolute;top:0;bottom:0;width:14px;
+  background:repeating-linear-gradient(90deg,
+    rgba(124,168,214,.5) 0 3px,rgba(124,168,214,.22) 3px 6px);
+}
+.ws-mock--wj-curtain--l{left:0;border-radius:0 0 9px 0;}
+.ws-mock--wj-curtain--r{right:0;border-radius:0 0 0 9px;}
+.ws-mock--wj-copy{
+  display:flex;flex-direction:column;align-items:center;gap:1px;
+  position:relative;
+}
+.ws-mock--wj-copy b{
+  font-size:10px;font-weight:500;color:var(--g-ink);letter-spacing:3px;
+  text-indent:3px; /* 抵消末字字距，视觉居中 */
+}
+.ws-mock--wj-copy em{
+  font-style:normal;font-size:7px;color:var(--g-ink-3);letter-spacing:1px;
 }
 .ws-mock--mode{
   padding:3px 10px;border-radius:999px;font-size:10px;color:var(--g-ink-2);
@@ -15406,9 +15431,17 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 .ws-mock--blank{width:36px;height:26px;border-radius:8px;border:0.5px dashed var(--tk-line);}
 .ws-mock--fallback{
   width:32px;height:32px;border-radius:9px;
-  background:rgba(255,255,255,.5);border:1px solid var(--tk-line);
+  background:linear-gradient(150deg,rgba(255,255,255,.65),rgba(255,255,255,.35) 60%,rgba(124,168,214,.14));
+  border:1px solid var(--tk-line);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset -2px -2px 6px rgba(124,168,214,.12);
   display:flex;align-items:center;justify-content:center;
   font-size:13px;color:var(--g-ink-2);font-weight:500;
+}
+/* 兜底砖右上一点高光，免得看着像素色块 */
+.ws-mock--fallback::after{
+  content:'';position:absolute;right:5px;top:5px;
+  width:5px;height:5px;border-radius:50%;
+  background:rgba(255,255,255,.8);
 }
 .ws-mock--lamp{display:flex;flex-direction:column;align-items:center;gap:3px;}
 .ws-mock--lamp-ring{width:30px;height:6px;border-radius:3px;background:rgba(124,168,214,.55);}

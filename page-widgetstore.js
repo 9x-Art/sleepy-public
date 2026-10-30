@@ -138,7 +138,13 @@
         h('span', null, '16:34')));
     },
     wj: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--wj'));
+      /* 缩样照本体画：两片幕布 + 衬线小字（本体见 page-desktop RENDER.wj） */
+      el.appendChild(h('div', 'ws-mock ws-mock--wj',
+        h('i', 'ws-mock--wj-curtain ws-mock--wj-curtain--l'),
+        h('i', 'ws-mock--wj-curtain ws-mock--wj-curtain--r'),
+        h('span', 'ws-mock--wj-copy',
+          h('b', null, '帷境'),
+          h('em', null, '今晚，读哪一种可能'))));
     },
     mode: function (el) {
       el.appendChild(h('div', 'ws-mock ws-mock--mode', '线下'));
