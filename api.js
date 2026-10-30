@@ -356,6 +356,21 @@
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
     }
 
+    /* 首块超时（2026-10-31 体检补）：空闲看门狗只罩「已开始吐内容之后」，
+       网关 TCP 连上了却一个字不吐（或只发注释帧保活）时，reader.read()
+       永挂、无报错、无候选轮换，用户消息永久停在 pending。
+       首块等待表用 genParams 的 timeoutSec（requestOnce 同口径）；
+       一旦有内容就交给上面的空闲表管，本表到点时发现已有内容就自退。 */
+    var FIRST_MS = Math.max(15, (p && p.timeoutSec) || 60) * 1000;
+    function armFirst() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () {
+        if (settled) return;
+        if (String(out || '').trim()) return;   /* 已有内容：空闲表接管 */
+        fail({ stage: 'timeout', error: '连接超时：服务器 ' + Math.round(FIRST_MS / 1000) + ' 秒没有返回首块内容' });
+      }, FIRST_MS);
+    }
+
     function fail(err) {
       if (settled) return;
       settled = true;
@@ -444,6 +459,7 @@
     }
 
     function fire(bodyOv) {
+      armFirst();   /* 每次发起（含 stream_options 降级重试）都重挂首块表 */
       return global.fetch(url, {
         method: 'POST',
         headers: requestHeaders(cand.cfg),

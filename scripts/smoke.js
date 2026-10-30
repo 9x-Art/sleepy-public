@@ -10824,7 +10824,7 @@ t('同本体未授权双账号表演被拦（总纲 7.3/12.3）', () => {
   return '拦住';
 });
 
-t('延迟补回：defer 落账 → 下一轮注入 [PENDING]，注入即清', () => {
+t('延迟补回：defer 落账 → 下一轮注入 [PENDING]；注入不清、**落地才清**（2026-10-31 体检改约）', () => {
   S.groupAI.saveDefer(aiFix.gid, [
     { entityId: aiFix.m, action: 'defer', internalUpdate: '在开会，晚点回' },
     { entityId: 'ghost-entity', action: 'defer', internalUpdate: '幽灵不该记' }
@@ -10834,9 +10834,12 @@ t('延迟补回：defer 落账 → 下一轮注入 [PENDING]，注入即清', ()
   if (usr.indexOf('[PENDING]') < 0) throw new Error('pending 没注入');
   if (usr.indexOf('在开会，晚点回') < 0) throw new Error('念头没带上');
   if (usr.indexOf('幽灵不该记') >= 0) throw new Error('群外本体不该入账');
+  /* 新契约：装配阶段只读不清（请求失败待办不蒸发）；下一轮装配还带得上，
+     只有 deliver 落库成功才清 —— 这里没有 deliver，所以第二轮还得注入。 */
   const r2 = S.groupAI.composeRound(aiFix.gid, { stimulus: '（测试2）' });
-  if (r2.messages[1].content.indexOf('[PENDING]') >= 0) throw new Error('注入后应清空');
-  return '落账→注入→清';
+  if (r2.messages[1].content.indexOf('[PENDING]') < 0) throw new Error('没落地就该还在（装配不清）');
+  if (r2.messages[1].content.indexOf('在开会，晚点回') < 0) throw new Error('念头第二轮丢了');
+  return '落账→注入→（未落地）仍在';
 });
 
 t('内心注记跨波连续：saveInner → 下一轮还到同一个本体', () => {
@@ -18016,7 +18019,9 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    同步 + dt-dock 14→8 无钉）—— 基准随批 v300 → v301。 */
 /* v302（2026-10-30 三）：boot 报错条升级（index.html 内联脚本变）——
    基准随批 v301 → v302。 */
-const EXPECTED_SW_CACHE = 'sleepy-v302';
+/* v303（2026-10-31）：iOS PWA 底部安全区视觉连续化（style.css 新增
+   一条 html.ios-pwa 背景 rule）—— 基准随批 v302 → v303。 */
+const EXPECTED_SW_CACHE = 'sleepy-v303';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -18026,10 +18031,14 @@ t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必�
     throw new Error('缓存版本与独立基准不符：期望 ' + EXPECTED_SW_CACHE +
       '，实得 ' + m[1] + '（改了运行时脚本就必须在 sw.js 跳位，并改本基准）');
   }
-  /* 附带护栏：跳位必须在文件头留下本批的跳版本说明，
-     否则下一个人会怀疑「这个号是不是手滑改的」。 */
-  if (sw.indexOf('v197（2026-10-07）') < 0) {
-    throw new Error('CACHE 已跳到 v197，但文件头缺少 v197 的变更说明');
+  /* 附带护栏：跳位必须在文件头留下**当前版本号**的跳版本说明，
+     否则下一个人会怀疑「这个号是不是手滑改的」。
+     （2026-10-31 体检：旧断言钉死 v197，验的是历史批碰巧没删的
+     changelog，从不校验当前版本 —— 改成按 CACHE 实际版本动态断言；
+     CACHE 值是 sleepy-vNNN，changelog 段写的是 vNNN，比对时剥前缀。） */
+  const VER = m[1].replace(/^sleepy-/, '');
+  if (sw.indexOf(VER + '（') < 0) {
+    throw new Error('CACHE 已跳到 ' + m[1] + '，但文件头缺少 ' + VER + ' 的变更说明');
   }
   return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
 });

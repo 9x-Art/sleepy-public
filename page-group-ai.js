@@ -76,7 +76,9 @@
   function pendingText(groupId) {
     var list = arr(store.get(pendKey(groupId)));
     if (!list.length) return '';
-    store.set(pendKey(groupId), []);      /* 注入即清：本轮就是 TA 补回的机会 */
+    /* 2026-10-31 体检改：这里**只读不清**。旧「注入即清」清在装配阶段，
+       请求一失败/被抢占，这批「忙碌者当时的念头」就物理蒸发、从未注入
+       任何一轮 —— 清空挪到 deliver 落库成功之后（落地才清）。 */
     return list.map(function (p) {
       var c = core.findChar(p.ownerId);
       return '- 「' + (c ? c.name : '?') + '」之前在忙没回上，当时的念头：' + (p.intent || '（没记下）') +
@@ -569,6 +571,11 @@
         });
       }
       return deliver(v, parsed);
+    })['catch'](function (e) {
+      /* 兜底（2026-10-31 体检）：请求链任何一环 reject / 回调同步抛错
+         不接住的话 busyGroups 永久卡 true —— 该群从此全是 {why:'busy'}、
+         「有人正在输入…」永远不消，只能刷新页面。 */
+      return finish({ ok: false, why: 'error', error: String((e && e.message) || e) });
     });
 
     /* 落地：逐条延迟写入 + 波次记账 + 续聊判定 */
@@ -577,6 +584,10 @@
       var plans = Array.isArray(parsed.plans) ? parsed.plans : [];
       saveDefer(groupId, plans);
       saveInner(groupId, plans);
+      /* 本轮已成功注入的「忙碌者待办」现在才清（2026-10-31 体检：
+         清空从装配阶段挪到这里 —— 请求失败/被抢占时待办不蒸发，
+         下一轮装配还会再带上）。 */
+      store.set(pendKey(groupId), []);
 
       var written = [];
       var i = 0;

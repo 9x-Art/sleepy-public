@@ -12,7 +12,7 @@
    注意：_redirects 目前只有 /index.html 一条，不会盖住 functions。
    ============================================================ */
 
-const API_RE = /^\/(account|public-shelf|item|inbox|publish)(\/|$)/;
+const API_RE = /^\/(account|public-shelf|item|inbox|publish|gate|shelf)(\/|$)/;
 const WORKER = 'https://sleepy-repo.sleepy-goodluck.workers.dev';
 
 export async function onRequest(context) {

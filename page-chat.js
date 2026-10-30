@@ -6102,7 +6102,8 @@
         /* 2026-10-29 修：配置在 cand.cfg 里（同 revThought），以前裸读候选
            对象上的地址 → 永远 undefined → 关系推进从来没发出去过。改走 requestOnce。 */
         var cand = api.candidates()[0];
-        if (!cand || !cand.cfg || !cand.cfg.baseUrl || !cand.cfg.apiKey) return;
+        /* apiKey 不再当硬门（2026-10-31 对齐 revThought：requestHeaders 对空 key 免鉴权） */
+        if (!cand || !cand.cfg || !cand.cfg.baseUrl) return;
         var recent = (chat.messages || []).slice(-6).map(function (m) {
           return (m.role === 'user' ? '你：' : 'TA：') + String(m.content || '').slice(0, 40);
         }).join('\n');
@@ -6145,7 +6146,8 @@
         /* 2026-10-29 修：同 revThought —— 配置在 cand.cfg 里，以前裸读
            候选对象上的地址 → 永远 undefined → 今日块从来没生成过。 */
         var cand = api.candidates()[0];
-        if (!cand || !cand.cfg || !cand.cfg.baseUrl || !cand.cfg.apiKey) return;
+        /* apiKey 不再当硬门（2026-10-31 对齐 revThought：requestHeaders 对空 key 免鉴权） */
+        if (!cand || !cand.cfg || !cand.cfg.baseUrl) return;
         var ch = findCharacter(chat.characterId);
         var material = td.buildMaterial(chat.characterId, chat.sandboxId);
         api.requestOnce(cand, [{ role: 'user', content: td.buildPrompt(ch ? ch.name : 'TA', material) }],

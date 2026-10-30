@@ -225,9 +225,12 @@
     var contacts = contactsOf(sbId, char.id, ph);
     /* 2026-10-29 用户点名：user 没设 NPC 时，消息/短信不该一直是空的 ——
        允许模型根据人设和聊天记录编 1~2 个背景联系人，程序会登记
-       （phone.applySettlement 的 allowBgContacts 口子）。 */
-    var allowBg = contacts.length === 0;
-    opts.allowBg = allowBg;   /* 回带给 settle —— 落库校验用同一把尺子 */
+       （phone.applySettlement 的 allowBgContacts 口子）。
+       调用方（settle）会把判好的 allowBg 传进来；没传就自己判 ——
+       2026-10-31 体检实锤：settle 读的是**它自己的** opts，这里回写在
+       buildMessages 的 opts 字面量上对它不可见，口子曾因此恒关。 */
+    var allowBg = (opts.allowBg === undefined) ? (contacts.length === 0) : !!opts.allowBg;
+    opts.allowBg = allowBg;   /* 回带给调用方 —— 落库校验用同一把尺子 */
     var user = [];
     user.push('[WORLD]\n岛屿：' + ((core.findSandbox(sbId) || {}).name || '') +
       '。合法联系人（幕后交流对象只能从里面选）：' + (contacts.join('、') || '暂无') +
@@ -315,16 +318,19 @@
     if (!cand) return Promise.resolve({ ok: false, error: 'noapi', reason: noApiReason() });
 
     var from = ph.settledUntil || ph.createdAt;
+    /* 口子判定必须在 settle 这里先判好再传下去（2026-10-31 体检实锤：
+       旧写法指望 buildMessages「回写」opts.allowBg，但它写在自己收到
+       的 opts 字面量上，settle 的入参 opts 永远是 undefined → 校验恒拒，
+       背景联系人的提示词邀请与落库校验劈叉）。 */
+    var allowBg = contactsOf(sbId, char.id, ph).length === 0;
     var messages = buildMessages(sbId, ph, char, {
       mode: opts.mode,
       level: opts.level,          /* 底片档位（light / rich），别在这儿丢掉 */
       appOnly: opts.appOnly,      /* 单 App 刷新（各 App 页的刷新按钮） */
       nudge: opts.nudge,          /* 空手退回后的补写轮（2026-10-23） */
-      from: opts.mode === 'bootstrap' ? null : from
+      from: opts.mode === 'bootstrap' ? null : from,
+      allowBg: allowBg            /* 提示词和落库校验用同一把尺子 */
     });
-    /* buildMessages 判定了这回合是否开了「背景联系人」口子（联系人池为空
-       才开），结算落库时用同一把尺子 —— 提示词和校验必须一致。 */
-    var allowBg = !!opts.allowBg;
     var runId = 'run_' + Date.now().toString(36);
 
     running[charId] = true;
@@ -354,6 +360,10 @@
         patch.bootstrapVersion = (ph.bootstrapVersion || 0) + 1;
         patch.bootstrapRunId = runId;
       }
+      /* bootstrap 完成态必须真的落库（2026-10-31 体检实锤：旧代码把 patch
+         组装完就丢，phone_applyPatch 从未被调 → 幂等闸从不生效，
+         「一生一次」的底片可被反复生成翻倍）。 */
+      phone_applyPatch(ph.id, patch);
       /* 顺手把可检测痕迹标记为「他已可能发现」—— 消费端在聊天注入槽 */
       var detected = phone.markDetected(ph.id);
       store.set('phoneRawFail:' + charId, null);

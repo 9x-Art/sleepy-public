@@ -272,45 +272,19 @@
     var charId = chat && chat.characterId;
     var cfg = resolve(charId);
 
-    var wrap = pageCtx.el.querySelector('.msg-wrap');
-    if (wrap) {
-      var old = document.getElementById('apStyleCur');
-      if (old) old.parentNode.removeChild(old);
-      if (cfg) {
-        var useBg = null;
-        if (cfg.bgImage && Sleepy.media) {
-          Sleepy.media.url(cfg.bgImage).then(function (u) {
-            /* 异步拿到地址后重刷一次（同步路径先用纯色兜着） */
-            applyTo(pageCtx, chatId);
-          });
-        } else {
-          useBg = null;
-        }
-        var st = document.createElement('style');
-        st.id = 'apStyleCur';
-        st.textContent = buildCss(cfg, useBg) + (isSkin(cfg) ? '' : ('\n' + buildPageCss(cfg)));
-        document.head.appendChild(st);
-        wrap.classList.remove('mode-classic', 'mode-wecom', 'mode-phone');
-        wrap.classList.add('ap-on', 'mode-' + (cfg.mode || 'classic'));
-        if (cfg.bgImage) { wrap.classList.add('ap-bgimg'); pageCtx.el.classList.add('ap-bgimg'); }
-        pageCtx.el.classList.add('ap-accented');
-        /* 壁纸铺**整页**（用户 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
-           且上方顶栏需要做透明的」）。
-           走 inline style 而不是 CSS 注入：注入的那条怎么写都会跟基础样式
-           打架（试过 .page / .page-inner / !important，读回来还是白底），
-           inline 优先级最高、不猜层级，最稳。 */
-        var bgv = 'transparent';
-        var sk2 = SKINS[cfg.mode] || null;
-        if (cfg.bgImage && useBg) bgv = 'url("' + useBg + '")';
-        else if (cfg.bgColor === 'night') bgv = 'linear-gradient(135deg,#1a1f2e,#2a2040)';
-        else if (cfg.bgColor && cfg.bgColor !== 'none') bgv = cfg.bgColor;
-        else if (sk2) bgv = sk2.bg;
-        pageCtx.el.style.background = (bgv === 'transparent') ? '' : bgv;
-        pageCtx.el.style.backgroundSize = 'cover';
-        pageCtx.el.style.backgroundPosition = 'center';
-        pageCtx.el.style.backgroundRepeat = 'no-repeat';
-      }
+    /* 图片壁纸只取**一次**地址再作画（2026-10-31 体检实锤：旧写法
+       「异步拿到地址后重调 applyTo 自己」= 无终止条件的异步自递归，
+       页面实例只藏不销毁 → 退出聊天页也停不下来；且 useBg 恒 null，
+       壁纸从来没铺上过）。现在：同步先铺纯色兜底，图到了单刷一次画。 */
+    if (cfg && cfg.bgImage && Sleepy.media) {
+      paint(pageCtx, cfg, null);
+      Sleepy.media.url(cfg.bgImage).then(function (u) {
+        paint(pageCtx, cfg, u);
+      })['catch'](function () { /* 取图失败就停在纯色兜底 */ });
+    } else {
+      paint(pageCtx, cfg, null);
     }
+
     /* 高级自定义 CSS：作用域是整个聊天页（demo 说明如此） */
     var custom = document.getElementById('apCustomStyle');
     if (custom && custom.parentNode) custom.parentNode.removeChild(custom);
@@ -319,6 +293,38 @@
       custom.id = 'apCustomStyle';
       custom.textContent = '/* 角色外观 · CSS 高级自定义 */\n' + cfg.customCss;
       document.head.appendChild(custom);
+    }
+  }
+
+  /* applyTo 的作画半体：useBg 是已解析好的壁纸地址（null = 没有壁纸） */
+  function paint(pageCtx, cfg, useBg) {
+    var wrap = pageCtx.el.querySelector('.msg-wrap');
+    if (wrap && cfg) {
+      var old = document.getElementById('apStyleCur');
+      if (old) old.parentNode.removeChild(old);
+      var st = document.createElement('style');
+      st.id = 'apStyleCur';
+      st.textContent = buildCss(cfg, useBg) + (isSkin(cfg) ? '' : ('\n' + buildPageCss(cfg)));
+      document.head.appendChild(st);
+      wrap.classList.remove('mode-classic', 'mode-wecom', 'mode-phone');
+      wrap.classList.add('ap-on', 'mode-' + (cfg.mode || 'classic'));
+      if (cfg.bgImage) { wrap.classList.add('ap-bgimg'); pageCtx.el.classList.add('ap-bgimg'); }
+      pageCtx.el.classList.add('ap-accented');
+      /* 壁纸铺**整页**（用户 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
+         且上方顶栏需要做透明的」）。
+         走 inline style 而不是 CSS 注入：注入的那条怎么写都会跟基础样式
+         打架（试过 .page / .page-inner / !important，读回来还是白底），
+         inline 优先级最高、不猜层级，最稳。 */
+      var bgv = 'transparent';
+      var sk2 = SKINS[cfg.mode] || null;
+      if (cfg.bgImage && useBg) bgv = 'url("' + useBg + '")';
+      else if (cfg.bgColor === 'night') bgv = 'linear-gradient(135deg,#1a1f2e,#2a2040)';
+      else if (cfg.bgColor && cfg.bgColor !== 'none') bgv = cfg.bgColor;
+      else if (sk2) bgv = sk2.bg;
+      pageCtx.el.style.background = (bgv === 'transparent') ? '' : bgv;
+      pageCtx.el.style.backgroundSize = 'cover';
+      pageCtx.el.style.backgroundPosition = 'center';
+      pageCtx.el.style.backgroundRepeat = 'no-repeat';
     }
   }
 

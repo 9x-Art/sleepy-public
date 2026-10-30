@@ -22,7 +22,13 @@ const http = require('http');
 const PORT = process.env.PROBE_PORT || 5205;
 const BASE = 'http://127.0.0.1:' + PORT;
 const API_BASE = process.env.PROBE_API || 'https://www.xinxiwang.org/v1';
-const API_KEY = process.env.PROBE_KEY || 'sk-QaDfTTT3R7OuZr0RV3ex2RwTc3pdFHiFeOW4VQqdqFrhhZ6n';
+/* key 一律走环境变量（2026-10-31 体检：字面量兜底曾是真实 key，
+   已从源码拔掉；那把 key 进过 git 历史，**要去服务商后台撤销轮换**）。 */
+const API_KEY = process.env.PROBE_KEY;
+if (!API_KEY) {
+  console.error('缺少 PROBE_KEY 环境变量（探针要走真链路，不给假货兜底）');
+  process.exit(2);
+}
 const MODEL = process.env.PROBE_MODEL || '[vertex]gemini-3.5-flash-lite';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

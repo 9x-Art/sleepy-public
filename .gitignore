@@ -33,3 +33,7 @@ generated-images/
 # 历史调试产物归档（2026-10-25 整理，勿部署勿提交）
 _archive-*/
 _tmp-deploy-conv/
+
+# 临时探针/候选目录与文件一律不入库（2026-10-31 体检：_tmp-probe-* 等曾有缺口）
+_tmp-*/
+_tmp-*

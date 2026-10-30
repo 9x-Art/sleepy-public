@@ -16556,3 +16556,19 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
   textarea:focus,
   select:focus { font-size: 16px; }
 }
+
+/* ============================================================
+   iOS PWA 底部安全区视觉连续化（2026-10-30 深夜批，v303）
+   ------------------------------------------------------------
+   现状：安全区带躺在 .input-area 的 padding-bottom 里，.input-area
+   自带 --bg-2（= --g-glass）玻璃，又叠在 .chat-foot 的玻璃 +
+   blur(24px) 之上 = 输入行/安全区带是「双层玻璃」，与上方引用条/
+   联想条的单层玻璃之间存在层数差断层（用户「底部空一截」）。
+   本条只让 .input-area 让出自己那层底：整条底栏（引用/联想/输入行/
+   安全区带）统一走 .chat-foot 的同一块玻璃 + blur，同一背景层连续
+   覆盖到屏底。padding/按钮/safe-bottom 不动，无 fixed/负 bottom。
+   只命中主屏 PWA（html.ios-pwa 由 app.js 按 navigator.standalone 打）；
+   iOS Safari 浏览器 / 安卓 / 桌面不吃这条。
+   候选验证：_tmp-strip-cand 桌面代理验收 10 项全绿 + check/smoke 双绿。
+   ============================================================ */
+html.ios-pwa .chat-foot .input-area{background:transparent;}

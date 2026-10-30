@@ -81,6 +81,17 @@
 
   function saveGroups(list) { return store.set('groups', list); }
 
+  /* touchGroup：updatedAt 只能改在落库快照里（2026-10-31 体检实锤：
+     findGroup 返回的是 store.get 的深拷贝，「改 g 再 allGroups() 落库」
+     改动随拷贝一起丢——群的活跃时间曾因此永不更新）。 */
+  function touchGroup(id, ts) {
+    var list = allGroups();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) { list[i].updatedAt = ts; break; }
+    }
+    saveGroups(list);
+  }
+
   /* 建群。
      opts = { name, ownerAccountId, members: [{kind, ownerId, accountId}], opening }
        ownerAccountId  创建者的 user 马甲 id（群主）；
@@ -322,8 +333,7 @@
     });
     if (!added.length) return { ok: true, added: [] };
     store.set('groupMembers', members);
-    g.updatedAt = Date.now();
-    saveGroups(allGroups());   /* 刷新 updatedAt（groups 快照里 hit 已改） */
+    touchGroup(groupId, Date.now());   /* 刷新 updatedAt（改在落库快照里） */
     return { ok: true, added: added };
   }
 
@@ -404,8 +414,7 @@
     list.push(item);
     store.set('groupMessages', list);
 
-    g.updatedAt = item.createdAt;
-    saveGroups(allGroups());
+    touchGroup(groupId, item.createdAt);   /* 群活跃时间跟最后一条消息走 */
 
     /* 分享回执·已回应（v247b）：群成员（char/NPC）在分享落地的群里开口了 →
        给分享者补一条回执。咽喉挂一次；forumShare 缺席/出错不影响消息本身。 */

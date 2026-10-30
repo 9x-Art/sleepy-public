@@ -1087,6 +1087,9 @@
 
       /* 从下级页回来重画一次（半截草稿保留 —— 只有重新进页才重置）。 */
       ctx.__lookRefresh = paint;
+      /* 美化预设的应用/删除按钮会调 ctx.rebuild()（2026-10-31 体检实锤：
+         之前从没赋值，一点就 TypeError 被 safeCall 吞掉，页面停在旧草稿）。 */
+      ctx.rebuild = paint;
     },
     onShow: function (ctx) { if (ctx.__lookRefresh) ctx.__lookRefresh(); }
   });
