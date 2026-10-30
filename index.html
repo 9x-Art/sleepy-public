@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<!-- maximum-scale=1：iOS 对字号 <16px 的输入框聚焦时会自动 zoom 放大页面，
+     且 iOS 10+ 忽略 user-scalable=no，唯一有效的压制是 maximum-scale=1（v294）。
+     代价是禁掉捏合缩放 —— App 类 PWA 惯例，与 user-scalable=no 的意图一致。 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
