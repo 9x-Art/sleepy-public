@@ -369,7 +369,20 @@ window.__bootErr = function (msg) {
     try { window.__bootErr(kind + ' ' + msg); } catch (e) { /* 画不了就算了 */ }
   }
   window.addEventListener('error', function (e) {
-    paint('JS错误:', (e && e.message) + ' @' + (e && e.filename ? e.filename.split('/').pop() : '?') + ':' + (e && e.lineno));
+    var msg = (e && e.message) || '(无消息)';
+    var src = (e && e.filename) ? e.filename.split('/').pop() : '?';
+    var extra = '';
+    /* 同源未捕获异常带得出 stack——前 3 行够定位了 */
+    if (e && e.error && e.error.stack) {
+      extra = '\n' + String(e.error.stack).split('\n').slice(0, 3).join('\n');
+    }
+    /* 「Script error.」= 细节被浏览器掩码（全库零外部脚本，同源不该掩）——
+       实测出现在 SW 换血窗口期（2026-10-30 v301 上线后真机一过性），
+       App 本体正常。别让用户对着天书猜，直接告诉他是怎么回事。 */
+    if (msg === 'Script error.') {
+      extra += '\n（细节被浏览器掩了：多半是刚才更新版本的换血窗口期，彻底关掉重开即解；反复出现请把这张卡截图回交）';
+    }
+    paint('JS错误:', msg + ' @' + src + ':' + (e && e.lineno) + extra);
   });
   window.addEventListener('unhandledrejection', function (e) {
     var r = e && e.reason;

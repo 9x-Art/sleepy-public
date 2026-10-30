@@ -18014,7 +18014,9 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    基准随批 v299 → v300。 */
 /* v301（2026-10-30 二）：PWA 边到边真机返修（safe-top-min 47→59 护栏
    同步 + dt-dock 14→8 无钉）—— 基准随批 v300 → v301。 */
-const EXPECTED_SW_CACHE = 'sleepy-v301';
+/* v302（2026-10-30 三）：boot 报错条升级（index.html 内联脚本变）——
+   基准随批 v301 → v302。 */
+const EXPECTED_SW_CACHE = 'sleepy-v302';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
