@@ -76,14 +76,35 @@ async function main() {
         localStorage.setItem(NS + 'chats', JSON.stringify([
           {
             id: 'ch1', characterId: 'c1', name: '测试对话',
+            sandboxId: 'sb-lamp-1',   /* 盖岛章：岛隔离下没章的聊天在房里看不见 */
             createdAt: Date.now(), updatedAt: Date.now(),
             messages: [{ id: 'm1', role: 'assistant', content: msg, timestamp: Date.now() }]
           }
         ]));
+        /* 预置一间活动房：真机上桌面挂载时房间早已就位 ——
+           只种 characters 的话，自动建房发生在 splash finish 之后，
+           ?splash=0 跳开屏就没人喊桌面挂载了（真机验收 2026-10-30 实锤，
+           v295 基线同样如此，与当日改动无关）。 */
+        const SB = { id: 'sb-lamp-1', name: '灯测房', kind: 'island',
+          charIds: ['c1'], createdAt: 1700000000000, updatedAt: 1700000000000 };
+        localStorage.setItem(NS + 'sandboxes', JSON.stringify([SB]));
+        localStorage.setItem(NS + 'activeSandboxId', JSON.stringify('sb-lamp-1'));
+        /* 授权闸：没这个桌面根本不挂（probe-widget-remove-ui2 的教训） */
+        localStorage.setItem(NS + 'license', JSON.stringify({ token: 'probe-token', lastVerifiedAt: Date.now() }));
       }, { msg: MSG });
 
-      await page.goto(BASE + '/index.html?splash=0');
+      /* ⚠️ 不用 ?splash=0：桌面挂载挂在开屏收尾的时点上，跳开屏会
+         连 bootHome 一起跳掉（2026-10-30 真机验收实锤，v295 基线同样）。
+         正常等开屏播完，只把遮罩藏掉方便断言。 */
+      await page.goto(BASE + '/index.html');
       await page.waitForFunction(() => !!window.Sleepy && !!window.Sleepy.nav, null, { timeout: 20000 });
+      await sleep(2500);   // 等开屏收尾（桌面在这时挂载）
+      await page.evaluate(() => {
+        const sp = document.getElementById('splash');
+        if (sp) sp.style.display = 'none';
+        const lm = document.querySelector('.legal-mask');
+        if (lm) lm.style.display = 'none';
+      });
       /* 长留言：走真实写入口落库（灯还没建的话，boot 时会从 store 现读） */
       const noteRec = await page.evaluate((text) => window.Sleepy.lampNotes.add({
         text: text, by: '阿玥', src: 'chat'

@@ -258,14 +258,16 @@ async function runGroupOnline(page, opts) {
 
     try {
       assert(r.groupOffline.ok === true, 'groupOffline 决策应成功');
-      eq(r.groupOffline.modules, ['B', 'P', 'L'],
-        '★ groupOffline 只报 B/P/L：');
-      eq(r.groupOffline.pendingModules, ['N', 'S5'],
-        '★ groupOffline 必须记 pendingModules：');
-      assert(r.groupOffline.partial === true, '★ groupOffline partial 应为 true');
-      assert(r.groupOffline.injectScene === false,
-        '★ groupOffline 本次不应注入 scene');
-      okMsg('groupOffline 部分接线：modules=B/P/L · pending=N/S5 · partial=true');
+      /* 2026-10-05 用户裁决：groupOffline 接入 S5（injectScene 改 true）——
+         老断言停在裁决前（B/P/L + pending N/S5），随批更新。 */
+      eq(r.groupOffline.modules, ['B', 'P', 'L', 'N', 'S5'],
+        '★ groupOffline 全量接线（裁决后）：');
+      eq(r.groupOffline.pendingModules, [],
+        '★ groupOffline 不该有 pendingModules：');
+      assert(r.groupOffline.partial === false, '★ groupOffline partial 应为 false');
+      assert(r.groupOffline.injectScene === true,
+        '★ groupOffline 裁决后应注入 scene');
+      okMsg('groupOffline 全量接线：modules=B/P/L/N/S5 · pending 空 · partial=false · injectScene=true');
     } catch (e) { badMsg('1 groupOffline -> ' + e.message); }
 
     try {
@@ -459,7 +461,7 @@ async function runGroupOnline(page, opts) {
 
   await resetCards();
 
-  process.stdout.write('\n7. 群线下部分接线：只接 B/P/L，七块旧协议原样保留\n');
+  process.stdout.write('\n7. 群线下全量接线（2026-10-05 裁决接入 N/S5），七块旧协议原样保留\n');
   {
     const r = await runGroupOffline(page, { tag: 'T7' });
     if (r.error) {
@@ -469,11 +471,11 @@ async function runGroupOnline(page, opts) {
         assert(r.txt.indexOf('以本轮提供的有效资料') >= 0, '★ 应含 B');
         assert(r.txt.indexOf('对每个获准扮演的人物，依据其资料') >= 0, '★ 应含 P');
         assert(r.txt.indexOf('结合本轮明确篇幅需求') >= 0, '★ 应含 L');
-        assert(r.txt.indexOf('从已成立现场中的话语、动作、注意力') < 0,
-          '★ N 不该进群线下 system（部分接线）');
-        assert(r.txt.indexOf('以共同现场中正在发生的事情组织叙述') < 0,
-          '★ S5 不该进群线下 system（部分接线）');
-        okMsg('群线下：system 里只有 B/P/L，N 与 S5 都不在');
+        assert(r.txt.indexOf('从已成立现场中的话语、动作、注意力') >= 0,
+          '★ N 应进群线下 system（裁决后全量接线）');
+        assert(r.txt.indexOf('以共同现场中正在发生的事情组织叙述') >= 0,
+          '★ S5 应进群线下 system（裁决后全量接线）');
+        okMsg('群线下：B/P/L/N/S5 五块全在 system 里');
       } catch (e) { badMsg('7 只接 B/P/L -> ' + e.message); }
 
       /* ★ 端到端（群线下版）：诊断声称的模块必须真在 txt 里，pending 的必须不在。
@@ -499,14 +501,14 @@ async function runGroupOnline(page, opts) {
       } catch (e) { badMsg('7 端到端一致 -> ' + e.message); }
 
       try {
-        eq(r.note.modules, ['B', 'P', 'L'], '★ 诊断 modules：');
-        eq(r.note.pendingModules, ['N', 'S5'], '★ 诊断 pendingModules：');
-        assert(r.note.partial === true, '★ partial：');
+        eq(r.note.modules, ['B', 'P', 'L', 'N', 'S5'], '★ 诊断 modules（裁决后全量）：');
+        eq(r.note.pendingModules, [], '★ 诊断 pendingModules：');
+        assert(r.note.partial === false, '★ partial：');
         assert(r.note.sceneSkippedByOverride === false,
-          '★ 这是「本批没接通」而不是 override 跳过，两者必须可区分');
+          '★ 这是正常接线而不是 override 跳过，两者必须可区分');
         assert(r.note.behaviorUsed === true, 'behaviorUsed：');
-        okMsg('群线下诊断：modules=B/P/L · pending=N/S5 · partial=true · ' +
-          'sceneSkippedByOverride=false（接线缺口 ≠ override）');
+        okMsg('群线下诊断：modules=B/P/L/N/S5 · pending 空 · partial=false · ' +
+          'sceneSkippedByOverride=false');
       } catch (e) { badMsg('7 群线下诊断 -> ' + e.message); }
 
       try {

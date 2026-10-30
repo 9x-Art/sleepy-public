@@ -193,17 +193,22 @@ async function main() {
     const txtR = await weText(page);
     chk('W7 刷新后记录仍在', txtR.indexOf('一起看过海') >= 0, '');
 
-    /* W8：LAYOUT_VERSION 17 + 桌面 we 入口 */
+    /* W8：桌面户型版本与 LAYOUT_VERSION 一致 + 桌面 we 入口。
+       （老断言锁 ver===17，现在 LAYOUT_VERSION 已到 25 —— 改成与
+       运行时常数对账，不随版本追改；?splash=0 下桌面数据不会自动落，
+       先显式 getDesktop() 物化一份。） */
     const layout = await page.evaluate(() => {
-      const d = window.Sleepy.store.get('desktop');
+      const S = window.Sleepy;
+      const d = S.desktop.getDesktop();
       let hasWe = false, ver = d && d.version;
       if (d && Array.isArray(d.pages)) {
         d.pages.forEach((p) => { (p || []).forEach((c) => { if (c && c.app === 'we') hasWe = true; }); });
       }
-      return { ver, hasWe };
+      return { ver, expect: S.desktop.LAYOUT_VERSION, hasWe };
     });
-    chk('W8 LAYOUT_VERSION 17 生效且桌面有 we 入口',
-      layout.ver === 17 && layout.hasWe, 'ver=' + layout.ver + ' hasWe=' + layout.hasWe);
+    chk('W8 桌面户型版本=LAYOUT_VERSION 且有 we 入口',
+      layout.ver === layout.expect && layout.hasWe,
+      'ver=' + layout.ver + ' expect=' + layout.expect + ' hasWe=' + layout.hasWe);
 
     /* ==================== 三页导航 + 时光 v1（2026-09-28） ==================== */
 

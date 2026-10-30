@@ -105,10 +105,13 @@
      有些组件渲染要懒加载/要数据，橱窗里只求一眼认出长相反而要轻）。 */
   var MOCKS = {
     lamp: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--lamp',
+      /* ⚠️ h() 第三参只收**一个**子节点（或数组）—— 直接传多个实参
+         会被静默丢弃（真机验收探针抓的：整排小样只渲染了第一个孩子）。
+         多个子节点一律用数组包。 */
+      el.appendChild(h('div', 'ws-mock ws-mock--lamp', [
         h('div', 'ws-mock--lamp-ring'),
         h('div', 'ws-mock--lamp-card'),
-        h('div', 'ws-mock--lamp-card ws-mock--lamp-card--b')));
+        h('div', 'ws-mock--lamp-card ws-mock--lamp-card--b')]));
     },
     clock: function (el) { el.appendChild(mockClock()); },
     worldclock: function (el) {
@@ -143,23 +146,23 @@
       el.appendChild(s);
     },
     char: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--char',
+      el.appendChild(h('div', 'ws-mock ws-mock--char', [
         h('span', 'ws-mock--ava'),
-        h('span', 'ws-mock--bar')));
+        h('span', 'ws-mock--bar')]));
     },
     hdr: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--hdr',
+      el.appendChild(h('div', 'ws-mock ws-mock--hdr', [
         h('b', null, '10月6日'),
-        h('span', null, '16:34')));
+        h('span', null, '16:34')]));
     },
     wj: function (el) {
       /* 缩样照本体画：两片幕布 + 衬线小字（本体见 page-desktop RENDER.wj） */
-      el.appendChild(h('div', 'ws-mock ws-mock--wj',
+      el.appendChild(h('div', 'ws-mock ws-mock--wj', [
         h('i', 'ws-mock--wj-curtain ws-mock--wj-curtain--l'),
         h('i', 'ws-mock--wj-curtain ws-mock--wj-curtain--r'),
-        h('span', 'ws-mock--wj-copy',
+        h('span', 'ws-mock--wj-copy', [
           h('b', null, '帷境'),
-          h('em', null, '今晚，读哪一种可能'))));
+          h('em', null, '今晚，读哪一种可能')])]));
     },
     mode: function (el) {
       el.appendChild(h('div', 'ws-mock ws-mock--mode', '线下'));
@@ -169,34 +172,34 @@
     },
     /* ---- 批3 新件的 mini mock ---- */
     countdown: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--cdown',
+      el.appendChild(h('div', 'ws-mock ws-mock--cdown', [
         h('b', null, '14'),
-        h('span', null, '天')));
+        h('span', null, '天')]));
     },
     weatherbrick: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--wbrick',
+      el.appendChild(h('div', 'ws-mock ws-mock--wbrick', [
         h('b', null, '12°'),
-        h('span', null, '多云')));
+        h('span', null, '多云')]));
     },
     dateclock: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--dclock',
+      el.appendChild(h('div', 'ws-mock ws-mock--dclock', [
         h('b', null, '10月6日'),
-        h('span', null, '16:50')));
+        h('span', null, '16:50')]));
     },
     polaroid: function (el) {
       el.appendChild(h('div', 'ws-mock ws-mock--pola'));
       el.appendChild(h('div', 'ws-mock ws-mock--pola is-alt'));
     },
     slowmail: function (el) {
-      el.appendChild(h('div', 'ws-mock ws-mock--smail',
+      el.appendChild(h('div', 'ws-mock ws-mock--smail', [
         h('b', null, '✉'),
-        h('span', null, '2 封')));
+        h('span', null, '2 封')]));
     }
   };
   function mockClock(alt) {
-    return h('div', 'ws-mock ws-mock--clock' + (alt ? ' ' + alt : ''),
+    return h('div', 'ws-mock ws-mock--clock' + (alt ? ' ' + alt : ''), [
       h('i', 'ws-mock--hand'),
-      h('i', 'ws-mock--hand ws-mock--hand--m'));
+      h('i', 'ws-mock--hand ws-mock--hand--m')]);
   }
   function mockDisc() {
     return h('div', 'ws-mock ws-mock--disc', h('i'));

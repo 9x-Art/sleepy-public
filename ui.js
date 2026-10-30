@@ -22,6 +22,25 @@
        （字符串转文本节点）。以前只认字符串，谁手滑传了个元素进去，
        textContent 就变成「[object HTMLElement]」—— 认知地图和「我」页
        都这么烂过。现在类型本身兜底，这类 bug 整类消失。 */
+    /* 可变子节点（2026-10-30 真机验收实锤）：只认第三参的话，写成
+       h('div', cls, child1, child2, child3) 会**静默丢掉第 2 个起的所有
+       孩子**（商城小样整排只渲染出第一个孩子就是这么来的）。第四参起
+       一律当孩子收 —— 单孩子的老写法完全不受影响。 */
+    if (arguments.length > 3) {
+      for (var i = 2; i < arguments.length; i++) {
+        var t = arguments[i];
+        if (t === undefined || t === null) continue;
+        if (Array.isArray(t)) {
+          t.forEach(function (x) {
+            if (x === undefined || x === null) return;
+            el.appendChild(x && x.nodeType ? x : document.createTextNode(String(x)));
+          });
+        } else {
+          el.appendChild(t && t.nodeType ? t : document.createTextNode(String(t)));
+        }
+      }
+      return el;
+    }
     if (text !== undefined && text !== null) {
       /* 用 nodeType 鸭子判断而不是 instanceof Node ——
          无头测试的 DOM 桩里没有 Node 这个全局，写 instanceof 会直接炸。 */
