@@ -2725,6 +2725,11 @@ html.kb-open .input-area{padding-bottom:6px;}
 .dl-card{
   position:absolute;
   left:50%;top:50%;
+  /* 位移必须写在本体，不能只靠 @keyframes 的 fill 留住 ——
+     iOS 16 WebKit 在动画结束、合成层回收后可能丢掉 forwards 填充的
+     transform，卡片会停在「左上角顶着屏幕中心」的位置（偏右下）。
+     同款正确写法参考 .hb-panel（位移在本体 + 动画只管 scale/opacity）。 */
+  transform:translate(-50%,-50%);
   width:min(320px, 82%);
   z-index:81;
   display:none;

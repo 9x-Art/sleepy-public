@@ -18084,7 +18084,8 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v310（2026-10-31）：iOS PWA dock 下探压指示条上缘 + 网格底部预算同步（style.css）—— 基准随批 v309 → v310。 */
 /* v317（2026-10-31）：授权拉取维稳（repo-core：同源 20s 超时 + GET 整轮重试 + no-store + 文案改关 VPN）—— 基准随批 v316 → v317。 */
 /* v318（2026-10-31）：授权失败诊断链（repo-core：全挂文案追加每 base 失败原因）—— 基准随批 v317 → v318。 */
-const EXPECTED_SW_CACHE = 'sleepy-v318';
+/* v319（2026-10-31）：iOS 16 弹窗不居中根修（style.css：.dl-card 位移写进本体，不再依赖 keyframes forwards 填充）—— 基准随批 v318 → v319。 */
+const EXPECTED_SW_CACHE = 'sleepy-v319';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
