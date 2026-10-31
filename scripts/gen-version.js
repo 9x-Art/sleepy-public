@@ -47,12 +47,28 @@ function walk(dir, base, out) {
   return out;
 }
 
-const files = walk(root, root, {});
+/* PWA 更新检测（2026-10-31 用户点名）：页面得知道自己多老才能跟
+   version.json 比。把构建号烙进部署副本的 index.html（<head> 里一枚
+   meta），仓库里的 index.html 一个字不动 —— 只有线上页面自带身份。
+   ⚠️ 必须在 walk() 算哈希**之前**烙：APK 的 Updater 逐文件校验 sha256，
+   烙完再算才是真哈希。head 还没算出来没关系 —— meta 烙的是 build
+   （head + 时间戳），build 先拼好再烙。 */
 let head = 'unknown';
 try { head = require('child_process').execSync('git rev-parse --short HEAD', { cwd: __dirname + '/..' }).toString().trim(); } catch (e) { /* 副本目录外跑也能活 */ }
 
+const BUILD = head + '-' + Date.now().toString(36);
+const indexPath = path.join(root, 'index.html');
+let html = fs.readFileSync(indexPath, 'utf8');
+if (html.indexOf('x-sleepy-build') < 0) {
+  const META = '<meta name="x-sleepy-build" content="' + BUILD + '">';
+  html = html.replace(/<head(\s[^>]*)?>/, function (m) { return m + '\n' + META; });
+  fs.writeFileSync(indexPath, html);
+}
+
+const files = walk(root, root, {});
+
 const manifest = {
-  build: head + '-' + Date.now().toString(36),
+  build: BUILD,
   head: head,
   generated: Date.now(),
   files: files

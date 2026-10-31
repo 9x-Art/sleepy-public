@@ -107,6 +107,10 @@
      消费口全惰性（prompt-engine 的 usage 槽 / 设置页 / 角色设置运行时读
      Sleepy.usage），排哪都行 —— 挨着 behavior-text 放好找。 -->
 <script src="usage.js" defer></script>
+<!-- PWA 更新检测（2026-10-31）：启动 6s + 页面可见（节流）自动查，
+     设置页「检查更新」手动查。壳内不启用（壳有自己的 OTA），本地
+     dev 不启用（没有烙印）。排 update-check 靠后无妨 —— 全惰性。 -->
+<script src="update-check.js" defer></script>
 <!-- 预设注入引擎（第一轮）：prompt-engine 是数据与装配核心，
      page-presets 是它的配置 app。都排在 page-chat 前 —— 后者要调引擎。 -->
 <script src="prompt-engine.js" defer></script>

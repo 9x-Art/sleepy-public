@@ -672,7 +672,20 @@
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
 /* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v314';
+var CACHE = 'sleepy-v315';
+
+/* v315（2026-10-31）：**PWA 更新检测**（update-check.js 新文件 / index.html /
+   page-settings.js / sw.js / scripts/gen-version.js）——用户点名：PWA 也能
+   检测到更新然后更新（APK 那半 2026-10-25 就有了，这批补 web 半边）。
+   ① gen-version.js：部署副本 index.html 烙 <meta x-sleepy-build>（必须在
+   walk 算哈希之前烙 —— APK 逐文件 sha256 校验要算真哈希）；
+   ② sw.js：version.json 永远直连网络不进缓存（它是检测探针，进了缓存
+   检测永远读老版本）；
+   ③ update-check.js：页面拿烙印 vs version.json（带 ?t= 破缓存），
+   head 不一致 = 有新版 → reg.update() + 等 SW 接管后 reload（sessionStorage
+   防循环：30s 内只自动刷一次）；触发点 = 启动 6s + 页面可见（10min 节流）
+   + 设置页手动行。本地 dev / 壳内 / file:// 不启用（壳有自己的 OTA）。
+   → 必须跳版本：sw.js / index.html / page-settings.js 变了。 */
 
 /* v314（2026-10-31）：**iOS PWA 底白边 + 顶部裁切**（style.css / app.js）——
    用户实机复验（删 PWA 重加 + 无痕 + 其他修复已同步 = 排除缓存）仍有问题，
@@ -1938,8 +1951,12 @@ self.addEventListener('fetch', function (e) {
      stale-while-revalidate 会把激活/登录后的回包当旧货端出来，
      表现为「激活成功了还停在激活页」。POST 本来就不进，这里排除 GET。
      v303 补 /gate /shelf：仓库门牌校验与货架走同源首候选（repo-core
-     的单 base 语义），functions 反代清单同步收编，这里也一起排除。 */
+     的单 base 语义），functions 反代清单同步收编，这里也一起排除。
+     v315 补 version.json：它是 PWA 更新检测的探针（页面拿自己的烙印
+     跟它比），必须永远打网络 —— 进了缓存 + ignoreSearch 把 ?t= 时间戳
+     也抹掉，更新检测就永远读到老版本，等于没做。 */
   if (/^\/(account|public-shelf|item|inbox|publish|gate|shelf)(\/|$)/.test(url.pathname)) return;
+  if (url.pathname === '/version.json') return;
 
   e.respondWith(
     caches.match(req, { ignoreSearch: true }).then(function (hit) {

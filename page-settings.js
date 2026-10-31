@@ -359,9 +359,11 @@
       });
       gSb.card.appendChild(fSbBat.el);
       body.appendChild(gSb.wrap);
-      /* 检查更新（2026-10-25 安卓壳）：只在原生 App 里出现 —— 浏览器/PWA
-         的更新就是刷新页面，不用这行。桥的 checkUpdate 异步拉 version.json
-         比对构建号，结果经 __sleepyUpdateResult 回 toast（含失败原因）。 */
+      /* 检查更新（2026-10-25 安卓壳；2026-10-31 起 PWA 也有）——
+         壳里走桥的 checkUpdate（异步拉 version.json 比构建号，结果经
+         __sleepyUpdateResult 回 toast）；PWA/浏览器走 Sleepy.updatePwa
+         （页面烙印 vs version.json，有新版自动刷新）。本地 dev 没有
+         烙印也不注册 SW，两边条件都不满足就不画这行。 */
       if (window.SleepyNative && typeof window.SleepyNative.checkUpdate === 'function') {
         var updRow = row({
           label: '检查更新',
@@ -374,6 +376,15 @@
           window.SleepyNative.checkUpdate();
         });
         g5.card.appendChild(updRow);
+      } else if (Sleepy.updatePwa && Sleepy.updatePwa.supported()) {
+        var pwaUpdRow = row({ label: '检查更新' });
+        pwaUpdRow.disabled = false;
+        pwaUpdRow.classList.remove('is-soon');
+        pwaUpdRow.addEventListener('click', function () {
+          ctx.toast('正在检查更新…');
+          Sleepy.updatePwa.check(true);
+        });
+        g5.card.appendChild(pwaUpdRow);
       }
       /* 我的授权（账密系统 v2，2026-10-21；2026-10-23 起进门先过授权闸）——
          能走到设置页说明已激活，这页只剩管理：改密 / 设备 / 注销
