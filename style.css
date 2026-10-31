@@ -70,6 +70,14 @@
   --safe-top:max(env(safe-area-inset-top, 0px), var(--safe-top-fb), var(--safe-top-min));
   --safe-bottom:max(env(safe-area-inset-bottom, 0px), var(--safe-bottom-fb));
 
+  /* 壳高度基准（2026-10-31 用户实机 + 小红书同款案例）：iOS PWA 里
+     100dvh 只撑到 WebKit 认的「可视区」，撑不到屏幕物理底 —— 底部
+     露白边（壁纸 cover 也没用，容器本身矮了）。PWA（html.ios-pwa）
+     下统一改基准 100vh：standalone 没有地址栏，vh 就是整块屏幕。
+     浏览器 / 桌面仍用 dvh（地址栏伸缩要跟着走）。壳相关的高度
+     （#phone / 桌面格子预算 / 授权闸）一律读这个变量，别再混写。 */
+  --app-vh:100dvh;
+
   /* ---- 假状态栏占位（2026-10-28 晚补，iOS 顶栏偏下的真凶）----
      #statusbar 是**浮层不占布局**（它要透明、要让封面顶到屏幕最上边），
      所以所有页面都得自己往下让 32px —— 以前这个 32 是**硬写**在
@@ -334,8 +342,8 @@ body{
   position:relative;
   width:100%;
   max-width:480px;
-  height:100vh;     /* 兜底：不认 dvh 的老浏览器没这行高度会塌成 auto */
-  height:100dvh;    /* 手机地址栏伸缩时跟着走（动态视口） */
+  height:100vh;     /* 兜底：不认 dvh / var 的老浏览器没这行高度会塌成 auto */
+  height:var(--app-vh);  /* 浏览器 = dvh；iOS PWA = 100vh（:root --app-vh） */
   background:transparent;   /* 底色交给 .ambient，玻璃才有东西可透 */
   display:flex;
   flex-direction:column;
@@ -3208,7 +3216,7 @@ html.kb-open .input-area{padding-bottom:6px;}
   --dt-pad-bottom:132px;
   --dt-chrome:calc(var(--safe-top) + var(--sb-h) + var(--dt-pad-top) + var(--dt-pad-bottom));
   --dt-cell-w:calc((100vw - 40px - 3 * var(--dt-gap)) / 4);
-  --dt-cell-h:calc((100dvh - var(--dt-chrome) - 5 * var(--dt-gap)) / 6);
+  --dt-cell-h:calc((var(--app-vh) - var(--dt-chrome) - 5 * var(--dt-gap)) / 6);
   /* 取小：宽屏时按宽度算更小，矮屏时按高度算更小。
      min() 是 CSS 的原生能力，比在 JS 里重算一遍可靠。 */
   --dt-cell:min(var(--dt-cell-w), var(--dt-cell-h), 98px);
@@ -5095,6 +5103,7 @@ html.kb-open .input-area{padding-bottom:6px;}
    下探到 safe-bottom 的四成左右；网格底部预算（--dt-pad-bottom）
    同步收掉，不然空隙只是从小条挪进网格（dock 顶 = safe*0.4+4+74，
    iPhone 上 ≈ 92px，预算给 106px 留呼吸）。 */
+html.ios-pwa{ --app-vh:100vh; }
 html.ios-pwa .dt-dock{ bottom:calc(var(--safe-bottom) * 0.4 + 4px); }
 html.ios-pwa{ --dt-pad-bottom:106px; }
 .dt-dock-btn{
@@ -16238,7 +16247,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
    2026-10-23：账密系统接进 bootHome —— 进门先过授权，桌面不挂。
    画在 home 位（全屏 section），复用 set-group 系表单样式，只补门面壳。 */
 .license-gate{
-  min-height:100dvh;
+  min-height:var(--app-vh);   /* PWA 下跟壳同基准（100vh），别比 #phone 还高 */
   box-sizing:border-box;
   display:flex;
   flex-direction:column;

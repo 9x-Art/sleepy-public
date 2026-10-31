@@ -18082,8 +18082,8 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    page-chat 流式清扫/reroll 渐进拆泡 + page-group/ai 群聊清扫）——
    基准随批 v303 → v304。 */
 /* v310（2026-10-31）：iOS PWA dock 下探压指示条上缘 + 网格底部预算同步（style.css）—— 基准随批 v309 → v310。 */
-/* v313（2026-10-31）：手机使用情况（usage.js 新文件 + prompt-engine usage 槽 + 设置/角色设置开关）—— 基准随批 v312 → v313。 */
-const EXPECTED_SW_CACHE = 'sleepy-v313';
+/* v314（2026-10-31）：iOS PWA 壳高度 100dvh→--app-vh（PWA 下 100vh）+ 边到边兜底放宽到 Safari（style.css/app.js）—— 基准随批 v313 → v314。 */
+const EXPECTED_SW_CACHE = 'sleepy-v314';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

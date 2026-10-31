@@ -413,14 +413,18 @@
         bottom = probeEl('safe-probe-bottom',
           'height:env(safe-area-inset-bottom,0px)').getBoundingClientRect().height || 0;
       } catch (e) { return; }      /* 量不出来就等下一轮，别写脏值 */
-      /* PWA standalone 边到边检测（2026-10-29 用户朋友 iPhone 实测）：
-         这一版 WebKit 在 standalone 下 env(top) 渲染恒 0（探针量出来
-         也是 0），内容顶进半透明状态栏 → 顶部文字「虚糊感」。
-         innerHeight ≈ screen.height = 内容没被系统从状态栏下推开 = 需要
-         最小让位（html.ios-pwa-edge 里 CSS 给 47px 兜底）；系统自己推开
-         的版本（iOS 26.1 那类）innerHeight 更小，不加，避免双份。 */
+      /* iOS 边到边检测（2026-10-29 用户朋友 iPhone 实测；2026-10-31 用户
+         实机复验时放宽到 Safari 也算）：这一版 WebKit 的 env(top) 渲染
+         恒 0（探针量出来也是 0），内容顶进半透明状态栏 → 顶部文字被裁
+         「虚糊感」。innerHeight ≈ screen.height = 内容没被系统从状态栏
+         下推开 = 需要最小让位（html.ios-pwa-edge 里 CSS 给 59px 兜底）；
+         系统自己推开的版本（iOS 26.1 那类）innerHeight 更小，不加，避免
+         双份。以前要求 navigator.standalone —— 但用户实机 Safari（无痕
+         刷新过、别的修复都同步到了）顶部一样被裁，说明这套 WebKit 在
+         Safari 里 env(top) 也是 0，放宽成只看边到边本身。冷启动五轮跑完
+         就停表，Safari 地址栏收起引起的 innerHeight 变化不会再触发重测。 */
       try {
-        var edge = navigator.standalone && global.screen &&
+        var edge = global.screen &&
           global.innerHeight >= (global.screen.height - 2);
         d.classList.toggle('ios-pwa-edge', !!edge);
       } catch (e) { /* 量不了就不加 */ }
