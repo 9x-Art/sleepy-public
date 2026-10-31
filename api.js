@@ -39,6 +39,12 @@
     stream: true
   };
 
+  /* 截断提示（2026-10-31）：finish_reason = length 时追加到正文末尾。
+     以前 length 和 stop 一视同仁静默收尾 —— 思考类模型把 max_tokens
+     额度先烧在思考上、正文只吐几个字就到顶，用户看到的却是「角色说
+     两个字就不说了」，完全无从排查。打上标记才对得起调上限的人。 */
+  var TRUNC_NOTE = '\n\n〔这条回复触到了「单次回复上限」被截断 —— 思考类模型会先烧思考额度，建议把接口设置里的「单次回复上限」再调大，或换非思考模型〕';
+
   /* 用户很容易只填到 /v1，也会有人把完整地址整条粘进来。两种都认 */
   function normalizeEndpoint(baseUrl) {
     var u = String(baseUrl || '').trim().replace(/\/+$/, '');
@@ -301,6 +307,10 @@
           }
           var choice = data.choices && data.choices[0];
           var content = choice && (choice.message ? choice.message.content : (choice.text || ''));
+          /* length = max_tokens 烧到顶被截断：打标记，别静默（2026-10-31） */
+          if (choice && choice.finish_reason === 'length') {
+            content = (content || '') + TRUNC_NOTE;
+          }
           resolve({ ok: true, ms: ms, status: r.status, data: data, content: content || '' });
         });
       })['catch'](function (err) {
@@ -401,6 +411,12 @@
           try { data = JSON.parse(txt); } catch (e) { /* 落下面 */ }
           var content = data && data.choices && data.choices[0] &&
             data.choices[0].message && data.choices[0].message.content;
+          /* 非流式退化路同样打 length 截断标记（2026-10-31） */
+          if (data && data.choices && data.choices[0] &&
+              data.choices[0].finish_reason === 'length') {
+            content = (content || '') + TRUNC_NOTE;
+            if (handlers.onDelta) handlers.onDelta(TRUNC_NOTE, false);
+          }
           if (data && data.usage) usage = data.usage;
           if (content) {
             out += content;
@@ -430,6 +446,13 @@
             /* include_usage：最后一块通常不带 choices、只带 usage */
             if (data.usage) usage = data.usage;
             var ch0 = data.choices && data.choices[0];
+            /* 思考分块也是「流还活着」的证据（2026-10-31 截断实锤）：
+               reasoning_content / reasoning 喂空闲看门狗 —— 头注注释一直
+               是这么声称的，但代码只在 content 分块喂表，思考阶段 15s
+               就被当「已说完」收尾落库，正文只剩开头几个字。 */
+            var rdelta = ch0 && ch0.delta &&
+              (ch0.delta.reasoning_content || ch0.delta.reasoning);
+            if (rdelta) armIdle();
             var delta = ch0 && ch0.delta && ch0.delta.content;
             if (delta) {
               out += delta;
@@ -439,8 +462,13 @@
             /* finish_reason 是模型说完的权威标志（2026-10-29 实锤：有的
                网关吐完内容既不发 [DONE] 也不关流，还用注释帧保活 ——
                光等 res.done 会永远等不到）。见到就立即收尾落库，
-               不等流关闭。 */
+               不等流关闭。length = max_tokens 烧到顶被截断，追加提示
+               别静默（思考模型正文只出几个字的主因）。 */
             if (ch0 && ch0.finish_reason) {
+              if (ch0.finish_reason === 'length') {
+                out += TRUNC_NOTE;
+                if (handlers.onDelta) handlers.onDelta(TRUNC_NOTE, true);
+              }
               /* 网关还会用注释帧保活，流不会自己关 —— 主动断开 reader 释放连接 */
               try { reader.cancel(); } catch (e) { /* 忽略 */ }
               done();
