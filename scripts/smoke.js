@@ -18083,7 +18083,8 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    基准随批 v303 → v304。 */
 /* v310（2026-10-31）：iOS PWA dock 下探压指示条上缘 + 网格底部预算同步（style.css）—— 基准随批 v309 → v310。 */
 /* v317（2026-10-31）：授权拉取维稳（repo-core：同源 20s 超时 + GET 整轮重试 + no-store + 文案改关 VPN）—— 基准随批 v316 → v317。 */
-const EXPECTED_SW_CACHE = 'sleepy-v317';
+/* v318（2026-10-31）：授权失败诊断链（repo-core：全挂文案追加每 base 失败原因）—— 基准随批 v317 → v318。 */
+const EXPECTED_SW_CACHE = 'sleepy-v318';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -19467,10 +19468,12 @@ t('账密网络层行为：第一个 base 被墙自动切第二个，全挂报�
     throw new Error('base 顺序不对（应按序转移）：' + dev.join(' , '));
   }
   /* 负向：两个 base 全挂 → 统一可读文案（独立基准硬写；v317 批准改口径
-     为「关 VPN」—— 2026-10-24 旧基准「挂 VPN 或换网络」随之作废）。
+     为「关 VPN」；v318 批准追加诊断链——每个 base 的失败原因拼进括号，
+     全挂 mock 下 4 次全是「连不上」，链路内容也硬写不引被测常量）。
      全挂时 GET 会跑两整轮（重试批准行为，锁死）：2 轮 × 2 base = 4 次。 */
   const HINT = '连不上授权服务器：关掉 VPN / 代理后重试（授权走 pages.dev 直连，' +
     '挂 VPN 反而绕到机房出口会被闸门挡）；还不行就换一下网络';
+  const DIAG = '（base-a.invalid 连不上｜base-b.invalid 连不上）';
   const allCalls = [];
   win.fetch = function (url) {
     allCalls.push(String(url));
@@ -19484,7 +19487,9 @@ t('账密网络层行为：第一个 base 被墙自动切第二个，全挂报�
     S.store.set('repoCfg', null);
   }
   if (r2.ok !== false) throw new Error('全挂必须回 ok:false：' + JSON.stringify(r2));
-  if (r2.message !== HINT) throw new Error('失败文案不是统一指引基准（独立基准 v317 登记）：' + r2.message);
+  if (r2.message !== HINT + DIAG) {
+    throw new Error('失败文案不是统一指引基准+诊断链（独立基准 v318 登记）：' + r2.message);
+  }
   const allDev = allCalls.filter((u) => u.indexOf('/account/devices') >= 0);
   if (allDev.length !== 4) {
     throw new Error('全挂应两整轮共 4 次（GET 重试批准行为），实到 ' +

@@ -971,7 +971,18 @@
 
     function tryRound() {
       rounds++;
+      diag = [];
       tryBase(0, rounds);
+    }
+
+    /* 诊断链（2026-10-31 v318）：每轮每个 base 败在哪（超时/HTTP 状态/
+     连不上）记下来，全挂时拼进文案 —— 授权拉取从「黑盒失败」变成
+     一眼能定位（主路超时 = 网络绕路；兜底 403 = 机房闸；HTTP 429 =
+     限流；HTTP 401 = 会话失效走不到这，那是另一条 cb 路径）。 */
+    var diag = [];
+
+    function diagMark(base, reason) {
+      diag.push(String(base).replace(/^https?:\/\//, '').split('/')[0] + ' ' + reason);
     }
 
     function timeoutFor(base, isLast) {
@@ -988,7 +999,9 @@
         /* 整轮跑完：GET 允许再来一整轮（网络抖动常见，幂等无副作用）；
            写操作不再重试 —— 服务端可能已处理，重复提交有真实写库风险。 */
         if (isGet && round === 1) { tryRound(); return; }
-        cb({ ok: false, message: LICENSE_NET_HINT });
+        cb({ ok: false,
+          message: LICENSE_NET_HINT + '（' + diag.join('｜') + '）',
+          diag: diag.slice() });
         return;
       }
       var base = bases[i];
@@ -1003,7 +1016,10 @@
         cache: isGet ? 'no-store' : undefined   /* 授权状态查询绝不吃 HTTP 缓存 */
       });
       if (ctl) {
-        timer = setTimeout(function () { ctl.abort(); }, timeoutFor(base, last));
+        timer = setTimeout(function () {
+          ctl.abort();
+          diagMark(base, '超时');
+        }, timeoutFor(base, last));
       } else if (!last) {
         /* 老浏览器退路：race 一个短超时 reject（请求会在后台跑完，
            users.qq 唯一索引兜底，无重复写库风险） */
@@ -1018,8 +1034,14 @@
         var js = res.js || {};
         cb({ ok: !!js.ok, status: res.status, message: js.message || '',
           data: js, devices: js.devices || null });
-      }, function () {
+      }, function (err) {
         if (timer) clearTimeout(timer);
+        /* 区分失败原因：真取消（abort）已由 timer 侧记「超时」；老浏览器
+           race 的 timeout 记「超时」；其余 = 连不上（DNS/墙/机房闸）。 */
+        var aborted = ctl && ctl.signal && ctl.signal.aborted;
+        if (!aborted) {
+          diagMark(base, (err && err.message === 'timeout') ? '超时' : '连不上');
+        }
         if (!last) { tryBase(i + 1, round); return; }   /* 切下一个 base；整轮全败看轮次 */
         tryBase(i + 1, round);
       });
