@@ -37,3 +37,22 @@ _tmp-deploy-conv/
 # 临时探针/候选目录与文件一律不入库（2026-10-31 体检：_tmp-probe-* 等曾有缺口）
 _tmp-*/
 _tmp-*
+
+# 工作过程产物只留本地、不上 GitHub（2026-10-31 清理：
+# docs 交接/验收/方案 325 个、preview 预览稿、_retired 退役旧物，
+# 里面带着本机路径，公开仓库不该有；磁盘上原样保留）
+docs/
+preview/
+_retired/
+
+# scripts 只留核心工具（smoke/check/deploy/gen-version/harness/pack-android/make-icons），
+# 其余一次性测试/探针/交接打包脚本（browser-*、probe-*、offline-f2-*、make-*handover 等）
+# 一律不入库 —— 新写的一次性脚本默认就不会跟到 GitHub 上
+scripts/*
+!scripts/smoke.js
+!scripts/check.js
+!scripts/deploy.sh
+!scripts/gen-version.js
+!scripts/harness.js
+!scripts/pack-android.sh
+!scripts/make-icons.js

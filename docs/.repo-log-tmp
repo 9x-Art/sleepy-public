@@ -1,4 +1,0 @@
-
-# 仓库 Worker 上线（v223）
-- 部署完成：https://sleepy-repo.2383444931.workers.dev（D1=ea5d3f03…，包体换 KV namespace STORE=6647713b…，R2 未开通弃用；下载口 R2/KV 双兼容）。schema 已补。门牌 meiguan=安乐的试吃铺 已建，/shelf 线上验证 ok。
-- repo-core DEFAULT_BASE 烤线上地址；页面地址框删除。sw v223 + smoke 基准 v223，双绿。
