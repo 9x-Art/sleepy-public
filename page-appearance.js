@@ -1109,18 +1109,18 @@
     title: '单独修改 App',
     render: function (ctx) {
       var body = ctx.body;
-      var selKey = ctx.params.appKey || '';
 
       function paint() {
         body.innerHTML = '';
         var list = appList();
         var IC = Sleepy.desktop && Sleepy.desktop.ICONS;
 
-        /* ---- 选择要修改的 App ---- */
-        var g1 = group('选择要修改的 App', '桌面网格和底栏里的都在这。');
+        /* ---- 选择要修改的 App（2026-10-31 改版：点行直接弹编辑面板，
+           不再「选中 → 滚到下面的编辑卡」两段式）---- */
+        var g1 = group('选择要修改的 App', '点一个直接弹出面板改；桌面网格和底栏里的都在这。');
         list.forEach(function (it) {
           var ov = appOverride(it.key);
-          var row = h('button', 'lk-app-row' + (selKey === it.key ? ' is-on' : ''));
+          var row = h('button', 'lk-app-row');
           row.type = 'button';
           var icEl = h('span', 'w-app-ic lk-app-ic');
           icEl.style.setProperty('--tk', '34px');
@@ -1140,114 +1140,144 @@
           main.appendChild(h('span', 'lk-app-sub',
             ov ? '已自定义' : '默认'));
           row.appendChild(main);
-          row.addEventListener('click', function () { selKey = it.key; paint(); });
+          row.addEventListener('click', function () { openPanel(it.key); });
           g1.card.appendChild(row);
         });
         body.appendChild(g1.wrap);
 
-        /* ---- 编辑卡 ---- */
-        if (!selKey) {
-          body.appendChild(h('p', 'set-foot', '点上面一个 App 开始改。'));
-          return;
-        }
-        var it2 = null;
-        list.forEach(function (x) { if (x.key === selKey) it2 = x; });
-        var ov2 = appOverride(selKey);
-
-        var g2 = group('当前 App', '单 App 的修改优先于整套图标风格。');
-        var hero = h('div', 'lk-editor-hero');
-        var big = h('span', 'w-app-ic lk-editor-ic');
-        big.style.setProperty('--tk', '56px');
-        if (ov2 && ov2.iconMediaId && Sleepy.media) {
-          var bimg = h('img', 'w-app-ic-img');
-          Sleepy.media.url(ov2.iconMediaId).then(function (u) { if (u) bimg.src = u; });
-          big.appendChild(bimg);
-        } else if (IC && IC[selKey]) {
-          big.innerHTML = IC[selKey];
-        } else {
-          big.textContent = ((it2 && it2.label) || '?').slice(0, 1);
-        }
-        hero.appendChild(big);
-        var heroMain = h('div', 'lk-editor-main');
-        heroMain.appendChild(h('b', '', (ov2 && ov2.name) || (it2 && it2.label) || selKey));
-        heroMain.appendChild(h('small', '', ov2 ? '已自定义 · 桌面立即生效' : '跟随默认'));
-        hero.appendChild(heroMain);
-        g2.card.appendChild(hero);
-
-        /* 名称 */
-        g2.card.appendChild(h('label', 'off-field-label lk-field-label', '桌面显示名称'));
-        var nameIn = h('input', 'lk-text-input');
-        nameIn.maxLength = 8;
-        nameIn.placeholder = '输入名称';
-        nameIn.value = (ov2 && ov2.name) || '';
-        g2.card.appendChild(nameIn);
-        var applyName = h('button', 'lk-soft-btn', '应用名称');
-        applyName.type = 'button';
-        applyName.addEventListener('click', function () {
-          setOverride(selKey, { name: String(nameIn.value || '').trim() });
-          ctx.toast('名称改好了 · 回桌面就能看到', 'ok');
-          paint();
-        });
-        g2.card.appendChild(applyName);
-
-        /* 图标
-           ⚠️ 文件 input 必须是按钮的**兄弟节点**，不能塞在按钮/label 里面。
-           塞在里面的话：input.click() 的合成事件会冒泡回外层，
-           外层处理器里的 e.preventDefault() 又把这个事件的默认动作
-           （打开文件选择器）取消掉 —— 表现就是「点了没反应」。
-           2026-09-21 修；壁纸那处同款写法一起改掉。 */
-        var up = h('button', 'lk-upload');
-        up.type = 'button';
-        up.appendChild(h('span', 'lk-upload-main', '上传自定义图标'));
-        var ifile = h('input');
-        ifile.type = 'file';
-        ifile.accept = 'image/*';
-        ifile.style.display = 'none';
-        g2.card.appendChild(up);
-        g2.card.appendChild(ifile);
-        up.addEventListener('click', function () { ifile.click(); });
-        ifile.addEventListener('change', function () {
-          var f = ifile.files && ifile.files[0];
-          if (!f || !Sleepy.media) return;
-          ctx.toast('正在收进图库…', 'ok');
-          Sleepy.media.shrink(f, 240).then(function (r) {
-            return Sleepy.media.put(r.blob, { w: r.w, h: r.h, name: '图标 · ' + selKey });
-          }).then(function (id) {
-            setOverride(selKey, { iconMediaId: id });
-            ctx.toast('图标换好了', 'ok');
-            paint();
-          }).catch(function (e2) {
-            ctx.toast('没换成：' + (e2 && e2.message || '图片处理失败'), 'err');
-          });
-        });
-
-        /* 恢复默认 */
-        if (ov2) {
-          var reset = h('button', 'lk-danger-btn', '恢复默认');
-          reset.type = 'button';
-          reset.addEventListener('click', function () {
-            ui.confirm({
-              title: '恢复默认？',
-              note: '这个 App 的自定义名称和图标都会清掉，重新跟随整套风格。',
-              ok: '恢复',
-              danger: true
-            }).then(function (yes) {
-              if (!yes) return;
-              setOverride(selKey, null);
-              ctx.toast('已恢复默认', 'ok');
-              paint();
-            });
-          });
-          g2.card.appendChild(reset);
-        }
-        body.appendChild(g2.wrap);
-
         body.appendChild(h('p', 'set-foot',
           '改的是「这张桌面上怎么显示」，App 里的功能跟名字无关；' +
-          '回桌面（或切一次屏）就能看到新名字新图标。'));
+          '面板里改完桌面网格和底栏立刻一起换。'));
+      }
+
+      /* ---- 单 App 编辑面板（居中弹层）----
+         复用 .dl-mask/.dl-card 骨架（stk-import 同款改法），视觉跟其余弹层一致。
+         单例：开着就先关旧的，连点不会叠出一堆。
+         ⚠️ 文件 input 必须是按钮的**兄弟节点** —— 塞进按钮里的话
+         input.click() 冒泡回外层被 preventDefault 掐死，表现「点了没反应」
+         （2026-09-21 的坑，壁纸处同款写法）。 */
+      var panelEls = null;
+      function closePanel() {
+        if (!panelEls) return;
+        var p = panelEls;
+        panelEls = null;
+        if (p.mask.parentNode) p.mask.parentNode.removeChild(p.mask);
+        if (p.card.parentNode) p.card.parentNode.removeChild(p.card);
+      }
+      function openPanel(key) {
+        closePanel();
+        var IC = Sleepy.desktop && Sleepy.desktop.ICONS;
+        var host = document.getElementById('phone') || document.body;
+        var mask = h('div', 'dl-mask is-open');
+        var card = h('div', 'dl-card is-open lk-app-panel');
+        panelEls = { mask: mask, card: card };
+        mask.addEventListener('click', closePanel);
+
+        function fill() {
+          card.innerHTML = '';
+          var it2 = null;
+          appList().forEach(function (x) { if (x.key === key) it2 = x; });
+          var ov2 = appOverride(key);
+
+          card.appendChild(h('p', 'dl-title', '改「' + ((ov2 && ov2.name) || (it2 && it2.label) || key) + '」'));
+
+          var hero = h('div', 'lk-editor-hero');
+          var big = h('span', 'w-app-ic lk-editor-ic');
+          big.style.setProperty('--tk', '56px');
+          if (ov2 && ov2.iconMediaId && Sleepy.media) {
+            var bimg = h('img', 'w-app-ic-img');
+            Sleepy.media.url(ov2.iconMediaId).then(function (u) { if (u) bimg.src = u; });
+            big.appendChild(bimg);
+          } else if (IC && IC[key]) {
+            big.innerHTML = IC[key];
+          } else {
+            big.textContent = ((it2 && it2.label) || '?').slice(0, 1);
+          }
+          hero.appendChild(big);
+          var heroMain = h('div', 'lk-editor-main');
+          heroMain.appendChild(h('b', '', (ov2 && ov2.name) || (it2 && it2.label) || key));
+          heroMain.appendChild(h('small', '', ov2 ? '已自定义 · 桌面立即生效' : '跟随默认'));
+          hero.appendChild(heroMain);
+          card.appendChild(hero);
+
+          /* 名称 */
+          card.appendChild(h('label', 'off-field-label lk-field-label', '桌面显示名称'));
+          var nameIn = h('input', 'lk-text-input');
+          nameIn.maxLength = 8;
+          nameIn.placeholder = '输入名称';
+          nameIn.value = (ov2 && ov2.name) || '';
+          card.appendChild(nameIn);
+          var applyName = h('button', 'lk-soft-btn', '应用名称');
+          applyName.type = 'button';
+          applyName.addEventListener('click', function () {
+            setOverride(key, { name: String(nameIn.value || '').trim() });
+            ctx.toast('名称改好了 · 桌面网格和底栏都换上了', 'ok');
+            paint();
+            fill();
+          });
+          card.appendChild(applyName);
+
+          /* 图标上传（文件 input 走兄弟节点，理由见上） */
+          var up = h('button', 'lk-upload');
+          up.type = 'button';
+          up.appendChild(h('span', 'lk-upload-main', '上传自定义图标'));
+          var ifile = h('input');
+          ifile.type = 'file';
+          ifile.accept = 'image/*';
+          ifile.style.display = 'none';
+          card.appendChild(up);
+          card.appendChild(ifile);
+          up.addEventListener('click', function () { ifile.click(); });
+          ifile.addEventListener('change', function () {
+            var f = ifile.files && ifile.files[0];
+            if (!f || !Sleepy.media) return;
+            ctx.toast('正在收进图库…', 'ok');
+            Sleepy.media.shrink(f, 240).then(function (r) {
+              return Sleepy.media.put(r.blob, { w: r.w, h: r.h, name: '图标 · ' + key });
+            }).then(function (id) {
+              setOverride(key, { iconMediaId: id });
+              ctx.toast('图标换好了 · 桌面网格和底栏都换上了', 'ok');
+              paint();
+              fill();
+            }).catch(function (e2) {
+              ctx.toast('没换成：' + (e2 && e2.message || '图片处理失败'), 'err');
+            });
+          });
+
+          /* 恢复默认 */
+          if (ov2) {
+            var reset = h('button', 'lk-danger-btn', '恢复默认');
+            reset.type = 'button';
+            reset.addEventListener('click', function () {
+              ui.confirm({
+                title: '恢复默认？',
+                note: '这个 App 的自定义名称和图标都会清掉，重新跟随整套风格。',
+                ok: '恢复',
+                danger: true
+              }).then(function (yes) {
+                if (!yes) return;
+                setOverride(key, null);
+                ctx.toast('已恢复默认', 'ok');
+                paint();
+                fill();
+              });
+            });
+            card.appendChild(reset);
+          }
+
+          var done = h('button', 'lk-soft-btn', '完成');
+          done.type = 'button';
+          done.addEventListener('click', closePanel);
+          card.appendChild(done);
+        }
+
+        fill();
+        host.appendChild(mask);
+        host.appendChild(card);
       }
 
       paint();
+      if (ctx.params && ctx.params.appKey) openPanel(ctx.params.appKey);
       ctx.__appRefresh = paint;
     },
     onShow: function (ctx) { if (ctx.__appRefresh) ctx.__appRefresh(); }

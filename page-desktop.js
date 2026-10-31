@@ -3466,7 +3466,10 @@
          老闭包的 scroller 已脱文档就别再画了。 */
       if (Sleepy.__desktopStoreWatchOff) Sleepy.__desktopStoreWatchOff();
       Sleepy.__desktopStoreWatchOff = store.onChange(function (path) {
-        if (path !== 'desktop' && path !== '*') return;
+        /* appearance 也算（2026-10-31 维稳）：单 App 名称/图标覆盖存在
+           appearance 键里 —— 以前只听 desktop，外观页改完世界书图标
+           网格纹丝不动，只有外观页原地刷的 dock 变了。 */
+        if (path !== 'desktop' && path !== 'appearance' && path !== '*') return;
         setTimeout(function () {
           if (dragState) return;
           if (!scroller.isConnected) return;   /* 旧 render 的闭包，DOM 已换血 */

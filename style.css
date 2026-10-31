@@ -7764,6 +7764,15 @@ html.kb-open .input-area{padding-bottom:6px;}
 .lk-pal-more-btn{width:auto;min-width:150px;margin:0;padding:8px 11px;}
 
 /* ---- 单独修改 App：列表 + 编辑卡 ---- */
+/* 单 App 编辑面板（2026-10-31 改版：点 App 直接弹出，不再选中+下滑编辑卡）。
+   复用 .dl-mask/.dl-card 骨架；lk-* 系列自带 13px 侧距，
+   所以卡片左右内距收窄成 5px，标题再补 8px 对齐内容。 */
+.lk-app-panel{
+  padding:18px 5px 14px;
+  max-height:86vh;overflow-y:auto;
+}
+.lk-app-panel .dl-title{margin:0 8px 10px;}
+.lk-app-panel .lk-editor-hero{padding:0 8px 10px;}
 .lk-app-row{
   display:flex;align-items:center;gap:11px;width:100%;
   padding:9px 13px;border:0;background:none;
