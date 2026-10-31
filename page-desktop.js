@@ -2243,7 +2243,10 @@
         } else {
           slot.innerHTML = ic('<path d="M12 7.5v9M7.5 12h9"/>', 15);
           slot.setAttribute('aria-label', '加照片');
-          slot.addEventListener('click', function () { addWallPhotos(ctx); });
+          /* 把格子序号带上：点哪个格，新照片就落到哪个格（不再是追加到队尾） */
+          (function (slotNo) {
+            slot.addEventListener('click', function () { addWallPhotos(ctx, slotNo); });
+          })(i);
         }
         slot.appendChild(ph);
         grid.appendChild(slot);
@@ -2570,13 +2573,45 @@
      图片本体在 IndexedDB 图库里，存档里只留 mediaId（photos.js 负责
      缩放 / 配额 / 新老记录兼容）。这里以前写的是「localStorage 只有 5MB，
      必须缩放后再存」—— 那是接 IDB 之前的说法，已经不准了（2026-09-21）。 */
-  function addWallPhotos(ctx) {
+  function addWallPhotos(ctx, slotIdx) {
     if (!Sleepy.photos || !Sleepy.photos.pick) {
       ctx.toast('相册模块没加载出来', 'err');
       return;
     }
     Sleepy.photos.pick({ title: '加进照片墙' }).then(function (added) {
       if (!added || !added.length) return;
+      /* 点格加格（2026-10-31 用户反馈）：以前 pick 一律追加到队尾，
+         表现是「点了 5 号格照片却出现在 1 号格后面」。现在把刚加的
+         这几张**搬**到「可见列表第 slotIdx 张」的绝对位置 ——
+         注意只能搬不能重拼：photos 是全量表，别的房 / 别的角色的
+         记录都在里面，搬错了就是把别人的照片挪走。 */
+      if (typeof slotIdx === 'number' && slotIdx >= 0) {
+        var movedIds = {};
+        added.forEach(function (p) { movedIds[p.id] = 1; });
+        var list = store.get('photos');
+        if (!Array.isArray(list)) list = [];
+        var me = core.activeCharOnIsland ? core.activeCharOnIsland() : null;
+        var myId = me ? me.id : '';
+        var sid = (core.activeSandbox() || {}).id || '';
+        var moved = [];
+        var rest = list.filter(function (p) {
+          if (p && movedIds[p.id]) { moved.push(p); return false; }
+          return true;
+        });
+        /* 搬完再数「墙上第 slotIdx 张」在 rest 里的绝对位置 */
+        var visCount = 0, at = rest.length;
+        for (var i = 0; i < rest.length; i++) {
+          var p = rest[i];
+          if (!p) continue;
+          if (sid && p.sandboxId !== sid) continue;
+          if (p.ownerCharId && p.ownerCharId !== myId) continue;
+          if (visCount === slotIdx) { at = i; break; }
+          visCount++;
+        }
+        var args = [at, 0].concat(moved);
+        rest.splice.apply(rest, args);
+        store.set('photos', rest);
+      }
       ctx.toast('加了 ' + added.length + ' 张', 'ok');
       if (ctx.repaint) ctx.repaint();
     });
@@ -3381,6 +3416,43 @@
           syncDots();
         });
       });
+
+      /* 维稳（2026-10-31 用户反馈「太顺滑了，从第一屏直接滑到最后一屏」）：
+         scroll-snap mandatory 只保证「停在某屏上」，拦不住惯性一口气
+         滚过好几屏。两道限幅：
+         ① 触屏 —— touchstart 记起手屏，touchend 静止后只允许落在
+            「起手屏 ±1」，超出就拉回来（一次手势最多翻一屏）；
+         ② 滚轮 / 触控板 —— 连环 deltaX 事件会把惯性放大成穿越，
+            260ms 内最多翻一屏，翻页走 smooth 有过渡不生硬。 */
+      var gestureScreen = null;
+      scroller.addEventListener('touchstart', function () {
+        gestureScreen = Math.round(scroller.scrollLeft / (scroller.clientWidth || 1));
+      }, { passive: true });
+      scroller.addEventListener('touchend', function () {
+        var from = gestureScreen;
+        gestureScreen = null;
+        setTimeout(function () {
+          var w = scroller.clientWidth || 1;
+          if (!w) return;
+          var cur = Math.round(scroller.scrollLeft / w);
+          var lo = (from == null) ? -Infinity : from - 1;
+          var hi = (from == null) ? Infinity : from + 1;
+          var want = Math.max(lo, Math.min(cur, hi));
+          if (want !== cur) jumpTo(want * w);
+        }, 140);
+      }, { passive: true });
+      var wheelLock = 0;
+      scroller.addEventListener('wheel', function (e) {
+        if (!e.deltaX) return;
+        e.preventDefault();
+        var now = Date.now();
+        if (now - wheelLock < 260) return;
+        wheelLock = now;
+        var w = scroller.clientWidth || 1;
+        var cur = Math.round(scroller.scrollLeft / w);
+        var want = Math.max(0, Math.min(pages.length - 1, cur + (e.deltaX > 0 ? 1 : -1)));
+        scroller.scrollTo({ left: want * w, behavior: 'smooth' });
+      }, { passive: false });
 
       dots.addEventListener('click', function (e) {
         var t = e.target;
