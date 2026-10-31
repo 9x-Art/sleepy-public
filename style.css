@@ -396,6 +396,9 @@ html.ios{--sb-h:0px;}
   background:var(--bg);
   overflow-y:auto;
   overflow-x:hidden;
+  /* 维稳（2026-10-31）：iOS 惯性滚动的合成提示 —— .page 是绝大多数页面的
+     垂直滚动容器，补上它滚动走合成器路径，不吃主线程的卡顿 */
+  -webkit-overflow-scrolling:touch;
   /* 进场走「纯淡入」（方案B）：新页 opacity 0→1 叠上来，零位移、桌面纹丝不动。
      之前是 translateX(100%)→0 的「从右滑入 + 桌面左推压暗」，用户觉得不好看，已改。
      后台页仍用轻微 brightness 压暗给层级（见 is-behind），但不做横向位移。
@@ -415,11 +418,17 @@ html.ios{--sb-h:0px;}
   transition:opacity .26s var(--ease-page),
              filter .34s var(--ease-page),
              visibility 0s linear .26s;
-  will-change:opacity;
+  /* 维稳（2026-10-31 内测前）：will-change:opacity 原来挂在**所有**页上 ——
+     退场的页元素永远留在 #stack 里，每页一个常驻合成层，页面栈一深
+     内存和光栅化开销都上去，低端机滚动会发卡。收敛到「只有活动页」：
+     转场动画本身不依赖 will-change（opacity/filter 是可动画属性），
+     is-active 一挂就位，提示照样生效。 */
+  will-change:auto;
   z-index:10;
   --shift:-14%;   /* 每层视差位移，relayout 按深度覆盖 */
   --dim:1;        /* 退到后台时的压暗系数，relayout 覆盖 */
 }
+.page.is-active{will-change:opacity;}
 /* 栈顶：完全就位、不再压暗；左缘一道软阴影，像被推起、浮在前面的卡片。
    静止时左缘贴着屏幕边，阴影落到屏外不可见；只有滑动过程中才露出来，
    当作「卡片在动」的提示，不抢静态布局。活动页刻意不带 filter，免得
@@ -1408,8 +1417,12 @@ html.ios{--sb-h:0px;}
   /* 原本写的是 color:var(--text)，而 --text 就是 #F2E8DC，和这张纸同一个颜色，
      所以角色的每句话都是浅字写在浅底上，等于隐身。
      现在跟主题的 --g-ink 走（下面 2565 那段才是真正生效的一组，
-     这里只是把「写死成 #2A2118」这个坑填掉，免得以后有人只改这一处）。 */
-  color:var(--g-ink,#2A2118);
+     这里只是把「写死成 #2A2118」这个坑填掉，免得以后有人只改这一处）。
+     2026-10-31：改吃 --g-ink-chat —— 外观 App 的「正文字颜色」只管外部
+     UI 文字，聊天正文保持主题墨色（--g-ink-chat 由 page-appearance 的
+     apply() 在设了正文字色时钉成主题原本的字色；没设时回落 --g-ink，
+     跟旧行为一致）。 */
+  color:var(--g-ink-chat,var(--g-ink,#2A2118));
   border-radius:18px;
   /* 同 .msg-user .msg-text：泡按自己的字收缩，不被泡下的引用条撑宽 */
   align-self:flex-start;
@@ -3051,7 +3064,11 @@ html.kb-open .input-area{padding-bottom:6px;}
 .msg-assistant .msg-text{
   background:color-mix(in srgb,#A8BFD8 30%,transparent);
   border:0.5px solid color-mix(in srgb,#A8BFD8 45%,transparent);
-  color:var(--g-ink);
+  /* 2026-10-31：--g-ink → --g-ink-chat。外观 App 的「正文字颜色」只覆盖
+     --g-ink（外部 UI 文字跟着变），聊天正文改吃 --g-ink-chat（apply() 钉成
+     主题原本字色，没设时回落 --g-ink 与旧行为一致）——
+     用户反馈「设置字体颜色后聊天里的字体也变色」。 */
+  color:var(--g-ink-chat,var(--g-ink));
   /* 透明感：对方泡保留 blur（既有行为）。我方泡不加 —— blur 一层半透明
      浅底等于糊成白灰，立体感反而没了。 */
   -webkit-backdrop-filter:blur(14px);
@@ -3122,6 +3139,8 @@ html.kb-open .input-area{padding-bottom:6px;}
   scroll-snap-type:x mandatory;
   scroll-behavior:smooth;
   scrollbar-width:none;
+  /* 维稳（2026-10-31）：横滑翻屏的 iOS 惯性/合成提示（竖屏容器都补了，就它漏了） */
+  -webkit-overflow-scrolling:touch;
 }
 .dt-scroll::-webkit-scrollbar{display:none;}
 
@@ -5077,10 +5096,13 @@ html.kb-open .input-area{padding-bottom:6px;}
 }
 /* 底栏图标和桌面图标是同一块玻璃（共用 .w-app-ic 那一段），只是小一号。
    2026-09-17 第二轮：原来这里是一根 26px 的裸线条，
-   在白底 + 玻璃条上飘着；现在收进 46px 的玻璃方块里，跟网格里那排对上。 */
+   在白底 + 玻璃条上飘着；现在收进 46px 的玻璃方块里，跟网格里那排对上。
+   2026-10-31：字色从 --g-ink-2 改成 --g-ink —— 外观 App 的「正文字颜色」
+   只覆盖 --g-ink，dock 图标走 --g-ink-2 就永远不变色（用户：「别的图标
+   都变了，底栏三个没变」）。跟桌面网格图标同一个变量，一起变。 */
 .dt-dock-ic{
   --tk:46px;
-  color:var(--g-ink-2);
+  color:var(--g-ink);
 }
 .dt-dock-ic svg{position:relative;width:21px;height:21px;z-index:1;}
 .dt-dock-btn:active .dt-dock-ic{transform:scale(.93);}
@@ -5088,7 +5110,7 @@ html.kb-open .input-area{padding-bottom:6px;}
    无障碍的 aria-label 在按钮上，留 DOM 结构省得以后改回来 */
 .dt-dock-name{display:none;}
 .dt-dock-btn{gap:0;}
-.dt-dock-ic{color:var(--g-ink-2);}
+.dt-dock-ic{color:var(--g-ink);}   /* 2026-10-31 同上：--g-ink-2 → --g-ink */
 
 /* ============================================================
    系统级切号（switcher）+ 面具轮盘（wheel）
@@ -8108,6 +8130,21 @@ div.pp-row:active{background:none;}
    同一个手法。 */
 .page[data-page="offline-scene"]{overflow:hidden;}
 .page[data-page="offline-scene"] .page-inner{height:100%;min-height:0;}
+/* 2026-10-31 用户真机「线下互动页无法下滑」：上面只钉了 .page-inner，
+   漏了中间层 —— .off-root 的爹其实是 .app-body（app.js 的页面骨架是
+   .page-inner > .app-head + .app-body），flex 子项默认 min-height:auto，
+   .app-body 会按内容撑高，.off-root 跟着破，.off-chat-scroll 永远
+   「clientHeight == scrollHeight」（没得滚），超屏的部分又被 .page 的
+   overflow:hidden 裁掉 = 底下的消息永远够不着。
+   chat-detail 当年修过一模一样的坑（见 1319 行那组），补同一刀：
+   .app-body 允许被压缩（min-height:0），滚动只留给 .off-chat-scroll。 */
+.page[data-page="offline-scene"] .app-body{min-height:0;}
+/* 群线下场景页（group-offline-scene）是同一套 .off-root 骨架、
+   同一个坑，且这页此前连满屏三段的规则都没有 —— 整组补齐，行为对齐
+   1v1 场景页（顶栏固定 / 正文内滚 / 输入条贴底）。 */
+.page[data-page="group-offline-scene"]{overflow:hidden;}
+.page[data-page="group-offline-scene"] .page-inner{height:100%;min-height:0;}
+.page[data-page="group-offline-scene"] .app-body{min-height:0;}
 /* 状态栏区域透明：线下自己的顶栏背景直接顶到最上沿，
    时间电量浮在页面配色上（用户：「直接透出下面的背景」） */
 .off-header{padding-top:calc(var(--safe-top) + var(--sb-h));}
@@ -8274,6 +8311,8 @@ div.pp-row:active{background:none;}
   background:var(--bg-scroll);
   transition:background 0.4s;
   min-height:0;
+  -webkit-overflow-scrolling:touch;   /* 维稳（2026-10-31）：iOS 惯性滚动 */
+  overscroll-behavior:contain;        /* 滑到头别把外层带着滚 */
 }
 .off-chat-scroll::-webkit-scrollbar{display:none;}
 

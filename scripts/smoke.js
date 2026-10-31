@@ -18083,7 +18083,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    基准随批 v303 → v304。 */
 /* v305（2026-10-31）：线下门弹窗定高内滚（style.css：off-door-overlay
    安全区 padding + off-sheet max-height/overflow-y）—— 基准随批 v304 → v305。 */
-const EXPECTED_SW_CACHE = 'sleepy-v305';
+const EXPECTED_SW_CACHE = 'sleepy-v306';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

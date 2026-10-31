@@ -336,9 +336,19 @@
         phone.style.setProperty('--wall-ink-light', th.wallInkLight || '#4A4238');
       }
       /* 正文字颜色：inline 覆盖主题块的 --g-ink（--text 是它的别名）；
-         空 = 跟随主题，把覆盖摘掉 */
-      if (a.textColor) phone.style.setProperty('--g-ink', a.textColor);
-      else phone.style.removeProperty('--g-ink');
+         空 = 跟随主题，把覆盖摘掉。
+         2026-10-31 用户反馈：聊天正文的字**不许**跟着这个颜色走（外部
+         界面/UI 文字变就行）—— 聊天气泡正文改吃 --g-ink-chat，这里把
+         它钉成**生效主题原本的字色**（th 在上面已经查好了），让聊天
+         在任何正文字色下都保持主题墨色；没设颜色时一并摘掉。 */
+      if (a.textColor) {
+        phone.style.setProperty('--g-ink', a.textColor);
+        if (th && th.ink) phone.style.setProperty('--g-ink-chat', th.ink);
+        else phone.style.removeProperty('--g-ink-chat');
+      } else {
+        phone.style.removeProperty('--g-ink');
+        phone.style.removeProperty('--g-ink-chat');
+      }
       /* PWA 底条（2026-10-30 用户反馈「加到主屏后下面空一截」）：
          iOS standalone 下系统把内容区从 home 条上方推开时，App（100dvh）
          到不了物理屏幕底，下面露的是 body 画布的底色 —— 而它写死

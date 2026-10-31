@@ -1146,9 +1146,11 @@
         'browser/add_history：{query,note} —— 他搜索过什么、为什么。',
         'notes/add_note：{title,content} —— 他用自己的语气记下的事。',
         'health/add_day：{day,meals:[{meal,time,text,comment}],workoutPlan,workoutResult,workoutName,workoutWhy,comments:["…"]} —— ' +
+        'day 是这条记录**属于哪一天**：优先写 YYYY-MM-DD（按输入给的现实时间推），今天也可以写「今天」；' +
         'meal.time 是他吃饭的时间（HH:MM），meal.comment 是他自己对这一顿的一句短评；' +
         'workoutName 是这次运动的名称，workoutWhy 是他为什么改计划/为什么没去（只写理由，不写检讨）；' +
-        'comments 是这天他随手写下的零到三条话。计划和实际可以不一致；不评分，不把夜宵/休息道德化，不做医学结论。',
+        'comments 是这天他随手写下的零到三条话——像真人随手记的两句，一两句话、有点情绪或细节，不要只写四五个字，也不写作文。' +
+        '计划和实际可以不一致；不评分，不把夜宵/休息道德化，不做医学结论。',
         'shop/add_order：{title,price,purpose} —— purpose 必须写实（自用/送某人的称呼/备用），不能默认都是送 user。',
         'shop/order_status：{title,status:"shipped|received|refunded|gifted"} —— 只推进已存在订单。',
         'music/listen：{title,artist,loops,note} —— 他最近在听的歌；loops 是**这段时间单曲循环了几遍**（0=只是听过，3 以上才值得写进 note，上限 99，不许拿大数字装深沉）；note 是一句为什么听这首（可空）。',

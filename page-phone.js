@@ -1942,7 +1942,32 @@
       }
 
       /* 健康打卡（照 Demo 03）：日期切换 → 渐变当日卡 → 方形分段
-         （饮食 / 运动 / 随手记）。Demo 的健康评分环不抄 —— 总纲明令禁止。 */
+         （饮食 / 运动 / 随手记）。Demo 的健康评分环不抄 —— 总纲明令禁止。
+         日期标签的唯一出口 healthDayLabel：优先把 day 字段解析成真日期
+         （今天/昨天/…/M月D日），解析不出（模型写的「今天」「周三」这类
+         文案）才原样用 —— 以前直接把 day 原文顶在格子上、底下又放 dateStrOf(at)
+         入库日期，两头来源不同就会同格打架（2026-10-31 用户实锤）。 */
+      function healthDayDate(d) {
+        if (!d) return null;
+        var m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(String(d.day || '').trim());
+        return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+      }
+      function healthDayLabel(d) {
+        var dt = healthDayDate(d);
+        if (!dt) return (d && d.day) || dateStrOf(d.at);
+        var now = new Date();
+        var DAY = 24 * 3600 * 1000;
+        var diff = Math.round(
+          (new Date(now.getFullYear(), now.getMonth(), now.getDate()) -
+           new Date(dt.getFullYear(), dt.getMonth(), dt.getDate())) / DAY);
+        if (diff === 0) return '今天';
+        if (diff === 1) return '昨天';
+        if (diff === 2) return '前天';
+        if (dt.getFullYear() === now.getFullYear()) {
+          return (dt.getMonth() + 1) + '月' + dt.getDate() + '日';
+        }
+        return dt.getFullYear() + '年' + (dt.getMonth() + 1) + '月' + dt.getDate() + '日';
+      }
       function paintHealth(root) {
         var days = phone.listHealth(ph.id);
         if (!days.length) {
@@ -1958,11 +1983,13 @@
            只有一天也画 —— Demo 里它一直在这条位置上。 */
         var dates = h('div', 'ph-dates');
         days.forEach(function (d) {
-          var label = d.day || dateStrOf(d.at);
+          var dt = healthDayDate(d);
           var b = h('button', 'ph-date' + (d === cur ? ' is-on' : ''));
           b.type = 'button';
-          b.appendChild(h('b', null, label));
-          b.appendChild(h('small', null, dateStrOf(d.at)));
+          b.appendChild(h('b', null, healthDayLabel(d)));
+          /* 底行日期与顶行同一个来源（day 解析出的日期；没有才用入库时间）
+             —— 同一个格子不许出现两个日子 */
+          b.appendChild(h('small', null, dt ? dateStrOf(dt.getTime()) : dateStrOf(d.at)));
           b.addEventListener('click', function () { healthDay = d; paint(); });
           dates.appendChild(b);
         });
@@ -1972,7 +1999,7 @@
         var hero = h('section', 'ph-hero-band is-health');
         var top = h('div', 'ph-hero-band-top');
         var tt = h('div', null);
-        tt.appendChild(h('h1', 'ph-hero-band-t', (cur.day || dateStrOf(cur.at)) + '的记录'));
+        tt.appendChild(h('h1', 'ph-hero-band-t', healthDayLabel(cur) + '的记录'));
         var subs = [];
         if (cur.meals && cur.meals.length) subs.push('记了 ' + cur.meals.length + ' 项进食');
         if (cur.workoutResult) subs.push('动过');

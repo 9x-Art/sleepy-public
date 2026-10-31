@@ -933,19 +933,35 @@
     if (dx > CLOSE_AT || (dx > 40 && dt < 260)) requestBack();
   }
 
-  document.addEventListener('touchstart', function (e) {
-    var t = e.touches[0];
-    startDrag(t.clientX, t.clientY, e.target);
-  }, { passive: true });
-
-  document.addEventListener('touchmove', function (e) {
+  /* 维稳（2026-10-31 内测前）：touchmove 的 preventDefault 只有
+     「左缘右滑返回已锁定横向」这一种情况才需要。以前是 document 级
+     常驻 non-passive touchmove —— 浏览器每一根手指的每次移动都要先等
+     这个 JS 回调跑完才敢滚，全局上下滚动都会被拖慢一拍（iOS 上尤其明显）。
+     现在改成：touchstart（passive）里判断是不是左缘手势，是才把
+     non-passive 的 move 挂上，手势结束/取消立刻摘掉 ——
+     95% 以上的正常滚动全程碰不到 non-passive 监听，丝滑归浏览器。
+     挂载是 touchstart 同步完成的，先于任何 touchmove 派发，
+     所以边缘手势的拦截能力与从前完全一致。 */
+  var onDragMove = function (e) {
     var t = e.touches[0];
     if (dragging && dragging.locked && e.cancelable) e.preventDefault();
     moveDrag(t.clientX, t.clientY);
-  }, { passive: false });
+  };
+  function armDragMove() {
+    document.addEventListener('touchmove', onDragMove, { passive: false });
+  }
+  function disarmDragMove() {
+    document.removeEventListener('touchmove', onDragMove);
+  }
 
-  document.addEventListener('touchend', endDrag);
-  document.addEventListener('touchcancel', endDrag);
+  document.addEventListener('touchstart', function (e) {
+    var t = e.touches[0];
+    startDrag(t.clientX, t.clientY, e.target);
+    if (dragging) armDragMove();
+  }, { passive: true });
+
+  document.addEventListener('touchend', function () { disarmDragMove(); endDrag(); });
+  document.addEventListener('touchcancel', function () { disarmDragMove(); endDrag(); });
 
   document.addEventListener('mousedown', function (e) { startDrag(e.clientX, e.clientY, e.target); });
   document.addEventListener('mousemove', function (e) { if (dragging) moveDrag(e.clientX, e.clientY); });

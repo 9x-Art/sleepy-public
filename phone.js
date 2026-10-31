@@ -748,17 +748,20 @@
     } else if (app === 'health') {
       /* 一天一条：三餐/零食 + 运动计划 vs 实际 + 他自己的短评。
          饮食卡要带时间与短评（Demo 03 的 mealHead/.comment），
-         运动卡要带名称与「为什么改了」（Demo 的 workoutName/.why）。 */
+         运动卡要带名称与「为什么改了」（Demo 的 workoutName/.why）。
+         2026-10-31 用户反馈「他写下的话都很短」：剪裁上限从 60/80/100
+         放宽到 120/200/200 —— 模型就算写了整句也会被旧上限拦腰剪断；
+         长度引导（别只写四五个字）在 phoneLife 协议卡里给。 */
       var meals = (p.meals || []).slice(0, 6).map(function (m) {
         return { meal: clipStr(m && m.meal, 10), time: clipStr(m && m.time, 10),
-          text: clipStr(m && m.text, 60), comment: clipStr(m && m.comment, 40) };
+          text: clipStr(m && m.text, 120), comment: clipStr(m && m.comment, 80) };
       }).filter(function (m) { return m.text; });
       var words = (p.comments || p.thoughts || []).slice(0, 4).map(function (x) {
-        return clipStr(x, 80);
+        return clipStr(x, 200);
       }).filter(function (x) { return !!x; });
       var plan = clipStr(p.workoutPlan, 60);
       var result = clipStr(p.workoutResult, 60);
-      if (!meals.length && !clipStr(p.comment, 100) && !words.length && !plan && !result) return null;
+      if (!meals.length && !clipStr(p.comment, 200) && !words.length && !plan && !result) return null;
       out.data = {
         day: clipStr(p.day, 12) || null,
         meals: meals,
@@ -766,7 +769,7 @@
         workoutResult: result,
         workoutName: clipStr(p.workoutName || p.workout, 20),
         workoutWhy: clipStr(p.workoutWhy || p.changeReason, 120),
-        comment: clipStr(p.comment, 100),
+        comment: clipStr(p.comment, 200),
         comments: words
       };
     } else if (app === 'shop' && op === 'add_order') {
@@ -873,12 +876,31 @@
 
   /* delta 带的 occurredAt 只在「不晚于现在」时才采信 —— 未来时间说明模型
      没在讲已经发生的事，用落库时间兜底（写入前校验「时间在范围内」的
-     本地可做那半边；跨岛的 range 判定在 applySettlement 那层）。 */
+     本地可做那半边；跨岛的 range 判定在 applySettlement 那层）。
+     2026-10-31：协议卡写的是「ISO时间或相对描述」，但这里原来只认
+     Number() —— ISO 字符串 Number 出来恒 NaN，全部回落成「现在」，
+     于是健康打卡的 day（模型写 2026-10-28）和记录的 at（落库当天）
+     在同一个格子里打架（用户真机实锤）。补 Date.parse 一路：能解析且
+     不晚于现在的字符串时间也采信。 */
   function atOf(v) {
-    var t = Number(v && v.occurredAt) || 0;
     var now = Date.now();
+    var raw = v && v.occurredAt;
+    var t = Number(raw) || 0;
+    if (!t && typeof raw === 'string') {
+      var p = Date.parse(raw);
+      if (!isNaN(p)) t = p;
+    }
     if (!t || t > now + 60000) return now;
     return t;
+  }
+
+  /* 「YYYY-MM-DD / YYYY/M/D」字符串 → 当天时间戳（解析不了返回 0）。
+     健康打卡的 day 字段用它校准记录归属日（见 applyDelta health 分支）。 */
+  function dayStrToTs(s) {
+    var m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(String(s || '').trim());
+    if (!m) return 0;
+    var t = new Date(+m[1], +m[2] - 1, +m[3]).getTime();
+    return isNaN(t) ? 0 : t;
   }
 
   function addNote(phone, o, at) {
@@ -1144,6 +1166,15 @@
   function applyDelta(phone, v, runId) {
     if (!v) return null;
     var at = atOf(v);
+    /* 健康打卡：day 字段给了明确日期（YYYY-MM-DD）就**以它为准**归属到那天
+       —— occurredAt 是「ISO 或相对描述」，相对描述解析不出来时上面会回落
+       成「现在」，那样 day=2026-10-28 的记录会挂到今天头上，UI 里同一个
+       日期格子顶上 bottom 两个日期（2026-10-31 用户实锤）。day 优先，
+       但不许指向未来。 */
+    if (v.app === 'health' && v.data) {
+      var dayTs = dayStrToTs(v.data.day);
+      if (dayTs && dayTs <= Date.now() + 60000) at = dayTs;
+    }
     if (v.app === 'lock') return applyLock(phone, v.data, at);
     if (v.app === 'messages') {
       return addDerived(phone.id, {
