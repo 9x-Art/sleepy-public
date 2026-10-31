@@ -8945,15 +8945,24 @@ div.pp-row:active{background:none;}
 .off-entry-hero-sub{margin:0;font-size:11px;color:var(--text-faint);letter-spacing:0.04em;}
 
 /* ---- 线下模式 · 第二批反馈 ---- */
-/* 门弹窗居中（不再是底部抽屉） */
+/* 门弹窗居中（不再是底部抽屉）。
+   2026-10-31 用户真机：「面板太长」+「无法下滑」——「自己定场景设定」
+   展开后（场景名/地点/时段/天气/时刻）整块比屏幕高，overlay 不滚、
+   顶部被浮动状态栏吃掉、底部按钮点不到。修法：面板定高 + 内部滑动，
+   上下让开安全区。 */
 .off-door-overlay{
   align-items:center;
-  padding:28px 20px;
+  padding:calc(var(--safe-top) + var(--sb-h) + 8px) 20px calc(var(--safe-bottom) + 12px);
 }
 .off-door-overlay .off-sheet{
   border-radius:18px;
   max-width:340px;margin:0 auto;
+  max-height:100%;
+  overflow-y:auto;
+  scrollbar-width:none;
+  overscroll-behavior:contain;
 }
+.off-door-overlay .off-sheet::-webkit-scrollbar{display:none;}
 /* 系统设置抽屉全屏（否则顶部露一条黑遮罩） */
 .off-sheet-full{
   height:100%;
