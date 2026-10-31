@@ -953,7 +953,8 @@
      Aborted 之类）怼给用户 —— 直连失败的主因是域名被网络封锁，说清楚该怎么办。
      断言里登记：本字符串为独立基准，不许引被测常量。 */
   var LICENSE_NET_HINT =
-    '连不上授权服务器：当前网络可能屏蔽了 Cloudflare 域名（校园网常见），挂 VPN 或换网络再试';
+    '连不上授权服务器：关掉 VPN / 代理后重试（授权走 pages.dev 直连，' +
+    '挂 VPN 反而绕到机房出口会被闸门挡）；还不行就换一下网络';
 
   /* 多 base 顺序尝试（A 方案韧性）：非最后 base 用 5s 短超时主动切下一个，
      被墙时不用干等浏览器默认超时。安全性：短超时中止的请求未达服务端，
@@ -963,29 +964,51 @@
     var lic = licGet();
     var headers = { 'Content-Type': 'application/json' };
     if (lic && lic.token) headers['X-Repo-Token'] = lic.token;   /* 与作者令牌同头，CORS 白名单不另开列 */
+    var isGet = (method || 'GET').toUpperCase() === 'GET';
     var bases = repoBases();
-    tryBase(0);
+    var rounds = 0;          /* 整轮序号：GET 幂等允许两轮，写操作一轮（防重复写库） */
+    tryRound();
 
-    function tryBase(i) {
-      if (i >= bases.length) { cb({ ok: false, message: LICENSE_NET_HINT }); return; }
+    function tryRound() {
+      rounds++;
+      tryBase(0, rounds);
+    }
+
+    function timeoutFor(base, isLast) {
+      /* 同源 base 给足 20s（2026-10-31 维稳，用户开 VPN 实测）：同源反代
+         是主路径，VPN/弱网下 >5s 很正常 —— 5s 掐死同源就会落到 workers.dev
+         兜底，而兜底有机房 ASN 闸（VPN 出口 = 机房 IP → 403），表现就是
+         「开了 VPN 反而一直拉取失败」。同源 = 主位，待遇向最后一个看齐。 */
+      if (global.location && base === global.location.origin) return BASE_LAST_TRY_MS;
+      return isLast ? BASE_LAST_TRY_MS : BASE_FIRST_TRY_MS;
+    }
+
+    function tryBase(i, round) {
+      if (i >= bases.length) {
+        /* 整轮跑完：GET 允许再来一整轮（网络抖动常见，幂等无副作用）；
+           写操作不再重试 —— 服务端可能已处理，重复提交有真实写库风险。 */
+        if (isGet && round === 1) { tryRound(); return; }
+        cb({ ok: false, message: LICENSE_NET_HINT });
+        return;
+      }
+      var base = bases[i];
       var last = (i === bases.length - 1);
-      /* 全部 base 都带硬超时（2026-10-29：最后一个以前裸奔，iOS 干等浏览器
-         默认超时 = 「卡激活很久」）；最后一个给 20s，前面 5s 快速切换 */
       var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       var timer = null;
-      var fp = global.fetch(bases[i] + path, {
+      var fp = global.fetch(base + path, {
         method: method || 'GET',
         headers: headers,
         body: body ? JSON.stringify(body) : undefined,
-        signal: ctl ? ctl.signal : undefined
+        signal: ctl ? ctl.signal : undefined,
+        cache: isGet ? 'no-store' : undefined   /* 授权状态查询绝不吃 HTTP 缓存 */
       });
       if (ctl) {
-        timer = setTimeout(function () { ctl.abort(); }, last ? BASE_LAST_TRY_MS : BASE_FIRST_TRY_MS);
+        timer = setTimeout(function () { ctl.abort(); }, timeoutFor(base, last));
       } else if (!last) {
         /* 老浏览器退路：race 一个短超时 reject（请求会在后台跑完，
            users.qq 唯一索引兜底，无重复写库风险） */
         fp = Promise.race([fp, new Promise(function (_, reject) {
-          timer = setTimeout(function () { reject(new Error('timeout')); }, BASE_FIRST_TRY_MS);
+          timer = setTimeout(function () { reject(new Error('timeout')); }, timeoutFor(base, last));
         })]);
       }
       fp.then(function (r) {
@@ -997,8 +1020,8 @@
           data: js, devices: js.devices || null });
       }, function () {
         if (timer) clearTimeout(timer);
-        if (!last) { tryBase(i + 1); return; }   /* 切下一个 base；全失败才报文案 */
-        cb({ ok: false, message: LICENSE_NET_HINT });
+        if (!last) { tryBase(i + 1, round); return; }   /* 切下一个 base；整轮全败看轮次 */
+        tryBase(i + 1, round);
       });
     }
   }
