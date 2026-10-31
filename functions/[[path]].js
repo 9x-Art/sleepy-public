@@ -7,12 +7,15 @@
    这个 Pages 站（app 本体就是它伺服的），所以把 API 挂在同源：
    /account/* /public-shelf /item/* /inbox /publish
    反代到 worker，其余路径照常回静态资产。
+   ⚠️ 发码页 /issue + /issue/claim 也要进反代（2026-10-31 补）：否则大陆用户
+   领激活码这第一步还得挂 VPN 才能打开 workers.dev/issue —— 与「零 VPN 进门」
+   的初衷自相矛盾。
 
    worker 的 CORS 是 `*`，反代后照常带 token 头，无白名单问题。
    注意：_redirects 目前只有 /index.html 一条，不会盖住 functions。
    ============================================================ */
 
-const API_RE = /^\/(account|public-shelf|item|inbox|publish|gate|shelf)(\/|$)/;
+const API_RE = /^\/(account|public-shelf|item|inbox|publish|gate|shelf|issue)(\/|$)/;
 const WORKER = 'https://sleepy-repo.sleepy-goodluck.workers.dev';
 
 export async function onRequest(context) {
