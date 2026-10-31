@@ -592,7 +592,16 @@
 
       function bubbleHtml(msg) {
         var names = memberNameMap();
-        var raw = esc(msg.content).replace(/(@[^\s@,，。!?！？]+)/g, function (tok) {
+        /* 能力标签清扫（2026-10-31）：群聊没有标签系统，模型把私聊那套
+           [引用:x]/[表情:x]/[旁白:x] 写进 content 就是纯泄漏 —— 落库前
+           已剥一遍（groupAI.validateRound），这里再兜底：老消息和
+           其他入口落的历史也一并干净。 */
+        var body = String(msg.content || '');
+        var peG = Sleepy.promptEngine;
+        if (peG && peG.stripAbilityTags) {
+          body = peG.stripAbilityTags(peG.narrPlain ? peG.narrPlain(body) : body);
+        }
+        var raw = esc(body).replace(/(@[^\s@,，。!?！？]+)/g, function (tok) {
           var nm = tok.slice(1);
           return names.hasOwnProperty(nm) ? '<span class="gc-mention">' + tok + '</span>' : tok;
         });

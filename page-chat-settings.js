@@ -321,20 +321,15 @@
     var wrap = h('div', 'iol-drawer');
     var panel = h('div', 'iol-drawer-panel');
     panel.appendChild(h('h2', '', '朋友权限'));
-    panel.appendChild(h('p', 'iol-drawer-desc',
-      '看到 TA 的朋友圈要三件事都成立：你加了她、她开放给你看、你也开了看她的。' +
-      '这两个开关是你能决定的。'));
 
     var fHide = switchField({
       label: '不看 ' + chName + ' 的朋友圈',
-      hint: '开了之后，TA 发的动态在你这儿就不显示了',
       value: pr.iHideChar
     });
     panel.appendChild(fHide.el);
 
     var fMine = switchField({
       label: '不让 ' + chName + ' 看我的朋友圈',
-      hint: '开了之后，你发的动态 TA 看不见',
       value: pr.iHideFromChar
     });
     panel.appendChild(fMine.el);
@@ -357,11 +352,8 @@
          那是他自己的行为。 */
     if (Sleepy.lifeFeed) {
       panel.appendChild(h('h2', '', 'TA 还能知道什么'));
-      panel.appendChild(h('p', 'iol-drawer-desc',
-        '日历不用在这儿开：每条日程自己带「谁能看到」的档位，在日历里逐条选就行。'));
       var fDiary = switchField({
         label: '让我写的日记给 ' + chName + ' 看',
-        hint: '开了之后，TA 会知道你最近写下的东西（默认关。TA 自己写的那几篇不算）',
         value: Sleepy.lifeFeed.diaryShared(chat.characterId)
       });
       panel.appendChild(fDiary.el);
@@ -748,7 +740,7 @@
       /* ---- 聊天 ---- */
       var secChat = sectionOf(body, '聊天');
       secChat.appendChild(demoRow({
-        label: '线上聊天预设', note: '注入内容在「预设」App 里管理',
+        label: '线上聊天预设',
         onClick: function () { ctx.open('presets'); }
       }));
       /* MCP 工具（2026-10-06，用户）：对话级能力开关 ——
@@ -787,7 +779,7 @@
          『用户身份』功能去掉」）。它本来就是没绑 onClick 的灰行占位，
          而身份系统真正的入口在「浮岛」和「我」两处 —— 摆在这儿只是噪音。 */
       secChat.appendChild(demoRow({
-        label: '主动消息', note: '允许他在合适的时候来找你',
+        label: '主动消息',
         switched: csRow.proactive,
         onSwitch: function (v) { csRow.set('proactive', v); }
       }));
@@ -799,7 +791,6 @@
       var sliderRow = h('div', 'set-row cs-row');
       var sMain = h('span', 'set-row-main');
       sMain.appendChild(h('span', 'set-row-label', '撤回被 TA 看到'));
-      sMain.appendChild(h('span', 'set-row-hint', '你撤回消息时，TA 有这个概率看到内容'));
       sliderRow.appendChild(sMain);
       var sRight = h('span', 'set-row-right cs-slider');
       var rng = h('input');
@@ -880,7 +871,7 @@
       var memRowCfg = (Sleepy.memoryStore && Sleepy.memoryStore.charConfig)
         ? Sleepy.memoryStore.charConfig(memRoot) : { enabled: true };
       secMem.appendChild(demoRow({
-        label: '角色记忆', note: '自动整理聊天中值得留下的内容',
+        label: '角色记忆',
         switched: memRowCfg.enabled,
         onSwitch: function (v) {
           if (Sleepy.memoryStore && Sleepy.memoryStore.setCharConfig) {
@@ -904,7 +895,7 @@
         onClick: function () { openMemoryApiDrawer(ctx); }
       }));
       secMem.appendChild(demoRow({
-        label: '整理聊天记忆', note: '把上次整理之后的新内容过一遍总结',
+        label: '整理聊天记忆',
         onClick: function () {
           if (!Sleepy.summaryEngine) { ctx.toast('总结引擎没加载', 'err'); return; }
           ctx.toast('正在整理…', 'ok');
@@ -949,7 +940,7 @@
         }));
       }
       secMem.appendChild(demoRow({
-        label: '前往留痕', note: '查看属于 ' + chName + ' 的记忆',
+        label: '前往留痕',
         onClick: function () {
           if (!charId) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
           ctx.open('memory', { charId: charId });
@@ -1074,7 +1065,7 @@
         }
       }
       secPh.appendChild(demoRow({
-        label: '去翻他的手机', note: '第 2 屏「查手机」也可以进',
+        label: '去翻他的手机',
         onClick: function () { ctx.open('phonecheck'); }
       }));
 
@@ -1285,7 +1276,7 @@
       /* ---- 数据管理 ---- */
       var secData = sectionOf(body, '数据管理');
       secData.appendChild(demoRow({
-        label: '导出对话', note: '存成纯文本，留个念想',
+        label: '导出对话',
         onClick: function () {
           var text = chatToText(chat);
           var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });

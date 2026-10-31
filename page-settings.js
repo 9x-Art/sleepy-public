@@ -175,7 +175,6 @@
       var gTalk = group('对话');
       var rowMain = row({
         label: '主 API',
-        hint: '日常对话走这一个',
         badge: mainApiSummary(),
         badgeKind: (mainApiSummary() === '已配置') ? 'ok' : 'dim',
         onClick: function () { ctx.open('settings-mainapi'); }
@@ -185,7 +184,6 @@
       var subText = subApiSummary();
       var rowSub = row({
         label: '副 API',
-        hint: '用于其他功能（后台任务 · 备用通道）',
         badge: subText,
         badgeKind: (subText === '未配置') ? 'dim' : 'ok',
         onClick: function () { ctx.open('settings-subapi'); }
@@ -200,7 +198,6 @@
       var gVoice = group('语音');
       var rowTts = row({
         label: '语音 TTS',
-        hint: '服务连接 · 默认模型 · 凭据说明',
         badge: Sleepy.tts ? Sleepy.tts.summary() : '未接',
         badgeKind: (Sleepy.tts && Sleepy.tts.settings().enabled) ? 'ok' : 'dim',
         onClick: function () { ctx.open('settings-tts'); }
@@ -211,20 +208,19 @@
       /* ============ 其他能力 ============
          还没接的那些也摆在这儿 —— 占位要摆在对的位置，
          不然用户根本不知道这 App 以后能长成什么样。灰着的行点不动。 */
-      var gCap = group('其他能力', '还没接上的那几项，编号是它在计划里的位置。');
+      var gCap = group('其他能力');
       /* 向量与总结这两个都是**单份接口**（不像副 API 那样多组轮询），
          2026-09-22 接上；空着的时候：总结跟随主 API，向量没配就没配。
          行要留引用：从它们的配置页回来时 badge 得跟着变（见 refreshSummary）。 */
       var capRows = {};
       [
-        { label: '向量记忆 API', hint: '填 embedding 模型，不是对话模型', kind: 'vector' },
-        { label: '总结 API', hint: '便宜模型跑记忆抽取', kind: 'summary' },
-        { label: '视频理解 API', hint: 'OpenAI 兼容 · 抽帧送视觉模型读视频', kind: 'video' }
+        { label: '向量记忆 API', kind: 'vector' },
+        { label: '总结 API', kind: 'summary' },
+        { label: '视频理解 API', kind: 'video' }
       ].forEach(function (c) {
         var cfg = Sleepy.singleApi ? Sleepy.singleApi.cfgOf(c.kind) : null;
         capRows[c.kind] = row({
           label: c.label,
-          hint: c.hint,
           badge: cfg ? (cfg.model || '已配置') : '未配置',
           badgeKind: cfg ? 'ok' : 'dim',
           onClick: function () { ctx.open('settings-' + c.kind); }
@@ -234,7 +230,6 @@
       /* 生图已经接上了（page-imggen.js）—— 用户：「不开独立 App，从设置进」 */
       var rowImg = row({
         label: '生图',
-        hint: '接口 · 提示词库 · 试一张',
         badge: Sleepy.imggen ? Sleepy.imggenSummary() : '未配置',
         badgeKind: (Sleepy.imggen && Sleepy.imggenSummary() !== '未配置') ? 'ok' : 'dim',
         onClick: function () { ctx.open('settings-imggen'); }
@@ -245,12 +240,10 @@
       try { vpKey = String(store.get('vpKey') || ''); } catch (e) { /* 没有就算了 */ }
       gCap.card.appendChild(row({
         label: '天气感知',
-        hint: '让 TA 感知现实天气 · 搜索走 MCP',
         onClick: function () { ctx.open('settings-weblink'); }
       }));
       gCap.card.appendChild(row({
         label: '链接解析',
-        hint: '链接卡的富数据 · 免费额度',
         badge: vpKey ? '已填 Key' : '匿名额度',
         badgeKind: vpKey ? 'ok' : 'dim',
         onClick: function () { ctx.open('settings-videoparse'); }
@@ -265,7 +258,6 @@
       var gMcp = group('MCP');
       var rowMcp = row({
         label: 'MCP 连接',
-        hint: '自己接 MCP 服务 · 工具调用',
         badge: Sleepy.mcp ? Sleepy.mcp.summary() : '未接',
         badgeKind: (Sleepy.mcp && Sleepy.mcp.summary() !== '未配置') ? 'ok' : 'dim',
         onClick: function () { ctx.open('settings-mcp'); }
@@ -279,7 +271,6 @@
       var g4 = group('数据与备份');
       var rowData = row({
         label: '数据与备份',
-        hint: '导出 · 导入 · 存储空间 · 清理',
         value: usageText(),
         onClick: function () { ctx.open('settings-backup'); }
       });
@@ -293,7 +284,6 @@
       if (window.SleepyNative && typeof window.SleepyNative.checkUpdate === 'function') {
         var updRow = row({
           label: '检查更新',
-          hint: '拉取线上新版本，下载完自动生效（失败不影响使用）',
           value: (window.SleepyNative.getInfo && window.SleepyNative.getInfo().build) || ''
         });
         updRow.disabled = false;
@@ -307,7 +297,7 @@
       /* 我的授权（账密系统 v2，2026-10-21；2026-10-23 起进门先过授权闸）——
          能走到设置页说明已激活，这页只剩管理：改密 / 设备 / 注销
          （激活 / 登录表单只活在启动闸上，page-license 两处共用一份）。 */
-      var licRow = row({ label: '我的授权', hint: '改密码 · 设备管理 · 注销' });
+      var licRow = row({ label: '我的授权' });
       licRow.disabled = false;
       licRow.classList.remove('is-soon');
       licRow.addEventListener('click', function () { ctx.open('license'); });
@@ -318,7 +308,6 @@
          两行分开放，各看一份，标题写清是什么。 */
       var legalRowA = row({
         label: '用户协议',
-        hint: '数据在你自己的设备上 · 使用规范',
         onClick: function () {
           if (Sleepy.legal && Sleepy.legal.openDoc) Sleepy.legal.openDoc('user');
           else ctx.toast('这一版没有协议页', 'err');
@@ -326,7 +315,6 @@
       });
       var legalRowP = row({
         label: '隐私政策',
-        hint: '我们默认不收集你的任何数据',
         onClick: function () {
           if (Sleepy.legal && Sleepy.legal.openDoc) Sleepy.legal.openDoc('priv');
           else ctx.toast('这一版没有隐私政策', 'err');
@@ -338,7 +326,7 @@
          面向用户后内置 prompt 上锁，这个开关是唯一的解锁口 ——
          所以它不能像普通开关一样摆在明面上（用户：「隐蔽一些qwq」）。
          row() 不带 onClick 会把自己 disabled 掉，这里手动解开再挂事件。 */
-      var aboutRow = row({ label: '关于 Sleepy', hint: '版本 · 更新日志' });
+      var aboutRow = row({ label: '关于 Sleepy' });
       aboutRow.disabled = false;
       aboutRow.classList.remove('is-soon');
       var devTaps = 0, devTimer = null;
@@ -500,8 +488,7 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var g = group('主 API 预设',
-        '可以存好几套，随时切换当前使用的那套。');
+      var g = group('主 API 预设');
       var listCard = g.card;
 
       function refresh() {
@@ -552,7 +539,7 @@
     var g = group('接口');
     f = buildApiFields(g.card, preset);
 
-    var g2 = group('生成参数', '这个接口自己的。留空就用内置默认值（灰字就是它）。');
+    var g2 = group('生成参数');
     f.temperature = numField({ label: '温度', hint: '留空＝用内置默认 · 越高越发散', value: preset.temperature, min: 0, max: 2, step: 0.05 });
     f.temperature.input.placeholder = String(def.temperature);
     g2.card.appendChild(f.temperature.el);
@@ -761,8 +748,7 @@
     title: 'MCP 连接',
     render: function (ctx) {
       var body = ctx.body;
-      var g = group('MCP 服务',
-        '每个服务有总开关，点进去还能逐个工具开关。哪些工具进对话，由每个对话自己的「MCP 工具」开关决定。');
+      var g = group('MCP 服务');
 
       function refresh() {
         g.card.innerHTML = '';
@@ -856,7 +842,7 @@
       body.appendChild(g2.wrap);
 
       /* ---- 工具清单（只有编辑已保存的服务才有） ---- */
-      var g3 = group('工具', '逐个开。只有这里开着的工具，才会挂进开了「MCP 工具」的对话里。');
+      var g3 = group('工具');
       var toolsCard = g3.card;
       var toolsHint = null;
       function paintTools() {

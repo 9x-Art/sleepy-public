@@ -472,7 +472,19 @@
          这里只做类型清洗和截断；对号成 replyToMessageId 在 deliver 里做
          （那里拿得到已落库的完整消息表）。 */
       var q = (typeof m.quote === 'string') ? m.quote.trim().slice(0, 60) : '';
-      messages.push({ accountId: acc, ownerId: oid, content: m.content.trim(), delayMs: delay, quote: q || null });
+      if (q && Sleepy.promptEngine && Sleepy.promptEngine.stripAbilityTags) {
+        q = Sleepy.promptEngine.stripAbilityTags(q).slice(0, 60);
+      }
+      /* 能力标签清扫（2026-10-31）：群聊没有标签系统，模型把私聊那套
+         [引用:x]/[表情:x] 写进 content 就是纯泄漏 —— 落库前统一剥
+         （能力标签 + 旁白，群聊两样都不该有）。剥完空了就当没说。 */
+      var gText = String(m.content || '').trim();
+      if (Sleepy.promptEngine && Sleepy.promptEngine.stripAbilityTags) {
+        gText = Sleepy.promptEngine.stripAbilityTags(
+          Sleepy.promptEngine.narrPlain ? Sleepy.promptEngine.narrPlain(gText) : gText);
+      }
+      if (!gText) return;
+      messages.push({ accountId: acc, ownerId: oid, content: gText, delayMs: delay, quote: q || null });
     });
 
     if (!Object.keys(allowed).length && outMsgs.length) {

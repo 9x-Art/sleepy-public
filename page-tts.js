@@ -186,11 +186,8 @@
         body.innerHTML = '';
         var s = tts.settings();
 
-        body.appendChild(h('p', 'set-group-note',
-          '在这里连接生成语音所需的服务。具体音色、语音频率和情绪表达，由每个角色单独设置。'));
-
         /* ---- 总开关 ---- */
-        var gOn = group('语音', '关着的时候，任何角色都不会生成语音（手动朗读也不行）。');
+        var gOn = group('语音');
         var sw = switchField({
           label: '开启语音',
           hint: '总开关 · 每件角色在「角色语音」里还有自己的开关',
@@ -204,7 +201,6 @@
         gOn.card.appendChild(sw.el);
         gOn.card.appendChild(row({
           label: '默认服务与模型',
-          hint: '设哪条连接默认、默认用哪个档位',
           badge: s.defaultConnectionId ? (tts.connectionSummary(tts.connection(s.defaultConnectionId))) : '未选择',
           badgeKind: s.defaultConnectionId ? 'ok' : 'dim',
           onClick: function () { pickDefault(ctx, build); }
@@ -212,13 +208,12 @@
         body.appendChild(gOn.wrap);
 
         /* ---- 服务列表 ---- */
-        var gSvc = group('语音服务', '只需要连接实际要用的服务，不要求同时注册所有家。');
+        var gSvc = group('语音服务');
         tts.PROVIDER_ORDER.forEach(function (pid) {
           var prov = tts.providerOf(pid);
           var conn = tts.firstConnectionOf(pid);
           gSvc.card.appendChild(row({
             label: prov.name,
-            hint: prov.desc,
             value: conn ? (conn.displayName || prov.defaultName) : '',
             badge: tts.connectionSummary(conn),
             badgeKind: statusKind(conn ? conn.status : 'unconfigured'),
@@ -232,7 +227,7 @@
         /* ---- 默认生成设置 ----
            2026-10-07 用户：「模型选择那些应该在每个服务接口里面而不是外面」——
            默认模型已搬进各服务的连接详情页（存到那条连接上），这里不再放模型下拉。 */
-        var gDef = group('默认生成设置', '角色之后仍可单独覆盖。模型在每家服务的连接页里选。');
+        var gDef = group('默认生成设置');
         /* 导演引擎（契约 §5）：规则版不出网；模型版多一次便宜调用，判得更准。
            出厂是规则版 —— 不给用户默认就多花 token。 */
         gDef.card.appendChild(selectField('导演引擎',
@@ -254,19 +249,15 @@
             ctx.toast(v === 'auto' ? '生成完会自动播（可能被系统拦）' : '改成只在你点时播', 'ok');
           }).el);
         body.appendChild(gDef.wrap);
-        body.appendChild(h('p', 'set-group-note',
-          '免费开发档在繁忙时可能较慢；正式使用可以切到稳定生产档。'));
 
         /* ---- 帮助 ---- */
-        var gHelp = group('帮助', '');
+        var gHelp = group('帮助');
         gHelp.card.appendChild(row({
           label: '凭据与隐私说明',
-          hint: 'API Key 存在哪、怎么替换、拆掉服务时会发生什么',
           onClick: function () { credentialNote(ctx); }
         }));
         gHelp.card.appendChild(row({
           label: '语音是怎么做出来的',
-          hint: '原文 → 语音计划 → 临时合成文本 → 音频（标签绝不进聊天正文）',
           onClick: function () { pipelineNote(ctx); }
         }));
         body.appendChild(gHelp.wrap);
@@ -474,22 +465,19 @@
         body.appendChild(out);
 
         /* ---- 验证 ---- */
-        var gTest = group('验证', '');
+        var gTest = group('验证');
         if (prov.freeModel) {
           gTest.card.appendChild(row({
             label: '拉取模型列表',
-            hint: '按 OpenAI 兼容口径问服务要 /models（用上面填的接口地址和密钥），拉到后出现下拉选',
             onClick: function () { doPullModels(); }
           }));
         }
         gTest.card.appendChild(row({
           label: '测试语音生成',
-          hint: '走完整链路：语音计划 → 组装 → 请求 → 播放',
           onClick: function () { doGenerate(); }
         }));
         gTest.card.appendChild(row({
           label: '打开服务商控制台',
-          hint: '管理账户、余额、Key 与音色',
           onClick: function () {
             if (global.open) global.open(prov.consoleUrl, '_blank');
             else ctx.toast(prov.consoleUrl);
@@ -497,23 +485,20 @@
         }));
         gTest.card.appendChild(row({
           label: '高级诊断',
-          hint: '看脱敏后的语音计划与临时合成文本',
           onClick: function () { diag(ctx, providerId, c); }
         }));
         body.appendChild(gTest.wrap);
 
         /* ---- 连接管理 ---- */
-        var gMgmt = group('连接管理', '');
+        var gMgmt = group('连接管理');
         if (tts.connections().filter(function (x) { return x.provider === providerId; }).length > 1) {
           gMgmt.card.appendChild(row({
             label: '换一条连接',
-            hint: '这家服务下有多条连接时在这里切换',
             onClick: function () { pickConnection(ctx, providerId); }
           }));
         }
         gMgmt.card.appendChild(row({
           label: '再建一条连接',
-          hint: '比如正式号与测试号分开',
           onClick: function () {
             var made = tts.saveConnection({ provider: providerId, displayName: prov.defaultName + ' 2' });
             connId = made.id;
@@ -522,7 +507,6 @@
         }));
         gMgmt.card.appendChild(row({
           label: '删除这条连接',
-          hint: '用它的角色会收到明确的「连接不在了」，不会静默换声音',
           onClick: function () { doDelete(c); }
         }));
         body.appendChild(gMgmt.wrap);
@@ -745,10 +729,9 @@
         }
 
         /* ---- 启用 + 单独设置 ---- */
-        var gOn = group('这件角色的语音', '');
+        var gOn = group('这件角色的语音');
         var sw = switchField({
           label: '给 TA 生成语音',
-          hint: '关着的时候，TA 的回复不会有语音',
           value: !!state.enabled
         });
         sw.input.addEventListener('change', function () {
@@ -761,7 +744,6 @@
         if (!own) {
           gOn.card.appendChild(row({
             label: '单独设置',
-            hint: '把这件角色的音色 / 频率 / 表达单独定一套（之后不再跟着默认走）',
             onClick: function () {
               tts.saveVoice(charId, { enabled: state.enabled, voiceId: state.voiceId });
               ctx.toast('现在可以单独设置了', 'ok');
@@ -771,7 +753,6 @@
         } else {
           gOn.card.appendChild(row({
             label: '恢复跟随默认',
-            hint: '丢掉这件角色自己的设置（音色、频率、表达全部回到默认）',
             onClick: function () {
               ui.confirm({
                 title: '让「' + ch.name + '」恢复跟随默认？',
@@ -901,9 +882,7 @@
         featLine += (tts.settings().director === 'model')
           ? '\n导演引擎：模型版（在「设置 → 语音 TTS」里改）—— 多一次调用判情绪，失败自动退回规则版。'
           : '\n导演引擎：规则版（设置里可切成模型版，判断更准）。';
-        var gHow = group('怎么读',
-          '这三项都会进「语音计划」：语速走服务商的韵律字段，情绪幅度决定标签强度，' +
-          '克制度优先**减标签**。' + featLine);
+        var gHow = group('怎么读', featLine.replace(/^\n/, ''));
         var fPace = numField({
           label: '语速（70–130，100 是正常）' + (feat && !feat.speed ? ' · 这家不支持' : ''),
           value: state.pace, min: 70, max: 130, step: 5
@@ -952,10 +931,8 @@
 
         /* ---- 允许的表达 ---- */
         var gAllow = group('允许表达',
-          '这两张表是**白名单**：不在表里的，导演永远不会用。' +
-          '默认没开哭腔与气声（强表演容易翻车）。' +
           (feat && !feat.tags
-            ? '\n⚠️ 当前这条连接**没有表演标签能力**（只有 Fish / MiniMax 2.8 / ElevenLabs v3 有），' +
+            ? '⚠️ 当前这条连接**没有表演标签能力**（只有 Fish / MiniMax 2.8 / ElevenLabs v3 有），' +
               '这两张表对它不生效 —— 情绪仍会按 ' + feat.emoLabel + ' 表达。'
             : ''));
         var emoAll = tts.EMOTIONS.map(function (e) { return { id: e, label: EMO_LABEL[e] || e }; });
@@ -973,9 +950,7 @@
         body.appendChild(gAllow.wrap);
 
         /* ---- 角色表达方向 ---- */
-        var gDir = group('TA 的表达习惯',
-          '写给导演看的一句话：TA 平时怎么说话、生气什么样、有什么口头习惯。\n' +
-          '这句话**不会**进合成文本 —— 只用来判断情绪和语速。');
+        var gDir = group('TA 的表达习惯');
         var fDir = textArea({
           label: '表达方向（可选）',
           value: state.characterDirection || '',
@@ -1019,7 +994,7 @@
         body.appendChild(gPlay.wrap);
 
         /* ---- 试听 ---- */
-        var gTry = group('试听', '走真实链路：检查连接 → 语音计划 → 组装 → 请求 → 播放。');
+        var gTry = group('试听');
         var tryLine = h('input', 'set-input tts-try-input');
         tryLine.value = '你怎么现在才回来？';
         gTry.card.appendChild(tryLine);
@@ -1039,8 +1014,6 @@
         gTry.card.appendChild(tryOut);
         body.appendChild(gTry.wrap);
 
-        body.appendChild(h('p', 'set-group-note',
-          '这一页的所有控件读写的是同一份 voiceState —— 改了就在，不存在「界面上变了但没存」。'));
         body.appendChild(h('div', 'lh-scroll-pad'));
       }
 

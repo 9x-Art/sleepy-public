@@ -340,10 +340,6 @@
     refresh();
     body.appendChild(g.wrap);
 
-    /* 这个接口干什么 —— 放在列表下面当说明，不占列表的位置 */
-    var gHint = group('这个接口干什么', k.hint);
-    body.appendChild(gHint.wrap);
-
     var foot = h('p', 'set-foot', '所有 Key 只存在这台设备的浏览器里，不经过我的服务器。');
     body.appendChild(foot);
 
@@ -366,9 +362,6 @@
     /* v242：顶栏保存动作与主 API / 总结编辑页对齐（doSave 函数声明提升，先挂不炸） */
     ctx.setActions([{ label: '保存', kind: 'primary', onClick: function () { doSave(); } }]);
     ctx.__paint = function () { renderSingle(ctx, kind); };
-
-    var gHint = group('这个接口干什么', k.hint);
-    body.appendChild(gHint.wrap);
 
     var g = group('连接');
     f.baseUrl = textField({
@@ -463,7 +456,7 @@
 
   function renderVectorTools(ctx, body) {
     var vc = store.get('vecCfg') || {};
-    var gV = group('用不用', '索引存在这台设备的浏览器里（IndexedDB），不上传。关掉开关，索引也留着。');
+    var gV = group('用不用');
     var fOn = switchField({
       label: '按话题找回聊过的东西',
       hint: '开着：每次说话前会先找一遍「以前聊过的相关片段」。关掉就只用已整理好的记忆和近期原文',

@@ -3118,6 +3118,16 @@
         if (ts) lastRenderedTs = ts;
         if (m.recalledAt) { msgWrap.appendChild(recallLine(m)); return; }
         var segs = bubbleSegs(m);
+        /* reroll 流式中（2026-10-31 用户再报「整条挤一个气泡、落库才拆」）：
+           9-26 那次只把**新回复**的拆段挪进了流式，挂旧气泡重写（targetId）
+           这条路一直整条挤一泡。这里改喂 pendingSegs —— 正文按 || 实时拆、
+           能力标签已剥；旧 content 在 startReroll 时已被清空，段数对得上。 */
+        if (pending && pending.targetId === m.id) {
+          var ps = pendingSegs();
+          segs = (ps.length ? ps : ['']).map(function (t) {
+            return { text: t, trans: null };
+          });
+        }
         segs.forEach(function (seg, i) {
           msgWrap.appendChild(bubbleFor(m, c, {
             text: seg.text, trans: seg.trans, idx: i, total: segs.length,
@@ -3682,8 +3692,10 @@
           var textEl = h('div', 'msg-text');
           var shown;
           if (herePending) {
-            /* 流式中：整条回复先挤在一个气泡里（按行显示），落库后再拆段 */
-            shown = pendingVisible();
+            /* 流式中（reroll 挂旧气泡重写）：每泡各画各的段 —— renderOneMessage
+               已改喂 pendingSegs（按 || 实时拆、能力标签已剥），这里不再用
+               pendingVisible 把整条按行拼进一个气泡。空段顶着打字点。 */
+            shown = opts.text || '';
             if (!shown) {
               textEl.appendChild(h('span', 'typing-dots', '···'));
               content.appendChild(textEl);
@@ -4314,7 +4326,18 @@
       function pendingSegs() {
         if (!pending) return [];
         var s = splitReplyOf(pending.raw);
-        return (s.bubbles && s.bubbles.length) ? s.bubbles : (s.visible ? [s.visible] : []);
+        var peS = Sleepy.promptEngine;
+        var list = (s.bubbles && s.bubbles.length) ? s.bubbles : (s.visible ? [s.visible] : []);
+        /* 流式显示面清洗（2026-10-31 用户：能力标签在打字机里裸奔）：
+           ① 旁白剥壳（完整留内文、半截扣标记）—— 以前只有 pendingVisible
+              那条单泡老路做了，多泡渐进这条路一直是裸的；
+           ② 能力标签整块剥 + 半截尾巴扣掉（抽取动作仍在落库时执行，
+              这里只管「标签不闪现」）。 */
+        return list.map(function (t) {
+          var x = (peS && peS.narrPlain) ? peS.narrPlain(t) : t;
+          if (peS && peS.stripAbilityTags) x = peS.stripAbilityTags(x, { tail: true });
+          return String(x || '').trim();
+        }).filter(function (x) { return !!x; });
       }
       function pendingBubbles() {
         var frag = document.createDocumentFragment();
@@ -4424,16 +4447,8 @@
         if (Sleepy.promptEngine) return Sleepy.promptEngine.parseReply(raw);
         return Sleepy.heartbeat.splitReply(raw);   /* 引擎缺席的保底 */
       }
-      function pendingVisible() {
-        if (!pending) return '';
-        var s = splitReplyOf(pending.raw);
-        /* 流式期间多个气泡先挤在一个气泡里按行显示，落库后渲染层再拆 */
-        var txt = s.bubbles ? s.bubbles.join('\n') : s.visible;
-        /* 旁白（2026-10-25）：流式里也剥壳 —— 完整的留内文，半截的扣标记，
-           别让 [旁白: 在打字机里闪出来。落库后渲染层再画成叙事条。 */
-        return (Sleepy.promptEngine && Sleepy.promptEngine.narrPlain)
-          ? Sleepy.promptEngine.narrPlain(txt) : txt;
-      }
+      /* pendingVisible 已删（2026-10-31）：reroll 也走 pendingSegs 渐进拆泡，
+         「整条按 \n 拼进一个气泡」的老路连同它的旁白清洗一起并进 pendingSegs。 */
 
       /* ======================== 多选 ========================
          ⚠️ 选择是**按气泡**算的，不是按整条消息（2026-09-23 用户：
@@ -6554,7 +6569,7 @@
         if (!msgs.length) { ctx.toast('还没有可以接的话', 'warn'); return; }
 
         var mySeq = ++reqSeq;
-        /* raw 是模型吐的全部内容（含心声标签）；信封正文一律走 pendingVisible() */
+        /* raw 是模型吐的全部内容（含心声标签）；信封正文一律走 pendingSegs 渲染 */
         revealReset();
         pending = { raw: '', timestamp: Date.now(), targetId: opts.targetId || null };
         renderMessages();
@@ -6807,6 +6822,15 @@
               store.set('slowLetters', box);
             }
 
+            /* 能力标签兜底清扫（2026-10-31）：上面每个抽取器各认各的写法，
+               变体（[表情包:x] 之于 [表情:x]、[灯牌:x] 之于 [灯:x]）会整条
+               漏进气泡、还会回喂下一轮。这里统一再过一遍 —— 能力词整块剥；
+               旁白不归它管（落库要保留，显示面 narrPlain 剥壳）。 */
+            if (Sleepy.promptEngine && Sleepy.promptEngine.stripAbilityTags) {
+              finalText = Sleepy.promptEngine.stripAbilityTags(finalText);
+              if (split.whisper) split.whisper = Sleepy.promptEngine.stripAbilityTags(split.whisper);
+            }
+
             if (!finalText && !st.names.length && !pt.patted && !gi.descs.length &&
                 !wp.hit && !pdApplied && !rc.hits.length && !ln.hits.length &&
                 !sm.hits.length && !hg.hit && !av.names.length) {
@@ -6996,18 +7020,26 @@
           /* 反查邀请标签同样剥（半截回复不动接管流程）；[[REV_PEEK]] 同 */
           if (Sleepy.revcheck) pText = Sleepy.revcheck.parseAcceptTag(pText).text;
           if (Sleepy.revcheck) pText = Sleepy.revcheck.parsePeekTag(pText).text;
-          var memRec = commitMemory(chatId, 'assistant', pText);
-          var memId = memRec ? memRec.id : null;
-          if (target) patchMessage(chatId, target, { content: pText, timestamp: Date.now(), memoryId: memId });
-          else {
-            stoppedMsgId = newId();
-            addMessage(chatId, {
-              id: stoppedMsgId,
-              role: 'assistant',
-              content: pText,
-              timestamp: Date.now(),
-              memoryId: memId
-            });
+          /* 能力标签兜底清扫（2026-10-31）：半截回复不走完整抽取链，
+             [引用:]/[拍一拍]/[灯:] 这类标签一律剥掉、动作一律不执行
+             （用户是主动停的，不补发）。剥完一个字不剩就不落库。 */
+          if (Sleepy.promptEngine && Sleepy.promptEngine.stripAbilityTags) {
+            pText = Sleepy.promptEngine.stripAbilityTags(pText);
+          }
+          if (pText) {
+            var memRec = commitMemory(chatId, 'assistant', pText);
+            var memId = memRec ? memRec.id : null;
+            if (target) patchMessage(chatId, target, { content: pText, timestamp: Date.now(), memoryId: memId });
+            else {
+              stoppedMsgId = newId();
+              addMessage(chatId, {
+                id: stoppedMsgId,
+                role: 'assistant',
+                content: pText,
+                timestamp: Date.now(),
+                memoryId: memId
+              });
+            }
           }
         } else if (target) {
           patchMessage(chatId, target, { content: '（这条被停掉了）' });

@@ -1022,8 +1022,7 @@
            （口径同「单独修改 App」子页）。应用范围跟编辑目标走。 */
         if (Sleepy.repo && Sleepy.repo.themePresets) {
           var presets = Sleepy.repo.themePresets();
-          var gp = group('美化预设', '从御膳房带回来的美化 —— 应用到当前编辑目标（' +
-            (t.scope === 'island' ? '这座岛' : '全局默认') + '），即时生效。');
+          var gp = group('美化预设');
           if (!presets.length) {
             gp.card.appendChild(h('p', 'set-group-note',
               '还没有预设 —— 从御膳房领一件「摆盘」，导入时选「先存进美化预设」就会到这里。'));

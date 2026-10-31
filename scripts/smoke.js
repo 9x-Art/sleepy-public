@@ -9658,6 +9658,45 @@ t('parseReply 心声标签在最前面时不给空气泡', () => {
   if (!r.visible.trim()) throw new Error('正文被吞成空气泡');
   return 'ok';
 });
+
+/* ---------- stripAbilityTags（2026-10-31 线上格式两漏收口）---------- */
+t('stripAbilityTags：能力标签整块剥（含全角冒号 / 变体写法 / 无冒号独词）', () => {
+  const strip = S.promptEngine.stripAbilityTags;
+  const a = strip('嗯[引用：今晚不回来吃饭]那算了');
+  if (a !== '嗯那算了') throw new Error('全角冒号引用没剥：' + a);
+  const b = strip('[表情包:小狗]给你看');
+  if (b !== '给你看') throw new Error('变体 [表情包:] 没剥：' + b);
+  const c = strip('站住别动\n[拍一拍]');
+  if (c !== '站住别动') throw new Error('无冒号 [拍一拍] 没剥：' + c);
+  const d = strip('记得喝水[灯:记得多喝水]晚安[慢递:6|信]');
+  if (d !== '记得喝水晚安') throw new Error('灯/慢递没剥：' + d);
+  const e = strip('接好了[[REV_ACCEPT]]就这样');
+  if (e !== '接好了就这样') throw new Error('[[REV_*]] 没剥：' + e);
+  return 'ok';
+});
+t('stripAbilityTags：旁白永远不碰（落库要保留），Markdown 链接 / 时间戳不动', () => {
+  const strip = S.promptEngine.stripAbilityTags;
+  if (strip('[旁白:她抬起头]笑了') !== '[旁白:她抬起头]笑了') {
+    throw new Error('旁白被误剥（它归 narrPlain 管）');
+  }
+  if (strip('看这个 [链接](https://x.com)') !== '看这个 [链接](https://x.com)') {
+    throw new Error('Markdown 链接被误伤');
+  }
+  if (strip('现在 [21:30] 了') !== '现在 [21:30] 了') throw new Error('时间戳被误伤');
+  return 'ok';
+});
+t('stripAbilityTags：tail 模式扣半截尾巴（流式打字到一半不闪标签）', () => {
+  const strip = S.promptEngine.stripAbilityTags;
+  if (strip('来了[引用：今', { tail: true }) !== '来了') {
+    throw new Error('半截 [引用： 没扣掉');
+  }
+  if (strip('来了[引用', { tail: true }) !== '来了') {
+    throw new Error('半截 [引用 没扣掉');
+  }
+  /* tail 只在串尾生效：正文中间的完整标签照常整块剥 */
+  if (strip('好[引用:x]的', { tail: true }) !== '好的') throw new Error('tail 模式丢了整块剥');
+  return 'ok';
+});
 t('assembleOnline：槽位按矩阵顺序出，历史原文垫底', () => {
   const r = S.promptEngine.assembleOnline({
     charId: m1, userId: u1,
@@ -10783,6 +10822,24 @@ t('validateRound：合法输出全通过，delay 收进 300~4000', () => {
   if (v.messages[0].delayMs !== 4000) throw new Error('delay 应夹到 4000');
   if (v.messages[1].delayMs !== 300) throw new Error('下限 300');
   return { 落地: v.messages.length, 夹取: v.messages[0].delayMs };
+});
+
+t('validateRound：content 里的能力标签落库前剥掉（群聊无标签系统）', () => {
+  const round = S.groupAI.composeRound(aiFix.gid, { budget: { actors: 1, msgs: 5 } });
+  const v = S.groupAI.validateRound(round, {
+    plans: [{ entityId: aiFix.m, action: 'group_reply', accountId: aiFix.s }],
+    messages: [
+      { senderAccountId: aiFix.s, content: '[引用：我可以]我可以。' },
+      { senderAccountId: aiFix.s, content: '[表情包:小狗]看它' },
+      { senderAccountId: aiFix.s, content: '[旁白:她笑了一下]哈哈' }
+    ]
+  }, aiFix.gid);
+  if (!v.ok) throw new Error('应通过：' + JSON.stringify(v.errors));
+  if (v.messages[0].content !== '我可以。') throw new Error('引用标签没剥：' + v.messages[0].content);
+  if (v.messages[1].content !== '看它') throw new Error('表情标签没剥：' + v.messages[1].content);
+  /* 群聊没有旁白渲染层：narrPlain 剥壳留内文，当普通文本展示 */
+  if (v.messages[2].content !== '她笑了一下哈哈') throw new Error('旁白剥壳口径不对：' + v.messages[2].content);
+  return 'ok';
 });
 
 t('validateRound：未获准的账号 / 群外账号 / 超预算消息全部拒收', () => {
@@ -18021,7 +18078,10 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
    基准随批 v301 → v302。 */
 /* v303（2026-10-31）：iOS PWA 底部安全区视觉连续化（style.css 新增
    一条 html.ios-pwa 背景 rule）—— 基准随批 v302 → v303。 */
-const EXPECTED_SW_CACHE = 'sleepy-v303';
+/* v304（2026-10-31）：线上格式两漏收口（prompt-engine stripAbilityTags +
+   page-chat 流式清扫/reroll 渐进拆泡 + page-group/ai 群聊清扫）——
+   基准随批 v303 → v304。 */
+const EXPECTED_SW_CACHE = 'sleepy-v304';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -19528,6 +19588,10 @@ function runDemoSeedBlock() {
     if (xm.content.indexOf('淘宝客服') < 0) throw new Error('人设缺客服魂');
     if (xm.speech.indexOf('好的呢亲亲') < 0) throw new Error('speech 缺客服体锚点');
     if (xm.neverDo.indexOf('不替用户做决定') < 0) throw new Error('红线没写');
+    /* 2026-10-31 用户：「不要每句话都带着拿token办事的口头禅」——反向钉死，
+       人设/说话方式里不许再长回来。 */
+    if (xm.content.indexOf('拿token') >= 0) throw new Error('content 里还有拿token口头禅');
+    if (xm.speech.indexOf('拿token') >= 0) throw new Error('speech 里还有拿token口头禅');
     return xm;
   });
   ok('小满没设头像（渲染侧自动落幽灵，不占图库）', !xmRec.avatar && !xmRec.avatarMedia);
@@ -19569,7 +19633,13 @@ function runDemoSeedBlock() {
     if (msgs.length !== 1 || msgs[0].role !== 'assistant') throw new Error('消息形状不对');
     if (msgs[0].content.indexOf('很高兴能够为您服务') < 0) throw new Error('欢迎语文案不对');
     if (chats[0].characterId !== xmRec.id) throw new Error('对话没挂小满');
-    return { messages: msgs.length, role: msgs[0].role };
+    /* 2026-10-31：欢迎词按 || 分泡（聊天气泡协议），不许再挤一段；
+       「不用先配什么」那种话也删了 —— 聊天要配 API 才通，别误导。 */
+    const wSegs = S.promptEngine.splitBubbles(msgs[0].content);
+    if (wSegs.length < 2) throw new Error('欢迎语没分泡：' + JSON.stringify(wSegs));
+    if (msgs[0].content.indexOf('不用先配') >= 0) throw new Error('「不用先配」那句还在');
+    if (msgs[0].content.indexOf('拿token') >= 0) throw new Error('欢迎语里还有拿token口头禅');
+    return { messages: msgs.length, role: msgs[0].role, 气泡数: wSegs.length };
   });
   t('朋友圈 3 条演示动态（时间倒序、无空文案、盖岛章）', () => {
     const ms = S.store.get('moments').filter((m) => m.sandboxId === demoSb.id);
@@ -19577,6 +19647,7 @@ function runDemoSeedBlock() {
     const ats = ms.map((m) => m.at);
     if (!(ats[0] > ats[1] && ats[1] > ats[2])) throw new Error('不是倒序');
     if (ms.some((m) => !m.text)) throw new Error('有空动态');
+    if (ms.some((m) => String(m.text).indexOf('拿token') >= 0)) throw new Error('动态里还有拿token口头禅');
     return { n: ms.length };
   });
   t('功能知识：个人世界书挂小满，10 条全部关键词触发（2026-10-26 补帷境/桌游入局贴满）', () => {

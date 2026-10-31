@@ -3062,6 +3062,36 @@
     return out + s.slice(last);
   }
 
+  /* ======================= 能力标签兜底清扫（2026-10-31） =======================
+     用户真机：[引用：xxx] 这类方括号能力标签总有漏网 —— 流式期间的
+     pending 泡、手动停止的半截回复、群聊落库、以及抽取链认不全的变体
+     写法（[表情包:x] 之于 [表情:x]）。这里给一个**统一兜底**：认得的
+     能力词一律整块剥掉，正文里不许杵着方括号标签。两条纪律：
+     ① 旁白不归这里管 —— [旁白:] 落库要保留（模型看得到自己的写法），
+        显示面走 narrPlain；这个函数**永远不碰旁白**。
+     ② 只剥「能力词 + 可选冒号内容」的整块；Markdown 链接 [t](url)、
+        时间戳 [21:30]、普通方括号文本都不动（能力词白名单控制）。 */
+  var ABILITY_TAG_NAMES =
+    '表情包|表情|贴纸|引用|拍一拍|撤回|灯牌|灯|慢递|生图|画图|换头像|头像|' +
+    '自察|收藏提议|手机|心声|WHISPER|/WHISPER|/心声|html|/html';
+  var ABILITY_TAG_RE = new RegExp(
+    '\\[(?:' + ABILITY_TAG_NAMES + ')(?:[：:][^\\]\\n]*)?\\]', 'g');
+  /* 流式用：正打字打到一半的标签（[引用：今）还没闭合，从标记头扣到串尾 */
+  var ABILITY_TAG_TAIL_RE = new RegExp(
+    '\\[(?:' + ABILITY_TAG_NAMES + ')(?:[：:][^\\]\\n]*)?\\s*$', 'g');
+  var REV_TAG_RE = /\[\[REV_(?:ACCEPT|PEEK)\]\]/g;
+
+  function stripAbilityTags(text, opts) {
+    var s = String(text == null ? '' : text)
+      .replace(REV_TAG_RE, '')
+      .replace(ABILITY_TAG_RE, '');
+    if (opts && opts.tail) s = s.replace(ABILITY_TAG_TAIL_RE, '');
+    return s
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   /* ---- 文风预设 / 字数 / 密度（对话设置页与说明书卡共用的唯一出处）---- */
   var NARR_STYLES = {
     plain:     { label: '简约白描', text: '短句白描，只写看得见的动作与画面，几乎不用形容词。' },
@@ -3217,6 +3247,9 @@
        凡是「要把气泡正文拿去给人看」的地方都该用它 —— 会话列表的预览就是：
        用 splitBubbles 会把 [译]…[/译] 当成正文原样显示出来。 */
     splitBubblesT: splitBubblesT,
+    /* 能力标签兜底清扫（2026-10-31）：流式 pending 段 / 收口抽取链之后 /
+       停止补落 / 群聊落库，四处共用这一份。opts.tail 扣半截尾巴（流式用）。 */
+    stripAbilityTags: stripAbilityTags,
     awarenessOf: awarenessOf
   };
 

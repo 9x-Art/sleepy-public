@@ -177,10 +177,10 @@
     render: function (ctx) {
       var body = ctx.body;
 
-      var g = group('API 列表', '给后台任务等用，也可以当备用通道。');
+      var g = group('API 列表');
       var listCard = g.card;
 
-      var g2 = group('轮询规则', '请求失败时自动跳下一个；全部失败则报错。');
+      var g2 = group('轮询规则');
       var rowCount = row({ label: '已配置副 API', plain: true });
       g2.card.appendChild(rowCount);
       /* 重试次数可调：改动即落盘（1~5） */
@@ -236,7 +236,7 @@
          服务不那么重要 / 简单 / 高频的功能，不是主聊天的备胎。 */
       var api = Sleepy.api;
       if (api && api.FEATURES) {
-        var g3 = group('功能分配', '勾选的功能固定用副 API（多组轮询，全失败就报错，不会偷用主 API）；没勾的照旧走主 API。');
+        var g3 = group('功能分配');
         api.FEATURES.forEach(function (f) {
           var sw = ui.switchField({ label: f.label, value: api.featureOn(f.key) });
           sw.input.addEventListener('change', function () {
@@ -304,7 +304,7 @@
       f.model = mp.f.model;
       body.appendChild(g.wrap);
 
-      var g2 = group('生成参数', '这个接口自己的。留空就用内置默认值（灰字就是它）。');
+      var g2 = group('生成参数');
       f.temperature = numField({ label: '温度', hint: '留空＝用内置默认 · 越高越发散', value: null, min: 0, max: 2, step: 0.05 });
       f.temperature.input.placeholder = String(def.temperature);
       g2.card.appendChild(f.temperature.el);
@@ -448,7 +448,7 @@
       f.model = mp.f.model;
       body.appendChild(g.wrap);
 
-      var g2 = group('生成参数', '这个接口自己的。留空就用内置默认值（灰字就是它）。');
+      var g2 = group('生成参数');
       var def = Sleepy.api.genDefaults;
       f.temperature = numField({ label: '温度', hint: '留空＝用内置默认 · 越高越发散', value: item.temperature, min: 0, max: 2, step: 0.05 });
       f.temperature.input.placeholder = String(def.temperature);
