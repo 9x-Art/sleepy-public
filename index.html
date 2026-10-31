@@ -103,6 +103,10 @@
      必须排在 prompt-engine.js **之前** —— 装配发生在页面 render 与启动点火
      （page-chat-settings.js 末尾的 Sleepy.bootHome）里，都远在本行之后。 -->
 <script src="behavior-text.js" defer></script>
+<!-- 手机使用情况（APK 壳专属，2026-10-31）：数据层。只依赖 Sleepy.store，
+     消费口全惰性（prompt-engine 的 usage 槽 / 设置页 / 角色设置运行时读
+     Sleepy.usage），排哪都行 —— 挨着 behavior-text 放好找。 -->
+<script src="usage.js" defer></script>
 <!-- 预设注入引擎（第一轮）：prompt-engine 是数据与装配核心，
      page-presets 是它的配置 app。都排在 page-chat 前 —— 后者要调引擎。 -->
 <script src="prompt-engine.js" defer></script>

@@ -1223,6 +1223,13 @@
        剧情设定（page-offline 自己填），不掺现实数据。 */
     { id: 'realworld', slot: 'I02b', name: '真实世界感知', kind: 'program', required: false,
       note: '程序生成：现实天气一行（设置里开了、key 和城市齐了才注入）' },
+    /* 手机使用感知（2026-10-31 用户点名）：user 现实手机的使用统计
+       （刚刚用了什么 / 今天亮屏多久）。三道闸：APK 壳在（无桥 = 无数据）、
+       设置里总开关开、这个角色自己的开关开（charSettings.usageAware，
+       角色设置页那行）。数据层唯一实现 Sleepy.usage.text（usage.js）。
+       只挂线上：线下场景的「用了什么手机」是剧情设定，不掺现实数据。 */
+    { id: 'usage', slot: 'I02b', name: '手机使用感知', kind: 'program', required: false,
+      note: '程序生成：user 现实手机的使用情况（APK 壳 + 总开关开 + 本角色开关开才注入）' },
     /* 语言与翻译（2026-09-19 用户要的）：他说哪国话**从常驻地点推**，
        不另开设置项。开关只是「我要不要看译文」，不影响他说什么语言。 */
     { id: 'lang', slot: 'I03', name: '语言与翻译', kind: 'program', required: false,
@@ -1471,6 +1478,24 @@
     if (!rw || !rw.compile) return '';
     try {
       return rw.compile() || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /* 手机使用感知（I02b，2026-10-31）：文本底料的唯一出处是
+     Sleepy.usage.text（usage.js）；这里加**角色级**那道闸 ——
+     charSettings.usageAware（root 维度，默认开，page-chat-settings 的
+     「手机使用感知」开关在写）。总开关 / 授权 / 数据是否成块都在
+     usage.text 内部判，缺哪样都返回空串，槽自动不上。 */
+  function compileUsage(charId) {
+    var csRow = (Sleepy.chatSettings && Sleepy.chatSettings.charSettings)
+      ? Sleepy.chatSettings.charSettings(charId) : null;
+    if (csRow && csRow.get('usageAware', true) === false) return '';
+    var us = Sleepy.usage;
+    if (!us || !us.text) return '';
+    try {
+      return us.text() || '';
     } catch (e) {
       return '';
     }
@@ -2211,6 +2236,7 @@
           break;
         }
         case 'realworld': pushSlot(def, compileRealworld()); break;
+        case 'usage': pushSlot(def, compileUsage(charId)); break;
         case 'lang': pushSlot(def, compileLang(charId)); break;
         /* 三张受影响卡统一读 btDec：任一失败时三者一起回退旧路径 */
         case 'shell': pushSlot(def, btDec.ok ? btDec.shellText : cardBody('shell')); break;

@@ -775,6 +775,22 @@
           });
         }
       }));
+      /* 手机使用感知（2026-10-31 用户点名）：这个角色要不要知道你
+         现实里刚用了什么手机 / 用了多久。只在 APK 壳里出现（没桥 =
+         没数据，摆了也是空行）。总开关在 设置 → 手机使用情况 ——
+         总开关关着时这里开关也不生效，note 里说清楚。 */
+      if (Sleepy.usage && Sleepy.usage.available()) {
+        var uMaster = Sleepy.usage.masterOn();
+        var uMine = csRow.get('usageAware', true);
+        secChat.appendChild(demoRow({
+          label: '手机使用感知',
+          note: !uMaster ? '总开关没开（设置 → 手机使用情况），开了才生效'
+            : (uMine ? '开 · TA 能自然地知道你刚在用手机做什么'
+                     : '关 · 不让 TA 知道'),
+          switched: uMaster && uMine,
+          onSwitch: function (v) { csRow.set('usageAware', v); }
+        }));
+      }
       /* 「用户身份」这一行 2026-09-22 **整行删掉**（用户：「角色设置里
          『用户身份』功能去掉」）。它本来就是没绑 onClick 的灰行占位，
          而身份系统真正的入口在「浮岛」和「我」两处 —— 摆在这儿只是噪音。 */

@@ -277,6 +277,55 @@
       g4.card.appendChild(rowData);
       body.appendChild(g4.wrap);
 
+      /* 手机使用情况（2026-10-31 用户点名，APK 壳专属）：没有壳桥的
+         环境（浏览器 / iOS PWA）整个组不画 —— 想看也看不了，别摆空行。 */
+      if (Sleepy.usage && Sleepy.usage.available()) {
+        var gU = group('手机使用情况',
+          '来自安卓系统的使用统计，本机数据不出设备。总开关开着时，' +
+          '每个角色可以在 TA 的设置里单独决定要不要知道这些。');
+        var fU = switchField({
+          label: '总开关',
+          value: Sleepy.usage.masterOn()
+        });
+        fU.input.addEventListener('change', function () {
+          Sleepy.usage.setMaster(fU.get());
+        });
+        gU.card.appendChild(fU.el);
+        var uj = Sleepy.usage.fetch(1);
+        if (!uj || !uj.ok) {
+          /* 未授权：PACKAGE_USAGE_STATS 弹窗授不了，只能去系统设置手动开 */
+          var uPerm = row({ label: '使用情况授权', value: '未授权 · 点去授权' });
+          uPerm.disabled = false;
+          uPerm.classList.remove('is-soon');
+          uPerm.addEventListener('click', function () {
+            try { window.SleepyNative.openUsageAccess(); }
+            catch (e) { ctx.toast('跳系统设置失败，去系统设置里手动找「使用情况访问」', 'warn'); }
+          });
+          gU.card.appendChild(uPerm);
+        } else {
+          gU.card.appendChild(row({
+            label: '今天亮屏合计',
+            value: Sleepy.usage.fmtDur(uj.total || 0)
+          }));
+          var rec = Sleepy.usage.recentApps(uj);
+          gU.card.appendChild(row({
+            label: '刚刚（最近 1 小时）',
+            value: rec.length
+              ? rec.slice(0, 3).map(function (a) { return a.label; }).join('、')
+              : '最近一小时没用过什么'
+          }));
+          (uj.apps || []).filter(function (a) { return a.t >= 60000; })
+            .slice(0, 8)
+            .forEach(function (a) {
+              gU.card.appendChild(row({
+                label: a.label,
+                value: Sleepy.usage.fmtDur(a.t)
+              }));
+            });
+        }
+        body.appendChild(gU.wrap);
+      }
+
       var g5 = group('其他');
 
       /* 状态栏开关（2026-10-31，APK 壳需求）：安卓 WebView 的时间时区 /
