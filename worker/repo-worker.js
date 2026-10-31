@@ -488,7 +488,12 @@ export default {
         }
         const q = String(b.qq || '').trim();
         if (!QQ_RE.test(q)) return j({ ok: false, message: 'QQ 号要是 5–12 位数字' }, 400);
-        if (!(await rateHit(env, 'rl:issue:' + ipOf(request), 10))) {
+        /* 已领过的先挡回去、不进限流（2026-10-31 维稳）：忘了码回来看的人
+           每次都吃 429 等于把人锁在门外；口令闸在上面已经拦过一轮。 */
+        const dup = await env.DB.prepare('SELECT code FROM codes WHERE qq = ?').bind(q).first();
+        if (dup) return j({ ok: false, message: '这个 QQ 号已经领过激活码了（一个号只能领一次）' }, 409);
+        /* 50 次 / 15 分钟 / IP：只挡脚本刷码，正常手滑重试烧不完 */
+        if (!(await rateHit(env, 'rl:issue:' + ipOf(request), 50))) {
           return j({ ok: false, message: '领得太频繁了，歇会儿再来' }, 429);
         }
         const code = 'SLP-' + randHex(6).toUpperCase();
@@ -529,24 +534,27 @@ export default {
         if (pass.length < 6) return j({ ok: false, message: '密码至少 6 位' }, 400);
         if (!installId) return j({ ok: false, message: '缺设备标识' }, 400);
 
-        /* 先认码再计限流 —— 公用码与自领码不共用配额（见下）。
-           注意错码照样计数：c 为 null 时走的是下面那个严桶，
-           拿错码来穷举的人不会因为多认了一次码就免掉计数。 */
+        /* 先认码（2026-10-31 维稳：限流拆成两个桶，正常重试不再吃计数）：
+           ① 错码桶 —— 穷举激活码的人在这里撞墙（20 次 / 15 分钟 / IP）；
+           ② 总桶 —— 只对「校验全过、真要建号」的请求计数（60 次 / 15 分钟 / IP），
+              同一个出口 IP（学校 / 公司 WiFi）一群人正常激活不再互撞；
+              它只挡建号刷量，挡不住核对信息时的手滑重试。 */
         const c = await env.DB.prepare(
           'SELECT qq, used_by, status FROM codes WHERE code = ?').bind(code).first();
         const isShared = !!c && c.status === 2;
-        /* 两个配额分开的意义：自领码一人一码，10 次 / 15 分钟绰绰有余；
-           公用码是「一群人同一会儿进门」，同个出口 IP（学校 / 公司 /
-           同一处 WiFi）十几个人一起来就把严桶撞爆了，第 11 个人看到的
-           是「操作太频繁」而不是进门。公用码本就公开，这里只是减速带。 */
-        if (!(await rateHit(env, 'rl:act:' + ipOf(request), isShared ? 40 : 10))) {
-          return j({ ok: false, message: '操作太频繁了，歇会儿再来' }, 429);
+        if (!c || (c.status !== 1 && !isShared)) {
+          if (!(await rateHit(env, 'rl:act-bad:' + ipOf(request), 20))) {
+            return j({ ok: false, message: '操作太频繁了，歇会儿再来' }, 429);
+          }
+          return j({ ok: false, message: '激活码不对' }, 404);
         }
-        if (!c || (c.status !== 1 && !isShared)) return j({ ok: false, message: '激活码不对' }, 404);
         if (!isShared && c.used_by) return j({ ok: false, message: '这个激活码已经被用过了（一码一人）' }, 409);
         if (!isShared && c.qq !== qq) return j({ ok: false, message: '这个码是发给另一个 QQ 号的，去发码页核对' }, 403);
         if (await env.DB.prepare('SELECT id FROM users WHERE qq = ?').bind(qq).first()) {
           return j({ ok: false, message: '这个 QQ 号已经激活过，直接登录就行' }, 409);
+        }
+        if (!(await rateHit(env, 'rl:act:' + ipOf(request), 60))) {
+          return j({ ok: false, message: '操作太频繁了，歇会儿再来' }, 429);
         }
         const uid = 'u-' + crypto.randomUUID().slice(0, 16);
         const salt = randHex(16);
@@ -584,8 +592,10 @@ export default {
           return j({ ok: false, message: 'QQ 号、密码、设备标识都要有' }, 400);
         }
         /* 防撞库只计**失败**次数（成功登录不该消耗额度，否则正常用户 15 分钟
-           登 5 次就被自己锁死——2026-10-21 冒烟设计时抓出）。 */
-        const exceeded = async () => !(await rateHit(env, 'rl:login:' + ipOf(request) + ':' + qq, 5));
+           登 N 次就被自己锁死——2026-10-21 冒烟设计时抓出）。
+           10 次 / 15 分钟（2026-10-31 维稳放宽）：忘密码的人试错空间更大，
+           对撞库仍是减速带不是闸门。 */
+        const exceeded = async () => !(await rateHit(env, 'rl:login:' + ipOf(request) + ':' + qq, 10));
         const u = await env.DB.prepare(
           'SELECT id, salt, hash, status FROM users WHERE qq = ?').bind(qq).first();
         if (!u || u.status !== 1 || (await passHash(pass, u.salt)) !== u.hash) {

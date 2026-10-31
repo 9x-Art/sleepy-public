@@ -19250,13 +19250,13 @@ t('账密系统：激活→登录→设备上限→解绑→改密→注销 全�
     body: JSON.stringify({ qq: '12345678', pass: 'newpass1', installId: 'inst-D', ua: 'UA-D' }) });
   if (!lNew.ok) throw new Error('新密码该能登：' + JSON.stringify(lNew));
 
-  /* ---- 5. 防撞库：连错 5 次后第 6 次 429（KV 计数）---- */
-  for (let i = 0; i < 5; i++) {
+  /* ---- 5. 防撞库：连错 10 次后第 11 次 429（KV 计数；2026-10-31 维稳放宽到 10）---- */
+  for (let i = 0; i < 10; i++) {
     await call('/account/login', { method: 'POST',
       body: JSON.stringify({ qq: '87654321', pass: 'bad-' + i, installId: 'inst-Z', ua: 'z' }) });
   }
   const lLock = await call('/account/login', { method: 'POST',
-    body: JSON.stringify({ qq: '87654321', pass: 'bad-5', installId: 'inst-Z', ua: 'z' }) });
+    body: JSON.stringify({ qq: '87654321', pass: 'bad-10', installId: 'inst-Z', ua: 'z' }) });
   if (lLock.ok !== false || lLock.message.indexOf('锁定') < 0) {
     throw new Error('失败 5 次后必须 429 锁定：' + JSON.stringify(lLock));
   }
