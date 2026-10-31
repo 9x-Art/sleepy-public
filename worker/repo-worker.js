@@ -131,6 +131,48 @@ function ipOf(request) {
   return direct;
 }
 
+/* ---- 机房 ASN 闸（2026-10-31）：把烧请求配额的机器人挡在门外 ----
+   正常用户全走 Pages 同源反代；直连 workers.dev 打敏感口的实测只剩
+   机房 IP 在扫 /issue/claim 与 /account/*（KV 限流桶里看到一堆托管段
+   IP，Worker 配额一天烧掉 50%）。反代子请求的 CF-Connecting-IP 是 CF
+   内部出口（ipOf 已识别），所以规则很简单：**非反代 + 机房 ASN =
+   机器人 → 403 快速挡回**，不查库不写 KV，把请求配额还给真人。
+   代价：挂商用 VPN 走 workers.dev 兜底的直连用户会被误挡 —— 他们本
+   来就该走 pages.dev（主位 base），可接受。
+   request.cf 缺位（本地 dev / 非直连环境）一律放行 —— fail open，
+   闸门只挡「确认是机房」的，不拦存疑的。 */
+const DC_ASN = {
+  16509: 1, 14618: 1, 396982: 1,   /* AWS */
+  15169: 1,                        /* Google */
+  8075: 1,                         /* Microsoft/Azure */
+  14061: 1,                        /* DigitalOcean */
+  16276: 1,                        /* OVH */
+  24940: 1,                        /* Hetzner */
+  9009: 1,                         /* M247（商用 VPN 常用出口） */
+  20473: 1,                        /* Vultr/Choopa */
+  63949: 1,                        /* Linode/Akamai */
+  51167: 1,                        /* Contabo */
+  60781: 1,                        /* Leaseweb */
+  62240: 1,                        /* Clouvider */
+  53667: 1, 204601: 1,             /* 云国际段常见扫源 */
+};
+function botGate(request) {
+  const direct = request.headers.get('CF-Connecting-IP') || '';
+  if (direct.indexOf('2a06:98c0:') === 0) return false;   /* 反代来的真人，放行 */
+  const cf = request.cf;
+  if (!cf || cf.asn === undefined || cf.asn === null) return false;  /* 缺位不拦 */
+  return !!DC_ASN[cf.asn];
+}
+
+/* ---- 管理钥匙（2026-10-31）：/admin/* 一律 X-Admin-Key = env.ADMIN_KEY ----
+   secret 部署后执行一次：wrangler secret put ADMIN_KEY。
+   没配 = 管理口全关（fail closed）。管理页从 pages.dev/admin（走反代）
+   进，VPN/iOA 出口就算是机房段也不影响 —— admin 不挂 ASN 闸。 */
+function adminOk(request, env) {
+  const k = request.headers.get('X-Admin-Key') || '';
+  return !!env.ADMIN_KEY && k === env.ADMIN_KEY;
+}
+
 /* 会话鉴权：token 走 X-Repo-Token 同一个头（CORS 白名单不用加列）。
    空闲过期（2026-10-22 收口）：last_seen 超 30 天的会话一律视为失效 ——
    以前 token 永不过期，泄露一枚就等于永久账号；现在空闲即死，
@@ -221,6 +263,117 @@ const ISSUE_PAGE = `<!DOCTYPE html>
 </body>
 </html>`;
 
+/* 管理页（2026-10-31）：从 pages.dev/admin 进，X-Admin-Key 鉴权。
+   三件事：看真实注册数据 / 帮人注册 / 帮人重置密码。钥匙存 localStorage，
+   页面本身不含任何敏感信息（没钥匙啥也干不了，fail closed）。 */
+const ADMIN_PAGE = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleepy · 管理台</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;
+    background:#FAF6EF;color:#2B2B2B;font-family:system-ui,-apple-system,"PingFang SC",sans-serif;padding:32px 0;box-sizing:border-box;}
+  .card{width:min(420px,calc(100vw - 40px));background:#fff;border:1px solid #E8E0D2;
+    border-radius:14px;padding:28px 24px;box-sizing:border-box;margin-bottom:16px;}
+  h1{font-size:18px;margin:0 0 6px;}
+  h2{font-size:15px;margin:22px 0 10px;}
+  .sub{font-size:12.5px;color:#8B8578;line-height:1.6;margin:0 0 18px;}
+  label{display:block;font-size:12.5px;color:#8B8578;margin:12px 0 6px;}
+  input{width:100%;box-sizing:border-box;padding:11px 12px;font-size:15px;
+    border:1px solid #D8D0C0;border-radius:9px;outline:none;background:#fff;color:#2B2B2B;}
+  input:focus{border-color:#B08A5E;}
+  button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;
+    background:#B08A5E;color:#fff;font-size:14.5px;cursor:pointer;}
+  button:disabled{opacity:.5;}
+  .out{font-size:12.5px;line-height:1.7;margin-top:12px;color:#2B2B2B;
+    white-space:pre-wrap;word-break:break-all;display:none;
+    background:#FAF6EF;border-radius:9px;padding:12px;}
+  .err{color:#B4544A;}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;}
+  td,th{padding:4px 6px;border-bottom:1px solid #EFE9DC;text-align:left;}
+  th{color:#8B8578;font-weight:500;}
+</style>
+</head>
+<body>
+<div style="width:100%;display:flex;flex-direction:column;align-items:center;">
+<div class="card">
+  <h1>Sleepy · 管理台</h1>
+  <p class="sub">管理钥匙只在部署时由你自己设置（wrangler secret put ADMIN_KEY），页面不保存到服务器。</p>
+  <label for="key">管理钥匙</label>
+  <input id="key" type="password" placeholder="ADMIN_KEY">
+  <button id="stats">查看真实注册数据</button>
+  <div class="out" id="outStats"></div>
+</div>
+<div class="card">
+  <h2>帮人注册</h2>
+  <p class="sub">不走发码页，直接建号（激活码账目不动）。</p>
+  <label for="regQq">QQ 号（5–12 位数字）</label>
+  <input id="regQq" inputmode="numeric" maxlength="12">
+  <label for="regPass">初始密码（≥6 位）</label>
+  <input id="regPass" type="password">
+  <button id="reg">建号</button>
+  <div class="out" id="outReg"></div>
+</div>
+<div class="card">
+  <h2>帮人重置密码</h2>
+  <p class="sub">重置后该账号所有设备全部登出，要用新密码重新登录。</p>
+  <label for="rstQq">QQ 号</label>
+  <input id="rstQq" inputmode="numeric" maxlength="12">
+  <label for="rstPass">新密码（≥6 位）</label>
+  <input id="rstPass" type="password">
+  <button id="rst">重置</button>
+  <div class="out" id="outRst"></div>
+</div>
+</div>
+<script>
+  var keyEl = document.getElementById('key');
+  keyEl.value = localStorage.getItem('sleepy.adminKey') || '';
+  function key() { var k = keyEl.value.trim(); localStorage.setItem('sleepy.adminKey', k); return k; }
+  function show(id, ok, text) {
+    var el = document.getElementById(id);
+    el.textContent = text; el.style.display = 'block';
+    el.className = 'out' + (ok ? '' : ' err');
+  }
+  function post(path, body, outId, doneMsg) {
+    var btns = document.querySelectorAll('button');
+    btns.forEach(function (b) { b.disabled = true; });
+    fetch(path, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': key() },
+      body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        btns.forEach(function (b) { b.disabled = false; });
+        if (!res.ok) { show(outId, false, res.message || '失败了'); return; }
+        show(outId, true, typeof doneMsg === 'function' ? doneMsg(res) : doneMsg);
+      })
+      .catch(function (e) { btns.forEach(function (b) { b.disabled = false; }); show(outId, false, '网络没通：' + e); });
+  }
+  document.getElementById('stats').addEventListener('click', function () {
+    post('/admin/stats', {}, 'outStats', function (res) {
+      var lines = '活跃用户 ' + res.users + '（累计 ' + res.usersAll + '，注销 ' + (res.usersAll - res.users) + '）'
+        + '\\n活跃设备 ' + res.devices + ' · 活跃会话 ' + res.sessions
+        + '\\n发码 ' + res.codes + ' / 已用 ' + res.codesUsed;
+      var rows = (res.recent || []).map(function (u, i) {
+        var d = new Date(u.created_at);
+        return (i + 1) + '. ' + u.qq + ' · ' + d.toLocaleString();
+      }).join('\\n');
+      return rows ? lines + '\\n\\n最近注册：\\n' + rows : lines;
+    });
+  });
+  document.getElementById('reg').addEventListener('click', function () {
+    post('/admin/register', { qq: document.getElementById('regQq').value.trim(), pass: document.getElementById('regPass').value },
+      'outReg', '建号成功，把 QQ 号和密码发给对方，让对方直接登录');
+  });
+  document.getElementById('rst').addEventListener('click', function () {
+    post('/admin/reset', { qq: document.getElementById('rstQq').value.trim(), newPass: document.getElementById('rstPass').value },
+      'outRst', '重置成功，告诉对方用新密码登录（所有设备已登出）');
+  });
+</script>
+</body>
+</html>`;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -228,7 +381,7 @@ export default {
     const CORS = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,X-Repo-Token',
+      'Access-Control-Allow-Headers': 'Content-Type,X-Repo-Token,X-Admin-Key',
     };
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
@@ -491,6 +644,7 @@ export default {
          env.ISSUE_KEY 是部署 secret（wrangler secret put ISSUE_KEY）；
          没配 = 发码页歇业（fail closed），配了 = 口令对上才出码。 */
       if (p === '/issue/claim' && request.method === 'POST') {
+        if (botGate(request)) return j({ ok: false, message: '请求被拒绝' }, 403);
         await ensureSchema(env);
         const b = await request.json();
         if (!env.ISSUE_KEY) return j({ ok: false, message: '发码页还没配营业口令，暂时歇业' }, 503);
@@ -535,6 +689,7 @@ export default {
            VALUES ('内测码字面值', 'beta-public', <now>, 2);
          （codes.qq 有唯一索引，占位值挑一个不会撞的，公用码最多一行。） */
       if (p === '/account/activate' && request.method === 'POST') {
+        if (botGate(request)) return j({ ok: false, message: '请求被拒绝' }, 403);
         await ensureSchema(env);
         const b = await request.json();
         const code = String(b.code || '').trim().toUpperCase();
@@ -604,6 +759,7 @@ export default {
          同设备（installId 已登记）重复登录不新增名额；3 台满且本机不在列
          → 403 带设备清单，前端接「踢/解绑」UI（发售路线：防误封是 1 星评论重灾区）。 */
       if (p === '/account/login' && request.method === 'POST') {
+        if (botGate(request)) return j({ ok: false, message: '请求被拒绝' }, 403);
         await ensureSchema(env);
         const b = await request.json();
         const qq = String(b.qq || '').trim();
@@ -734,6 +890,80 @@ export default {
         await env.DB.prepare('UPDATE sessions SET status = 0 WHERE user_id = ?').bind(s.uid).run();
         await env.DB.prepare('UPDATE users SET status = 0, qq = ? WHERE id = ?')
           .bind('deleted:' + s.uid, s.uid).run();
+        return j({ ok: true });
+      }
+
+      /* ==================== 管理台（2026-10-31，X-Admin-Key）==================== */
+
+      /* ---- GET /admin 管理页 ---- */
+      if (p === '/admin' && request.method === 'GET') {
+        return new Response(ADMIN_PAGE, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS },
+        });
+      }
+
+      /* ---- POST /admin/stats 真实注册数据 ---- */
+      if (p === '/admin/stats' && request.method === 'POST') {
+        await ensureSchema(env);
+        if (!adminOk(request, env)) return j({ ok: false, message: '管理钥匙不对' }, 401);
+        const uAll = await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first();
+        const uAct = await env.DB.prepare('SELECT COUNT(*) AS n FROM users WHERE status = 1').first();
+        const dv = await env.DB.prepare('SELECT COUNT(*) AS n FROM devices WHERE status = 1').first();
+        const ss = await env.DB.prepare('SELECT COUNT(*) AS n FROM sessions WHERE status = 1').first();
+        const cd = await env.DB.prepare('SELECT COUNT(*) AS n FROM codes').first();
+        const cdu = await env.DB.prepare('SELECT COUNT(*) AS n FROM codes WHERE used_by IS NOT NULL').first();
+        const recent = await env.DB.prepare(
+          'SELECT qq, created_at FROM users WHERE status = 1 ORDER BY created_at DESC LIMIT 30').all();
+        return j({
+          ok: true,
+          users: (uAct && uAct.n) || 0, usersAll: (uAll && uAll.n) || 0,
+          devices: (dv && dv.n) || 0, sessions: (ss && ss.n) || 0,
+          codes: (cd && cd.n) || 0, codesUsed: (cdu && cdu.n) || 0,
+          recent: recent.results || [],
+        });
+      }
+
+      /* ---- POST /admin/register {qq, pass} 帮人注册：直接建号，不走发码页 ----
+         激活码账目不动（没消耗码）；用户后续可正常登录、绑设备、改密。 */
+      if (p === '/admin/register' && request.method === 'POST') {
+        await ensureSchema(env);
+        if (!adminOk(request, env)) return j({ ok: false, message: '管理钥匙不对' }, 401);
+        const b = await request.json();
+        const qq = String(b.qq || '').trim();
+        const pass = String(b.pass || '');
+        if (!QQ_RE.test(qq)) return j({ ok: false, message: 'QQ 号要是 5–12 位数字' }, 400);
+        if (pass.length < 6) return j({ ok: false, message: '密码至少 6 位' }, 400);
+        if (await env.DB.prepare('SELECT id FROM users WHERE qq = ?').bind(qq).first()) {
+          return j({ ok: false, message: '这个 QQ 号已经有账号了，直接登录就行' }, 409);
+        }
+        const uid = 'u-' + crypto.randomUUID().slice(0, 16);
+        const salt = randHex(16);
+        const hash = await passHash(pass, salt);
+        await env.DB.prepare(
+          'INSERT INTO users (id, qq, salt, hash, created_at, status) VALUES (?,?,?,?,?,1)')
+          .bind(uid, qq, salt, hash, Date.now()).run();
+        return j({ ok: true, uid: uid });
+      }
+
+      /* ---- POST /admin/reset {qq, newPass} 帮人重置密码 ----
+         新盐新哈希覆盖；该用户全部会话作废（所有设备登出，防旧凭证残留）。
+         设备绑定保留 —— 对方换设备登录时名额照常算。 */
+      if (p === '/admin/reset' && request.method === 'POST') {
+        await ensureSchema(env);
+        if (!adminOk(request, env)) return j({ ok: false, message: '管理钥匙不对' }, 401);
+        const b = await request.json();
+        const qq = String(b.qq || '').trim();
+        const newPass = String(b.newPass || '');
+        if (!QQ_RE.test(qq)) return j({ ok: false, message: 'QQ 号要是 5–12 位数字' }, 400);
+        if (newPass.length < 6) return j({ ok: false, message: '新密码至少 6 位' }, 400);
+        const u = await env.DB.prepare(
+          'SELECT id FROM users WHERE qq = ? AND status = 1').bind(qq).first();
+        if (!u) return j({ ok: false, message: '找不到这个 QQ 号的账号（或已注销）' }, 404);
+        const salt = randHex(16);
+        const hash = await passHash(newPass, salt);
+        await env.DB.prepare('UPDATE users SET salt = ?, hash = ? WHERE id = ?')
+          .bind(salt, hash, u.id).run();
+        await env.DB.prepare('UPDATE sessions SET status = 0 WHERE user_id = ?').bind(u.id).run();
         return j({ ok: true });
       }
 
