@@ -19437,7 +19437,12 @@ t('授权闸装配：bootHome 先过闸再挂桌面 + 表单一份两用', () =>
 t('账密网络层行为：第一个 base 被墙自动切第二个，全挂报统一指引文案', async () => {
   if (typeof S.repo.licenseDevices !== 'function') throw new Error('repo.licenseDevices 未导出');
   /* repoCfg.base 覆盖通道（页面不暴露）支持逗号分隔多入口 —— 本断言借它注入
-     两个假 base。期望值全硬写：顺序、次数、文案都不许引被测常量。 */
+     两个假 base。期望值全硬写：顺序、次数、文案都不许引被测常量。
+     ⚠️ v317 批准变更（2026-10-31）：① GET 类整轮全败后自动再试一整轮
+     （幂等安全，写操作不重试）—— 本断言只数 /account/devices 自己的
+     调用：app.js 启动期有一次静默 licenseMe（刷宽限），它失败后的重试
+     会落进本测试的 mock 窗口，混进计数就成假红；② 失败文案改成
+     「关 VPN」口径（pages.dev 直连是主路，VPN 出口=机房 ASN 被兜底闸挡）。 */
   S.store.set('repoCfg', { base: 'https://base-a.invalid,https://base-b.invalid' });
   const calls = [];
   const old = win.fetch;
@@ -19453,14 +19458,24 @@ t('账密网络层行为：第一个 base 被墙自动切第二个，全挂报�
     win.fetch = old;
   }
   if (!r.ok) throw new Error('第一个 base 被墙应自动切第二个并成功，实到：' + JSON.stringify(r));
-  if (calls.length !== 2) throw new Error('fetch 应打 2 个 base，实到 ' + calls.length + '：' + calls.join(' , '));
-  if (calls[0].indexOf('base-a.invalid') < 0 || calls[1].indexOf('base-b.invalid') < 0) {
-    throw new Error('base 顺序不对（应按序转移）：' + calls.join(' , '));
+  const dev = calls.filter((u) => u.indexOf('/account/devices') >= 0);
+  if (dev.length !== 2) {
+    throw new Error('devices fetch 应打 2 个 base（base-b 成功即回，不进第二轮），实到 ' +
+      dev.length + '：' + dev.join(' , '));
   }
-  /* 负向：两个 base 全挂 → 统一可读文案（独立基准硬写，2026-10-24 登记；
-     反向证明「浏览器原始错误不许怼给用户」） */
-  const HINT = '连不上授权服务器：当前网络可能屏蔽了 Cloudflare 域名（校园网常见），挂 VPN 或换网络再试';
-  win.fetch = function () { return Promise.reject(new Error('Failed to fetch')); };
+  if (dev[0].indexOf('base-a.invalid') < 0 || dev[1].indexOf('base-b.invalid') < 0) {
+    throw new Error('base 顺序不对（应按序转移）：' + dev.join(' , '));
+  }
+  /* 负向：两个 base 全挂 → 统一可读文案（独立基准硬写；v317 批准改口径
+     为「关 VPN」—— 2026-10-24 旧基准「挂 VPN 或换网络」随之作废）。
+     全挂时 GET 会跑两整轮（重试批准行为，锁死）：2 轮 × 2 base = 4 次。 */
+  const HINT = '连不上授权服务器：关掉 VPN / 代理后重试（授权走 pages.dev 直连，' +
+    '挂 VPN 反而绕到机房出口会被闸门挡）；还不行就换一下网络';
+  const allCalls = [];
+  win.fetch = function (url) {
+    allCalls.push(String(url));
+    return Promise.reject(new Error('Failed to fetch'));
+  };
   var r2;
   try {
     r2 = await new Promise((res) => S.repo.licenseDevices(res));
@@ -19469,8 +19484,17 @@ t('账密网络层行为：第一个 base 被墙自动切第二个，全挂报�
     S.store.set('repoCfg', null);
   }
   if (r2.ok !== false) throw new Error('全挂必须回 ok:false：' + JSON.stringify(r2));
-  if (r2.message !== HINT) throw new Error('失败文案不是统一指引基准（独立基准 2026-10-24 登记）：' + r2.message);
-  return { 转移: 'a→b 自动', 全挂文案: 'VPN 指引（硬写基准）' };
+  if (r2.message !== HINT) throw new Error('失败文案不是统一指引基准（独立基准 v317 登记）：' + r2.message);
+  const allDev = allCalls.filter((u) => u.indexOf('/account/devices') >= 0);
+  if (allDev.length !== 4) {
+    throw new Error('全挂应两整轮共 4 次（GET 重试批准行为），实到 ' +
+      allDev.length + '：' + allDev.join(' , '));
+  }
+  if (allDev[0].indexOf('base-a') < 0 || allDev[1].indexOf('base-b') < 0 ||
+      allDev[2].indexOf('base-a') < 0 || allDev[3].indexOf('base-b') < 0) {
+    throw new Error('重试轮 base 顺序不对（每轮都应 a→b）：' + allDev.join(' , '));
+  }
+  return { 转移: 'a→b 自动', 重试: 'GET 两轮×2base（v317 批准）', 全挂文案: '关 VPN 指引（硬写基准）' };
 });
 
 t('账密网络层静态护栏：多 base 结构在，浏览器原始错误文案不许复活', () => {
