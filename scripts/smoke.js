@@ -18081,9 +18081,9 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v304（2026-10-31）：线上格式两漏收口（prompt-engine stripAbilityTags +
    page-chat 流式清扫/reroll 渐进拆泡 + page-group/ai 群聊清扫）——
    基准随批 v303 → v304。 */
-/* v305（2026-10-31）：线下门弹窗定高内滚（style.css：off-door-overlay
-   安全区 padding + off-sheet max-height/overflow-y）—— 基准随批 v304 → v305。 */
-const EXPECTED_SW_CACHE = 'sleepy-v306';
+/* v307（2026-10-31）：外观-单 App 改版（page-appearance.js / page-desktop.js /
+   style.css：点 App 直接弹编辑面板 + 网格重画补听 appearance 键）—— 基准随批 v306 → v307。 */
+const EXPECTED_SW_CACHE = 'sleepy-v307';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
