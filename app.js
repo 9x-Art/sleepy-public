@@ -413,19 +413,20 @@
         bottom = probeEl('safe-probe-bottom',
           'height:env(safe-area-inset-bottom,0px)').getBoundingClientRect().height || 0;
       } catch (e) { return; }      /* 量不出来就等下一轮，别写脏值 */
-      /* iOS 边到边检测（2026-10-29 用户朋友 iPhone 实测；2026-10-31 用户
-         实机复验时放宽到 Safari 也算）：这一版 WebKit 的 env(top) 渲染
-         恒 0（探针量出来也是 0），内容顶进半透明状态栏 → 顶部文字被裁
-         「虚糊感」。innerHeight ≈ screen.height = 内容没被系统从状态栏
-         下推开 = 需要最小让位（html.ios-pwa-edge 里 CSS 给 59px 兜底）；
-         系统自己推开的版本（iOS 26.1 那类）innerHeight 更小，不加，避免
-         双份。以前要求 navigator.standalone —— 但用户实机 Safari（无痕
-         刷新过、别的修复都同步到了）顶部一样被裁，说明这套 WebKit 在
-         Safari 里 env(top) 也是 0，放宽成只看边到边本身。冷启动五轮跑完
-         就停表，Safari 地址栏收起引起的 innerHeight 变化不会再触发重测。 */
+      /* iOS 边到边检测（2026-10-29 用户朋友 iPhone 实测起）：这套 WebKit
+         的 env(top) 渲染恒 0（探针量出来也是 0），内容顶进半透明状态栏
+         → 顶部文字被裁「虚糊感」。innerHeight 接近 screen.height = 内容
+         没被系统从状态栏下推开 = 需要最小让位（html.ios-pwa-edge 里
+         CSS 给 59px 兜底）；系统自己推开的版本（iOS 26.1 那类）innerHeight
+         明显更小，不挂，避免双份 59px。历史上要求 navigator.standalone，
+         v314 放宽到 Safari，v316 把容差 2px 放到 40px —— 真机复验：
+         用户底部已赢（--app-vh 生效 = 非推开型）而顶部仍虚，说明这版
+         WebKit 的 innerHeight 比 screen.height 差一点，最可疑是底部
+         home indicator 区（~34px）。40px 恰好两头安全：只留底部 34 的
+         （挂 ✓），顶部被推开至少差 47（不挂 ✓）。 */
       try {
         var edge = global.screen &&
-          global.innerHeight >= (global.screen.height - 2);
+          global.innerHeight >= (global.screen.height - 40);
         d.classList.toggle('ios-pwa-edge', !!edge);
       } catch (e) { /* 量不了就不加 */ }
       /* 只有非零才算「可信」：替换该边 fallback 并锁定。
@@ -496,6 +497,15 @@
       cachedTop = null;
       cachedBottom = null;
       startColdStart(false);
+    });
+    /* 切回前台补测一轮（2026-10-31 v316）：冷启动五轮内 innerHeight 可能
+       还没稳（PWA 拉起动画、系统栏就位晚），edge 类没挂上顶部就虚 ——
+       用户切回来时视口早稳了，这时再给一次机会。只补没锁定的边，
+       已锁定/已发布的 fallback 一律不动（顶底栏不跳）。 */
+    global.document.addEventListener('visibilitychange', function () {
+      if (global.document.visibilityState !== 'visible') return;
+      if (cachedTop !== null && cachedBottom !== null) return;
+      startColdStart(true);
     });
 
     startColdStart(true);
