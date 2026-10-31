@@ -559,7 +559,17 @@ export default {
           }
           return j({ ok: false, message: '激活码不对' }, 404);
         }
-        if (!isShared && c.used_by) return j({ ok: false, message: '这个激活码已经被用过了（一码一人）' }, 409);
+        if (!isShared && c.used_by) {
+          /* 2026-10-31 文案修准：激活成功后手抖再交一次表单的人，看到的
+             不该是吓人的「码被用过了」而是「你已经激活过，去登录」；
+             码确实是别人的（qq 对不上）才报「被用过」。 */
+          const owner = await env.DB.prepare(
+            'SELECT qq FROM users WHERE id = ?').bind(c.used_by).first();
+          if (owner && owner.qq === qq) {
+            return j({ ok: false, message: '你已经激活过啦，用刚设的密码直接登录就行' }, 409);
+          }
+          return j({ ok: false, message: '这个激活码已经被用过了（一码一人）' }, 409);
+        }
         if (!isShared && c.qq !== qq) return j({ ok: false, message: '这个码是发给另一个 QQ 号的，去发码页核对' }, 403);
         if (await env.DB.prepare('SELECT id FROM users WHERE qq = ?').bind(qq).first()) {
           return j({ ok: false, message: '这个 QQ 号已经激活过，直接登录就行' }, 409);
