@@ -5081,6 +5081,14 @@ html.kb-open .input-area{padding-bottom:6px;}
   -webkit-backdrop-filter:var(--g-glass-blur);
   z-index:6;
 }
+/* iOS PWA（2026-10-31 用户反馈「dock 栏底下空一截，别的小手机没有」）：
+   PWA 里 --safe-bottom 是整个 home indicator 区（~34px），dock 浮在
+   +8px 上就悬得很高。iOS 主屏 dock 的习惯是压着指示条上缘一点 ——
+   下探到 safe-bottom 的四成左右；网格底部预算（--dt-pad-bottom）
+   同步收掉，不然空隙只是从小条挪进网格（dock 顶 = safe*0.4+4+74，
+   iPhone 上 ≈ 92px，预算给 106px 留呼吸）。 */
+html.ios-pwa .dt-dock{ bottom:calc(var(--safe-bottom) * 0.4 + 4px); }
+html.ios-pwa{ --dt-pad-bottom:106px; }
 .dt-dock-btn{
   flex:1;
   background:none;
