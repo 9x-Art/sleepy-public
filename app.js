@@ -301,6 +301,20 @@
     })['catch'](function () { sbBattery.textContent = ''; });
   }
 
+  /* 状态栏时间/电量开关（2026-10-31，APK 壳需求）：安卓 WebView 里
+     时间时区/电量 API 都可能不对劲，设置页给两把开关把显示关掉。
+     只切 display，不动取值逻辑 —— 重新打开立刻有值，不用等下一轮 tick。 */
+  function applyStatusbarPrefs() {
+    var p;
+    try { p = (global.Sleepy && global.Sleepy.store) ? global.Sleepy.store.get('appearance.statusbar') : null; }
+    catch (e) { p = null; }
+    var showTime = !(p && p.time === false);
+    var showBat = !(p && p.battery === false);
+    if (sbTime) sbTime.style.display = showTime ? '' : 'none';
+    if (sbBattery) sbBattery.style.display = showBat ? '' : 'none';
+  }
+  applyStatusbarPrefs();
+
   /* tickTime 会在 setInterval 里被反复调用，状态栏元素缺失时不能每 15 秒
      炸一次。tickTime / initBattery 都改成「查不到元素就安静跳过」，
      这样把 index.html 的状态栏拆掉或者做单页直开时，壳子依然能起来。 */
@@ -1131,6 +1145,7 @@
   };
 
   Sleepy.toast = toast;
+  Sleepy.applyStatusbarPrefs = applyStatusbarPrefs;
   /* 报错专用（可复制、不过期、自动过网址闸）。页面里给 API 失败用这个，
      比 ctx.toast(describeError(res), 'err') 多出一个可复制的原文块。 */
   Sleepy.apiFail = apiFail;

@@ -278,6 +278,38 @@
       body.appendChild(g4.wrap);
 
       var g5 = group('其他');
+
+      /* 状态栏开关（2026-10-31，APK 壳需求）：安卓 WebView 的时间时区 /
+         电量 API 都可能不准，给两把开关把显示关掉。存全局 appearance
+         键（不跟岛走 —— 状态栏是系统级 UI）。app.js 的
+         applyStatusbarPrefs 只切 display，重开立刻有值。 */
+      var gSb = group('状态栏', '假状态栏的时间 / 电量显示。APK 壳里显示不对劲就关掉。');
+      var sbCfg = store.get('appearance.statusbar') || {};
+      var fSbTime = switchField({
+        label: '显示时间',
+        value: !(sbCfg && sbCfg.time === false)
+      });
+      fSbTime.input.addEventListener('change', function () {
+        var a = store.get('appearance') || {};
+        a.statusbar = a.statusbar || {};
+        a.statusbar.time = fSbTime.get();
+        store.set('appearance', a);
+        if (Sleepy.applyStatusbarPrefs) Sleepy.applyStatusbarPrefs();
+      });
+      gSb.card.appendChild(fSbTime.el);
+      var fSbBat = switchField({
+        label: '显示电量',
+        value: !(sbCfg && sbCfg.battery === false)
+      });
+      fSbBat.input.addEventListener('change', function () {
+        var a = store.get('appearance') || {};
+        a.statusbar = a.statusbar || {};
+        a.statusbar.battery = fSbBat.get();
+        store.set('appearance', a);
+        if (Sleepy.applyStatusbarPrefs) Sleepy.applyStatusbarPrefs();
+      });
+      gSb.card.appendChild(fSbBat.el);
+      body.appendChild(gSb.wrap);
       /* 检查更新（2026-10-25 安卓壳）：只在原生 App 里出现 —— 浏览器/PWA
          的更新就是刷新页面，不用这行。桥的 checkUpdate 异步拉 version.json
          比对构建号，结果经 __sleepyUpdateResult 回 toast（含失败原因）。 */
