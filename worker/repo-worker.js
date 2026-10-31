@@ -117,7 +117,18 @@ async function rateHit(env, key, max) {
   } catch (e) { return true; }   /* KV 出问题不拦正常人 */
 }
 function ipOf(request) {
-  return (request.headers.get('CF-Connecting-IP') || 'unknown').slice(0, 40);
+  /* 反代透传（2026-10-31 维稳）：Pages 同源反代的子请求里，CF 会把
+     CF-Connecting-IP 重写成 CF 内部出口（实测 2a06:98c0:3600::103）——
+     不透传的话全体用户挤同一个限流桶，几个人一起进门就互撞 429。
+     反代把真实客户端 IP 放在 X-Forwarded-Client-IP；
+     **只在直连方本身是 CF 内部出口时才认这个头** —— 外部直连
+     workers.dev 的人伪造不了（他们的 CF-Connecting-IP 是真实公网 IP）。 */
+  const direct = (request.headers.get('CF-Connecting-IP') || 'unknown').slice(0, 40);
+  if (direct.indexOf('2a06:98c0:') === 0) {
+    const fwd = (request.headers.get('X-Forwarded-Client-IP') || '').trim();
+    if (fwd) return fwd.slice(0, 40);
+  }
+  return direct;
 }
 
 /* 会话鉴权：token 走 X-Repo-Token 同一个头（CORS 白名单不用加列）。

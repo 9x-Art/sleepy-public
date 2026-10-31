@@ -25,10 +25,15 @@ export async function onRequest(context) {
   }
 
   const target = WORKER + url.pathname + url.search;
-  /* 原样转发（method/headers/body 全保留），响应原样回 —— worker 自带
-     CORS `*` 与 JSON 错误体，代理层不做任何加工 */
+  /* 把真实客户端 IP 带给 worker（2026-10-31 维稳）：反代子请求到 worker
+     时 CF 会把 CF-Connecting-IP 重写成 CF 内部出口（2a06:98c0:…），
+     worker 端限流按 IP 分桶就变成「全体用户一个桶」——几个人一起进门
+     就互撞 429。这里把反代看到的真实客户端 IP 塞进自定义头；
+     worker 只在直连方是 CF 内部出口时才认它（外部直连伪造无效）。 */
+  const fwd = new Request(target, request);
+  fwd.headers.set('X-Forwarded-Client-IP', request.headers.get('CF-Connecting-IP') || '');
   try {
-    return await fetch(new Request(target, request));
+    return await fetch(fwd);
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, message: '代理层连不上授权服务器' }), {
       status: 502,
