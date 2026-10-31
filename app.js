@@ -357,6 +357,17 @@
        · 3000ms 后仍为 0 就接受 0（iOS 26.1 那类「系统已把内容推开」
          的版本，0 本来就是对的）—— 不硬编码 59/34，不无限重试。
        · 相同数值不重复 setProperty（省一次无意义重排）。 */
+  /* APK 壳（2026-10-31 用户点名）：壳不是 fullscreen，安卓系统状态栏
+     （时间/电量）本来就显示在 WebView 上方，页面再画一条 #statusbar
+     就是两个时间。按 origin 识别壳（WebViewAssetLoader 固定域名），
+     打 html.apk-shell → style.css 里照 html.ios 的口径藏假状态栏 +
+     归零 --sb-h。安卓 WebView 里 env(safe-area-inset-*) 恒 0，
+     内容本来就起在系统栏下面，不用再让位。 */
+  try {
+    if (global.location && global.location.origin === 'https://appassets.androidplatform.net') {
+      document.documentElement.classList.add('apk-shell');
+    }
+  } catch (e) { /* location 缺位就当浏览器走 */ }
   (function () {
     var d = document.documentElement;
     var ua = navigator.userAgent || '';

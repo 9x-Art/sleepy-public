@@ -374,6 +374,14 @@ html.ios #statusbar{display:none;}
    那段注释）。不归零 = 所有页面顶部白吃 32px，iOS 上顶栏/搜索框整体偏下。 */
 html.ios{--sb-h:0px;}
 
+/* APK 壳（html.apk-shell，app.js 按 WebViewAssetLoader 固定 origin 打）：
+   安卓壳不是 fullscreen，系统状态栏（时间电量）画在 WebView 上方，
+   页面的假状态栏叠在下面就是「两个时间」（用户 2026-10-31 点名要去掉）。
+   藏法与 html.ios 同口径：整条藏 + --sb-h 归零还回 32px 占位。
+   壳里 WebView 起点在系统栏下方，env(safe-area-inset-*) 恒 0，无需让位。 */
+html.apk-shell #statusbar{display:none;}
+html.apk-shell{--sb-h:0px;}
+
 #stack{
   position:relative;
   flex:1;

@@ -99,7 +99,14 @@
     try {
       if (global.location && global.location.protocol === 'https:' &&
           global.navigator && !/electron/i.test(global.navigator.userAgent)) {
-        list = [global.location.origin].concat(list);
+        /* APK 壳（2026-10-31）：壳的 origin 是 WebViewAssetLoader 固定域名
+           appassets.androidplatform.net，也是 https，会混进来当首选 base ——
+           但壳里没有 functions 反代，/account 全 404，白等 5s 后落到
+           workers.dev 又被校园网墙（用户实测「APK 注册激活登录都要 VPN」）。
+           壳里直接把 Pages 生产域名顶到主位：pages.dev 在封锁名单外，
+           反代可用，壳零 VPN 走通全部授权/仓库接口。 */
+        var isApkShell = global.location.origin === 'https://appassets.androidplatform.net';
+        list = [isApkShell ? 'https://sleepy-u17.pages.dev' : global.location.origin].concat(list);
       }
     } catch (e) { /* location 缺位就按老列表走 */ }
     return list.filter(function (b, i) { return list.indexOf(b) === i; });
