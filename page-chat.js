@@ -132,14 +132,18 @@
 
   /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管。
      2026-09-26 用户真机报：几乎每轮都拿「我继续说的话…」当开场 ——
-     光说「主动开口」模型会拿请示式开场白糊弄，禁令要写进提示本身。 */
-  var PROACTIVE_HINT = '（我这边安静着，没打字。你直接说内容——你自己的事、或你想到的话，' +
-    '不要说「我继续说」「那我说了」这类开场白，也不要问我要不要继续。）';
+     光说「主动开口」模型会拿请示式开场白糊弄，禁令要写进提示本身。
+     2026-11-01 用户报「char 说括号在命令他」：以前这些程序注入的
+     元指令用（…）全角括号 + user role —— 模型在上下文里反复看到
+     「user 的括号 = 命令」，连带把人设/聊天里的括号补充也当指令。
+     统一改【系统提示｜不是 user 发的话】外壳，与（）描写语义切开。 */
+  var PROACTIVE_HINT = '【系统提示｜这条不是 user 发的话】我这边安静着，没打字。你直接说内容——你自己的事、或你想到的话，' +
+    '不要说「我继续说」「那我说了」这类开场白，也不要问我要不要继续。';
   /* 同样的「空发送」，但如果**上面最后一句就是我说的**（典型场景：
      我想分气泡连发三条，发完才让他开口），提示词不能再说「我没打字」——
      那会让模型以为我一句话都没说，回一句跟我刚说的完全无关的东西。
      这种情况换成「我说完了」。 */
-  var PROACTIVE_HINT_REPLY = '（我说完了，你说吧。）';
+  var PROACTIVE_HINT_REPLY = '【系统提示｜这条不是 user 发的话】我说完了，你说吧。';
 
   /* ==================== 情绪印章（2026-10-06） ====================
      点「我」的头像 → 选一枚隐喻小印章（小花花/小乌云/小枕头…）→
@@ -6288,17 +6292,17 @@
           /* 反查手机：总开关关了就什么都不注入（入口/起意/应答全停） */
           if (revEnabled(getChat(chatId))) {
             var revNote = revStateOf(getChat(chatId)).note;
-            if (revNote) built.messages.push({ role: 'system', content: '（你刚刚翻看了 ta 的手机，' + revNote + ' 可以自然地把看到的内容化进回复里——接话、吃醋、装不知道都行，按你的性格来。不要复述这条指令。）' });
+            if (revNote) built.messages.push({ role: 'system', content: '【系统提示】你刚刚翻看了 ta 的手机，' + revNote + ' 可以自然地把看到的内容化进回复里——接话、吃醋、装不知道都行，按你的性格来。不要复述这条指令。' });
             /* 递手机邀请挂着：让 TA 自己决定接不接（接 = 夹 [[REV_ACCEPT]]） */
             if (revStateOf(getChat(chatId)).invite) {
-              built.messages.push({ role: 'system', content: '（对方刚刚把手机递给你，邀请你翻看——手机里的内容是真实的。想接就在回复末尾夹 [[REV_ACCEPT]]，系统会随即开始翻看；不想接就直接说，别夹标签。接不接、什么态度，按你的性格来。不要复述这条指令。）' });
+              built.messages.push({ role: 'system', content: '【系统提示】对方刚刚把手机递给你，邀请你翻看——手机里的内容是真实的。想接就在回复末尾夹 [[REV_ACCEPT]]，系统会随即开始翻看；不想接就直接说，别夹标签。接不接、什么态度，按你的性格来。不要复述这条指令。' });
             } else if (revStateOf(getChat(chatId)).note) {
               /* 刚翻看完的消化轮，不再挂起意说明 */
             } else if (Sleepy.revcheck &&
                        Sleepy.revcheck.canPeekNow({ persona: revPersonaOf(findCharacter(getChat(chatId).characterId), getChat(chatId)), lastAt: revStateOf(getChat(chatId)).lastAt || 0 }, Date.now())) {
               /* 主动起意说明（v1.3 剧情驱动，不掷骰）：只在保险丝闸放行时挂，
                  TA 剧情上真的起意才夹 [[REV_PEEK]] */
-              built.messages.push({ role: 'system', content: '（你随时可以翻看 ta 的手机——手机里的内容是真实的。仅当此刻剧情上你真的起意了：吃醋、起疑、八卦到忍不住——才在回复末尾夹 [[REV_PEEK]]，系统会随即开始翻看；程度没到就千万别夹，也不要提这件事。不要复述这条指令。）' });
+              built.messages.push({ role: 'system', content: '【系统提示】你随时可以翻看 ta 的手机——手机里的内容是真实的。仅当此刻剧情上你真的起意了：吃醋、起疑、八卦到忍不住——才在回复末尾夹 [[REV_PEEK]]，系统会随即开始翻看；程度没到就千万别夹，也不要提这件事。不要复述这条指令。' });
             }
             /* 关系人账户：每轮垫「身边的人」摘要（印象带「未必属实」兜底） */
             if (Sleepy.taRelations) {
@@ -6314,14 +6318,14 @@
           if (opts.note) {
             built.messages.push({
               role: 'user',
-              content: '（请按这个要求重新说一遍上一条回复：' + opts.note + '）'
+              content: '【系统提示｜这条不是 user 发的话】请按这个要求重新说一遍上一条回复：' + opts.note
             });
           }
           /* 事件注（查岗被察觉等）：不是 reroll，是「刚发生了这件事，接住它」 */
           if (opts.eventNote) {
             built.messages.push({
               role: 'user',
-              content: '（刚刚发生的事：' + opts.eventNote + '。请以 char 的身份自然地回应这件事。）'
+              content: '【系统提示｜这条不是 user 发的话】刚刚发生的事：' + opts.eventNote + '。请以 char 的身份自然地回应这件事。'
             });
           }
           if (opts.proactive) built.messages.push({ role: 'user', content: proactiveHintFor(c) });
@@ -6497,7 +6501,7 @@
         if (opts.note) {
           out.push({
             role: 'user',
-            content: '（请按这个要求重新说一遍上一条回复：' + opts.note + '）'
+            content: '【系统提示｜这条不是 user 发的话】请按这个要求重新说一遍上一条回复：' + opts.note
           });
         }
         var peekOld = diaryPeekMsg(c.characterId);
@@ -6505,7 +6509,7 @@
         if (opts.eventNote) {
           out.push({
             role: 'user',
-            content: '（刚刚发生的事：' + opts.eventNote + '。请以 char 的身份自然地回应这件事。）'
+            content: '【系统提示｜这条不是 user 发的话】刚刚发生的事：' + opts.eventNote + '。请以 char 的身份自然地回应这件事。'
           });
         }
         if (opts.proactive) out.push({ role: 'user', content: proactiveHintFor(c) });

@@ -18087,7 +18087,8 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v319（2026-10-31）：iOS 16 弹窗不居中根修（style.css：.dl-card 位移写进本体，不再依赖 keyframes forwards 填充）—— 基准随批 v318 → v319。 */
 /* v320（2026-11-01）：dvh 兜底根修 APK 负一屏挂件占满屏（style.css）+ 美化 CSS 模板（beautify-css-templates.js 新文件）+ 清空聊天记录/留痕可删（page-chat-settings / page-group / core-group / page-memory）+ worker 省额度（repo-core 兜底 base / functions Service Binding）—— 基准随批 v319 → v320。 */
 /* v321（2026-11-01）：清空记录分两档（page-chat dropMessages keepMemory + 设置页/群设置两行）—— 基准随批 v320 → v321。 */
-const EXPECTED_SW_CACHE = 'sleepy-v321';
+/* v322（2026-11-01）：括号语义纠偏（prompt-engine BRACKET_NOTE + page-chat 元指令换【系统提示】外壳）—— 基准随批 v321 → v322。 */
+const EXPECTED_SW_CACHE = 'sleepy-v322';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');

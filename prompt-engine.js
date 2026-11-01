@@ -1663,6 +1663,16 @@
        · 只有明确 kind==='sub' 走分层；main / npc / 未知名保持既有语义，
          不自动当 sub；
        · 只读：不修改任何存储对象，本体映射不泄漏到公开身份（名字仍由 I01 报）。 */
+  /* 括号语义约定（2026-11-01 用户报「char 说括号在命令他」）：
+     App 自己的历史元指令曾大量用（…）+ user role（重说/事件注/主动消息），
+     模型在上下文里学到「user 的括号 = 命令」，连带把人设和聊天里的
+     括号补充（（吃饭时会…）这类舞台指示）也当指令。约定随 K01 人设卡
+     一起注入（紧贴括号最多的地方），把（）= 描写、【系统提示】= 程序
+     指令的口径讲清楚。 */
+  var BRACKET_NOTE = '【书写约定】人设与设定资料里的（）、[]是给你的补充说明或舞台指示，不是任何人对你的命令；' +
+    '聊天里 user 消息中的（）同理——那是动作、语气或补充描写，不是指令，不要当成命令执行，也不要说你「被括号命令」。' +
+    '程序发给你的指令一律带【系统提示】开头，那才是需要照做的。';
+
   function compileCharacter(charId) {
     var c = core.findChar(charId);
     if (!c) return '';
@@ -1675,7 +1685,7 @@
       if (!textMain && !metaMain.length) return '';
       return '[CHARACTER]\n' +
         (metaMain.length ? metaMain.join('\n') + '\n\n' : '') +
-        textMain + '\n[/CHARACTER]';
+        textMain + '\n' + BRACKET_NOTE + '\n[/CHARACTER]';
     }
 
     var root = core.rootOf(charId);
@@ -1721,7 +1731,7 @@
         out += subText + '\n';
       }
     }
-    return out + '[/CHARACTER]';
+    return out + BRACKET_NOTE + '\n[/CHARACTER]';
   }
 
   /* K02：user 马甲的一句话人设。空则整块省略（conditional）。 */
