@@ -42,9 +42,11 @@ function walk(dir, base, out) {
        访问它拿到的是 index.html 回退页（200 但 sha 必不匹配）。APK 的
        Updater 逐文件 sha256 校验，撞上它整次更新回退 —— 10-29 它进仓库
        起 APK OTA 就一直挂。必须跳过（tar 不能排它：Pages 靠它出 Function）。
-       点开头文件（.gitignore 等）壳也用不上，一并跳过。 */
+       下划线开头是 Pages 保留文件（_redirects/_headers：配置用，**不当
+       资产伺服**，线上同样是 index.html 回退页 —— 同日第二撞，用户报
+       「未通过啥啥啥」）；点开头文件（.gitignore 等）壳也用不上，一并跳过。 */
     if (rel === 'functions' || rel.startsWith('functions/')) continue;
-    if (name.startsWith('.')) continue;
+    if (name.startsWith('.') || name.startsWith('_')) continue;
     const st = fs.statSync(full);
     if (st.isDirectory()) walk(full, base, out);
     else out[rel] = {
