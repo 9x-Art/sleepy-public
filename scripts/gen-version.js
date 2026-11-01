@@ -37,6 +37,14 @@ function walk(dir, base, out) {
     if (name === 'version.json') continue;   // 自身不登
     const full = path.join(dir, name);
     const rel = path.relative(base, full).split(path.sep).join('/');
+    /* functions/ 是唯一特例（2026-11-01 APK「下载失败」事故）：它是 Pages
+       专属目录 —— 上传时被编译成 Function，**静态资产里没有真文件**，线上
+       访问它拿到的是 index.html 回退页（200 但 sha 必不匹配）。APK 的
+       Updater 逐文件 sha256 校验，撞上它整次更新回退 —— 10-29 它进仓库
+       起 APK OTA 就一直挂。必须跳过（tar 不能排它：Pages 靠它出 Function）。
+       点开头文件（.gitignore 等）壳也用不上，一并跳过。 */
+    if (rel === 'functions' || rel.startsWith('functions/')) continue;
+    if (name.startsWith('.')) continue;
     const st = fs.statSync(full);
     if (st.isDirectory()) walk(full, base, out);
     else out[rel] = {

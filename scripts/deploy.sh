@@ -38,8 +38,13 @@ git archive HEAD | tar -x -C "$OUT" \
   --exclude='_retired' --exclude='_retired/*' \
   --exclude='preview' --exclude='preview/*' \
   --exclude='scripts' --exclude='scripts/*' \
+  --exclude='worker' --exclude='worker/*' \
+  --exclude='.gitignore' \
   --exclude='README.md' --exclude='ROADMAP.md' --exclude='serve.js' \
   --exclude='package.json' --exclude='pnpm-workspace.yaml'
+# ⚠️ functions/ 千万别排（上面没排是对的）：Pages 靠部署目录里的 functions/
+# 编译出反代 Function。但它进不了 OTA 清单 —— gen-version.js 会跳过它
+# （线上静态资产里没有真文件，登了 APK 更新必挂，2026-11-01 踩过）。
 
 echo "副本：$OUT"
 echo "文件数：$(find "$OUT" -type f | wc -l)（文档 / 归档 / 预览稿 / 开发脚本 / 仓库说明都没解出来）"
