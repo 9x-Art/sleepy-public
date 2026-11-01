@@ -1199,7 +1199,7 @@
     return msg;
   }
 
-  function dropMessages(chatId, ids) {
+  function dropMessages(chatId, ids, opts) {
     var c0 = getChat(chatId);
     /* 语音（2.15）：消息删了，它那条音频也该从图库清掉 ——
        不清的话图库和存储占用里会留一堆「已经没有任何消息在引用」的音频。 */
@@ -1241,8 +1241,11 @@
       c.messages = c.messages.filter(function (m) { return ids.indexOf(m.id) < 0; });
     });
     /* 索引里的原文是**给模型看的证据** —— 消息删了它就得跟着失效，
-       否则 TA 以后还会引用一句根本不在聊天记录里的话（见 memoryVec.forget）。 */
-    if (c0 && c0.characterId && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+       否则 TA 以后还会引用一句根本不在聊天记录里的话（见 memoryVec.forget）。
+       keepMemory 例外（2026-11-01 用户「只清记录不清记忆」）：索引的
+       原文就是 TA 的记忆本体，跳过遗忘 TA 才还记得这些对话；代价是
+       「查看原文」定位不到已删气泡，可接受。默认仍遗忘（彻底当没发生）。 */
+    if (!(opts && opts.keepMemory) && c0 && c0.characterId && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
       Sleepy.memoryVec.forget({ charId: c0.characterId, ids: ids })
         ['catch'](function () { /* 索引清理失败不该让删除本身失败 */ });
     }

@@ -1757,18 +1757,40 @@
           sheet.appendChild(blk);
         });
 
-        /* 危险区：清空聊天记录（2026-11-01 用户）。物理删除，撤回那种
-           「留原文」不是这个语义；向量索引和总结游标一并清。 */
+        /* 危险区：清空聊天记录（2026-11-01 用户，两档同私聊）——
+           「只清记录」保留向量索引（TA 们还记得），「彻底清空」连记忆一起。
+           物理删除，撤回那种「留原文」不是这个语义；总结游标两档都清。 */
         var dangerBlk = h('div', 'gu-setblock');
         dangerBlk.appendChild(h('b', null, '数据'));
-        var clrBtn = h('button', 'gu-danger-btn', '清空聊天记录');
+        var clrBtn = h('button', 'gu-danger-btn', '清空聊天记录（保留记忆）');
         clrBtn.type = 'button';
         clrBtn.addEventListener('click', async function () {
           var list = gs().messagesOf(groupId);
           var yes = await ui.confirm({
             title: '清空这个群的聊天记录？',
-            note: '共 ' + list.length + ' 条（含系统消息），全部删掉且不可恢复；TA 们以后也不会再「记得」这些对话。',
+            note: '共 ' + list.length + ' 条（含系统消息），删完不可恢复；TA 们仍记得这些对话。',
             ok: '清空',
+            danger: true
+          });
+          if (!yes) return;
+          gs().clearMessages(groupId);
+          try {
+            Sleepy.store.remove('sumCursor:g:' + groupId);
+            Sleepy.store.remove('sumRawFail:g:' + groupId);
+          } catch (e) { /* 游标清不掉不影响删除本身 */ }
+          close();
+          toast('已清空 · TA 们还记得', 'ok');
+          syncRows();
+        });
+        dangerBlk.appendChild(clrBtn);
+        var clrAllBtn = h('button', 'gu-danger-btn', '彻底清空（连记忆一起）');
+        clrAllBtn.type = 'button';
+        clrAllBtn.addEventListener('click', async function () {
+          var list = gs().messagesOf(groupId);
+          var yes = await ui.confirm({
+            title: '彻底清空这个群？',
+            note: '共 ' + list.length + ' 条消息连同 TA 们的相关记忆一起清掉，不可恢复。',
+            ok: '彻底清空',
             danger: true
           });
           if (!yes) return;
@@ -1783,10 +1805,10 @@
             Sleepy.store.remove('sumRawFail:g:' + groupId);
           } catch (e) { /* 游标清不掉不影响删除本身 */ }
           close();
-          toast('已清空 ' + ids.length + ' 条', 'ok');
+          toast('已彻底清空', 'ok');
           syncRows();
         });
-        dangerBlk.appendChild(clrBtn);
+        dangerBlk.appendChild(clrAllBtn);
         sheet.appendChild(dangerBlk);
 
         mask.appendChild(sheet);

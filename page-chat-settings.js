@@ -1291,29 +1291,56 @@
 
       /* ---- 数据管理 ---- */
       var secData = sectionOf(body, '数据管理');
+      /* 两档清空（2026-11-01 用户「只清记录不清记忆」）：
+         A 只清消息，保留向量索引（索引原文 = TA 的记忆本体）→ TA 还记得；
+         B 连索引一起遗忘 → 彻底当没发生过。总结游标两档都清：
+         留着的话消息清零后游标停在旧位数，新消息会被当成「已总结过」。 */
+      function collectIds() {
+        var c0 = cs().getChat(chatId);
+        return ((c0 && c0.messages) || []).map(function (m) { return m.id; });
+      }
+      function clearCursor() {
+        try {
+          store.remove('sumCursor:' + chatId);
+          store.remove('sumRawFail:' + chatId);
+        } catch (e) { /* 游标清不掉不影响删除本身 */ }
+      }
       secData.appendChild(demoRow({
         label: '清空聊天记录', danger: true,
-        note: '删完不可恢复 · 附件与记忆索引一并清理',
+        note: '只清消息 · TA 仍记得这些对话',
         onClick: function () {
-          var c0 = cs().getChat(chatId);
-          var ids = ((c0 && c0.messages) || []).map(function (m) { return m.id; });
+          var ids = collectIds();
           if (!ids.length) { ctx.toast('这个对话还没有记录', 'warn'); return; }
           ui.confirm({
-            title: '清空这个对话的聊天记录？',
-            note: '共 ' + ids.length + ' 条，全部删掉且不可恢复；语音/照片等附件和向量索引会一并清理。',
+            title: '清空聊天记录？',
+            note: '共 ' + ids.length + ' 条，删完不可恢复；TA 的记忆保留，语音/照片附件会一并清理。',
             danger: true, ok: '清空'
           }).then(function (v) {
             if (!v) return;
-            /* 规范入口 dropMessages（2026-09-22 导出）：不只改存档，
-               还会清语音/照片媒体 + memoryVec.forget 向量索引。 */
+            /* keepMemory：跳过向量遗忘（见 page-chat dropMessages 注释） */
+            cs().dropMessages(chatId, ids, { keepMemory: true });
+            clearCursor();
+            ctx.toast('已清空 · TA 还记得', 'ok');
+          });
+        }
+      }));
+      secData.appendChild(demoRow({
+        label: '彻底清空（连记忆一起）', danger: true,
+        note: '消息和 TA 的记忆一起消失，当没发生过',
+        onClick: function () {
+          var ids = collectIds();
+          if (!ids.length) { ctx.toast('这个对话还没有记录', 'warn'); return; }
+          ui.confirm({
+            title: '彻底清空这个对话？',
+            note: '共 ' + ids.length + ' 条消息连同 TA 的相关记忆一起清掉，不可恢复；语音/照片附件一并清理。',
+            danger: true, ok: '彻底清空'
+          }).then(function (v) {
+            if (!v) return;
+            /* 规范入口 dropMessages：不只改存档，还会清语音/照片媒体
+               + memoryVec.forget 向量索引。 */
             cs().dropMessages(chatId, ids);
-            /* 总结游标一并清：留着的话下次总结会从旧游标继续，
-               引用已经不存在的内容（page-summary cursorKey 同名键）。 */
-            try {
-              store.remove('sumCursor:' + chatId);
-              store.remove('sumRawFail:' + chatId);
-            } catch (e) { /* 游标清不掉不影响删除本身 */ }
-            ctx.toast('已清空', 'ok');
+            clearCursor();
+            ctx.toast('已彻底清空', 'ok');
           });
         }
       }));
