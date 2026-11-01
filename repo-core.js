@@ -66,9 +66,14 @@
      workers.dev 降级为兜底（VPN 用户 / 自定义域名临时故障时）。
      ⚠️ 自定义域名未填入前两个 base 相同，repoBases() 会去重退化成单发，
      不会傻等两遍；域名在 CF 后台绑 Custom Domain 后，只需改主位一个字面值。 */
+  /* 兜底 base（2026-11-01 改）：workers.dev 公网入口即将整体关闭
+     （functions 反代改走 Service Binding + wrangler.toml workers_dev=false，
+     根治机器人扫 workers.dev 烧 worker 请求配额 —— 请求到达 worker 就计费，
+     worker 内部再拦都省不下）。所以兜底不再指 workers.dev，指 Pages 主域
+     （同一条 functions 反代走廊，paths 全一致）。repoCfg.base 覆盖通道
+     仍在，作者要临时直连什么自己填。 */
   var DEFAULT_BASES = [
-    'https://sleepy-repo.sleepy-goodluck.workers.dev',
-    'https://sleepy-repo.sleepy-goodluck.workers.dev'
+    'https://sleepy-u17.pages.dev'
   ];
   /* 非最后 base 的短超时：被墙时 5s 就切下一个，别让用户干等浏览器默认超时。
      最后一个 base 也要有超时（2026-10-29 用户朋友 iPhone 实测「卡在激活

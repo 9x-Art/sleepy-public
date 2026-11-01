@@ -552,6 +552,15 @@
       cssArea.placeholder = '/* 在这里写覆盖样式，作用域为聊天页 */\n.msg-text { font-style: italic; }';
       cssArea.value = cfg.customCss || '';
       cssArea.addEventListener('input', function () { cfg.customCss = cssArea.value; refresh(); });
+      /* 预设模板 chips（2026-11-01 用户）：点=填入（走上面的 input 落库+预览链路），
+         长按=复制模板原文。数据与交互在 beautify-css-templates.js。 */
+      var tplHost = h('div', 'beautify-tpl-host');
+      Sleepy.beautifyCssTemplates.mount(tplHost, {
+        area: cssArea,
+        toast: function (m, t) { ctx.toast(m, t); },
+        confirm: function (o) { return ui.confirm(o); }
+      });
+      gCss.appendChild(tplHost);
       gCss.appendChild(cssArea);
       gCss.appendChild(h('p', 'cap-hint', '样式实时注入预览区 · 保存后作用于聊天页'));
 

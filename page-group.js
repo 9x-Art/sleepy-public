@@ -1757,6 +1757,38 @@
           sheet.appendChild(blk);
         });
 
+        /* 危险区：清空聊天记录（2026-11-01 用户）。物理删除，撤回那种
+           「留原文」不是这个语义；向量索引和总结游标一并清。 */
+        var dangerBlk = h('div', 'gu-setblock');
+        dangerBlk.appendChild(h('b', null, '数据'));
+        var clrBtn = h('button', 'gu-danger-btn', '清空聊天记录');
+        clrBtn.type = 'button';
+        clrBtn.addEventListener('click', async function () {
+          var list = gs().messagesOf(groupId);
+          var yes = await ui.confirm({
+            title: '清空这个群的聊天记录？',
+            note: '共 ' + list.length + ' 条（含系统消息），全部删掉且不可恢复；TA 们以后也不会再「记得」这些对话。',
+            ok: '清空',
+            danger: true
+          });
+          if (!yes) return;
+          var ids = list.map(function (m) { return m.id; });
+          gs().clearMessages(groupId);
+          if (ids.length && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
+            Sleepy.memoryVec.forget({ groupId: groupId, ids: ids })
+              ['catch'](function () { /* 索引清不掉不影响删除本身 */ });
+          }
+          try {
+            Sleepy.store.remove('sumCursor:g:' + groupId);
+            Sleepy.store.remove('sumRawFail:g:' + groupId);
+          } catch (e) { /* 游标清不掉不影响删除本身 */ }
+          close();
+          toast('已清空 ' + ids.length + ' 条', 'ok');
+          syncRows();
+        });
+        dangerBlk.appendChild(clrBtn);
+        sheet.appendChild(dangerBlk);
+
         mask.appendChild(sheet);
         mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
         host.appendChild(mask);
@@ -1900,6 +1932,15 @@
       area.addEventListener('input', function () {
         gs().updateGroup(groupId, { beautifyCss: area.value });
       });
+      /* 预设模板 chips（2026-11-01 用户）：点=填入（走上面的 input 落库链路），
+         长按=复制模板原文。数据与交互在 beautify-css-templates.js。 */
+      var tplHost = h('div', 'beautify-tpl-host');
+      Sleepy.beautifyCssTemplates.mount(tplHost, {
+        area: area,
+        toast: function (m, t) { ctx.toast(m, t); },
+        confirm: function (o) { return ui.confirm(o); }
+      });
+      card.appendChild(tplHost);
       card.appendChild(area);
       /* 复制变量（2026-10-06 用户）：写覆盖样式要引用 --g-* 那批变量，
          名字手抄太苦 —— 一键把「--名: 值;」清单复制走，粘到编辑框里挑着用。 */

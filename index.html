@@ -189,6 +189,9 @@
      群数据层只用 core 的作用域纪律，排在 core 之后即可；
      页面要读 chat 列表的入口（消息 tab 挂群入口），排在 page-chat 后。 -->
 <script src="core-group.js" defer></script>
+<!-- 美化 CSS 预设模板（beautify-css-templates.js，2026-11-01）：纯数据 + 挂载助手，
+     page-char-appearance / page-group 两页的「CSS 自定义」共用。排它俩前面。 -->
+<script src="beautify-css-templates.js" defer></script>
 <script src="page-group.js" defer></script>
 <!-- 群聊调度引擎（阶段 D/E）：普通轮次单调用（调度+发言）、输出校验、
      波次续聊与 user 抢占。要打模型，排在 api.js / prompt-engine.js 后；

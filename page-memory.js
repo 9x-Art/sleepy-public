@@ -313,8 +313,10 @@
   function deleteMemoryItem(charId, memoryId) {
     var file = loadCharMemory(charId);
     var m = findMemory(file, memoryId);
-    /* 只有 user_manual 能物理删除；其他来源只能标 invalid */
-    if (!m || m.source !== 'user_manual') return false;
+    /* 2026-11-01 用户：任何来源的记忆都允许物理删除（以前只放行
+       user_manual，AI 总结的错了只能「标记错误」挂着）。删了就从库
+       里真消失；向量索引由 refreshMem 按单条清掉，不留残影。 */
+    if (!m) return false;
     file.memories = file.memories.filter(function (x) { return x.id !== memoryId; });
     saveCharMemory(file);
     /* 不在了 → refreshMem 顺手把旧块清掉（不是重建） */
@@ -1531,17 +1533,16 @@
             ctx.toast(m.isAnchor ? '已取消锚定' : '已锚定 · 注入时始终优先', 'ok');
             ctx.rebuild();
           });
-          if (m.source === 'user_manual') {
-            op('删除', function () {
-              ui.confirm({ title: '删除这条记忆？', note: '只有自己添加的记忆可以物理删除。', danger: true, ok: '删除' })
-                .then(function (yes) {
-                  if (!yes) return;
-                  if (deleteMemoryItem(charId, memoryId)) { ctx.toast('已删除', 'ok'); ctx.back(); }
-                  else ctx.toast('这条不能物理删除', 'warn');
-                });
-            }, 'danger');
-          }
-        } else {
+          /* 2026-11-01 用户：删除放开到任何来源（AI 总结的记错了也能真删）。
+             「标记错误」保留为温和选项（invalid 留库可审计），删除是彻底消失。 */
+          op('删除', function () {
+            ui.confirm({ title: '删除这条记忆？', note: '从记忆里彻底删掉，TA 以后不会再想起这件事。', danger: true, ok: '删除' })
+              .then(function (yes) {
+                if (!yes) return;
+                if (deleteMemoryItem(charId, memoryId)) { ctx.toast('已删除', 'ok'); ctx.back(); }
+                else ctx.toast('没找到这条记忆', 'warn');
+              });
+          }, 'danger');        } else {
           if (m.status === 'active') {
             op('不再这样理解', function () {
               updateUnderstandingItem(charId, memoryId, { status: 'invalid' });

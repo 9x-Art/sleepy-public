@@ -2,6 +2,13 @@ name = "sleepy-repo"
 main = "repo-worker.js"
 compatibility_date = "2026-10-01"
 
+# 关掉 workers.dev 公网入口（2026-11-01，worker 用量 50% 根治）：
+# 机器人扫这个地址烧请求配额，请求到达 worker 就计费、内部拦截省不下。
+# 正式流量全部走 Pages 同源反代（functions/[[path]].js → Service Binding）。
+# ⚠️ 部署顺序：先去 Pages 后台配好 Service binding（变量名 API → sleepy-repo），
+# 再跑 wrangler deploy —— 顺序反了反代兜底 fetch 的 workers.dev 会 404，主路断。
+workers_dev = false
+
 [[d1_databases]]
 binding = "DB"
 database_name = "sleepy-repo"

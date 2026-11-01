@@ -1292,6 +1292,32 @@
       /* ---- 数据管理 ---- */
       var secData = sectionOf(body, '数据管理');
       secData.appendChild(demoRow({
+        label: '清空聊天记录', danger: true,
+        note: '删完不可恢复 · 附件与记忆索引一并清理',
+        onClick: function () {
+          var c0 = cs().getChat(chatId);
+          var ids = ((c0 && c0.messages) || []).map(function (m) { return m.id; });
+          if (!ids.length) { ctx.toast('这个对话还没有记录', 'warn'); return; }
+          ui.confirm({
+            title: '清空这个对话的聊天记录？',
+            note: '共 ' + ids.length + ' 条，全部删掉且不可恢复；语音/照片等附件和向量索引会一并清理。',
+            danger: true, ok: '清空'
+          }).then(function (v) {
+            if (!v) return;
+            /* 规范入口 dropMessages（2026-09-22 导出）：不只改存档，
+               还会清语音/照片媒体 + memoryVec.forget 向量索引。 */
+            cs().dropMessages(chatId, ids);
+            /* 总结游标一并清：留着的话下次总结会从旧游标继续，
+               引用已经不存在的内容（page-summary cursorKey 同名键）。 */
+            try {
+              store.remove('sumCursor:' + chatId);
+              store.remove('sumRawFail:' + chatId);
+            } catch (e) { /* 游标清不掉不影响删除本身 */ }
+            ctx.toast('已清空', 'ok');
+          });
+        }
+      }));
+      secData.appendChild(demoRow({
         label: '导出对话',
         onClick: function () {
           var text = chatToText(chat);

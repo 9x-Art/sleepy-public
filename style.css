@@ -76,7 +76,15 @@
      下统一改基准 100vh：standalone 没有地址栏，vh 就是整块屏幕。
      浏览器 / 桌面仍用 dvh（地址栏伸缩要跟着走）。壳相关的高度
      （#phone / 桌面格子预算 / 授权闸）一律读这个变量，别再混写。 */
-  --app-vh:100dvh;
+  --app-vh:100vh;
+  /* dvh 兜底（2026-11-01 APK 负一屏挂件占满屏的真凶）：Android 系统
+     WebView 内核 < Chromium 108 不认 dvh —— 下游 calc() 里代入 100dvh
+     会让**整条 calc 变 invalid at computed-value time**，--dt-cell 直接
+     guaranteed-invalid：桌面格子塌缩（App 图标变小）+ 照片墙胶片条
+     失去尺寸后内层 SVG 按替换元素默认规则膨胀到 300×150+（右上角
+     「巨大挂件」）。所以 :root 只给 100vh 兜底值，支持 dvh 的环境由
+     下面顶层的 @supports 块升回去（WebView 壳没有地址栏，100vh 本来
+     就是对的；浏览器新内核才需要 dvh 跟地址栏伸缩）。 */
 
   /* ---- 假状态栏占位（2026-10-28 晚补，iOS 顶栏偏下的真凶）----
      #statusbar 是**浮层不占布局**（它要透明、要让封面顶到屏幕最上边），
@@ -5109,6 +5117,12 @@ html.kb-open .input-area{padding-bottom:6px;}
    同步收掉，不然空隙只是从小条挪进网格（dock 顶 = safe*0.4+4+74，
    iPhone 上 ≈ 92px，预算给 106px 留呼吸）。 */
 html.ios-pwa{ --app-vh:100vh; }
+/* dvh 升级块（2026-11-01，配合 :root --app-vh 的 100vh 兜底）：
+   只在环境真支持 dvh 时才把基准升回 100dvh。html.ios-pwa 特异性
+   (0,1,1) 高于 :root(0,1,0)，iOS PWA 的 100vh 覆盖不受影响。 */
+@supports (height:100dvh){
+  :root{ --app-vh:100dvh; }
+}
 html.ios-pwa .dt-dock{ bottom:calc(var(--safe-bottom) * 0.4 + 4px); }
 html.ios-pwa{ --dt-pad-bottom:106px; }
 .dt-dock-btn{
@@ -16176,7 +16190,9 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 .legal-body{
   flex:1 1 auto;
   min-height:200px;
-  /* 视口矮时（手机横屏 / 小窗口）别让正文被压成两三行 —— 用 dvh 拿到真实可用高度 */
+  /* 视口矮时（手机横屏 / 小窗口）别让正文被压成两三行 —— 用 dvh 拿到真实可用高度
+     （先给 vh 兜底行：不认 dvh 的旧 WebView 会整条丢弃，弹层正文就没限高了） */
+  max-height:min(58vh, 460px);
   max-height:min(58dvh, 460px);
   overflow-y:auto;
   -webkit-overflow-scrolling:touch;
@@ -16245,7 +16261,7 @@ button.tan-row:active{background:rgba(124,168,214,.07)}
 /* 桌面端：屏宽裕，给正文更多行，少滚动 */
 @media (min-width: 720px){
   .legal-card{ width:min(460px, 62%); max-height:min(80vh, 660px); }
-  .legal-body{ max-height:min(60dvh, 520px); }
+  .legal-body{ max-height:min(60vh, 520px); max-height:min(60dvh, 520px); }
 }
 
 /* ==================== 启动授权闸（page-license.js · Sleepy.licenseGate）

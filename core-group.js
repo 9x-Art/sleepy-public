@@ -468,6 +468,20 @@
     return list.length ? list[list.length - 1] : null;
   }
 
+  /* 清空群聊天记录（2026-11-01 用户）：本群全部消息（含系统消息）从
+     groupMessages 平表里**物理删除**。撤回只是打时间戳留原文（延迟补回、
+     认知结算还要看「撤回前谁读到了什么」），这里是另一种语义 —— 全部当
+     没发生过。返回删掉的条数；向量索引和总结游标由调用方一并清
+     （memoryVec.forget({groupId, ids}) + sumCursor:g:<id>），core 层
+     不碰这两个键，跟删群时 core.removeGroup 清游标的分工一致。 */
+  function clearMessages(groupId) {
+    var list = allMessages();
+    var kept = list.filter(function (m) { return m.groupId !== groupId; });
+    var n = list.length - kept.length;
+    if (n) store.set('groupMessages', kept);
+    return { ok: true, count: n };
+  }
+
   /* ---------------------------- 展示辅助 ---------------------------- */
 
   /* 账号的展示名 / 头像。三种 kind 各查各的表；
@@ -541,6 +555,7 @@
     addMessage: addMessage,
     systemMessage: systemMessage,
     recallMessage: recallMessage,
+    clearMessages: clearMessages,
     lastMessage: lastMessage,
     accountMeta: accountMeta,
     entityName: entityName,
