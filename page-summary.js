@@ -474,6 +474,34 @@
     });
   }
 
+  /* 手动整理前的「待整理有多少」统计（2026-11-01 用户）：
+     和 shouldRun 同一支尺量 —— 游标之后的 pending 段数 / 字数 / 跨天数。
+     手动整理无视阈值，所以这里只报数不做闸。 */
+  function pendingStat(chatId) {
+    var cs = Sleepy.chatStore;
+    var chat = cs && cs.getChat(chatId);
+    if (!chat || !chat.characterId) return null;
+    var msgs = chat.messages || [];
+    var cur = getCursor(chatId);
+    var startIdx = Math.min(cur.startIdx || 0, msgs.length);
+    var pending = msgs.slice(startIdx);
+    var chars = 0, days = {};
+    pending.forEach(function (m) {
+      chars += String(m.content || '').length;
+      if (m.timestamp) {
+        var d = new Date(m.timestamp);
+        days[d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())] = 1;
+      }
+    });
+    return {
+      total: msgs.length,
+      pending: pending.length,
+      chars: chars,
+      days: Object.keys(days).length,
+      startIdx: startIdx
+    };
+  }
+
   /* ---------------------------- 对外 ---------------------------- */
 
   Sleepy.summaryEngine = {
@@ -482,6 +510,7 @@
     summarizeOnline: summarizeOnline,
     onChatTurn: onChatTurn,
     runNow: runNow,
+    pendingStat: pendingStat,
     candFor: candFor
   };
 

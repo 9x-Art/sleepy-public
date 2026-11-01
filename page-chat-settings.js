@@ -914,18 +914,33 @@
         label: '整理聊天记忆',
         onClick: function () {
           if (!Sleepy.summaryEngine) { ctx.toast('总结引擎没加载', 'err'); return; }
-          ctx.toast('正在整理…', 'ok');
-          Sleepy.summaryEngine.runNow(chatId).then(function (r) {
-            if (r.ok && r.stat) {
-              ctx.toast(r.stat.added
-                ? '整理出 ' + r.stat.added + ' 条记忆，去「留痕」确认'
-                : '这段时间没有值得留的新东西', 'ok');
-              ctx.rebuild();
-            } else if (r.error === 'noapi') {
-              ctx.toast('先去 设置 → 主 API 配一个模型', 'warn');
-            } else if (r.error !== 'empty') {
-              ctx.toast('✗ ' + (r.error || '整理失败'), 'err');
-            }
+          /* 先弹窗报数（2026-11-01 用户）：待整理多少条/多少字，确认再跑。
+             手动整理无视阈值但只吃增量（游标之后的新消息），所以报的数
+             就是这次真正会喂给模型的范围。 */
+          var st = Sleepy.summaryEngine.pendingStat(chatId);
+          if (!st) { ctx.toast('这个对话还没绑定角色', 'warn'); return; }
+          if (!st.pending) { ctx.toast('没有新东西可整理，都整理过了', 'ok'); return; }
+          ui.confirm({
+            title: '开始整理记忆？',
+            note: '自上次整理以来有 ' + st.pending + ' 条新消息（约 ' + st.chars + ' 字，跨 ' + st.days + ' 天）没整理过。' +
+              (st.pending > 120 ? '一次最多整理最近 120 条，剩下的下次继续。' : '') +
+              '只整理这些新内容，不会重复翻旧账；整理完去「留痕」确认。',
+            ok: '开始整理'
+          }).then(function (v) {
+            if (!v) return;
+            ctx.toast('正在整理…', 'ok');
+            Sleepy.summaryEngine.runNow(chatId).then(function (r) {
+              if (r.ok && r.stat) {
+                ctx.toast(r.stat.added
+                  ? '整理出 ' + r.stat.added + ' 条记忆，去「留痕」确认'
+                  : '这段时间没有值得留的新东西', 'ok');
+                ctx.rebuild();
+              } else if (r.error === 'noapi') {
+                ctx.toast('先去 设置 → 主 API 配一个模型', 'warn');
+              } else if (r.error !== 'empty') {
+                ctx.toast('✗ ' + (r.error || '整理失败'), 'err');
+              }
+            });
           });
         }
       }));
