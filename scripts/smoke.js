@@ -9697,6 +9697,29 @@ t('stripAbilityTags：tail 模式扣半截尾巴（流式打字到一半不闪�
   if (strip('好[引用:x]的', { tail: true }) !== '好的') throw new Error('tail 模式丢了整块剥');
   return 'ok';
 });
+/* ---------- stripStampImitation（2026-11-02 真机复发：换行戳行 + 句读粘戳）---------- */
+t('parseReply 剥仿戳：换行戳行拆成多条气泡（模型不用 || 也分泡）', () => {
+  const r = S.promptEngine.parseReply('哈喽\n[12:22]在干嘛\n\n[WHISPER]嗯。[/WHISPER]');
+  if (JSON.stringify(r.bubbles) !== JSON.stringify(['哈喽', '在干嘛'])) {
+    throw new Error('气泡：' + JSON.stringify(r.bubbles));
+  }
+  if (r.visible.indexOf('12:22') >= 0) throw new Error('戳漏进气泡：' + r.visible);
+  if (r.whisper !== '嗯。') throw new Error('心声丢了：' + r.whisper);
+  return 'ok';
+});
+t('parseReply 剥仿戳：开头/句读后都剥；句中合法时刻与纯日期戳不误伤', () => {
+  const a = S.promptEngine.parseReply('[12:21]来了||好的。[12:22]走吧');
+  if (JSON.stringify(a.bubbles) !== JSON.stringify(['来了', '好的。走吧'])) {
+    throw new Error('气泡：' + JSON.stringify(a.bubbles));
+  }
+  const b = S.promptEngine.parseReply('现在 [21:30] 了');
+  if (b.visible !== '现在 [21:30] 了') throw new Error('句中时刻被误伤：' + b.visible);
+  const c = S.promptEngine.parseReply('翻旧照片\n[10月1日] 海边');
+  if (c.bubbles.length !== 1 || c.bubbles[0].indexOf('10月1日') < 0) {
+    throw new Error('纯日期戳不该被换行换泡：' + JSON.stringify(c.bubbles));
+  }
+  return 'ok';
+});
 t('assembleOnline：槽位按矩阵顺序出，历史原文垫底', () => {
   const r = S.promptEngine.assembleOnline({
     charId: m1, userId: u1,
@@ -18089,7 +18112,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v321（2026-11-01）：清空记录分两档（page-chat dropMessages keepMemory + 设置页/群设置两行）—— 基准随批 v320 → v321。 */
 /* v322（2026-11-01）：括号语义纠偏（prompt-engine BRACKET_NOTE + page-chat 元指令换【系统提示】外壳）—— 基准随批 v321 → v322。 */
 /* v323（2026-11-01）：整理记忆确认弹窗（summaryEngine.pendingStat）+ 记忆条目带温度（summary 卡 text 放宽为一到两句）—— 基准随批 v322 → v323。 */
-const EXPECTED_SW_CACHE = 'sleepy-v323';
+const EXPECTED_SW_CACHE = 'sleepy-v324';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
