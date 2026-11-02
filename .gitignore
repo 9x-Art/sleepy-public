@@ -56,3 +56,14 @@ scripts/*
 !scripts/harness.js
 !scripts/pack-android.sh
 !scripts/make-icons.js
+# 行为迁移基线套件（2026-11-02 收口批入白名单）：耐久回归守卫，不是一次性脚本 ——
+# 之前被 scripts/* 误伤，本地跑得欢但换机即失，还漂了一个月没人知道。
+# browser-behavior-decision-test.js 仍按一次性口径留库外。
+!scripts/behavior-text-test.js
+!scripts/behavior-baseline-capture.js
+!scripts/behavior-baseline-test.js
+!scripts/behavior-baseline-write-test.js
+!scripts/behavior-offline-migration-test.js
+!scripts/behavior-online-migration-test.js
+!scripts/fixtures/
+!scripts/fixtures/behavior-baseline-v1.json
