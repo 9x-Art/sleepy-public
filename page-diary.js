@@ -564,6 +564,7 @@
 
   Sleepy.register('diary-edit', {
     title: '写日记',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同 contact-edit 的坑） */
     render: function (ctx) {
       var body = ctx.body;
       body.innerHTML = '';

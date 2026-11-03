@@ -12,13 +12,15 @@ workers_dev = false
 [[d1_databases]]
 binding = "DB"
 database_name = "sleepy-repo"
-database_id = "ea5d3f03-c7a7-4a78-a73a-357281e2dd0a"
+# 公开仓库占位：换成你自己的 Cloudflare D1 数据库 ID（Dashboard → D1 → 数据库详情）
+database_id = "<YOUR_D1_DATABASE_ID>"
 
 # 包体存 KV（2026-10-10：R2 要去 Dashboard 手动开通，KV 免开通且 25MB/值
 # 对 5MB 上限的设定包绰绰有余）。绑定名保持 STORE，Worker 代码双兼容。
 [[kv_namespaces]]
 binding = "STORE"
-id = "6647713bee174fe68901dfca9f0e48c5"
+# 公开仓库占位：换成你自己的 Cloudflare KV 命名空间 ID（Dashboard → KV → 命名空间详情）
+id = "<YOUR_KV_NAMESPACE_ID>"
 
 # 发码页营业口令（2026-10-22 收口）：secret 不进配置文件，部署后执行一次
 #   wrangler secret put ISSUE_KEY

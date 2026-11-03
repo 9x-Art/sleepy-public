@@ -34,7 +34,7 @@ node serve.js            # 默认 http://127.0.0.1:5173
 2. **改完跑双绿**：`pnpm check` + `pnpm smoke`（104 个脚本，改了运行时文件它们会告诉你哪里漏了）
 3. **改运行时脚本必须跳 SW 版本**：`sw.js` 的 `CACHE` 号 +1，文件头写一行跳版本说明，`scripts/smoke.js` 里的 `EXPECTED_SW_CACHE` 同步——不然用户拿到的是旧缓存
 4. **常量块排在所有使用点之前**（var 提升 → 顶层求值抛、导出全丢）
-5. 改 CSS 变量前先 grep 有没有人在用；本地的助手协作目录（如 `.workbuddy/`，已 gitignore）别删
+5. 改 CSS 变量前先 grep 有没有人在用；本地助手的工作区目录（已 gitignore）别删
 
 ## ☁️ 自部署（想架一套自己的）
 

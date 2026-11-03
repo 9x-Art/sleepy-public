@@ -68,7 +68,7 @@
         eng.appendChild(engSwitch);
         body.appendChild(eng);
 
-        /* 2026-10-07 用户：内置上锁卡**直接点不进二级页** —— 点进去也看不了
+        /* 2026-10-07：内置上锁卡**直接点不进二级页** —— 点进去也看不了
            编辑不了，没意义。列表里拦住，弹个 toast 说明（开发者模式不受限）。 */
         function openCard(id) {
           var meta = E.cardMeta(id);
@@ -353,6 +353,7 @@
 
   Sleepy.register('preset-custom-edit', {
     title: '自定义注入',
+    freshOnOpen: true,   /* 新建/编辑表单重开必须重画（同参短路会端回旧输入） */
     render: function (ctx) {
       var E = engine();
       var body = ctx.body;

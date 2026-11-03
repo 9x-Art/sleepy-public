@@ -55,7 +55,7 @@
 
   function save(list) { return store.set('photos', list); }
 
-  /* ---- 归属（2026-10-06，用户：「相册要选人 · 按账号隔离」）----
+  /* ---- 归属（2026-10-06，需求：「相册要选人 · 按账号隔离」）----
      群岛里有好几个角色，相册混在一起的话，以后 char 发朋友圈
      可能会翻到别人的图。所以每条照片记一笔 ownerCharId：
      · 默认 = 当前岛上的活动角色（core.activeCharOnIsland —— 指针卫兵，

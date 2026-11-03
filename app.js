@@ -31,7 +31,7 @@
     settings: { title: '设置',   hint: 'API 配置、数据备份、聊天参数都在这里。' },
     support:  { title: '反馈',   hint: '有问题随时找我（联系方式待填）。' },
     /* 第 2 屏新换的两个 App（2026-09-19）—— 页面本体还没开工，
-       先用占位页接着，等用户发来需求再注册真正的页面。 */
+       先用占位页接着，等收到需求再注册真正的页面。 */
     phonecheck: { title: '查手机', hint: '角色翻看这部手机的地方，页面还没贴好。' },
     workshop:   { title: '工坊',   hint: '做小东西的地方，工具还没摆上来。' }
     /* 注：yishenruju（以身入局）已在 page-yishenruju.js 注册为真实页面
@@ -56,7 +56,7 @@
   var toastTimer = null;
 
   /* ---- 报错 toast 的第一道闸：**不许出现我们自己的网址** ----
-     产品规矩（用户 2026-09-22）：「里面不出现我们未来的网址」。
+     产品规矩（需求 2026-09-22）：「里面不出现我们未来的网址」。
      原因是那种网址在用户的设备上不一定打得开（还没上线的域名、
      或者本机调试地址），写在报错里只会让人白点一下。
      所以统一在这里抹掉 —— 只在**报错路径**上抹（正常文案里要提线上地址
@@ -218,7 +218,7 @@
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
 
     /* 所有报错都走这张卡：明确的原因 + 错误码 + 可复制的技术细节 + × 关闭。
-       不再有「自己会消失的小胶囊」—— 那条正是用户说的「丑且原因不清」。 */
+       不再有「自己会消失的小胶囊」—— 那条正是规格说明的「丑且原因不清」。 */
     if (errMode) {
       if (!toastEl.__body) buildToastCard();
       var code = errCodeOf(opts, text);
@@ -357,12 +357,12 @@
        · 3000ms 后仍为 0 就接受 0（iOS 26.1 那类「系统已把内容推开」
          的版本，0 本来就是对的）—— 不硬编码 59/34，不无限重试。
        · 相同数值不重复 setProperty（省一次无意义重排）。 */
-  /* APK 壳（2026-10-31 用户点名）：壳不是 fullscreen，安卓系统状态栏
-     （时间/电量）本来就显示在 WebView 上方，页面再画一条 #statusbar
-     就是两个时间。按 origin 识别壳（WebViewAssetLoader 固定域名），
-     打 html.apk-shell → style.css 里照 html.ios 的口径藏假状态栏 +
-     归零 --sb-h。安卓 WebView 里 env(safe-area-inset-*) 恒 0，
-     内容本来就起在系统栏下面，不用再让位。 */
+  /* APK 壳：壳用沉浸式 fullscreen（MainActivity.applyImmersive 隐藏系统
+     状态栏），系统栏整个不存在。按 origin 识别壳（WebViewAssetLoader 固定
+     域名），打 html.apk-shell → style.css 里照 386 行 Android fullscreen
+     原则让前端 #statusbar（时间/电量浮层）接管顶部占位、--sb-h 维持 32px，
+     内容从状态栏下开始避让刘海。安卓 WebView 里 env(safe-area-inset-*) 恒 0，
+     无需额外让位。 */
   try {
     if (global.location && global.location.origin === 'https://appassets.androidplatform.net') {
       document.documentElement.classList.add('apk-shell');
@@ -601,7 +601,7 @@
           }
           if (a.disabled) b.disabled = true;
           /* 长按是**另一个动作**的入口（朋友圈的相机：微信的规矩是
-             点击选图、长按发纯文字 —— 用户点名要这个交互）。
+             点击选图、长按发纯文字 —— 设计规格要求这个交互）。
              判定跟桌面长按进编辑态同一套：按下起计时，移动超阈值就撤。 */
           if (typeof a.onLongPress === 'function') {
             var lpTimer = null, lpFrom = null;
@@ -847,7 +847,7 @@
     if (backPending) return;              /* 上一次返回还没落地，忽略这次 */
     /* 页面可以自己接管返回（def.onBack 返回 true = 已处理）。
        典型：朋友圈那页停在朋友圈 tab 时，返回先切回消息 tab，
-       而不是直接退回桌面（用户：「返回需要默认返回到 chat 的首页」）。
+       而不是直接退回桌面（需求：「返回需要默认返回到 chat 的首页」）。
        历史栈不动，所以再按一次返回照常退回桌面，不会出现按不出 App。 */
     var top = current();
     if (top && top.def && typeof top.def.onBack === 'function') {
@@ -1060,7 +1060,7 @@
     /* 聚焦的框**真的被键盘盖住**时，才把它往上拉「刚好露出来」那么多 ——
        不居中、不整页滚、没盖住就一点都不碰。
 
-       2026-09-23 用户：「点击大部分输入框都会上下页面移动」。原来这里是
+       2026-09-23：「点击大部分输入框都会上下页面移动」。原来这里是
        scrollIntoView({block:'center', behavior:'smooth'})：只要聚焦就把
        最近那个能滚的祖先滚到「焦点框摆屏幕正中」—— 于是点哪个输入框整页
        就上下跳一下（实测 11 个输入框里 7 个会跳，最多 1619px：表单页的
@@ -1110,7 +1110,7 @@
        页面退场只是 visibility:hidden（build 缓存复用，元素不卸载），
        退场页的 textarea 仍可能是 activeElement —— 只查 activeElement 的话，
        切页之后永远判成「有焦点」，下面的清理永远不跑
-       （2026-10-28 用户：「切换页面之后底栏往上走」—— --kb-inset 残留）。 */
+       （2026-10-28：「切换页面之后底栏往上走」—— --kb-inset 残留）。 */
     function isEditing() {
       var a = document.activeElement;
       if (!a) return false;

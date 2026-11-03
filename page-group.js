@@ -164,7 +164,7 @@
 
   /* user 账号 = 房里的马甲；char 账号 = 大号 + 它的皮套；
      NPC = 房里全部 NPC（它们默认就有线上账号）。
-     孤岛也放行（2026-09-19 用户拍板）：孤岛锁的是「只有一位主角色」，
+     孤岛也放行（2026-09-19 设计确认）：孤岛锁的是「只有一位主角色」，
      不是「不能有群」—— 我 + TA + 岛上的 NPC 照样能拉一个小群。 */
   function collectCandidates() {
     var sb = core.activeSandbox();
@@ -195,6 +195,7 @@
 
   Sleepy.register('group-create', {
     title: '新建群聊',
+    freshOnOpen: true,   /* 重开必须重画（同参短路会端回上一次的旧表单） */
     render: function (ctx) {
       var cand = collectCandidates();
       var body = ctx.body;
@@ -1404,7 +1405,7 @@
 
       /* 群聊美化（2026-10-05）：多人线下在群聊页顶栏已经有入口
          （ICON_DOOR 那个「多人线下」动作），这张卡不再重复 ——
-         用户：「改成美化的，就还是可以自定义美化 css」。
+         需求：「改成美化的，就还是可以自定义美化 css」。
          CSS 存群记录的 beautifyCss（updateGroup 白名单），进群聊页时注入。 */
       var btWrap = h('div', 'set-group');
       var btCard = h('div', 'set-card gd-beautify');

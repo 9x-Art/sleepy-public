@@ -148,7 +148,7 @@
     };
   }
 
-  /* 食单单件：只带一本世界书（2026-10-11 用户：世界书要能单独上传）。
+  /* 食单单件：只带一本世界书（2026-10-11：世界书要能单独上传）。
      个人书挂靠的角色不在下载者设备上 → 导入时转全局书。 */
   function packWorldbook(wbId, opts) {
     opts = opts || {};
@@ -167,7 +167,7 @@
     };
   }
 
-  /* 摆盘单件：单独分享一套美化（2026-10-22 用户：美化也是单独分享的）。
+  /* 摆盘单件：单独分享一套美化（2026-10-22：美化也是单独分享的）。
      data = themePayloadOf(sbId) —— 打包「这座岛生效中的样子」。 */
   function packTheme(sbId, opts) {
     opts = opts || {};
@@ -331,7 +331,7 @@
   }
   /* 发布前上锁：lockedIdx = 要上锁的 items 下标数组；secret 可空 ——
      空 = 可用不可看（混淆锁），填了 = 需对暗号。所有件同一口径
-     （2026-10-11 用户：角色「干脆就给看」，靠领取条件约束）。
+     （2026-10-11：角色「干脆就给看」，靠领取条件约束）。
      condition = 领取条件（'none'|'repo'|'like'|'comment'），落 manifest.condition，
      详情页/领取时展示；实际校验等席间（评论/repo）开张后生效。 */
   function applyLocks(manifest, lockedIdx, secret, condition) {

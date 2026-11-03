@@ -3,7 +3,7 @@
    跑法：node scripts/make-icons.js
    产出：icons/icon-192.png / icons/icon-512.png
 
-   为什么手画 PNG：项目零依赖（用户 C 盘紧张，不装 node_modules），
+   为什么手画 PNG：项目零依赖（需求 C 盘紧张，不装 node_modules），
    而手撸 PNG 只需要 zlib（node 自带）+ 手写 chunk/CRC。
    图案：深夜底色 + 琥珀色猫爪，**满幅方块不烤圆角**（见 draw() 上面的说明）。
    改图案改 draw() 就行，重跑一次脚本。

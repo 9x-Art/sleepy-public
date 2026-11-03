@@ -180,7 +180,7 @@
   function entries() {
     var list = core.scoped(arr(store.get('weEntries'))).slice();
     /* —— 并馆（wj-data §5.1 原设计：聊天收藏按岛 + 票根全局并进收藏馆）——
-       2026-10-08 用户反馈：聊天收藏只落 favorites，收藏馆里看不到；票根同病
+       2026-10-08 反馈：聊天收藏只落 favorites，收藏馆里看不到；票根同病
        （帷境谢幕 toast 说「收进收藏馆了」但馆里没有）。修法 = 并馆展示、
        不搬数据：favorites / wjTickets 仍是唯一真相，这里只是读出来统一形状。
        weEntry 已引用过的（sourceType+sourceId 相同）不重复并，防双份。 */

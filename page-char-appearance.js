@@ -88,7 +88,7 @@
      底色换了字色必须跟着翻：浅色板配白字就是一片看不见。
      用相对亮度判明暗，白 / 近黑二选一 —— 各家聊天都是这个做法。
      注意作用面只到「我方气泡」：对方气泡跟主题（.msg-assistant 走 --g-ink），
-     这是用户 2026-09-21 拍的口径「正文跟着主题，气泡有角色设置的话跟着角色设置」。 */
+     这是2026-09-21 拍的口径「正文跟着主题，气泡有角色设置的话跟着角色设置」。 */
   function inkOn(hex) {
     var m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || '').trim());
     if (!m) return '#FFFFFF';
@@ -171,7 +171,7 @@
     }
     /* 消息区本身**不再铺背景**（壁纸挪到整页了），见下面的 inline 设置 */
     lines.push('.msg-wrap.ap-on{gap:' + cfg.msgGap + 'px;}');
-    /* 壁纸 / 底色铺到**整页**（用户 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
+    /* 壁纸 / 底色铺到**整页**（需求 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
        且上方顶栏需要做透明的」）—— 原来只铺 .msg-wrap（消息区），
        顶栏和输入栏是两条实底色带，看着像「壁纸贴在一张纸上」。
        背景是 transparent 时不动，免得把主题底色也盖掉。 */
@@ -310,7 +310,7 @@
       wrap.classList.add('ap-on', 'mode-' + (cfg.mode || 'classic'));
       if (cfg.bgImage) { wrap.classList.add('ap-bgimg'); pageCtx.el.classList.add('ap-bgimg'); }
       pageCtx.el.classList.add('ap-accented');
-      /* 壁纸铺**整页**（用户 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
+      /* 壁纸铺**整页**（需求 2026-09-22：「企微和捡手机的外观不是全屏壁纸，
          且上方顶栏需要做透明的」）。
          走 inline style 而不是 CSS 注入：注入的那条怎么写都会跟基础样式
          打架（试过 .page / .page-inner / !important，读回来还是白底），

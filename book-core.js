@@ -110,7 +110,7 @@
 
   /* ---------- 运行（任务） ---------- */
 
-  /* 身份口径（用户 2026-10-09 晚）：**每个世界定一次身份就锁死**——
+  /* 身份口径（需求 2026-10-09 晚）：**每个世界定一次身份就锁死**——
      建档时把 identity 刻进档案盒，之后这个世界的所有运行都用它；
      大厅的「下一局身份」只是默认值，别的世界建档时仍可换。 */
   function startRun(boxId, identity, seat) {
@@ -126,7 +126,7 @@
     if (!hit) throw new Error('book: 未知身份 ' + identity);
     var now = new Date().toISOString();
     if (box.identity && box.identity !== identity) {
-      /* 演练盒重走三步（2026-10-11 用户：演练每次点都从领局牌开始）——
+      /* 演练盒重走三步（2026-10-11：演练每次点都从领局牌开始）——
          换身份=收旧局重开；正式世界身份仍锁死（本世界定一次）。 */
       if (box.source !== 'drill') {
         throw new Error('book: 这个世界已定过身份（' + box.identity + '），不可再改');
@@ -222,7 +222,7 @@
     return getBox(boxId, sid);
   }
 
-  /* ★ v219 场景图多张（用户：故事是发展的，场景是动态的）：
+  /* ★ v219 场景图多张（需求：故事是发展的，场景是动态的）：
      box.sceneRefs = [mediaId]（顺序即场景顺序），coverRef 永远同步成第一张
      —— 老代码（游玩页封面等）不用改。传 [] = 清空。 */
   function setScenes(boxId, mediaIds, sandboxId) {

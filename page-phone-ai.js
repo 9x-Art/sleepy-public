@@ -94,12 +94,12 @@
     real: '请按输出协议产出初始生活底片（数量从少）。'
   };
 
-  /* ★ 2026-10-10 用户反馈：每个 App 页面要能单独刷新，且每页用**新的提示词**
+  /* ★ 2026-10-10 反馈：每个 App 页面要能单独刷新，且每页用**新的提示词**
      （首页右上角的「刷新」走整体结算 phoneLife 原卡；各 App 页里的刷新
      只产出这个 App 的 deltas —— 限定范围写在 [FOCUS]，本体协议卡不变）。
      每页的「新提示词」= 共同协议卡 + 该 App 的专属指令 + 已有条目防重复。 */
   var APP_FOCUS_ASK = {
-    /* 2026-10-29 用户反馈：每个 App 每次刷新要「五个左右」，1~3 太抠 ——
+    /* 2026-10-29 反馈：每个 App 每次刷新要「五个左右」，1~3 太抠 ——
        硬性条数统一改成 3~5。 */
     messages: '这次**只更新「消息」App**：给出 **3～5 条** deltas —— 他和合法联系人的幕后交流（一来一回）、或一条没发出去的草稿。deltas 里其他 App 一律不要出现。',
     taobao:   '这次**只更新「淘宝」App**：给出 **3～5 条** deltas —— 新下单的东西 / 既有订单状态往前推一步 / 收藏 / 加购。deltas 里其他 App 一律不要出现。',
@@ -223,7 +223,7 @@
     if (opts.appOnly) sys.push('[MODE]\napp-refresh —— 手动单 App 刷新：只允许产出 [FOCUS] 指定 App 的 deltas，其余 App 一律为空。');
 
     var contacts = contactsOf(sbId, char.id, ph);
-    /* 2026-10-29 用户点名：user 没设 NPC 时，消息/短信不该一直是空的 ——
+    /* 2026-10-29 设计规格指定：user 没设 NPC 时，消息/短信不该一直是空的 ——
        允许模型根据人设和聊天记录编 1~2 个背景联系人，程序会登记
        （phone.applySettlement 的 allowBgContacts 口子）。
        调用方（settle）会把判好的 allowBg 传进来；没传就自己判 ——
@@ -256,7 +256,7 @@
         user.push('[EXIST]\n' + (APP_LABEL_OF[opts.appOnly] || opts.appOnly) +
           '里已有的条目（不要重复，要新的东西）：\n' + exist.join('\n'));
       }
-      /* 2026-10-23 用户点名：手动刷新必须出东西 —— 「没有合理的就返回空」
+      /* 2026-10-23 设计规格指定：手动刷新必须出东西 —— 「没有合理的就返回空」
          是模型偷懒的出口（真机连点全弹「没有新动静」）。单 App 刷新改成
          硬性 1～3 条；实在想不出大事就写他今天最可能做的小事。
          整段结算（else 分支）仍允许空 —— 那是后台自动跑，不该硬凑。 */
@@ -298,7 +298,7 @@
     if (!APP_FOCUS_ASK[appKey]) {
       return Promise.resolve({ ok: false, error: '这个 App 还不支持单独刷新' });
     }
-    /* 2026-10-23 用户点名「只要刷新就要有新东西」：空手由 settle 内部
+    /* 2026-10-23 设计规格指定「只要刷新就要有新东西」：空手由 settle 内部
        （force）自动补写一轮；解析失败在这外面再补一轮。 */
     return settle(sbId, charId, { appOnly: appKey, force: true }).then(function (r) {
       if (!(!r.ok && /解析失败/.test(r.error || ''))) return r;
@@ -367,7 +367,7 @@
       /* 顺手把可检测痕迹标记为「他已可能发现」—— 消费端在聊天注入槽 */
       var detected = phone.markDetected(ph.id);
       store.set('phoneRawFail:' + charId, null);
-      /* 2026-10-23 用户点名「只要刷新就要有新东西」：手动刷新（force）空手
+      /* 2026-10-23 设计规格指定「只要刷新就要有新东西」：手动刷新（force）空手
          而归时自动补写一轮（[RETRY] 退回指令）。bootstrap 不递归（幂等门禁
          在上面已经 completed 拦过）；补写轮 force 不传 —— 两轮都空就如实
          回给页面，不无限烧调用。 */

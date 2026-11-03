@@ -391,12 +391,12 @@ html.ios #statusbar{display:none;}
 html.ios{--sb-h:0px;}
 
 /* APK 壳（html.apk-shell，app.js 按 WebViewAssetLoader 固定 origin 打）：
-   安卓壳不是 fullscreen，系统状态栏（时间电量）画在 WebView 上方，
-   页面的假状态栏叠在下面就是「两个时间」（用户 2026-10-31 点名要去掉）。
-   藏法与 html.ios 同口径：整条藏 + --sb-h 归零还回 32px 占位。
-   壳里 WebView 起点在系统栏下方，env(safe-area-inset-*) 恒 0，无需让位。 */
-html.apk-shell #statusbar{display:none;}
-html.apk-shell{--sb-h:0px;}
+   壳用沉浸式 fullscreen（MainActivity.applyImmersive 隐藏系统状态栏），
+   系统栏整个不存在。照 386 行 Android fullscreen 原则——假状态栏必须留：
+   由 #statusbar（前端画的时间/电量浮层）接管顶部占位，--sb-h 维持 :root
+   默认 32px，内容从状态栏下开始，避让刘海/挖孔。时间/电量开关见 app.js
+   applyStatusbarPrefs（默认显示，可在设置里关）。 */
+html.apk-shell #statusbar{display:flex;}
 
 #stack{
   position:relative;

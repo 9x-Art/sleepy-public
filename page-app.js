@@ -166,7 +166,7 @@
     if (!cs) { ctx.toast('聊天模块没加载出来', 'err'); return; }
     /* 找会话按 (角色, 当前账号) 双匹配 —— 同一个角色被大号和小号分别加过时
        是两条各自独立的会话，只按角色找会把小号直接带进大号的对话框，
-       看到前一个身份聊过的气泡（用户 2026-09-22 报的）。 */
+       看到前一个身份聊过的气泡（需求 2026-09-22 报的）。 */
     var mine = cs.chatOf(charId);
     if (mine) { ctx.open('chat-detail', { chatId: mine.id }); return; }
     var ch = core.findChar(charId);
@@ -242,7 +242,7 @@
         btnMap[t.id].setAttribute('aria-selected', on ? 'true' : 'false');
       });
       /* 朋友圈那一屏**不写标题** —— 微信的朋友圈顶上就是封面图本身，
-         三个字杵在那儿会把封面切掉一条（用户：「上面不要有『朋友圈』三个字」）。
+         三个字杵在那儿会把封面切掉一条（需求：「上面不要有『朋友圈』三个字」）。
          tab 名还在 tabMeta 里，底栏那一份不受影响。 */
       ctx.setTitle(cur === 'moments' ? '' : tabMeta(cur).name);
       /* 顶栏右侧先清空 —— 消息那一屏会自己挂「新建对话」，
@@ -258,7 +258,7 @@
        右滑返回和左上角返回键都走 app.js 的 requestBack，都会经过这里。
        2026-09-19：原来只挂在 moments 入口上 —— 从「聊天」图标进来
        （chat-list 入口）切到朋友圈再返回，会直接退回桌面
-       （用户：「要返回聊天列表页」）。现在三个入口统一挂。 */
+       （需求：「要返回聊天列表页」）。现在三个入口统一挂。 */
     ctx.__backGuard = function () {
       if (cur === 'chat') return false;
       /* We 时光跳进朋友圈的这次「来源浏览」：返回直接回时光（放行默认

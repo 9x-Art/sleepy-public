@@ -2,10 +2,10 @@
    page-imggen.js — 生图设置（挂在设置 App 里，不开独立桌面 App）
    依赖：store.js、ui.js、app.js、media.js、imggen.js（必须在它之前加载）
 
-   用户拍板：不占桌面格子（桌面已经 12 个了），从 设置 → 生图 进来。
+   设计确认：不占桌面格子（桌面已经 12 个了），从 设置 → 生图 进来。
    这一页从上到下：开关 / 接口 / 试一张（默认收起）/ 提示词库。
 
-   精致原则（用户：「能简化成小的按钮会更舒适」）：
+   精致原则（需求：「能简化成小的按钮会更舒适」）：
    - 拉取模型是大按钮改成模型名旁边的小图标钮；
    - 「试一张」默认收起，点一下才展开，框也小一号；
    - 提示词库的类别用下拉列表选，不是让人手打。
@@ -100,7 +100,7 @@
       /* ---------- 正式生图视觉层（内置 / 自定义，2026-10-01 施工单 v1 §四） ----------
          只有两档；内置词不提供编辑（§一）。切换不清空自定义原文；
          自定义框只在 custom 档露面。独立字段，与实验区的 visualExp* 互不混用。
-         2026-10-07 用户：组内说明文字全去掉（自定义框 hint / 动态提示 / NAI 段），
+         2026-10-07：组内说明文字全去掉（自定义框 hint / 动态提示 / NAI 段），
          只留组标题、视觉层下拉、自定义框。功能与显隐逻辑未动。 */
       var gs = group('视觉层（正式生图）',
         '聊天发图、日记、朋友圈这些正式入口用哪套审美：内置＝已核准底座；自定义＝只替换审美层，人数、身份、镜头与画面事实照常保留。');
@@ -123,7 +123,7 @@
         placeholder: '例：flat graphic illustration, limited 6-color palette'
       });
       gs.card.appendChild(styleCustom.el);
-      /* 2026-10-07 用户：视觉层这一组的说明文字（自定义框 hint、随档位变的动态
+      /* 2026-10-07：视觉层这一组的说明文字（自定义框 hint、随档位变的动态
          提示、NAI 那段）全部去掉 —— 字段本身与显隐逻辑一字未动。
          NAI 沿用原生图路径、本组视觉层对 NAI 不生效，仍是事实，只是不再显示。 */
       function syncStyleUI() {
@@ -223,7 +223,7 @@
         var fText = textArea({ label: '词条内容（英文 tag 或一句话）', rows: 2, value: editing ? editing.text : '', placeholder: '例：film grain, muted colors' });
         libFold.body.appendChild(fText.el);
 
-        /* 类别下拉 —— 用户：「改成可选，还是下拉列表」 */
+        /* 类别下拉 —— 需求：「改成可选，还是下拉列表」 */
         var catWrap = h('div', 'set-field');
         catWrap.appendChild(h('label', 'set-label', '类别'));
         var sel = h('select', 'set-select');
@@ -334,7 +334,7 @@
       f.model = textField({ label: '模型名', value: api.model, placeholder: '' });
       g.card.appendChild(f.model.el);
 
-      /* 拉取模型是模型名旁边的小圆钮（用户：「能简化成小的按钮会更舒适」），
+      /* 拉取模型是模型名旁边的小圆钮（需求：「能简化成小的按钮会更舒适」），
          调 {base}/models，用表单里当前的地址和 Key，不用先保存。
          结果走**浮层**：拉一次可能回 60 个，铺在页面里整页会被拉长。 */
       f.model.el.querySelector('.set-line').appendChild(ui.modelPickButton({
@@ -376,7 +376,7 @@
     g.card.appendChild(f.refSupport);   /* 裸 div 没有 .el —— 直接挂自身 */
     body.appendChild(g.wrap);
 
-    /* ---------- 预设词（想覆盖再填；内置词不展示，2026-10-08 用户拍板） ----------
+    /* ---------- 预设词（想覆盖再填；内置词不展示，2026-10-08 设计确认） ----------
        「不要把我们的提示词放出来」：老存档预灌过、和内置一字不差的，
        显示为空（＝用内置）；真改过的显示他改的原文。留空保存也合法 ——
        运行时空串回落内置（三条路同款回落），拼出来的词分毫不变。 */
@@ -416,7 +416,7 @@
     body.appendChild(g3.wrap);
 
     /* ---------- 试一张（就在这个接口下面试：用的是表单里当前的值，
-       不用先保存。用户：「放到加 api 的下面去测试」） ---------- */
+       不用先保存。需求：「放到加 api 的下面去测试」） ---------- */
     var tryFold = foldGroup('试一张',
       '用上面表单里当前的配置直接画一张，画好自动收进图库。', false);
     body.appendChild(tryFold.wrap);
@@ -429,7 +429,7 @@
     });
     tryFold.body.appendChild(subj.el);
 
-    /* ---- 主体 / 镜头（正式管线，2026-10-08 用户拍板）----
+    /* ---- 主体 / 镜头（正式管线，2026-10-08 设计确认）----
        试一张与聊天发图走**同一条正式拼接器**（generate({plan})）：
        视觉层跟随「视觉层（正式生图）」的内置/自定义设置，不再有
        legacy 对照、E1/E2 实验措辞或内置词展示。实验拼接器本体保留在
@@ -546,7 +546,7 @@
       out.innerHTML = '';
       out.appendChild(h('p', 'test-tip', '正在画…（生图要几秒到几十秒）'));
 
-      /* 正式管线（2026-10-08 用户拍板）：与聊天发图同一条 generate({plan}) ——
+      /* 正式管线（2026-10-08 设计确认）：与聊天发图同一条 generate({plan}) ——
          视觉层跟随「视觉层（正式生图）」的内置/自定义设置，锁脸/校验/报错
          语义全同款。提示词库词条照旧拼上（正式路吃 extras，与 legacy 一致）。 */
       var extras = imggen.listPrompts().map(function (p) { return p.text; });
@@ -753,6 +753,7 @@
 
   Sleepy.register('settings-imggen-add', {
     title: '添加生图接口',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同参短路会端回上一次的旧输入） */
     render: function (ctx) {
       var kind = (ctx.params && ctx.params.kind) || 'general';
       renderForm(ctx, imggen.newApi(kind), true);
@@ -761,6 +762,7 @@
 
   Sleepy.register('settings-imggen-edit', {
     title: '编辑生图接口',
+    freshOnOpen: true,   /* 重开必须重画，避免旧闭包把 A 的内容写进 B */
     render: function (ctx) {
       var id = ctx.params && ctx.params.id;
       var hit = null;

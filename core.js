@@ -649,7 +649,7 @@
     });
   }
 
-  /* 岛内全体 NPC —— **全仓唯一口径**（四.2 收敛，2026-09-21 用户拍板）。
+  /* 岛内全体 NPC —— **全仓唯一口径**（四.2 收敛，2026-09-21 设计确认）。
      新归属（09-19 定稿）：NPC 属于整座岛（parentType='sandbox'，parentId=sb.id），
      不属于 user 或 char 的任何一方 —— 谁认识他由 knownBy 决定。
      老数据（挂在房内 char / user 名下的）仍然收进来，别让老 NPC 凭空消失。
@@ -747,7 +747,7 @@
         parentType: has(data, 'parentType') ? data.parentType : 'char',
         boundUserId: has(data, 'boundUserId') ? data.boundUserId : null,
         name: data.name || '未命名角色',
-        /* 微信名：会话列表/聊天页对外显示的名字（用户 2026-09-21）。 */
+        /* 微信名：会话列表/聊天页对外显示的名字（需求 2026-09-21）。 */
         wechatName: data.wechatName || '',
         content: data.content || '',
         createdAt: Date.now(),
@@ -783,7 +783,7 @@
       seen[x] = true;
       out.push(x);
       allChars().forEach(function (c) {
-        /* 2026-09-29（用户拍板）：删除**永不连坐 NPC** —— NPC 属于整座岛，
+        /* 2026-09-29（设计确认）：删除**永不连坐 NPC** —— NPC 属于整座岛，
            不属于任何一方。挂在将被删的皮套/大号名下的 NPC 由 cleanupChar
            收编归岛，不进 doomed（主表与向量共用本函数，两边自动一致）。 */
         if ((c.kind || '') === 'npc') return;
@@ -830,7 +830,7 @@
 
   /* 删大号 / NPC：按「doomed 角色树」+ 岛清主表和向量。
      doomed = doomedCharIds(该 id)（递归：皮套全带；**NPC 一律不连坐**，
-     2026-09-29 用户拍板 —— 挂在 doomed 名下的 NPC 由 cleanupChar 收编归岛）。
+     2026-09-29 设计确认 —— 挂在 doomed 名下的 NPC 由 cleanupChar 收编归岛）。
      sandbox 口径 NPC（parentId=岛id）本就不在此树里 —— 它们是岛的成员。
      向量侧 forgetCharSet(fromCharIds=同款 doomed + sandboxId) —— 主表 doomed 与向量命中
      **严格一致**，不再按 charId=rootOf 一刀切（那张删法会误清同 root 整池，见实现注释）。 */
@@ -939,11 +939,11 @@
     } else {
       hit = {
         id: data.id || newId('um'),
-        /* 名字**允许留空**（用户 2026-09-22：「名字可以不填，不填的话 char
+        /* 名字**允许留空**（需求 2026-09-22：「名字可以不填，不填的话 char
            就只知道微信名（大号小号都是）」）—— 调用方显式给了空串就存空串，
            只有连这个键都没给时才兜「我」。用 `||` 会把「显式留空」吃掉。 */
         name: has(data, 'name') ? data.name : '我',
-        /* 微信名：会话列表/聊天页对外显示的名字（用户 2026-09-21）。
+        /* 微信名：会话列表/聊天页对外显示的名字（需求 2026-09-21）。
            名字留空时**反过来**由它顶上（core.labelOfUser 的口径）。 */
         wechatName: has(data, 'wechatName') ? data.wechatName : '',
         avatar: has(data, 'avatar') ? data.avatar : '',
@@ -1091,7 +1091,7 @@
   /* 把某件马甲设成「我的大号」。大号在一座岛里唯一 ——
      同一座岛其他件的 isDefault 一并清掉，**别座岛的大号不动**
      （那是别岛的「我」，跨岛大号本来就各论各的）。
-     用户 2026-09-21 拍板：入口在「我的马甲」列表 + 马甲编辑页。 */
+     2026-09-21 拍板：入口在「我的马甲」列表 + 马甲编辑页。 */
   function setDefaultUser(id) {
     var list = userMasks();
     var hit = findUser(id);
@@ -1281,7 +1281,7 @@
     return { ok: true, relation: slot.hit.relation };
   }
 
-  /* ---- 朋友圈的朋友权限（用户 2026-09-22：「和微信一样哇」）----
+  /* ---- 朋友圈的朋友权限（需求 2026-09-22：「和微信一样哇」）----
 
      看到某个人的朋友圈要同时满足三件事：
        ① 你加了她微信（在这个 app 里 = 她在这座岛上，由 scoped 保证）
@@ -1440,7 +1440,7 @@
       return u.id !== userId && (!sid || u.sandboxId === sid);
     });
     if (!others.length) return '';
-    /* 名字留空是合法状态（用户 2026-09-22）→ 走唯一出口，
+    /* 名字留空是合法状态（需求 2026-09-22）→ 走唯一出口，
        否则这里会拼出一串空名字，认知边界就白写了 */
     var names = others.map(function (u) { return labelOfUser(u, '另一个身份'); }).join('、');
     return [
@@ -1619,7 +1619,7 @@
 
   /* ------------------- 「这个账号叫什么」的唯一出口 -------------------
 
-     用户 2026-09-22：「名字可以不填，不填的话 char 就只知道微信名（大号小号都是）」。
+     2026-09-22：「名字可以不填，不填的话 char 就只知道微信名（大号小号都是）」。
      于是 user 侧多了一条**留空语义**，跟 char 那边（名字必填）不一样：
 
        name       = 人设里的真名 / 别名（可以空）

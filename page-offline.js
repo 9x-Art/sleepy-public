@@ -1916,7 +1916,7 @@
       }
 
       function sheetShell(title, contentEl, cancelLabel, onCancel) {
-        /* 离开/切换模型这类小弹层跟门弹窗一样居中（用户：「放中间，
+        /* 离开/切换模型这类小弹层跟门弹窗一样居中（需求：「放中间，
            不要黑的」）—— 设置页那种满屏的另带 off-sheet-full。 */
         var overlay = h('div', 'off-overlay off-door-overlay');
         var sheet = h('div', 'off-sheet');
@@ -2006,7 +2006,7 @@
         var modelLine = h('div', 'off-model-line');
         modelLine.appendChild(modelInput);
         /* 拉取模型走**浮层**（ui.modelPickButton）—— 以前结果平铺在这一段下面，
-           回 40 个就把整页拉长（用户：「别铺在屏幕上」）。下拉函数仍然用
+           回 40 个就把整页拉长（需求：「别铺在屏幕上」）。下拉函数仍然用
            「当前选中的接口」，没选接口就同步返回一个失败结果（浮层里显示）。 */
         var mini = ui.modelPickButton({
           tip: '用上面选中的接口去拉；也可以直接手填',

@@ -304,7 +304,7 @@
   }
   function candFor() {
     /* 1) 总结 API（单份独立配置，2026-09-22 接上）——
-          它和副 API **完全独立**：删副 API 也还是它（用户拍板的语义）。 */
+          它和副 API **完全独立**：删副 API 也还是它（设计确认的语义）。 */
     var sa = store.get('summaryApi');
     if (sa && sa.baseUrl && sa.model) return { cfg: sa, label: '总结 API' };
     /* 2) 老路径：记忆模型指定了副 API 的某一组（兼容老存档） */
@@ -450,7 +450,7 @@
       running[chatId] = false;
       if (r.ok && r.stat && r.stat.added) {
         /* 可点击 toast：整理出的记忆落在「留痕」App（memory）——
-           只有一句话指路没人找得到（2026-10-08 用户反馈第 5 条），
+           只有一句话指路没人找得到（2026-10-08 反馈第 5 条），
            点 toast 直达留痕页。 */
         if (Sleepy.toast) Sleepy.toast(
           '悄悄整理了 ' + r.stat.added + ' 条新记忆，点这里去「留痕」看看', 'ok',

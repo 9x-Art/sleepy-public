@@ -7,7 +7,7 @@
 
    **进设置就是那些接口本身**：主 API / 副 API / TTS / 向量 / 总结 / 生图 /
    天气搜索 WebDAV 直接列在一级页上，点一行就是那一项的配置。
-   中间那层「模型连接」已经拿掉 —— 用户：「进入设置 app，直接就是：主 api、
+   中间那层「模型连接」已经拿掉 —— 需求：「进入设置 app，直接就是：主 api、
    副 api、tts、向量 api、总结 api 和其他原本那几个」。
 
    这里只放「业务」：读写哪个字段、调用哪个接口。
@@ -53,7 +53,7 @@
       /* 数字化的下限兜底：cfg.timeoutSec 可能是 0，也可能是字符串 '0'（老存档）。
          后者是 truthy —— `cfg.timeoutSec || 60` 拦不住它，会被
          Math.max(1, '0') 算成 **1 秒**（2026-09-23 全链路排查）。
-         2026-09-29 起下限抬到 60（用户拍板「归一到 60s」），与 genParams 同口径。 */
+         2026-09-29 起下限抬到 60（设计确认「归一到 60s」），与 genParams 同口径。 */
       var secs = Number(cfg.timeoutSec);
       if (!(secs >= 60)) secs = 60;
       var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
@@ -170,7 +170,7 @@
       /* ============ 对话：主 / 副 ============
          这两行以前藏在「模型连接」里（设置 → 模型连接 → 主 API → 配置），
          点三层才摸到自己的 Key。现在**进设置就看得见** ——
-         用户：「进入设置 app，直接就是：主 api、副 api、tts、向量 api、
+         需求：「进入设置 app，直接就是：主 api、副 api、tts、向量 api、
          总结 api 和其他原本那几个」。 */
       var gTalk = group('对话');
       var rowMain = row({
@@ -227,7 +227,7 @@
         });
         gCap.card.appendChild(capRows[c.kind]);
       });
-      /* 生图已经接上了（page-imggen.js）—— 用户：「不开独立 App，从设置进」 */
+      /* 生图已经接上了（page-imggen.js）—— 需求：「不开独立 App，从设置进」 */
       var rowImg = row({
         label: '生图',
         badge: Sleepy.imggen ? Sleepy.imggenSummary() : '未配置',
@@ -277,7 +277,7 @@
       g4.card.appendChild(rowData);
       body.appendChild(g4.wrap);
 
-      /* 手机使用情况（2026-10-31 用户点名，APK 壳专属）：没有壳桥的
+      /* 手机使用情况（2026-10-31 设计规格指定，APK 壳专属）：没有壳桥的
          环境（浏览器 / iOS PWA）整个组不画 —— 想看也看不了，别摆空行。 */
       if (Sleepy.usage && Sleepy.usage.available()) {
         var gU = group('手机使用情况',
@@ -416,7 +416,7 @@
       g5.card.appendChild(legalRowP);
       /* 「关于 Sleepy」背着隐蔽开关：3 秒内连点 5 次 = 切开发者模式。
          面向用户后内置 prompt 上锁，这个开关是唯一的解锁口 ——
-         所以它不能像普通开关一样摆在明面上（用户：「隐蔽一些qwq」）。
+         所以它不能像普通开关一样摆在明面上（需求：「隐蔽一些」）。
          row() 不带 onClick 会把自己 disabled 掉，这里手动解开再挂事件。 */
       var aboutRow = row({ label: '关于 Sleepy' });
       aboutRow.disabled = false;
@@ -560,7 +560,7 @@
     /* 拉取模型：模型名旁边的小圆钮，用表单里当前的地址和 Key，不用先保存。
        结果是**浮层**（ui.modelPickButton → ui.modelPicker），不是铺在页面里 ——
        拉一次可能回 60 个模型名，铺在页面里整页会被拉得很长，用户得一直往下滚
-       **整页**（用户原话：「现在是直接全部铺在屏幕上，就会很长」）。
+       **整页**（原始需求：「现在是直接全部铺在屏幕上，就会很长」）。
        浮层里自己滚 + 顶部搜索框，点一个填进去、框随即收掉。 */
     var mini = ui.modelPickButton({
       load: function () {
@@ -796,6 +796,7 @@
 
   Sleepy.register('settings-mainapi-add', {
     title: '新增主 API',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同参短路会端回上一次的旧输入） */
     render: function (ctx) {
       var def = Sleepy.api.genDefaults;
       var preset = {
@@ -819,6 +820,7 @@
 
   Sleepy.register('settings-mainapi-edit', {
     title: '编辑主 API',
+    freshOnOpen: true,   /* 重开必须重画，避免旧闭包把 A 的内容写进 B */
     render: function (ctx) {
       var id = ctx.params.id;
       var preset = null;
@@ -883,6 +885,7 @@
 
   Sleepy.register('settings-mcp-edit', {
     title: 'MCP 服务',
+    freshOnOpen: true,   /* 新增/编辑表单重开必须重画（同参短路会端回旧输入） */
     render: function (ctx) {
       var id = ctx.params.id || '';
       var isNew = !id;

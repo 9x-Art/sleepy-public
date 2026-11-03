@@ -246,7 +246,7 @@
     ctx.rebuild = function () { mount(ctx, active, buildBody, headOpts); };
     deepLink();
     var root = h('div', 'rp-root');
-    /* 报头/crumb 左侧一律带小返回钮（2026-10-11 用户：御膳房左边加个小返回钮；
+    /* 报头/crumb 左侧一律带小返回钮（2026-10-11：御膳房左边加个小返回钮；
        二级页退出口只许多不许少——退出条删了，返回钮顶上） */
     var back = h('button', 'rp-backbtn', '‹');
     back.type = 'button';
@@ -693,7 +693,7 @@
 
   /* 开炉页：同学录式表单（标签 + 下划线栏）+ 实时发布预览 */
   function renderPublishBody(ctx, root) {
-    /* 返回条（2026-10-11 用户：又忘记退出按钮了 —— 二级页必须自带退出） */
+    /* 返回条（2026-10-11：又忘记退出按钮了 —— 二级页必须自带退出） */
     var back = h('button', 'rp-btn ghost', '← 不发了，回铺面');
     back.addEventListener('click', function () { Sleepy.nav.back(); });
     root.appendChild(back);
@@ -1346,7 +1346,7 @@
     root.appendChild(gc);
   }
 
-  /* 编辑资料：居中弹层（2026-10-11 用户：行内编辑太简陋）——
+  /* 编辑资料：居中弹层（2026-10-11：行内编辑太简陋）——
      昵称 / 头像 URL（即时预览）/ 一句简介。 */
   function openProfileEditor(ctx) {
     var p = profile();
@@ -1672,7 +1672,7 @@
   Sleepy.register('repo', page('repo', renderShelf, {
     sub: '明厨暗铺 · 设定打包分享',
     action: function (ctx) {
-      /* 放大镜 icon 素钮（2026-10-11 用户：直接一个放大镜，不要框框） */
+      /* 放大镜 icon 素钮（2026-10-11：直接一个放大镜，不要框框） */
       var b = h('button', 'rp-searchbtn');
       b.type = 'button';
       b.setAttribute('aria-label', '搜一搜');

@@ -9,7 +9,7 @@
    为什么这两个是「固定职责」而不是像副 API 那样多组轮询：
    一个抽记忆、一个算向量。它们不需要多组容灾去轮询。
 
-   ★ 两者的界面**故意不一样**（用户 2026-09-23 明确）：
+   ★ 两者的界面**故意不一样**（需求 2026-09-23 明确）：
      · 总结 API：**多套预设 + 列表页 + 从副 API 复制一份**。
        它和副 API 都是对话模型（/chat/completions），复制过来就能用。
        存法照抄主 API：`summaryApis` 数组 + `summaryApiId` 指当前那套，
@@ -20,7 +20,7 @@
        （/embeddings vs /chat/completions）—— 复制过来只会得到一份
        注定 404 的配置。所以它就是单个 `vectorApi`。
 
-   ★ 与副 API 的关系（用户 2026-09-22 拍板，三条都要成立）：
+   ★ 与副 API 的关系（需求 2026-09-22 拍板，三条都要成立）：
      · 新增副 API 时，如果总结**还是空的**，顺手带一份进来（省得重填）
      · 填过之后两边各自独立：改副 API 不动它
      · 删副 API 也不动它（**不回落、不清空**）
@@ -63,7 +63,7 @@
     },
     /* 向量**不走预设、也不从副 API 复制**：它要的是 embedding 模型，
        副 API 是对话模型，协议都不一样（/embeddings vs /chat/completions）——
-       带过来只会得到一份注定 404 的配置（用户 2026-09-23 明确）。
+       带过来只会得到一份注定 404 的配置（需求 2026-09-23 明确）。
        所以它没有 listKey / idKey，页面是一页表单（renderSingle）。 */
     vector: {
       key: 'vectorApi',
@@ -237,7 +237,7 @@
 
   /* 新增副 API 之后调一次：把空着的**总结**顺手填上。
      ⚠️ 向量不在内 —— 副 API 是对话模型，向量要 embedding，协议都不一样
-     （用户 2026-09-23 明确：「向量记忆 api 不要复制…只有总结的才需要复制和列表」）。
+     （需求 2026-09-23 明确：「向量记忆 api 不要复制…只有总结的才需要复制和列表」）。
      导出给 page-subapi.js 用（那边只管喊一声，不关心填了什么）。 */
   function seedAll() {
     return seedFromSub('summary') ? 1 : 0;
@@ -349,7 +349,7 @@
   /* --------- 页面：向量记忆 API（单份，一页表单，没有预设这一层） ---------
      它**不从副 API 复制**：副 API 是对话模型，向量要 embedding，协议都不一样
      （/chat/completions vs /embeddings），复制过来只会得到一份注定 404 的配置
-     （用户 2026-09-23 明确）。所以它一页到底：说明 + 连接表单（带拉取）+
+     （需求 2026-09-23 明确）。所以它一页到底：说明 + 连接表单（带拉取）+
      用不用 / 索引 / 试试召回 + 清空。 */
   function renderSingle(ctx, kind) {
     var k = KINDS[kind];
@@ -1021,6 +1021,7 @@
 
   Sleepy.register('settings-summary-add', {
     title: '新增总结 API',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同参短路会端回上一次的旧输入） */
     render: function (ctx) {
       renderForm(ctx, 'summary', newPreset('summary', { name: '' }), true);
     }
@@ -1028,6 +1029,7 @@
 
   Sleepy.register('settings-summary-edit', {
     title: '编辑总结 API',
+    freshOnOpen: true,   /* 重开必须重画，避免旧闭包把 A 的内容写进 B */
     render: function (ctx) {
       var p = null;
       presetsOf('summary').forEach(function (x) { if (x.id === ctx.params.id) p = x; });

@@ -342,7 +342,7 @@
     /* 总结 API 也存多套预设（2026-09-23 对齐主 API）：summaryApi 这个老键保留，
        始终镜像「当前使用」的那套，cfgOf / page-summary / page-settings 只读镜像。
        ⚠️ 向量记忆**没有这一层** —— 它要 embedding 模型、副 API 是对话模型，
-       复制和多套都没有意义（用户 2026-09-23 明确），它还是单个 vectorApi。 */
+       复制和多套都没有意义（需求 2026-09-23 明确），它还是单个 vectorApi。 */
     summaryApis: [],
     summaryApiId: null,
 

@@ -731,6 +731,7 @@
 
   Sleepy.register('worldbook-book-edit', {
     title: '编辑世界书',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同参短路会端回上一次的旧输入） */
     render: function (ctx) {
       var body = ctx.body;
       var id = ctx.params.id || '';
@@ -865,6 +866,7 @@
 
   Sleepy.register('worldbook-entry-edit', {
     title: '编辑条目',
+    freshOnOpen: true,   /* 2026-11-03 真机抓到：手动加第二条时上一次的输入还挂着 */
     render: function (ctx) {
       var body = ctx.body;
       var bookId = ctx.params.bookId;

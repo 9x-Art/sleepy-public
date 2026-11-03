@@ -46,7 +46,7 @@
       /* 数字化的下限兜底：cfg.timeoutSec 可能是 0，也可能是字符串 '0'（老存档）。
          后者是 truthy —— `cfg.timeoutSec || 60` 拦不住它，会被
          Math.max(1, '0') 算成 **1 秒**（2026-09-23 全链路排查）。
-         2026-09-29 起下限抬到 60（用户拍板「归一到 60s」），与 genParams 同口径。 */
+         2026-09-29 起下限抬到 60（设计确认「归一到 60s」），与 genParams 同口径。 */
       var secs = Number(cfg.timeoutSec);
       if (!(secs >= 60)) secs = 60;
       var ctrl = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
@@ -265,6 +265,7 @@
 
   Sleepy.register('settings-subapi-add', {
     title: '新增副 API',
+    freshOnOpen: true,   /* 新建表单重开必须重画（同参短路会端回上一次的旧输入） */
     render: function (ctx) {
       var body = ctx.body;
       var f = {};
@@ -372,7 +373,7 @@
         var ok = store.set('subApis', list);
         if (ok) {
           /* 顺手把**还空着的**「总结 API / 向量记忆 API」带一份进来
-             （用户 2026-09-22 拍板：加副 API 可以同步加这两个）。
+             （需求 2026-09-22 拍板：加副 API 可以同步加这两个）。
              只填空的：填过之后两边各自独立，改副 API / 删副 API 都不动它们。 */
           var seeded = 0;
           if (Sleepy.singleApi && Sleepy.singleApi.seedAll) seeded = Sleepy.singleApi.seedAll();
@@ -406,6 +407,7 @@
 
   Sleepy.register('settings-subapi-edit', {
     title: '编辑副 API',
+    freshOnOpen: true,   /* 重开必须重画，避免旧闭包把 A 的内容写进 B */
     render: function (ctx) {
       var body = ctx.body;
       var params = ctx.params;

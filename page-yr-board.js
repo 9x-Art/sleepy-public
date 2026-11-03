@@ -36,7 +36,7 @@
     return el;
   }
 
-  /* 重点标签：酒红强调（2026-10-11 用户：纸面上重点处要用别的颜色） */
+  /* 重点标签：酒红强调（2026-10-11：纸面上重点处要用别的颜色） */
   function keyLine(label, val) {
     var p = h('p');
     p.appendChild(h('b', 'yb-key', label + '：'));
@@ -193,7 +193,7 @@
     room.appendChild(h('div', 'yr-top', h('div', 'yr-brand', [h('span', 'yr-mark'), h('span', null, box.title)])));
 
     var existing = B().getRunByBox(boxId, sid);
-    /* 演练盒重走三步（2026-10-11 用户：演练每次点都从领局牌开始，
+    /* 演练盒重走三步（2026-10-11：演练每次点都从领局牌开始，
        不吃「本局已开」锁卡）——正式世界维持已开即进。 */
     if (existing && box.source !== 'drill') {
       room.appendChild(renderRunCard(ctx, sid, box, existing));
@@ -202,7 +202,7 @@
       return;
     }
 
-    /* 分步状态（2026-10-10 用户反馈：三个步骤分开，一屏一步，照建群的走法） */
+    /* 分步状态（2026-10-10 反馈：三个步骤分开，一屏一步，照建群的走法） */
     var st = { step: 1, identity: box.identity || B().getIdentity(sid) || null, seat: null };
     var body = h('div');
     room.appendChild(body);
@@ -249,7 +249,7 @@
     }
 
     /* 场景图（可选、可多张）：photos.pick 通道（手机相册/file input）→ media 落盘。
-       2026-10-10 用户反馈：故事是发展的，场景不止一张 —— box.sceneRefs 按顺序存，
+       2026-10-10 反馈：故事是发展的，场景不止一张 —— box.sceneRefs 按顺序存，
        封面永远同步成第一张（book-core.setScenes）。 */
     function sceneCard() {
       var card = h('div', 'yb-card');
@@ -322,7 +322,7 @@
             onTake: function (i) {
               st.identity = B().IDENTITIES[i].key;
               Sleepy.toast('这个世界就认它了：' + B().IDENTITIES[i].name);
-              st.step = 2;   /* 2026-10-11 用户：选定后直接进下一步页面 */
+              st.step = 2;   /* 2026-10-11：选定后直接进下一步页面 */
               renderStep();
             }
           }));
@@ -432,7 +432,7 @@
         if (!st.seat) { Sleepy.toast('先在第 2 步领一枚穿书占位的局牌。', 'err'); return; }
         var r = B().startRun(boxId, st.identity, st.seat);
         Sleepy.toast(r.existed ? '这局早开着了，接着走。' : '局开了。卷宗从这一刻开始记。');
-        /* 开局即进世界，不再回到领局牌第一步（2026-10-11 用户：点开局又回第一步） */
+        /* 开局即进世界，不再回到领局牌第一步（2026-10-11：点开局又回第一步） */
         Sleepy.nav.open('yr-play', { boxId: box.id, sandboxId: sid });
       });
       body.appendChild(open);

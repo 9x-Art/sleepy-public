@@ -224,7 +224,7 @@
         pendingCount: file.memories.filter(function (m) { return m.status === 'pending'; }).length
       });
     }
-    /* 按岛过滤（用户 09-19 定稿：留痕这类 App 显示「打开的那座岛」的数据，
+    /* 按岛过滤（需求 09-19 定稿：留痕这类 App 显示「打开的那座岛」的数据，
        全局的只有浮岛/设置/外观/世界书/预设）。
        范围 = 当前岛的主要角色 + 岛内全体 NPC（唯一口径 core.npcsOfRoom：
        sandbox 新语义 + 挂 char/user 名下的老数据兜底）。
@@ -313,7 +313,7 @@
   function deleteMemoryItem(charId, memoryId) {
     var file = loadCharMemory(charId);
     var m = findMemory(file, memoryId);
-    /* 2026-11-01 用户：任何来源的记忆都允许物理删除（以前只放行
+    /* 2026-11-01：任何来源的记忆都允许物理删除（以前只放行
        user_manual，AI 总结的错了只能「标记错误」挂着）。删了就从库
        里真消失；向量索引由 refreshMem 按单条清掉，不留残影。 */
     if (!m) return false;
@@ -1533,7 +1533,7 @@
             ctx.toast(m.isAnchor ? '已取消锚定' : '已锚定 · 注入时始终优先', 'ok');
             ctx.rebuild();
           });
-          /* 2026-11-01 用户：删除放开到任何来源（AI 总结的记错了也能真删）。
+          /* 2026-11-01：删除放开到任何来源（AI 总结的记错了也能真删）。
              「标记错误」保留为温和选项（invalid 留库可审计），删除是彻底消失。 */
           op('删除', function () {
             ui.confirm({ title: '删除这条记忆？', note: '从记忆里彻底删掉，TA 以后不会再想起这件事。', danger: true, ok: '删除' })

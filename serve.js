@@ -5,7 +5,7 @@
 
    为什么不用 vite / live-server：
      这个项目是「零依赖静态前端」，双击 index.html 就能跑。
-     引构建工具会带来 node_modules、几百 MB 缓存（用户 C 盘紧张），
+     引构建工具会带来 node_modules、几百 MB 缓存（需求 C 盘紧张），
      而且我们不需要打包、不需要 HMR —— 改完手动刷新就够了。
      所以这里用 Node 自带的 http 模块写一个最小的静态服务器。
 
@@ -138,7 +138,7 @@ function serveFile(res, file, urlPath, isFallback) {
     };
 
     /* ---- gzip ----
-       2026-09-18 加的。起因是接了亚克力灯之后用户说「加载时间有点长了qwq」——
+       2026-09-18 加的。起因是接了亚克力灯之后规格说明「加载时间有点长了」——
        那次要现下 three.module.js，**671 KB 明文**。
        压完只剩 166 KB，本地上基本感觉不到等待了。
 

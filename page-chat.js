@@ -130,7 +130,7 @@
       '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.4"/></svg>'
   };
 
-  /* 空输入点发送时，替用户说的一句话。F 模块上线后由 F 接管。
+  /* 空输入点发送时，替规格说明的一句话。F 模块上线后由 F 接管。
      2026-09-26 用户真机报：几乎每轮都拿「我继续说的话…」当开场 ——
      光说「主动开口」模型会拿请示式开场白糊弄，禁令要写进提示本身。
      2026-11-01 用户报「char 说括号在命令他」：以前这些程序注入的
@@ -289,7 +289,7 @@
   /* 找「这个账号 × 这个角色」的那一条私聊。
 
      **必须是 (characterId, userId) 双匹配。** 同一个角色被大号和小号分别
-     加过时，那是**两条各自独立的会话** —— 用户 2026-09-22 报的：
+     加过时，那是**两条各自独立的会话** —— 2026-09-22 报的：
      「如果在不同账号加了 char 的同一账号，聊天的历史记录不能同步
      （不是说记忆，是说聊过的在对话框里的确切气泡）」。
 
@@ -345,7 +345,7 @@
     return chat.name || '对话';
   }
 
-  /* 会话长按菜单：改备注 / 删除（2026-09-21 用户：「长按对话框改备注」）。
+  /* 会话长按菜单：改备注 / 删除（2026-09-21：「长按对话框改备注」）。
      复用朋友圈那套 .msg-menu 浮层样式。 */
   function openChatMenu(ctx, chat, rebuild) {
     var host = document.getElementById('phone') || ctx.el;
@@ -1246,7 +1246,7 @@
     });
     /* 索引里的原文是**给模型看的证据** —— 消息删了它就得跟着失效，
        否则 TA 以后还会引用一句根本不在聊天记录里的话（见 memoryVec.forget）。
-       keepMemory 例外（2026-11-01 用户「只清记录不清记忆」）：索引的
+       keepMemory 例外（2026-11-01 规格「只清记录不清记忆」）：索引的
        原文就是 TA 的记忆本体，跳过遗忘 TA 才还记得这些对话；代价是
        「查看原文」定位不到已删气泡，可接受。默认仍遗忘（彻底当没发生）。 */
     if (!(opts && opts.keepMemory) && c0 && c0.characterId && Sleepy.memoryVec && Sleepy.memoryVec.forget) {
@@ -1992,7 +1992,7 @@
     return { role: 'system', content: note };
   }
 
-  /* 会话列表的预览。三条规矩（用户 2026-09-21 拍板，照微信来）：
+  /* 会话列表的预览。三条规矩（需求 2026-09-21 拍板，照微信来）：
      1) **不带「你说：/对方回：」这种前缀** —— 名字和时间已经把「谁」交代
         清楚了，前缀只是噪音；这也是微信的样子。
      2) **只给最后一个气泡**。一次模型输出在存档里是用 '||' 把多个气泡拼成
@@ -2159,7 +2159,7 @@
   }
 
   /* 长按（触摸 480ms / 鼠标按住 480ms / 右键）打开菜单。
-     手感（2026-10-07 用户：要微信那种「按住了」的感觉）：
+     手感（2026-10-07：要微信那种「按住了」的感觉）：
      · 按住期间气泡轻微压暗（.lp-pressing），松手/触发即摘；
      · 触发瞬间 navigator.vibrate(10) 来一下微震动（Android 有效，
        iOS Safari 不支持 vibrate —— 没有替代 API，静默跳过）。 */
@@ -2635,7 +2635,7 @@
 
         /* 空态：搜索指定内容的分类网格（微信那种，格子按我们的类型来）。
            每格后面带**条数**（这段对话里那一类有几条）——
-           光一排词确实太空（用户 2026-10-28：「感觉整个搜索界面很空」），
+           光一排词确实太空（需求 2026-10-28：「感觉整个搜索界面很空」），
            带上数字既填了空又告诉人哪一类值得点。 */
         var home = h('div', 'chat-search-home');
         home.appendChild(h('p', 'chat-search-cap', '搜索指定内容'));
@@ -2656,7 +2656,7 @@
 
         /* 下半屏：这段对话的概览（微信那一版下半屏是空的，我们填上
            「这段对话里有什么」—— 条数、时间跨度、最近一条）。
-           空着确实像没做完（用户原话：「感觉整个搜索界面很空」）。 */
+           空着确实像没做完（原始需求：「感觉整个搜索界面很空」）。 */
         var stat = h('div', 'chat-search-stat');
         searchPanel.appendChild(stat);
         function refreshStat() {
@@ -2782,7 +2782,7 @@
       /* -------- 只活在这一次拜访里的状态，不落盘 -------- */
       var reqSeq = 0;        /* 请求序号，旧回调一律丢弃 */
       var pending = null;    /* { text, timestamp, targetId } */
-      /* 拟真节奏（2026-10-26 用户：「回复啪一下出来，没代入感」）：
+      /* 拟真节奏（2026-10-26：「回复啪一下出来，没代入感」）：
          流式文本照常收，但气泡按真人打字的节奏**逐条**上屏 ——
          前一条收完（出现了下一个 || 边界）才排下一条，间隔按
          下一条的字数估打字时长。n = 已上屏的气泡数。 */
@@ -2823,7 +2823,7 @@
       /* ---- 表情推荐条 ----
          在输入框里打了字，如果匹配到某张表情的**解释**，就在这儿横着排出来
          （左右可滑，防显示不全）。点一张直接发出去。
-         用户：「输入某个文字之后可以匹配上对应的推荐表情包，
+         需求：「输入某个文字之后可以匹配上对应的推荐表情包，
          并且推荐的表情包可以左右滑动显示，以防显示不完整」。 */
       var suggestBar = h('div', 'stk-suggest');
       foot.appendChild(suggestBar);
@@ -2907,7 +2907,7 @@
       foot.appendChild(panel);
 
       /* ---- 情绪印章：点「我」的头像选一枚，章以小图标待在输入框**里面** ----
-          （用户 2026-10-06 定稿：不是 chip 条、也不是消息气泡上盖章）
+          （需求 2026-10-06 定稿：不是 chip 条、也不是消息气泡上盖章）
           pendingMoodStamp 是**当天**的章，渲染 / 发送都读它。 */
       var pendingMoodStamp = null;
 
@@ -2965,7 +2965,7 @@
           var ic = h('span', 'mood-pop-ic');
           ic.innerHTML = stampSvg(s.icon, 34);
           item.appendChild(ic);
-          /* 2026-10-26 用户：「有点看不出每种代表什么情绪」—— 名字下面补情绪小字 */
+          /* 2026-10-26：「有点看不出每种代表什么情绪」—— 名字下面补情绪小字 */
           var lbl = h('span', 'mood-pop-label');
           lbl.appendChild(h('b', null, s.name));
           lbl.appendChild(h('span', 'mood-pop-feel', s.feel));
@@ -3017,7 +3017,7 @@
       }
 
       /* ------------------------ 贴着底部 ------------------------
-         用户 2026-09-23：「输入完一句回车发出去，看不到自己发的，要把输入框
+         2026-09-23：「输入完一句回车发出去，看不到自己发的，要把输入框
          点掉才看得到」。
 
          根因不是「消息没渲染」，是**消息区被压矮之后没有人重新贴底**：
@@ -3138,7 +3138,7 @@
         segs.forEach(function (seg, i) {
           msgWrap.appendChild(bubbleFor(m, c, {
             text: seg.text, trans: seg.trans, idx: i, total: segs.length,
-            /* 2026-10-26 用户：分隔线刚标过时间，气泡下面的时间戳就是复读 —— 藏掉 */
+            /* 2026-10-26：分隔线刚标过时间，气泡下面的时间戳就是复读 —— 藏掉 */
             hideTime: showSep
           }));
         });
@@ -3293,7 +3293,7 @@
       }
 
       /* 长按菜单里点 emoji → 给**这个气泡**贴/取消表情回应（QQ/企微风）。
-         2026-10-07 用户：一条回复拆成几段时，只贴被长按的那一段，不是整轮。
+         2026-10-07：一条回复拆成几段时，只贴被长按的那一段，不是整轮。
          存储 msg.reactions = { segKey: { emoji: [maskId,…] } }，segKey 是段下标
          的字符串（无分段的按 '0'）。旧数据 { emoji: [maskId,…] } 在读取时
          统一归一化到 '0' —— 老的贴纸本来就显示在每一段下面，迁到第一段最接近原意。
@@ -3567,7 +3567,7 @@
                  : (msg.role === 'system' ? 'system' : 'assistant');
         /* 拍一拍：微信那种居中灰字，不是气泡。
            没有头像、没有重答 —— 它是个动作记录，不是话。
-           但能删（2026-10-29 用户：系统信息也要能删）—— 长按只给删除。 */
+           但能删（2026-10-29：系统信息也要能删）—— 长按只给删除。 */
         if (msg.type === 'pat') {
           var patEl = h('div', 'msg-pat', msg.content || '拍了拍');
           patEl.setAttribute('data-id', msg.id);
@@ -3594,7 +3594,7 @@
           bindLongPress(invEl, function () { openSysMenu(msg, invEl); });
           return invEl;
         }
-        /* 查岗：居中「系统镜头」卡（用户 2026-09-29 定稿）—— 这张图不是
+        /* 查岗：居中「系统镜头」卡（需求 2026-09-29 定稿）—— 这张图不是
            任何人拍的（线上功能的窥视镜头），挂在 user 气泡里会读成
            「我发了张 TA 的照片」。只换渲染载体：
            存储仍是 role:'user'（noticed 隔离闸门 / 上下文装配 / plan 不动），
@@ -3635,7 +3635,7 @@
            不整流重画（见 toggleSelect 那段说明） */
         bubble.setAttribute('data-key', myKey);
         if (selecting && selected[myKey]) {
-          /* 选中态**一个气泡一份**：勾就挂在这个气泡自己身上（用户 2026-09-23
+          /* 选中态**一个气泡一份**：勾就挂在这个气泡自己身上（需求 2026-09-23
              报的是「点第二个气泡就退出多选」—— 以前按整条算，勾也只标在
              第一个气泡上，第二个气泡根本点不着、点了反而是取消）。
              CSS 见 .msg-bubble.is-selected::after。 */
@@ -3677,7 +3677,7 @@
         } else if (msg.type === 'transfer') {
           content.appendChild(transferCard(msg));
         } else if (msg.type === 'photo' || msg.type === 'file' || isVideoMsg(msg)) {
-          /* 2026-10-29 用户点名：视频气泡一直漏路由到 attachCard（这里只认
+          /* 2026-10-29 设计规格指定：视频气泡一直漏路由到 attachCard（这里只认
              photo/file），落成一行「xxx.mp4」的文字 —— 补上视频这一路。 */
           content.appendChild(attachCard(msg));
         } else if (msg.type === 'wj-share' || msg.type === 'wj-invite') {
@@ -3759,7 +3759,7 @@
         }
 
         var isLast = c.messages[c.messages.length - 1] === msg;
-        /* 停止按钮已撤（2026-10-28 用户：气泡上不再给停止键，等回复就等）；
+        /* 停止按钮已撤（2026-10-28：气泡上不再给停止键，等回复就等）；
            reroll 也挪进加号面板（「重说」），气泡 meta 只剩时间。 */
         if (role === 'assistant' && msg.type === 'photo' && msg.subject && isLast && !pending) {
           /* TA 发的图可以重画：同 subject 重新生成，原地替换 */
@@ -4098,7 +4098,7 @@
 
         /* 外链表情最常见的坏法：图挂了（域名没了 / 403 / 图床把图删了）。
            不兜的话气泡里就是一个破图加一行 alt 文字，很难看。 */
-        img.addEventListener('error', function () { missing('表情包丢失了qwq'); });
+        img.addEventListener('error', function () { missing('表情包丢失了'); });
         box.appendChild(img);
 
         var p = (msg.mediaId && Sleepy.media)
@@ -4106,7 +4106,7 @@
           : Promise.resolve(msg.url || '');
         p.then(function (u) {
           if (u) { img.src = u; return; }
-          missing('表情包丢失了qwq');
+          missing('表情包丢失了');
         });
         return box;
       }
@@ -4115,7 +4115,7 @@
          被察觉时才标「TA 发现了」——没察觉的不标，悬念留给你自己品。 */
       function checkinCard(msg) {
         var box = h('div', 'msg-checkin');
-        /* 居中系统卡的抬头（用户 2026-09-29）：点明这是窥视镜头，
+        /* 居中系统卡的抬头（需求 2026-09-29）：点明这是窥视镜头，
            不是任何人发的消息 —— caption 也不再带「你悄悄看了一眼」前缀。 */
         box.appendChild(h('div', 'msg-checkin-head', '偷看了一眼'));
         var img = h('img', 'msg-photo-img');
@@ -4254,7 +4254,7 @@
             box.appendChild(h('span', 'msg-photo-miss', '图库打不开'));
           });
           /* 点一下看整张。图注只在**放大态**里出现 —— 铺在气泡里会把
-             「一张照片」变成「一张配了解释的卡片」（用户 2026-09-23 报的）。 */
+             「一张照片」变成「一张配了解释的卡片」（需求 2026-09-23 报的）。 */
           box.addEventListener('click', function () {
             if (!fullSrc) return;
             ui.imageViewer(fullSrc, { caption: msg.caption || '', alt: img.alt });
@@ -4326,7 +4326,7 @@
         return b;
       }
 
-      /* 流式期间就按气泡协议**渐进拆段**（2026-09-26 用户：
+      /* 流式期间就按气泡协议**渐进拆段**（2026-09-26：
          「完整的气泡显示所有内容，过一会儿才拆开」—— 以前整条挤一个
          气泡、落库才拆，观感差）。段数没变只改文本，段数变了才整页重画
          （onDelta 那边配合，见热路径注释）。 */
@@ -4335,7 +4335,7 @@
         var s = splitReplyOf(pending.raw);
         var peS = Sleepy.promptEngine;
         var list = (s.bubbles && s.bubbles.length) ? s.bubbles : (s.visible ? [s.visible] : []);
-        /* 流式显示面清洗（2026-10-31 用户：能力标签在打字机里裸奔）：
+        /* 流式显示面清洗（2026-10-31：能力标签在打字机里裸奔）：
            ① 旁白剥壳（完整留内文、半截扣标记）—— 以前只有 pendingVisible
               那条单泡老路做了，多泡渐进这条路一直是裸的；
            ② 能力标签整块剥 + 半截尾巴扣掉（抽取动作仍在落库时执行，
@@ -4352,7 +4352,7 @@
         if (!segs.length) { frag.appendChild(pendingOne('')); return frag; }
         segs.forEach(function (t, i) {
           /* 拟真节奏：只画「已揭示」的段；正在打的那个泡（下标 = n）
-             顶着打字点，**更后面的泡先不出场**（2026-10-29 用户：
+             顶着打字点，**更后面的泡先不出场**（2026-10-29：
              一排泡全是三个点不好看 —— 出场的永远只有带点的那一个）。 */
           var b = pendingOne(i < pendingReveal.n ? t : '');
           if (i > pendingReveal.n) b.style.display = 'none';
@@ -4418,7 +4418,7 @@
         return bubble;
       }
 
-      /* reroll 挪进加号面板（2026-10-28 用户：气泡上不再挂 reroll）。
+      /* reroll 挪进加号面板（2026-10-28：气泡上不再挂 reroll）。
          面板点「重说」= 对**最后一条**助手正文回复发起重说 ——
          和原来挂气泡尾的条件一致（isLast && !type），只是入口变了。 */
       function rerollFromPanel() {
@@ -4458,7 +4458,7 @@
          「整条按 \n 拼进一个气泡」的老路连同它的旁白清洗一起并进 pendingSegs。 */
 
       /* ======================== 多选 ========================
-         ⚠️ 选择是**按气泡**算的，不是按整条消息（2026-09-23 用户：
+         ⚠️ 选择是**按气泡**算的，不是按整条消息（2026-09-23：
          「多选气泡的时候，点击第二个气泡就会退出多选」）。
          以前 selected 的键是 msg.id，而一条回复会被 || 拆成好几个气泡 ——
          点同一条的第二个气泡就是「取消同一条」，选中集合当场变空、直接
@@ -4497,7 +4497,7 @@
         renderSelection();
         /* 勾直接翻在现有 DOM 上，**别整流重画** —— 重画会把照片/表情的
            <img> 整个重新挂载，高度在 scrollTop 恢复之后才长回来，
-           眼前这段就上下跳（用户 2026-10-06：多选时点气泡还是会上移/下移）。
+           眼前这段就上下跳（需求 2026-10-06：多选时点气泡还是会上移/下移）。
            勾是 absolute 定位的 ::after，不占布局，翻类零位移。 */
         var el = msgWrap.querySelector('[data-key="' + key + '"]');
         if (el) el.classList.toggle('is-selected', !!selected[key]);
@@ -4544,7 +4544,7 @@
 
       /* 条子是从**上面**插进流里的（它 append 在 .msg-wrap 之前），所以它一露面，
          消息区就矮一条子那么高、顶边也被推下去同样多 —— 结果是**用户眼前的
-         这段对话整体往下滑 47px**（用户 2026-09-23：「聊天里面的多选，我点一个
+         这段对话整体往下滑 47px**（需求 2026-09-23：「聊天里面的多选，我点一个
          气泡之后页面就会下滑」；量过：进多选前 wrap.top=100，进了之后 147，
          参照气泡的屏幕坐标 109 → 156。**点气泡本身不动**，动的是这一下露面）。
 
@@ -4815,7 +4815,7 @@
         return card;
       }
 
-      /* 系统卡的长按菜单（2026-10-29 用户：系统信息也要能删）：
+      /* 系统卡的长按菜单（2026-10-29：系统信息也要能删）：
          这些是动作记录/播报，不是话 —— 引用、回复都没有意义，只给删除。 */
       function openSysMenu(msg, anchorEl) {
         var pop = ui.anchorPopover(anchorEl, { className: 'msg-pop', arrow: true });
@@ -4844,7 +4844,7 @@
         renderQuote();
         textarea.focus();
         /* 这里原来弹一句「已引用这一句 · 输入框空着点发送就是让 TA 回这句」。
-           2026-09-23 用户：「引用不要弹出 toast」—— 引用条本身就杵在输入框上方
+           2026-09-23：「引用不要弹出 toast」—— 引用条本身就杵在输入框上方
            写着引了哪一句，再弹一个居中浮层纯属打扰（引用是高频动作）。 */
       }
 
@@ -4927,7 +4927,7 @@
         } else {
           /* 只改被点中的那一段，再用 '||' 拼回去 —— 正文的存储格式就是
              `a || b || c`（见 prompt-engine 的 splitBubblesT）。
-             以前是整条一起改，所以用户「编辑这一句」时看到的是整轮的分层结构。 */
+             以前是整条一起改，所以规格「编辑这一句」时看到的是整轮的分层结构。 */
           var arr = Sleepy.promptEngine.splitBubbles(msg.content || '');
           arr[idx] = next;
           var patch = { content: arr.join(' || ') };
@@ -5011,7 +5011,7 @@
       }
 
       async function removeMsg(msg, idx) {
-        /* 删的是**被长按的那一个气泡**，不是整条消息（用户 2026-09-23：
+        /* 删的是**被长按的那一个气泡**，不是整条消息（需求 2026-09-23：
            「删除按钮是一次性删除了本次所有对话气泡而不是某个气泡」）。
            一条回复会被 || 拆成好几段，以前这里 dropMessages 整条 → 一次
            全没了。现在只在多气泡时才问「这一句」，一段话的附件气泡照旧
@@ -5033,7 +5033,7 @@
       /* ==================== 文字麻将（wm-core.js 接线层） ====================
 
         状态挂在对话对象上（c.wm = { game, pending, charLastPlay }），按对话
-        存档（用户 2026-10-25 定稿）：切对话互不干扰、退到列表再回来牌局还在。
+        存档（需求 2026-10-25 定稿）：切对话互不干扰、退到列表再回来牌局还在。
         读写纪律（store 深拷贝红线）：
         · 读走 wmOf(chatId) —— 每次从 store 现取，不缓存整局对象；
         · 写走 wmSave(chatId, fn) —— 进 mutate 拿**全量**列表改完整体落盘。
@@ -5557,7 +5557,7 @@
             }
             if (!lines.length) return { detail: '空的，什么都没聊', learned: '' };
             /* learned 只提炼**值得知道**的：短应酬（你好/嗯/在吗）不算
-               「TA 知道了什么」（2026-10-29 用户「信息很多但没用」）。 */
+               「TA 知道了什么」（2026-10-29 规格「信息很多但没用」）。 */
             var userSays = lines.filter(function (l) { return l.indexOf('你：') === 0; })
               .map(function (l) { return l.slice(2); })
               .filter(function (t) { return t.length >= 6; })
@@ -5663,10 +5663,10 @@
       }
 
       /* 模拟手指滚屏：v282 起并入 revScrollTick（每拍随机决定翻/回/停/甩），
-         匀速传送带版退役 —— 用户 2026-10-29「不想太机械化」。 */
+         匀速传送带版退役 —— 2026-10-29「不想太机械化」。 */
 
       /** 内心想法：裸 LLM 一次调用（走主 API 候选首位），失败回 ''（不弹幕不阻断）。
-          2026-10-29 用户「弹幕没有他本人的感觉」：以前只喂 400 字人设切片，
+          2026-10-29 规格「弹幕没有他本人的感觉」：以前只喂 400 字人设切片，
           飘出来的自然是没脸没腔的通用句。现在给全人设（compileCharacter：
           本体+皮套分层原文）、TA 的记忆、你们最近的对话 —— 飘过来的那句
           得真的是「他」看到这些东西时会想的话。 */
@@ -5738,7 +5738,7 @@
         return attempt(0);
       }
 
-      /** 心声保底（2026-10-29 用户「没有心声飘过很平淡」）：模型想法没到位
+      /** 心声保底（2026-10-29 规格「没有心声飘过很平淡」）：模型想法没到位
           （没配 API / 超时 / 空回）也要有一条弹幕 —— 只用情绪模板，
           绝不编造「看到了什么」（具体内容只来自采样器的 learned）。
           2026-10-29 二修：池子扩了，并且按当前看的面换话术 —— 以前
@@ -5786,7 +5786,7 @@
         if (!plan.length) { ctx.toast('这台手机上没有 TA 能看的东西', 'warn'); return; }
 
         var host = (Sleepy.el && Sleepy.el.phone) || document.getElementById('phone');
-        /* 遮罩层（2026-10-29 用户点名要的）：轻暗化 + 顶部胶囊 + 弹幕都在
+        /* 遮罩层（2026-10-29 设计规格要求的）：轻暗化 + 顶部胶囊 + 弹幕都在
            这层「接管感」里，底下的真页面照样看得见、照样在滚 —— 是
            「TA 正在翻」的氛围，不是把手机盖住。pointer-events:none，
            只有胶囊上的按钮可点。 */
@@ -5797,7 +5797,7 @@
         var stopB = h('button', 'rev-cap-btn rev-cap-stop', '×');
         var btnRow = h('span', 'rev-cap-btns');
         btnRow.appendChild(pauseB); btnRow.appendChild(stopB);
-        /* 反查手机：帮 user 换头像（用户 2026-10-27：TA 翻你手机时顺手帮你换）。
+        /* 反查手机：帮 user 换头像（需求 2026-10-27：TA 翻你手机时顺手帮你换）。
            系统相册选图 → 落图库(kind:'avatar') → 写回当前 user 马甲的 avatarMedia。
            复用 idcard 头像字段那套 media.shrink+put，不另起炉灶。 */
         var avB = h('button', 'rev-cap-btn rev-cap-avatar', '头像');
@@ -5842,7 +5842,7 @@
         function danmu(text) {
           if (!text) return;
           /* 心声飘过来时他会停一下 —— 像是站在那里想这句（2026-10-29
-             用户「不想太机械化」：滚屏节奏有心跳，不是匀速传送带）。 */
+             规格「不想太机械化」：滚屏节奏有心跳，不是匀速传送带）。 */
           state.lingerUntil = Date.now() + 1500 + Math.random() * 1000;
           var b = h('div', 'rev-bubble', text);
           b.style.left = (8 + Math.random() * 54) + '%';
@@ -5916,12 +5916,12 @@
           } catch (e) { /* 还页失败不影响播报 */ }
           renderMessages();
           ctx.toast(interrupted ? 'TA 被你抓个正着' : (charName + ' 看完了你的手机'), 'ok');
-          /* 看完要有下文（2026-10-29 用户「查完之后他不说话么」）：
+          /* 看完要有下文（2026-10-29 规格「查完之后他不说话么」）：
              eventNote 刚挂好，直接让 TA 开口接住这一眼 —— 被打断也一样，
              被抓个正着更要说话。等回复中就让下一轮自然带。 */
           requestReply({ proactive: true });
         }
-        /* 模拟手指滚屏 —— 2026-10-29 用户「不想太机械化」：
+        /* 模拟手指滚屏 —— 2026-10-29 规格「不想太机械化」：
            旧版是每 1.2s 匀速滚一格的传送带。现在每拍随机决定：
            往下翻一截 / 往回再看看 / 停住不动（在读）/ 甩到底或回顶，
            节奏 700~2200ms 不等；心声飘过来时再停 1.5~2.5s 像在想。 */
@@ -7272,7 +7272,7 @@
           if (input.parentNode) input.parentNode.removeChild(input);
           if (!f) return;
 
-          /* 2026-10-29 用户点名：从「发文件」选了视频 / 系统没给 mime 时，
+          /* 2026-10-29 设计规格指定：从「发文件」选了视频 / 系统没给 mime 时，
              不能落成一行「xxx.mp4」的文件卡 —— 按文件本体嗅探真实类型，
              视频走视频链路（入库 + 可播放 + 视频理解），图片同理。 */
           var sniffed = sniffFileKind(f);
@@ -7398,7 +7398,7 @@
         var cur = getChat(chatId) || {};
         var ch = findCharacter(cur.characterId);
         var who = ch ? ch.name : '对方';
-        /* 备注单独一个框（用户 00:19 批的）：挤在一个输入里写「68 买奶茶」
+        /* 备注单独一个框（需求 00:19 批的）：挤在一个输入里写「68 买奶茶」
            太费劲 —— 备注是正经内容，该有自己的格子。
            金额照旧走 parseTransfer 校验，输入框里只写数字。 */
         ui.prompt({
@@ -7451,7 +7451,7 @@
         /* 反查手机：让 TA 偷看你的手机（同意/拒绝走 TA 的倾向档） */
         { id: 'revcheck', svg: PLUS_ICON.revcheck, name: '反查手机', run: function () { closePanel(); revManual(ctx); } },
         { id: 'diary', svg: PLUS_ICON.diary, name: '日记', run: function () { closePanel(); ctx.open('diary', {}); } },
-        /* 翻译开关（用户 2026-09-19：「翻译开关放在加号面板吧」）。
+        /* 翻译开关（需求 2026-09-19：「翻译开关放在加号面板吧」）。
            它是 **toggle**，不关面板 —— 想边看译文边点其他的很正常。
            开关只决定「要不要看译文」；他说不说外语由常驻地点决定。 */
         { id: 'translate', svg: PLUS_ICON.translate, name: '翻译',
@@ -7726,7 +7726,7 @@
             return { ok: true, replaced: true };
           }
           /* 新生成的图顺手收进相册 —— 以前只写了 media（图库），相册里翻不到，
-             想再找那张图只能回聊天记录里翻（用户 2026-09-23 报的）。
+             想再找那张图只能回聊天记录里翻（需求 2026-09-23 报的）。
              重画（replaceId）不算新图，上面已经 return 掉了。
              2026-10-06 相册按账号隔离：归属显式记成这场对话的角色，
              别靠「当前活动角色」猜 —— 群岛里切过号就会归错人。 */
@@ -8206,7 +8206,7 @@
         return av;
       }
 
-      /* 角色侧头像：**跟账号同步**（用户 2026-09-22：「chat 聊天里气泡旁的
+      /* 角色侧头像：**跟账号同步**（需求 2026-09-22：「chat 聊天里气泡旁的
          头像也没同步」）。以前这里写死 `av.src = AVATAR`（一颗灰圆占位），
          不管角色设没设头像都一样 —— 现在本地图 avatarMedia 优先、
          其次网址头像。
@@ -8242,7 +8242,7 @@
         else msg.url = s.url;
 
         addMessage(chatId, msg);
-        /* 发完就把输入框清空 —— 用户：「先做那种发完就清空吧」。
+        /* 发完就把输入框清空 —— 需求：「先做那种发完就清空吧」。
            那几个字本来就是拿去**搜表情**的，表情发出去了它就完成使命了；
            留着只会让人以为还没发出去。 */
         textarea.value = '';

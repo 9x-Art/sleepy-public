@@ -257,7 +257,7 @@
 
   /* 顶栏中间的**名字**（用户定的：三版 UI 顶栏都不放头像）。
      点名字直接去朋友圈（少点一下）。未读光点不在顶栏 ——
-     用户：「要放在 char 在聊天气泡旁边的头像右上角」，
+     需求：「要放在 char 在聊天气泡旁边的头像右上角」，
      那边由 page-chat 的 msg-ava-wrap 管，这里不带光点。 */
   function mountName(ctx, chatId, name) {
     var slot = h('button', 'avatar-slot head-name-slot');

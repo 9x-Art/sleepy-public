@@ -875,7 +875,7 @@ export default {
 
       /* ---- POST /account/forget {pass} 注销（QQ 号删除出口，iOS 审核硬要求）----
          老密码确认后：全部设备/会话作废，qq 字段脱敏（哈希与码的账目保留）。
-         密码彻底丢了 → 人工（Q 群）核身处理，起步期量小最省事（用户 2026-10-21 定）。 */
+         密码彻底丢了 → 人工（Q 群）核身处理，起步期量小最省事（需求 2026-10-21 定）。 */
       if (p === '/account/forget' && request.method === 'POST') {
         await ensureSchema(env);
         const s = await sessionOf(request, env);

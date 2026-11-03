@@ -284,7 +284,7 @@
       '.page[data-page^="qunsheng"]{background:#f4f0e7;}',
       '.page[data-page^="qunsheng"] .page-inner{background:#f4f0e7;}',
       '.page[data-page^="qunsheng"] .app-body{background:#f4f0e7;}',
-      /* ---- 2026-10-08 布局返修（用户反馈第 3 条）----
+      /* ---- 2026-10-08 布局返修（反馈第 3 条）----
          ① 滚动归页内：.page 对群声关掉自身整页滚动，.app-body 变有界 flex
             容器，.qs-root 占满 —— 只有 .qs-main 滚，报头和底栏钉在原位。
          ② 边距收掉 page-inner 的左右 22px（报纸版式自己管边距，不再
@@ -311,7 +311,7 @@
       '.qs-id-colors button{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;}',
       '.qs-id-colors button.on{border-color:#2b2620;}',
       '.qs-id-save{margin-top:10px;border:0;border-radius:6px;background:#315d68;color:#f4f0e7;font-size:11px;padding:6px 16px;cursor:pointer;font-family:inherit;}',
-      /* ---- 2026-10-10 用户反馈：壳头别再挂「群声」title ——
+      /* ---- 2026-10-10 反馈：壳头别再挂「群声」title ——
          群声各页自带报刊报头/顶栏 crumb（板块名就在那），默认玻璃壳头
          （app.js 372 行拿 def.title 填的「群声」）整条藏掉，缝也不占高。
          返回键页内自有 qs-backbar，不依赖壳头的 back-btn。 */

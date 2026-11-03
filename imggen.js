@@ -3,7 +3,7 @@
    依赖：store.js（localStorage）、media.js（IndexedDB 图库）。
    必须排在 media.js 之后、page-imggen.js 之前。
 
-   两类接口（用户：「分为常规生图模型和 nai 等热门模型，专门分出来」）：
+   两类接口（需求：「分为常规生图模型和 nai 等热门模型，专门分出来」）：
    - general  OpenAI 兼容式 /v1/images/generations，b64_json 返回
    - nai      NovelAI /ai/generate-image，返回的是一个 **zip 包**
               （里面躺着一张 png）—— 不引依赖，用 DecompressionStream
@@ -298,7 +298,7 @@
 
   function setCurrent(id) { return store.set('imgApiId', id); }
 
-  /* 新建一份接口记录：**不再预灌内置预设词**（2026-10-08 用户拍板：
+  /* 新建一份接口记录：**不再预灌内置预设词**（2026-10-08 设计确认：
      「不要把我们的提示词放出来」—— 预灌的词会直接出现在设置表单里）。
      留空即可：正式/legacy/NAI 三条路对空 positivePreset / negativePreset
      都回落 BUILTIN_PRESET，拼出来的词分毫不变，只是不再展示、不再拷进
@@ -312,7 +312,7 @@
       apiKey: '',
       model: '',
       size: kind === 'nai' ? '832x1216' : '1024x1024',
-      /* 用户 2026-09-29：「所有 api 类型的超时都改成 60s」——
+      /* 2026-09-29：「所有 api 类型的超时都改成 60s」——
          生图不再按类型给长超时，统一 60。 */
       timeoutSec: 60,
       positivePreset: '',
@@ -1052,7 +1052,7 @@
      命中之外的分支（性别未指定 / NAI / 真实身份 / custom 之外的一切）维持现状。
 
      这段正文已经写死「Follow the description … do not replace them with a
-     default face」—— 即用户要求强调的**设定优先**，不另补一条重复的词，
+     default face」—— 即需求强调的**设定优先**，不另补一条重复的词，
      程序也不对描述里的外貌做二次改写。
 
      ⚠️ 三点如实标注，别当成通用规则往外扩：
@@ -2296,7 +2296,7 @@
      很多中转站没有独立的 /images/generations，生图模型挂在文字通道上：
      发一段「画这张图」的对话，模型回 markdown 图链 / 裸链 / dataURI。
      解析顺序：markdown 图片 → dataURI → 带图片后缀的裸链。
-     报错契约与 general 一致：{message, detail}，detail 原样留给用户反馈中转站。 */
+     报错契约与 general 一致：{message, detail}，detail 原样留给反馈中转站。 */
   function extractImageFromChatText(text) {
     var t = String(text || '');
     var m = /!\[[^\]]*\]\((https?:\/\/[^)\s]+|data:image\/[^;)]+;base64,[A-Za-z0-9+/=]+)\)/.exec(t);

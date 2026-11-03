@@ -57,7 +57,7 @@ function walk(dir, base, out) {
   return out;
 }
 
-/* PWA 更新检测（2026-10-31 用户点名）：页面得知道自己多老才能跟
+/* PWA 更新检测（2026-10-31 设计规格指定）：页面得知道自己多老才能跟
    version.json 比。把构建号烙进部署副本的 index.html（<head> 里一枚
    meta），仓库里的 index.html 一个字不动 —— 只有线上页面自带身份。
    ⚠️ 必须在 walk() 算哈希**之前**烙：APK 的 Updater 逐文件校验 sha256，

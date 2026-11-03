@@ -13,14 +13,30 @@
    skipWaiting + clients.claim 让新版立刻接管，不用关两次页面。
    （file:// 不走 SW，本来就是全离线的，两边正好互补。）
 
-   v310（2026-10-31）：**iOS PWA dock 下探**（style.css）——用户反馈「dock 栏
+   v325（2026-11-03）：**裸 delta 乱码回归 + 表单残留 + APK 状态栏衔接批**
+   （phone.js / page-worldbook.js / page-diary.js / page-group.js /
+   page-singleapi.js / page-imggen.js / page-presets.js / page-settings.js /
+   page-subapi.js / style.css / app.js）——
+   ① 模型漏写 [手机] 前缀时，裸 {"app":…} JSON 漏进聊天气泡（真机抓到
+   health/add_day）：extractPhoneDeltas 补裸 JSON 容错，非 delta 形状原样保留；
+   ② 表单页「第二次打开还挂着上一次的输入」：worldbook-book/entry-edit、
+   diary-edit、group-create、summary/imggen/mainapi/mcp/subapi 的 add/edit、
+   preset-custom-edit 共 13 页补 freshOnOpen（同参短路会端回旧 DOM）；
+   ③ APK 状态栏衔接反转：壳改沉浸式 fullscreen 隐藏系统状态栏（见 v325 壳侧），
+   前端 apk-shell 口径从「藏 #statusbar + --sb-h:0px」（v312 旧前提：壳非
+   fullscreen、避免两个时间）反转成「显示 #statusbar + --sb-h 维持 32px」，
+   照 386 行 Android fullscreen 假状态栏必须留原则，由前端时间/电量浮层接管顶部
+   占位、内容从状态栏下避让刘海。
+   → 必须跳版本：phone.js + 一批 page-*.js + style.css + app.js 都变了。
+
+   v310（2026-10-31）：**iOS PWA dock 下探**（style.css）——反馈「dock 栏
    底下空一截」：PWA 里 --safe-bottom 是整个 home indicator 区，dock 浮在
    +8px 上悬得很高。html.ios-pwa 里 dock 下探到 safe*0.4+4（压指示条上缘，
    iOS 主屏 dock 习惯位），--dt-pad-bottom 132→106 同步收网格底部预算。
    → 必须跳版本：style.css 变了。
 
    v309（2026-10-31）：**桌面横滑限幅 + 照片墙点格加格**（page-desktop.js）——
-   ① 用户反馈「太顺滑了，从第一屏直接滑到最后一屏」：scroll-snap 拦不住惯性
+   ① 反馈「太顺滑了，从第一屏直接滑到最后一屏」：scroll-snap 拦不住惯性
    穿越多屏，触屏加「起手屏 ±1」限幅（touchend 静止后超出拉回）、
    滚轮/触控板 260ms 内最多翻一屏；② 负一屏照片墙空格点击带格号，
    新照片插到点的那个格（以前一律追加队尾，表现「1 之后默认加到 2」）。
@@ -49,7 +65,7 @@
    · 线下场景页无法下滑：满屏三段漏了中间层 .app-body{min-height:0}
      （group-offline-scene 整组补齐）；线下门弹窗定高内滚延续 v305；
    · 外观「正文字颜色」只管外部 UI，聊天正文改吃 --g-ink-chat（主题墨色）；
-     底栏图标改跟 --g-ink（用户：「别的图标都变了，底栏没变」）；
+     底栏图标改跟 --g-ink（需求：「别的图标都变了，底栏没变」）；
    · 健康打卡日期打架：atOf 补 ISO 字符串解析 + day 日期优先归属 +
      UI 日期标签唯一出口；随手记剪裁上限放宽 + 协议卡补长度引导。
    → 必须跳版本：app.js / style.css 等运行时文件全变了。
@@ -71,11 +87,11 @@
      停止补落接清扫（剥标签不执行）；pendingVisible 删除（并进 pendingSegs）；
    · page-group-ai：群聊落库前剥能力标签与旁白（quote 字段同）；
      page-group：气泡渲染兜底（老消息也干净）；
-   · 设置族去解释行批（用户 2026-10-31：「解释太多太密，所有按钮都有注释」）：
+   · 设置族去解释行批（需求 2026-10-31：「解释太多太密，所有按钮都有注释」）：
      settings / chat-settings / tts / singleapi / subapi / idcard / appearance
      的菜单行 hint、组注（group 第二参）与静态 set-group-note 全部删除 ——
      动态状态值（模型名 / 开关读数 / 空态提示 / 确认弹层说明）与按钮 title 保留；
-   · demo-seed 小满改人设（用户 2026-10-31）：「拿token办事」口头禅全下岗
+   · demo-seed 小满改人设（需求 2026-10-31）：「拿token办事」口头禅全下岗
      （content/speech/欢迎词/朋友圈），欢迎词按 || 分三泡、「不用先配好什么」
      那句删掉（聊天要配 API 才通，不误导）。
    → 必须跳版本：prompt-engine.js / page-chat.js / page-group.js /
@@ -374,7 +390,7 @@
      不跳位老用户拿到的还是能直接调 addEvent 的旧版。
 
    v150（2026-10-03）：日历真机反馈三修 ——
-   ① 新建入口从右下角悬浮加号挪到**顶栏「设置」旁边**（用户：固定死右下
+   ① 新建入口从右下角悬浮加号挪到**顶栏「设置」旁边**（需求：固定死右下
       有点遮屏幕，会压住列表最后一条日程）；`.cal-fab` 样式随之删除。
    ② page-calendar.js 的 calendar-new / calendar-event 声明 freshOnOpen：
       修「同一天再点加号，上次填的还在」与「记下他推掉了之后再看详情页
@@ -480,7 +496,7 @@
 
    v106（2026-09-22）：浮岛的文案块改成**按房型各写一份 top** —— 两张底图是
    分别生成的，岩尖高度不一样（实测屏幕 y：孤岛 506 / 群岛 476，差 30px），
-   共用一个 top 的话群岛会空出 54px（用户：「其实群岛看会更明显」）。
+   共用一个 top 的话群岛会空出 54px（需求：「其实群岛看会更明显」）。
    `.isl-page` 加了 `data-kind`，CSS 分两份（62.8% / 59.3%）。
    → 必须跳版本：style.css / page-island.js 都改了。
 
@@ -504,7 +520,7 @@
    v103（2026-09-22）：**浮岛选岛页换成整幅生成插画**（`art/isle.webp` /
    `art/archipelago.webp`，各约 110 KB）—— 原来那版是 CSS 画的扁平淡绿椭圆 +
    棒棒糖树，加上一层薄荷绿渐变和一团冷蓝光，跟全站纯白 + 焦糖的身份完全打架
-   （用户：「配色不好看，那两个岛屿也不是很美观」）。
+   （需求：「配色不好看，那两个岛屿也不是很美观」）。
    同时撤掉岛名下面的「1v1 / 1vN」小徽章，进岛从「点整页」改成明确的一个
    「进 岛」按钮；第二层存档列表页那层薄荷绿→蓝的渐变也一起改成暖白。
    顶栏在这页要彻底隐形：默认的 `.app-head` 是玻璃（`backdrop-filter:blur(14px)`
@@ -591,7 +607,7 @@
 /* v169（2026-10-05）：**桌面第 3 屏空壳 + 群聊美化 + 设置页 MCP 位**——
    · page-desktop：版本 19 —— 第 3 屏贴纸/钱包/组件商城改 type 'blank'
      （空玻璃壳，无图标无跳转，功能都有别的入口）；ta 图标重画（拱窗 + 心）。
-   · style.css：负一屏网格 align-content center→end（用户「整体下移一些，
+   · style.css：负一屏网格 align-content center→end（规格「整体下移一些，
      下面太空」）；.w-blank / .gd-beautify 新样式。
    · page-group + core-group：群详情「发起多人线下」卡改「群聊美化」
      （beautifyCss 白名单字段 + group-beautify 编辑页 + group-chat 注入，
@@ -666,13 +682,13 @@
 /* v190（2026-10-06）：**小岛指南 App（使用说明手册）**——①新增 page-guide.js，注册 app 'guide'：按板块把现有功能（聊天/浮岛/世界书/日记/相册/日历/ta/We/外观/组件/工坊/预设/设置各 API…）整理成可滚动的说明书，条目带「在哪儿」+「打开›」可点跳对应 App；②桌面第 3 屏 (x3,y4) 那格从「钱包」空壳改成「小岛指南」真入口（p3-guide / type app / app guide），ICONS 加 guide 图标，LAYOUT_VERSION 19→20 强制迁移；③style.css 加手册页样式。→ 必须跳版本：page-guide.js（新）/ page-desktop.js / style.css / index.html 都变了。 */
 /* v191（2026-10-06）：**四件事下线**——①桌面 6 个组件彻底移除（情绪印章 mood / 思念电量 battery / 时钟 clock / 双城时钟 worldclock / 正在播放 player / 农历日历组件 calendar）：RENDER 里的渲染函数 + style.css 对应 CSS + 孤儿函数（lunarText / cycleMood）+ 无消费者的 ICONS.mood/ICONS.clock 全清（**第 3 屏那个日历 App 不动**，它走 type:'app'）；②查手机里的相册 App 下线（一直只是空壳，无专属页面无专属数据表），PHONE_APPS 白名单 + 图标 + 文案 + phone.js 的 appOrder 全清；③面具轮盘（宇宙内就地切皮套）下线：page-switch.js 删 openWheel/getChatSafe/buildWheel/switchMask 整块 123 行 + switcher.wheel 导出 + page-chat.js 的死代码 chatDetailRefresh + style.css 的 .wh-* CSS（.sw-mask 是系统级切号器，只摘 .wh-mask 部分）；④删掉 smoke.js 里那条「禁止出现来源项目名」的护栏（新项目不该有这类来源禁令）。→ 必须跳版本：page-desktop.js / style.css / page-phone.js / phone.js / page-phone-ai.js / page-switch.js / page-chat.js / scripts/smoke.js 都变了。 */
 /* v192（2026-10-06）：**小岛指南改折叠版（最小版）**——page-guide.js 重写：开篇常显 + 「第一次使用」默认展开 + 其余 10 个板块默认折叠（原生 <details>，箭头自绘）；内容块分 7 类（p / item / note / tag / li / step / qa），靠字体与颜色分层突出重点（功能名=深焦糖加粗，说明降一级，提示块=浅底+左边框，能力标记三色：本地/需要API/选配）。⚠️ 类名前缀从 .gd- 换成 .gz-（.gd- 是 page-group.js 群详情的前缀，会撞）。内容对齐 docs/文稿-小岛指南 定稿 v1。→ 必须跳版本：page-guide.js / style.css 都变了。 */
-/* v193（2026-10-07）：**默认主题换奶蓝**——用户：「纯白不太好看了」「搭配的橙色不好看，马卡龙类会好看些，倾向蓝色的、透亮的柔和色调」。①style.css :root 主色系焦糖→奶蓝（accent #7CA8D6 / deep #5C86B4 / soft #C3DCF1 / pale #E4EEF9），字色暖深棕→冷墨（#2F3A47/#66768A/#94A3B4），底色纯白→奶蓝（base #F7FAFE / base-2 #F1F6FC / base-3 #E3EDF7），--g-pin-wash 跟着主色走，设置页织物纸转冷灰；②清掉 **144 处写死的 rgba(176,138,94,*) 焦糖**→rgba(124,168,214,*)，以及 #8A6844 兜底 / 音乐卡 / 照片墙纸带等暖色小件；③JS 里的硬编码同步：page-appearance 第一套改名「奶蓝」+ chip/bg/ink 全套换新、auto 壁纸预览、textColor 默认；page-workshop 模板默认色；phone ACCENTS 首色；splash --g-accent 兜底；sw.js 离线降级页。玻璃系统（--g-glass 系 / --tk 系 / --g-lens）本来就是冷灰蓝调，**未改动**。⚠️ 旧红线「不要蓝绿」已由用户澄清作废（禁的是廉价荧光绿，蓝与柔和蓝绿可用），:root 注释已更新。→ 必须跳版本：style.css / page-appearance.js / page-workshop.js / phone.js / splash.js / sw.js 都变了。 */
-/* v194（2026-10-07）：**浮岛页保留暖杏色系（奶蓝主题的例外）**——用户：「浮岛页的进孤岛其实用原本的就可以，因为背景是杏色那种，用蓝色会比较突兀」。把 v193 里被批量换成奶蓝的浮岛专属色回退成暖杏：island 页的返回键/文字、isl-dot.is-on、进岛按钮底（#B08A5E / #8A6844）。⚠️ 只有 isl-* 与 island 页那两支享受这个例外；simple-form / simple-sub 是浮岛与名片夹共用类，跟随全局奶蓝。已在 style.css 该块顶部加注释锁住这个例外，别再当成漏改的旧焦糖统一掉。→ 必须跳版本：style.css 变了。 */
+/* v193（2026-10-07）：**默认主题换奶蓝**——需求：「纯白不太好看了」「搭配的橙色不好看，马卡龙类会好看些，倾向蓝色的、透亮的柔和色调」。①style.css :root 主色系焦糖→奶蓝（accent #7CA8D6 / deep #5C86B4 / soft #C3DCF1 / pale #E4EEF9），字色暖深棕→冷墨（#2F3A47/#66768A/#94A3B4），底色纯白→奶蓝（base #F7FAFE / base-2 #F1F6FC / base-3 #E3EDF7），--g-pin-wash 跟着主色走，设置页织物纸转冷灰；②清掉 **144 处写死的 rgba(176,138,94,*) 焦糖**→rgba(124,168,214,*)，以及 #8A6844 兜底 / 音乐卡 / 照片墙纸带等暖色小件；③JS 里的硬编码同步：page-appearance 第一套改名「奶蓝」+ chip/bg/ink 全套换新、auto 壁纸预览、textColor 默认；page-workshop 模板默认色；phone ACCENTS 首色；splash --g-accent 兜底；sw.js 离线降级页。玻璃系统（--g-glass 系 / --tk 系 / --g-lens）本来就是冷灰蓝调，**未改动**。⚠️ 旧红线「不要蓝绿」已由用户澄清作废（禁的是廉价荧光绿，蓝与柔和蓝绿可用），:root 注释已更新。→ 必须跳版本：style.css / page-appearance.js / page-workshop.js / phone.js / splash.js / sw.js 都变了。 */
+/* v194（2026-10-07）：**浮岛页保留暖杏色系（奶蓝主题的例外）**——需求：「浮岛页的进孤岛其实用原本的就可以，因为背景是杏色那种，用蓝色会比较突兀」。把 v193 里被批量换成奶蓝的浮岛专属色回退成暖杏：island 页的返回键/文字、isl-dot.is-on、进岛按钮底（#B08A5E / #8A6844）。⚠️ 只有 isl-* 与 island 页那两支享受这个例外；simple-form / simple-sub 是浮岛与名片夹共用类，跟随全局奶蓝。已在 style.css 该块顶部加注释锁住这个例外，别再当成漏改的旧焦糖统一掉。→ 必须跳版本：style.css 变了。 */
 /* v195（2026-10-07）：**海盐换薄荷 + 小岛指南多色混搭**——①原 sea 主题（冷蓝）跟新的奶蓝默认撞色，用户同意改成马卡龙薄荷绿（accent #8AC9C3 / base #F3FBFA / 墨色同步转绿），data-theme 的 id 仍是 sea 不动（老存档里选过它的不能失效）；page-appearance 的 THEMES 预览色卡同步改名为「薄荷」。②小岛指南 12 个板块各配一支马卡龙色（SECTIONS 增加 c 字段，渲染时写进 --gz-c），标题/色点/箭头/功能名/步骤圆标/路径/列表 marker/提示块左边框/问答问句全部吃它；提示块底用 color-mix 兑到 12%（12 种色再给实底太吵）。→ 必须跳版本：style.css / page-guide.js / page-appearance.js 都变了。 */
 /* v196（2026-10-07）：**手册目录统一色 + 主题 id sea 改 mint**——①用户看真机反馈：12 个板块标题各用一色显得花花绿绿，大目录统一成冷墨 var(--g-ink)，箭头回中性灰；板块马卡龙色只留在色点（折叠时的颜色线索）和展开后的内容里（功能名/步骤圆标/路径/提示块/问答问句不变）。②用户确认开发期没有外传用户，主题 id 也可以改：data-theme 的 sea 全部改名 mint（style.css 5 处选择器 + page-appearance THEMES 的 id），旧 sea 字样零残留。③顺手处理浏览器点击 summary 的金色 focus 框：outline:none + 只保留 :focus-visible 键盘可达。→ 必须跳版本：style.css / page-appearance.js 都变了。 */
-/* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，用户要求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
+/* v197（2026-10-07）：**第 3 屏外观格改空壳**——外观在主屏 p1-look 已有一份，第 3 屏 p3-look 是重复入口，需求改成空的占位（做法同版本 19 那批贴纸/组件商城）：type 改 blank，图标空、内容空、不跳转，app 字段保留以便一行接回，格子 id 沿用 p3-look。LAYOUT_VERSION 20→21 强制迁移；冒烟同步：空壳名单加 p3-look、补「主屏 p1-look 必须仍是 app」的保护、版本断言改 21。→ 必须跳版本：page-desktop.js / scripts/smoke.js 都变了。 */
 /* v204（2026-10-07）：**用户协议 / 隐私政策（内测前第一件，发售路线 v1）**——①新增 legal.js：两份正文常量（用户协议 7 节 / 隐私政策 7 节）+ 首启弹窗（双标签切换、可滚动正文、「先看看」与「我已知情，不再提示」两个出口）+ 设置页「其他」组里两个随时可翻的入口。**「先看看」不写标记**（下次进来还会弹 —— 有意留的余地，别改成逼用户勾选）；点遮罩等同「先看看」。②store.js 新增 DEVICE_LOCAL_KEYS 判据：协议同意标记 legalAgreedAt 是**设备本地状态**，用户导出 / 内部回滚快照 / 用户导入**三个方向都不带** —— 否则换设备导入会带着上一台设备的「我已知情」直接进桌面、该弹的不弹（这是冒烟 L3 抓出来的真缺陷，不是测试写错）。它和 isProcessKey **分开单列**：过程数据要进内部快照，同意标记是两边都不进，混进去会让回滚口径失效。③真机验收（390×844 实拍）后修了四处：卡片底太透读不清 → 底色加实 + 遮罩提z-index 到 96；正文区被压到 204px → 按 dvh 重算高度 + 底部渐隐提示「下面还有」；两条按钮 flex 失衡 → 改成固定比例；**`frag.appendChild.apply(frag, out)` 只有第一个节点进去、其余静默丢** → 强调词一条都没渲染（页面看着却正常），改逐个 append，`emCount` 从 0 变成 9。另把正文里的 **强调片段改短**（长句加粗时背景色跨行断开像坏排版）。首启补上副标题。④首启弹窗挂在 splash.js 的 finish() 里**遮罩摘掉之后**触发，别盖在开屏动画上（盖上去用户会以为点不动）；legal.js 排在 ui.js / store.js 之后、splash.js 之前。④协议正文里**不许写绝对化承诺**（「永不上传」这类与可选备份矛盾的表述），冒烟 L4 用静态护栏拦住了。→ 必须跳版本：legal.js / store.js / splash.js / style.css / index.html / page-settings.js 都变了。 */
-var CACHE = 'sleepy-v324';
+var CACHE = 'sleepy-v325';
 
 /* v324（2026-11-02）：**仿时间戳复发收口**（prompt-engine.js）——用户真机：
    聊天回复又带 [12:21] 这种戳、且多条全挤一个气泡。根因：模型学历史行的
@@ -684,7 +700,7 @@ var CACHE = 'sleepy-v324';
    → 必须跳版本：prompt-engine.js 变了。 */
 
 /* v323（2026-11-01）：**整理记忆确认弹窗 + 记忆条目带温度**（page-summary.js /
-   page-chat-settings.js / prompt-engine.js）——用户反馈：①点「整理聊天记忆」
+   page-chat-settings.js / prompt-engine.js）——反馈：①点「整理聊天记忆」
    先弹窗报「多少条没整理」，确认再跑（summaryEngine 新增 pendingStat，与
    shouldRun 同一支尺：游标后 pending 段数/字数/跨天数；>120 条提示分次）；
    ②留痕条目过于事实向且太短——总结指令卡 text 字段从「一句话一个原子事实」
@@ -702,7 +718,7 @@ var CACHE = 'sleepy-v324';
    提示】= 指令的口径。→ 必须跳版本：prompt-engine.js / page-chat.js 变了。 */
 
 /* v321（2026-11-01）：**清空记录分两档**（page-chat.js / page-chat-settings.js /
-   page-group.js）——用户反馈「想只清记录，不清记忆」：①「清空聊天记录」只清
+   page-group.js）——反馈「想只清记录，不清记忆」：①「清空聊天记录」只清
    消息，dropMessages 新增 keepMemory 选项跳过向量遗忘（索引原文=TA 的记忆
    本体），TA 还记得这些对话；②「彻底清空（连记忆一起）」维持原语义。
    两档都清总结游标（消息清零后游标停在旧位数会把新消息当「已总结」）。
@@ -713,7 +729,7 @@ var CACHE = 'sleepy-v324';
    · style.css：--app-vh 由 100dvh 改为「100vh 兜底 + @supports 升级」。
      Android 系统 WebView（Chromium<108）不认 dvh，:root 那条 calc 链整体
      invalid → --dt-cell 失效：负一屏胶片条 SVG 按替换元素默认尺寸膨胀
-     占满屏、桌面格子塌缩（用户 1.1+pro 反馈「挂件巨大、App 图标很小」）；
+     占满屏、桌面格子塌缩（需求 1.1+pro 反馈「挂件巨大、App 图标很小」）；
      另给 58dvh/60dvh 两处弹层限高补 vh 兜底行。
    · beautify-css-templates.js（新文件）：美化 CSS 预设模板（点=填入、
      长按=复制），page-char-appearance / page-group 的 CSS 自定义共用。
@@ -763,7 +779,7 @@ var CACHE = 'sleepy-v324';
    → 必须跳版本：app.js 变了。 */
 
 /* v315（2026-10-31）：**PWA 更新检测**（update-check.js 新文件 / index.html /
-   page-settings.js / sw.js / scripts/gen-version.js）——用户点名：PWA 也能
+   page-settings.js / sw.js / scripts/gen-version.js）——设计规格指定：PWA 也能
    检测到更新然后更新（APK 那半 2026-10-25 就有了，这批补 web 半边）。
    ① gen-version.js：部署副本 index.html 烙 <meta x-sleepy-build>（必须在
    walk 算哈希之前烙 —— APK 逐文件 sha256 校验要算真哈希）；
@@ -789,7 +805,7 @@ var CACHE = 'sleepy-v324';
 
 /* v313（2026-10-31）：**手机使用情况（APK 壳专属）**（usage.js 新文件 /
    index.html / prompt-engine.js / page-settings.js / page-chat-settings.js）——
-   用户点名：能看手机系统使用情况（刚刚用了什么 / 整体亮屏时长等），
+   设计规格指定：能看手机系统使用情况（刚刚用了什么 / 整体亮屏时长等），
    设置里总开关 + 每个角色设置里单独开关。
    · usage.js：数据层，唯一出处 Sleepy.usage（壳桥 usageStats 聚合，本机数据）；
    · prompt-engine：线上新增 usage 槽（I02b，realworld 之后），三道闸
@@ -804,7 +820,7 @@ var CACHE = 'sleepy-v324';
 
 /* v312（2026-10-31）：**APK 壳双修**（app.js / style.css / repo-core.js）——
    ① 壳里藏假状态栏：安卓壳系统栏画在 WebView 上方，页面 #statusbar 叠在
-   下面就是「两个时间」（用户点名去掉）；app.js 按 origin（appassets.
+   下面就是「两个时间」（设计规格指定去掉）；app.js 按 origin（appassets.
    androidplatform.net）打 html.apk-shell，style.css 照 html.ios 口径
    藏 #statusbar + --sb-h:0px；
    ② 壳里零 VPN 授权：repo-core repoBases() 把壳 origin 当同源 base 顶在
@@ -902,7 +918,7 @@ var CACHE = 'sleepy-v324';
    scripts/smoke.js 都变了。 */
 
 /* v296（2026-10-30 三）：**组件商城丑小样重画**——
-   用户：「都是一格还有底色的丑丑的样子」。①帷境 wj 小样照本体重画：
+   需求：「都是一格还有底色的丑丑的样子」。①帷境 wj 小样照本体重画：
    两片带褶幕布（repeating-linear-gradient）夹「帷境/今晚，读哪一种可能」
    两行小字，替换原来的纯圆角矩形；②兜底砖（没画小样的型号）加渐变瓷面
    + 内阴影 + 右上高光点，不再像素色块；③心情印章加内圈虚线更像盖章。
@@ -1509,7 +1525,7 @@ var CACHE = 'sleepy-v324';
    → 必须跳版本：page-qunsheng.js / forum-share.js / moments-ai.js /
      life-feed.js / scripts/smoke.js 都变了。 */
 
-/* v239（2026-10-15）：**聊天历史时间标注批**（方案 A，用户拍板）——
+/* v239（2026-10-15）：**聊天历史时间标注批**（方案 A，设计确认）——
    真机复现：昨晚发的消息今天触发回复，char 以为是今天发的 ——
    喂模型的历史此前只有 role+content，「现在」层（timeFacts/群逐本体时间块）
    很全，缺的是历史每条的「何时」。数据层早有时刻（私聊 msg.timestamp /
@@ -1576,7 +1592,7 @@ var CACHE = 'sleepy-v324';
    → 必须跳版本：repo-core.js / page-repo.js / prompt-engine.js / scripts/smoke.js
      都变了（worker 不经 SW，同批带跳）。 */
 
-/* v235（2026-10-12）：**挂件灯三点返修批**（用户反馈）——
+/* v235（2026-10-12）：**挂件灯三点返修批**（反馈）——
    · 留言带「||」分割符：长按「留在灯上」原来送整条 '||' 拼起来的原文，
      改成送**长按的那个气泡**（bubbleText(msg, idx)，page-chat）；
      lampNotes.add 里再把 || 兜底转成换行（一句话一行，卡面按 \n 分行）；
@@ -1660,7 +1676,7 @@ var CACHE = 'sleepy-v324';
    ensureHomeStyle 的部件规则直接写 YR_PAGES + ' .yr-top'：选择器列表里
    后代空格只粘最后一个 → `.page[yishenruju]` 等**页面本体**直接命中
    报头规则（position:relative / bottom:-5px / height:1px），inset:0 被干掉，
-   整页塌成顶部一条 10px 小白框、看得到桌面变暗（用户：白框边 + 屏幕暗一点）。
+   整页塌成顶部一条 10px 小白框、看得到桌面变暗（需求：白框边 + 屏幕暗一点）。
    改 yrSel()：对三个页面选择器逐个接后代后缀。
    → 必须跳版本：page-yishenruju.js / index.html（?v=228）都变了。 */
 
@@ -1750,7 +1766,7 @@ var CACHE = 'sleepy-v324';
    · 论坛身份编辑：「我的」页每个身份加「改名/头像」——名字（12 字内）+
      头像字 + 8 色底；forum-core 新增 updateAccountProfile（只认 user 自己的）；
      publicAuthorOf 头像字支持 avatarGlyph；
-   · 以身入局首页回炉（用户：不要悬浮球、不要底部说明）：悬浮球与相关
+   · 以身入局首页回炉（需求：不要悬浮球、不要底部说明）：悬浮球与相关
      CSS 整体拆除；封存层从一句空话改成真书架（没货摆三只虚线空位）。
    → 必须跳版本：forum-core.js / forum-gen.js / page-qunsheng.js /
      page-yishenruju.js / store.js / core.js（删岛映射键名单）都变了。 */
@@ -1907,7 +1923,7 @@ var CACHE = 'sleepy-v324';
    · 断链修复：page-wj-curtain 分享卡可点直达 wj-read；
    · 新增 schedule-gen.js（每日角色日程生成器）+ calendar.js AUTH_VIA +schedule_switch；
      page-chat 两个触发点。index.html 加载列表 +1；
-   · calendar.js：日程注入补「不是硬性剧本」一句（用户：不要太死）；
+   · calendar.js：日程注入补「不是硬性剧本」一句（需求：不要太死）；
      schedule-gen.js 提示词允许把「user 的影响」排进日程；
    · page-we.js：记一笔抽屉加「✦ 帮我们记」（B1，模型起草、user 确认落库）；
    · ⑦ 副 API 功能分配：api.js（candidates 按 ov.feature 收窄 + requestForFeature

@@ -172,7 +172,7 @@
     }
     var h = hashOf(sbId + ':' + charId);
     /* 桌面上的 App 排列。**日历和相册都不在里面** ——
-       日历 2026-09-19 用户拍板：它是桌面上的一个独立 App（第 3 屏），
+       日历 2026-09-19 设计确认：它是桌面上的一个独立 App（第 3 屏），
        不是查手机里翻到的那一个；相册 2026-10-06 下线（一直只是空壳，
        没有专属页面也没有专属数据表）。
        ⚠️ 老存档的 phones.appOrder 里可能还有 'calendar' / 'gallery'，
@@ -189,7 +189,7 @@
       accent: ACCENTS[h % ACCENTS.length],
       appOrder: order,
       /* enabled = 他到底给不给手机上锁。**默认 false** ——
-         用户 2026-09-21 原话：「角色本身没有设置密码，但界面仍然显示输入密码解锁」。
+         2026-09-21 原话：「角色本身没有设置密码，但界面仍然显示输入密码解锁」。
          现在「设不设密码」是角色设置里一个明确的开关（聊天 → 角色设置 → 他的手机），
          没打开就是真的没密码：锁屏那一屏照样在（「打开通知」只在这屏存在），
          但不会有任何要你输密码的入口。 */
@@ -564,7 +564,7 @@
   }
 
   /* ---------------------------- 设置 ----------------------------
-     自主生活档位（用户 2026-09-19 定：聊天 char 设置里 关/低/中/高）：
+     自主生活档位（需求 2026-09-19 定：聊天 char 设置里 关/低/中/高）：
      off=完全离屏不生活；low/mid/high 只影响第 2 批结算闸门的阈值。 */
 
   /* 项目 5 S6：autoLife 键归 root —— 存取都过 rootIdOf，皮套和大号一个档位。 */
@@ -620,13 +620,27 @@
      搜索≠购买、草稿≠已发送、计划≠完成 —— 语义升级一律拦下。 */
 
   /* [手机] 行提取：每行一个 JSON 对象。纯函数，冒烟直接打表。
-     返回 { list, text } —— text 是抽掉标签后的正文。 */
+     返回 { list, text } —— text 是抽掉标签后的正文。
+     容错（2026-11-03 真机抓到）：模型偶尔漏写 [手机] 前缀，
+     整行就是一个 {"app":…,"op":…} 裸 JSON —— 同样吃掉并落库，
+     免得原始 JSON 漏进聊天气泡。非 delta 形状的裸 JSON 原样保留。 */
+  function deltaShaped(o) {
+    return o && typeof o === 'object' && !Array.isArray(o) &&
+      typeof o.app === 'string' && typeof o.op === 'string';
+  }
   function extractPhoneDeltas(raw) {
     var list = [];
     var text = String(raw == null ? '' : raw)
-      .replace(/^[ \t]*\[手机\][ \t]*(\{.*\})[ \t]*$/gm, function (_, j) {
+      .replace(/^[ \t]*\[手机\][ \t]*(\{[^\n]*\})[ \t]*$/gm, function (_, j) {
         try { list.push(JSON.parse(j)); } catch (e) { /* 坏 JSON 直接丢 */ }
         return '';
+      })
+      .replace(/^[ \t]*(\{"app"[^\n]*\})[ \t]*$/gm, function (m, j) {
+        try {
+          var o = JSON.parse(j);
+          if (deltaShaped(o)) { list.push(o); return ''; }
+        } catch (e) { /* 不是合法 delta，原样保留 */ }
+        return m;
       })
       .replace(/\n{3,}/g, '\n\n').trim();
     return { list: list, text: text };
@@ -690,7 +704,7 @@
     return names.length ? names : null;
   }
 
-  /* 背景联系人（2026-10-29 用户点名）：user 没设 NPC 时，允许模型根据
+  /* 背景联系人（2026-10-29 设计规格指定）：user 没设 NPC 时，允许模型根据
      人设 / 聊天记录编 1~2 个背景联系人（朋友 / 同事 / 家人）。首次出现
      时在这里登记进 phone 记录，之后每次校验都认 —— 不是凭空一次性。 */
   function registerBgContact(phoneId, name) {
@@ -749,7 +763,7 @@
       /* 一天一条：三餐/零食 + 运动计划 vs 实际 + 他自己的短评。
          饮食卡要带时间与短评（Demo 03 的 mealHead/.comment），
          运动卡要带名称与「为什么改了」（Demo 的 workoutName/.why）。
-         2026-10-31 用户反馈「他写下的话都很短」：剪裁上限从 60/80/100
+         2026-10-31 反馈「他写下的话都很短」：剪裁上限从 60/80/100
          放宽到 120/200/200 —— 模型就算写了整句也会被旧上限拦腰剪断；
          长度引导（别只写四五个字）在 phoneLife 协议卡里给。 */
       var meals = (p.meals || []).slice(0, 6).map(function (m) {

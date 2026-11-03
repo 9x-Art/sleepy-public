@@ -1,5 +1,5 @@
 /* ============================================================
-   usage.js — 手机使用情况（APK 壳专属，2026-10-31 用户点名）
+   usage.js — 手机使用情况（APK 壳专属，2026-10-31 设计规格指定）
 
    数据源：安卓壳桥 SleepyNative.usageStats(days)（UsageStatsManager，
    PACKAGE_USAGE_STATS 特殊权限，用户在系统设置手动授）。本机数据，

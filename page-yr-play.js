@@ -263,7 +263,7 @@
 
   function renderDeck(root, run, box) {
     var deck = h('div', 'yp-deck');
-    /* ★ v219 场景切换（用户：故事是发展的，场景是动态的 —— 本批先给
+    /* ★ v219 场景切换（需求：故事是发展的，场景是动态的 —— 本批先给
        手动切换；「剧情自动换景」等世界包批次接）。box.sceneRefs 顺序切换。 */
     var refs = (box && box.sceneRefs) || (box && box.coverRef ? [box.coverRef] : []);
     if (refs.length) {
@@ -440,7 +440,7 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  /* ☰ 右侧栏（2026-10-11 装修：替代悬浮球三件套 —— 用户点名
+  /* ☰ 右侧栏（2026-10-11 装修：替代悬浮球三件套 —— 设计规格指定
      「点击三条横线出来右侧栏，三个选项」，面板要居中像真手机）。
      三项仍按身份换装（ballDefs 的 A/B 套），局印徽标/置灰逻辑原样保留。 */
   function openRailDrawer(ctx, sid, boxId) {
@@ -501,7 +501,7 @@
     var world = B().worldFor(box, run);
 
     if (kind === 'phone') {
-      /* 局内手机：面板做成小手机样子（2026-10-11 用户：弹一个手机样子的） */
+      /* 局内手机：面板做成小手机样子（2026-10-11：弹一个手机样子的） */
       panel.classList.add('yp-phone');
       panel.appendChild(h('div', 'yp-phone-notch'));
       panel.appendChild(h('h3', null, '手机 · 局内系统'));

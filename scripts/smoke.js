@@ -778,7 +778,7 @@ t('skin() 按角色出皮肤数据', () => {
 });
 t('ICONS / icon() 可用', () => ({ 图标数: Object.keys(S.desktop.ICONS).length, svg: typeof S.desktop.icon('idcard') }));
 
-console.log('\n--- desktop:挂件灯留言去重（2026-10-12 用户反馈批）---');
+console.log('\n--- desktop:挂件灯留言去重（2026-10-12 反馈批）---');
 t('灯上留言：一条只挂一个挂点，不再四层重复', () => {
   /* 走真实写路径：lampNotes.add（落库 + 盖岛章），再核**装配产物**
      lampCards()。不直接拼 lampNotes 数组 —— 那测的是夹具不是链路。
@@ -833,7 +833,7 @@ t('浮岛三层都注册上了', () => {
   ['island', 'island-saves', 'island-overview'].forEach((id) => {
     if (!reg[id]) throw new Error('缺页面：' + id);
   });
-  /* 配置台（island-config）**2026-09-22 已删除** —— 用户：
+  /* 配置台（island-config）**2026-09-22 已删除** —— 需求：
      「点击更改进入的身份和彼此认知，又要进入岛屿设置，没必要啊，
      岛屿设置不能删掉么」。这里反过来断言它**不许再注册回来**。 */
   if (reg['island-config']) throw new Error('配置台不该再注册（已下线）');
@@ -1057,7 +1057,7 @@ t('马甲按岛：新建即打章 + 复制是新记录 + 拆岛连马甲清', ()
   return { 新建打章: true, 复制是新记录: true, 拆岛清马甲: true };
 });
 
-/* 「我」的大号（isDefault）+ User 侧指针卫兵（2026-09-21 用户拍板：
+/* 「我」的大号（isDefault）+ User 侧指针卫兵（2026-09-21 设计确认：
    落岛要用「我」的**大号**，所以先把「哪件是大号」定下来）。
    这两条盯的是**跨岛串身份**：群岛落岛有意不替人选「对方」，
    于是全局指针 activeUser() 还停在上一座岛的马甲上 ——
@@ -1110,7 +1110,7 @@ t('activeUserOnIsland：别座岛的「我」一律挡掉，本岛的放行', ()
   return { 别岛: 'null', 本岛: got.name };
 });
 
-/* ── 用户 2026-10-03 报的两个 bug（真机）────────────────────────────────
+/* ── 2026-10-03 报的两个 bug（真机）────────────────────────────────
    ① 「改了默认存档之后再加孤岛/群岛，表单直接 copy 那个存档的 user 账号；
        后面改孤岛 B，其他所有岛屿的 user 账号信息都跟着变」
    ② 「默认存档的彼此认知和新加的岛屿里彼此认知不一样：一个有选项一个没有」
@@ -1129,7 +1129,7 @@ t('activeUserOnIsland：别座岛的「我」一律挡掉，本岛的放行', ()
 
    这条用例把判据钉在**数据层**（不依赖浏览器）：同一条 user 记录
    绝不能同时出现在两座岛的名册里；改一件不许动到别岛那件。 */
-t('马甲真隔离：一件 user 记录只属一座岛，改一件不影响别岛（用户 10-03 报）', () => {
+t('马甲真隔离：一件 user 记录只属一座岛，改一件不影响别岛（需求 10-03 报）', () => {
   const sbOld = S.core.createSandbox('isle', '默认存档那座');
   const sbNew = S.core.createSandbox('isle', '后加的孤岛 B');
 
@@ -1188,7 +1188,7 @@ t('马甲真隔离：一件 user 记录只属一座岛，改一件不影响别�
    判据：认知锁的档数与**能不能设**是两件事 ——
    认知锁页面必须在「有角色」时就能打开并给出统一档数，
    不能因为马甲数为 0 就少一截。 */
-t('彼此认知：新岛没马甲也要给出同样的档位，不许少一截（用户 10-03 报）', () => {
+t('彼此认知：新岛没马甲也要给出同样的档位，不许少一截（需求 10-03 报）', () => {
   /* 认知锁的档数是**产品常量**（LOCKS 四档：拼图/调情/死装/没有小号），
      与某座岛此刻有几件马甲**无关**。以前 UI 把「初始认知锁」整段挂在
      `mains.length && masks.length` 底下 → 新岛没马甲就整段不渲染，
@@ -3291,7 +3291,7 @@ ok('三屏的实现都挂上了（消息 / 朋友圈 / 我）',
       曾经用 JS 给 #phone 打类，遇到「页面实例复用 / 点当前 tab 时 paint 提前 return」
       就漏打，状态栏又绿回去。所以这里两边都要管住。
    ② 封面右下角那个头像是**探出封面半格**的，封面不能 overflow:hidden，
-      一裁就只剩半边（用户：「这个头像你没发现只有一半么」）。
+      一裁就只剩半边（需求：「这个头像你没发现只有一半么」）。
    ③ 朋友圈顶上不写标题（微信就是封面本身顶到底）。 */
 {
   const css = require('fs').readFileSync('style.css', 'utf8');
@@ -3320,7 +3320,7 @@ ok('三屏的实现都挂上了（消息 / 朋友圈 / 我）',
     css.indexOf('--mo-wall-1') >= 0 &&
     momentsJs.indexOf('var(--mo-wall-1)') >= 0 &&
     momentsJs.indexOf('#79B7E3') < 0);
-  /* 状态栏是**浮在页面上**的（用户：「所有的屏幕的显示都改成透明底」）。
+  /* 状态栏是**浮在页面上**的（需求：「所有的屏幕的显示都改成透明底」）。
      它一旦不占布局，就得有人把位置补回来：.page-inner 的 padding-top、
      吸顶顶栏的 sticky top、浮岛那个 absolute 顶栏的 top —— 三处必须同源，
      少一处就会有页面被状态栏压住（浮岛就踩过）。 */
@@ -3384,7 +3384,7 @@ t('转账输入的解析与校验', () => {
   return { 合法: a.amount + ' + ' + a.note, 上限: S.chatApp.TRANSFER_MAX };
 });
 
-/* 「空输入点发送」到底该替用户说什么 —— 现在发送键是两义的：
+/* 「空输入点发送」到底该替规格说明什么 —— 现在发送键是两义的：
    有字 = 只发一条，空着点 = 让他开口。分气泡连发几条之后再空发送时，
    提示词必须是「我说完了」，不能再是「我这边安静着，没打字」（那会让
    模型以为我一句话没说，回一句跟我们刚聊的完全无关的东西）。 */
@@ -3408,7 +3408,7 @@ t('空发送的提示词按「上一条是谁发的」分流', () => {
   return { 空对话: '主动', 我发的: '我说完了', 他发的: '主动' };
 });
 
-/* 会话列表的预览（用户 2026-09-21：「对方回：」这几个字不要显示，照微信）。
+/* 会话列表的预览（需求 2026-09-21：「对方回：」这几个字不要显示，照微信）。
    三条不许退回去的规矩：不带角色前缀、只给最后一个气泡、不漏 [译] 标签。 */
 t('会话列表预览：无前缀 / 只取最后一句 / 不漏译文标签', () => {
   const P = S.chatApp.previewOf;
@@ -3624,7 +3624,7 @@ t('fmtBytes 三档都说得人话',
 
 console.log('\n--- page:表情包（批量导入 / 分组）---');
 
-/* 批量导入的解析是纯函数，直接单测 —— 三种写法是用户点名的需求：
+/* 批量导入的解析是纯函数，直接单测 —— 三种写法是设计规格指定的需求：
    「格式大概有解释：URL，解释:URL，URL 解释这三种」。 */
 t('三种写法都认（解释：URL / 解释:URL / URL 解释），注释和废行要挑出来', () => {
   const r = S.stickers.parseLines([
@@ -3657,7 +3657,7 @@ t('分组按出现顺序列出，没写分组的算「未分组」', () => {
   return { 分组: S.stickers.groupsOf(list), 散装的组: S.stickers.groupOf(list[2]) };
 });
 
-/* 导入的两条路要分清楚（用户点名的）：
+/* 导入的两条路要分清楚（设计规格指定的）：
      · 右上角 = 导入**文件**（txt 这类，内容是那些 URL）
      · 组里第一格的「+」= 单独往这一组加图片
    加上「文件里读出来的行」还是走 parseLines 那三种格式。 */
@@ -4400,7 +4400,7 @@ t('photos.removeByMedia() 按 mediaId 清记录；dropMessages 已接线', () =>
   return { 删了: n, 剩: after.length };
 });
 
-/* ---- 相册按账号隔离（2026-10-06 用户：「相册要选人 · 按账号隔离」）---- */
+/* ---- 相册按账号隔离（2026-10-06：「相册要选人 · 按账号隔离」）---- */
 t('photos.add 归属章：显式 owner 优先，默认按活动角色，字段必须总在', () => {
   S.store.set('photos', []);
   const list = S.photos.add([{ url: 'x1' }], { charId: 'chA' });
@@ -5275,7 +5275,7 @@ t('narr 半截尾巴（流式兜底）：扣标记留内文，[旁白: 三个字
   if (S.promptEngine.narrPlain('干净文本') !== '干净文本') throw new Error('干净文本不该被动');
   return 'ok';
 });
-/* v281（2026-10-29 用户「旁白时不时掉格式」）：模型手滑的三种变体 ——
+/* v281（2026-10-29 规格「旁白时不时掉格式」）：模型手滑的三种变体 ——
    全角括号 / 标记里套方括号 / 标记里写 ||。旧正则任何一种都会漏。 */
 t('narr 加固：全角括号/嵌套方括号/标记里的 || 都不漏', () => {
   /* 全角方括号 ［旁白：…］ */
@@ -5576,7 +5576,7 @@ t('iOS 安全区 v277：--sb-h 补偿归零 / 面板固定三行 / kb 残留清�
   if (/var\(--safe-top\)\s*\+\s*32px/.test(cssNC)) {
     throw new Error('发现硬写 calc(var(--safe-top) + 32px)——顶部补偿必须走 var(--sb-h)');
   }
-  /* ③ 加号面板固定三行高度 + 内部滚（用户：高度固定，固定高度内可滑动） */
+  /* ③ 加号面板固定三行高度 + 内部滚（需求：高度固定，固定高度内可滑动） */
   const pp = css.match(/\.plus-panel\{[^}]*\}/);
   if (!pp || pp[0].indexOf('height:calc(var(--safe-bottom) + 291px)') < 0 ||
       pp[0].indexOf('overflow-y:auto') < 0) {
@@ -7156,7 +7156,7 @@ t('迁移之后：本房看得见、换间房就看不见', () => {
 
 console.log('\n--- page:桌面（编辑态的小叉叉）---');
 
-/* 用户：「桌面进入编辑模式后，所有的组件都加上一个小叉叉，
+/* 需求：「桌面进入编辑模式后，所有的组件都加上一个小叉叉，
    就是把这个组件删掉的意思，因为以后打算做个组件商城~」
    这几条都是会被改回去的回归点，钉住。 */
 {
@@ -7203,7 +7203,7 @@ t('桌面布局：日记 / 朋友圈下架，换成外观 / 组件商城', () =>
    「外观仍 blank」+「组件商城位已换成以身入局」。 */
 t('第 3 屏外观位已换成「御膳房」真入口，组件商城位→以身入局，钱包位→小岛指南，贴纸位→群声，主屏入口不动', () => {
   const d = S.desktop.defaultDesktop();
-  /* 版本 24（2026-10-10 用户点名）：外观空壳位（主屏 p1-look 已有同功能
+  /* 版本 24（2026-10-10 设计规格指定）：外观空壳位（主屏 p1-look 已有同功能
      入口）换成仓库真入口 —— 格子 id 语义变了，p3-look → p3-repo。
      版本 25（2026-10-11）：App 改名「御膳房」，label 跟改（id/app 不动）。 */
   const repo = d.pages[3].filter((c) => c.i === 'p3-repo')[0];
@@ -7284,7 +7284,7 @@ t('组件商城：目录非空，装一件进去桌面真的多一格', () => {
   return { 目录件数: cat.length, 装上了: res.ok, 多出来: after - before };
 });
 
-/* 角色卡上架（2026-09-22 用户「人1」）：默认户型里没有它（用户点名从主屏
+/* 角色卡上架（2026-09-22 规格「人1」）：默认户型里没有它（设计规格指定从主屏
    拿掉的），但组件商城要能装回来。
    2026-09-29：状态签名全量下线 —— 卡片第二行恒为「在线」，不再读 char.status。 */
 t('组件商城：角色卡上架了（默认户型没有，目录里能装回来）', () => {
@@ -7766,7 +7766,7 @@ t('imggen 模块出口齐全', () => {
   return 'ok';
 });
 
-/* 新建接口**不再预灌内置预设词**（2026-10-08 用户拍板：「不要把我们的提示词
+/* 新建接口**不再预灌内置预设词**（2026-10-08 设计确认：「不要把我们的提示词
    放出来」——预灌的词会直接出现在设置表单里）。留空即合法：三条消费路
    （legacy / NAI 正式 / buildFormalPrompt）对空 positivePreset / negativePreset
    都回落 BUILTIN_PRESET，词面分毫不变，只是不再展示、不再拷进用户存档。 */
@@ -7786,7 +7786,7 @@ t('newApi 预设词留空（不预灌内置词，运行时回落 BUILTIN）', ()
   return { 预设留空: true, 内置模板原样: true };
 });
 
-/* 试一张退役实验 UI（2026-10-08 用户拍板）：改走正式管线 generate({plan})，
+/* 试一张退役实验 UI（2026-10-08 设计确认）：改走正式管线 generate({plan})，
    不再有「实验」「对照」措辞、临时双人/多人入口或内置词展示。 */
 t('生图试一张：实验 UI 退役，改走正式管线', () => {
   const src = fs.readFileSync(path.join(ROOT, 'page-imggen.js'), 'utf8');
@@ -8554,7 +8554,7 @@ t('E2 单人视觉实验：真实身份读取 + 层序 + 男性校准暂停 + cu
   if (FEMALE_LOOK.indexOf('窗边') >= 0 || FEMALE_LOOK.indexOf('花束') >= 0) {
     throw new Error('测试内容被写进了默认常量');
   }
-  /* 用户要求强调的「设定优先」必须在正文里 */
+  /* 需求强调的「设定优先」必须在正文里 */
   if (FEMALE_LOOK.indexOf('do not replace them with a default face') < 0) throw new Error('C 版丢了「设定优先」那句');
   const sdFemale = mkTemp('general', 'female', 'sleepy-default');
   if (sdFemale.debug.visualLayer !== 'temp-female-c') throw new Error('女性分支没被路由到 C 版');
@@ -8865,7 +8865,7 @@ t('假期表述给全事实：区间 + 今天 + 第几天，模型不用自己�
      两条打架的信息，只能采信假期名、忽略日期 → 说成「第一天」。
      **它不是算错了，是我们逼它二选一。**
 
-     现在按「节 ≠ 节假日」分层（用户 2026-10-03 拍板）：
+     现在按「节 ≠ 节假日」分层（需求 2026-10-03 拍板）：
        假期名（国庆假期）→ 法定层，附区间
        节日名（中秋节/除夕）→ 文化层，只在真正那天出现
      并把三件不需要推理的事实一次给全：区间、今天、第几天。 */
@@ -9135,7 +9135,7 @@ t('红线：日历数据层 0 模型调用（源码里不许出现 api. 调用�
   return '干净';
 });
 
-console.log('\n--- 常驻地点 × 时间事实（2026-09-19 用户提的第二件事）---');
+console.log('\n--- 常驻地点 × 时间事实（2026-09-19 提出的第二件事）---');
 
 const plTest = t('常驻地点夹具：一个常驻东京的 char', () => {
   const sb = S.core.createSandbox('archipelago', '常驻地点测试岛');
@@ -9219,7 +9219,7 @@ t('线上装配真的注入了 I02 时间事实（以前线上一点时间都没
   return { 槽: slot.slot, tokens: slot.tokens, 顺序: ids.slice(0, 5).join('>') };
 });
 
-console.log('\n--- 翻译 · 私聊气泡（2026-09-19 用户拍板）---');
+console.log('\n--- 翻译 · 私聊气泡（2026-09-19 设计确认）---');
 
 t('parseReply 把 [译] 抽出来：正文干净、译文按索引对齐', () => {
   const r = S.promptEngine.parseReply(
@@ -9342,7 +9342,7 @@ t('线下：关掉翻译开关 → 语言照旧、协议不要 trans（两件事
   return { 开关关: '只说日语不附译文', CN: '不注入' };
 });
 
-/* ===== 预设注入清单通查（2026-09-22，用户：「完成所有的功能后重新加上
+/* ===== 预设注入清单通查（2026-09-22，需求：「完成所有的功能后重新加上
    需要注入的东西」）。修的是三处「同一件事只做了一半」的缺口。 ===== */
 
 t('通查①：线下装配也吃自定义卡（以前只有线上吃，用户加的卡线下失效）', () => {
@@ -9535,7 +9535,7 @@ t('群线下协议：四类段落齐全，且写清「这是一篇文章」', ()
     if (sys.indexOf('"type":"' + k + '"') < 0) throw new Error('协议里没有 ' + k + ' 段');
   });
   if (sys.indexOf('[WRITING]') < 0) throw new Error('没有「怎么写」那一段');
-  /* 用户 2026-09-19 定的语义：输出是一篇长文（对话/描写/心理混在一起），
+  /* 2026-09-19 定的语义：输出是一篇长文（对话/描写/心理混在一起），
      没说想说的就不写对话 —— 不是「prose/dialogue 两类表格」。 */
   if (sys.indexOf('连续的叙事') < 0) throw new Error('没说「你写的是一篇连续的叙事」');
   if (sys.indexOf('给程序排版的标记') < 0) throw new Error('没说清段落类型只是标记');
@@ -10388,7 +10388,7 @@ t('项目3 P3-M1b 静态护栏：UI 成功 toast 只在 ok:true 时出现，失�
   const okToast = chatSrc.indexOf("ctx.toast('已解散', 'ok')");
   const gate = chatSrc.lastIndexOf('if (res && res.ok)', okToast);
   if (gate < 0 || gate > okToast) throw new Error('「已解散」不该出现在 res.ok 门禁之外');
-  /* 失败分支要有 err toast（用户要求 5：失败不显示成功 toast） */
+  /* 失败分支要有 err toast（需求 5：失败不显示成功 toast） */
   if (chatSrc.indexOf("|| '解散失败', 'err'") < 0) throw new Error('失败该 toast 成 err，不能静默假装成功');
   return '成功门禁 + 失败err + 不静默';
 });
@@ -10551,9 +10551,9 @@ t('项目4 P4-M3 默认「我」保护：无章共享兜底不可删', async () 
 });
 
 /* 项目4 NPC 向量归属核查：doomedCharIds 递归角色树，主表 doomed = 向量命中集合。
-   铁律（用户 2026-09-27）：
+   铁律（需求 2026-09-27）：
      删单 NPC → doomed={NPC}（大号/别的皮套/别的 NPC 的向量必须留）。
-   2026-09-29（用户拍板）新增一条：**NPC 永不连坐** —— NPC 属于整座岛，
+   2026-09-29（设计确认）新增一条：**NPC 永不连坐** —— NPC 属于整座岛，
      删皮套/删大号时挂在其名下的 NPC 收编归岛（parentType='sandbox'），
      不进 doomed（主表与向量共用 doomedCharIds，两边自动一致）。 */
 t('项目4 P4-M11 doomedCharIds 递归角色树：单NPC/皮套/大号集合各自正确', async () => {
@@ -11443,7 +11443,7 @@ t('phone.ensurePhone：建壳幂等、密码/壁纸由哈希派生（同 char �
 });
 
 /* 锁屏：**「他设没设密码」以前在数据层不存在**，于是 pin 一旦派生好就恒真，
-   所有角色一律被要求输密码 —— 用户 2026-09-21 报的「角色本身没设密码，
+   所有角色一律被要求输密码 —— 2026-09-21 报的「角色本身没设密码，
    却显示输入密码解锁」。现在只看 lock.enabled，默认 false。 */
 t('phone 锁屏：默认没设密码；开了才有；老存档按没设解释', () => {
   const P = S.phone;
@@ -11587,6 +11587,21 @@ t('extractPhoneDeltas：[手机] 行抽出 + 坏 JSON 丢弃 + 正文剥离', ()
   if (r.list.length !== 1) throw new Error('该抽出 1 条，实 ' + r.list.length);
   if (r.text.indexOf('[手机]') >= 0) throw new Error('正文还残留标签');
   if (r.text.indexOf('今天去跑了步') < 0 || r.text.indexOf('晚安') < 0) throw new Error('正文被误伤');
+  return { 条数: r.list.length };
+});
+
+t('extractPhoneDeltas：漏写 [手机] 前缀的裸 delta JSON 也吃掉（真机乱码回归）', () => {
+  /* 2026-11-03 真机抓到的泄漏：模型把 {"app":"health",...} 直接混进正文，没带 [手机] 前缀 */
+  const raw = ['你那边画完了？', '{"app":"health","op":"add_day","payload":{"day":"今天","meals":[{"meal":"午餐","time":"12:20","text":"速冻小馄饨","comment":"没胃口"}]}}', '提不起精神。'].join('\n');
+  const r = S.phone.extractPhoneDeltas(raw);
+  if (r.list.length !== 1) throw new Error('裸 delta 该抽出 1 条，实 ' + r.list.length);
+  if (r.list[0].app !== 'health' || r.list[0].op !== 'add_day') throw new Error('抽出的 delta 内容不对');
+  if (r.text.indexOf('"app"') >= 0 || r.text.indexOf('health') >= 0) throw new Error('正文还残留裸 JSON');
+  if (r.text.indexOf('你那边画完了') < 0 || r.text.indexOf('提不起精神') < 0) throw new Error('正文被误伤');
+  /* 非 delta 形状的裸 JSON 不许误伤（可能是叙事/台词） */
+  const keep = S.phone.extractPhoneDeltas('他说：{"app":"这是台词"}\n继续。');
+  if (keep.text.indexOf('{"app":"这是台词"}') < 0) throw new Error('非 delta 裸 JSON 被误删');
+  if (keep.text.indexOf('继续') < 0) throw new Error('正文被误伤');
   return { 条数: r.list.length };
 });
 
@@ -12382,7 +12397,7 @@ t('审计修复：删作品时共读会话与审阅记录一起收掉', () => {
   return { 删前: before.sessions + '/' + before.canon, 删后: after.sessions + '/' + after.canon };
 });
 
-/* 2026-09-22 用户拍板的两条语义（衔接审计留下的那两问）。 */
+/* 2026-09-22 设计确认的两条语义（衔接审计留下的那两问）。 */
 
 t('文风底座：全局是「新作品的起点」—— 改全局只影响之后新建的作品', () => {
   S.store.set('wjWorks', []);
@@ -12412,7 +12427,7 @@ t('取材档位：「选择性读取」已从选项里收起（勾选器从来�
 });
 
 /* 2026-09-22 接上的两个「单份接口」：总结 API / 向量记忆 API。
-   用户拍板的三条语义都在这里守着（E 类待办里的「总结 api」那条）。 */
+   设计确认的三条语义都在这里守着（E 类待办里的「总结 api」那条）。 */
 
 t('总结 API：单份独立配置优先，且它和副 API 互不影响', () => {
   S.store.set('summaryApi', null);
@@ -12549,7 +12564,7 @@ t('心声 commit 回传记录，drop / dropLastAfter 删得掉（reroll 要按�
   return { 回传id: !!r1.id, 按id删: 1, 退路删: 1 };
 });
 
-t('genParams：timeoutSec 归一到 60s 下限（用户 2026-09-29：几秒就超时是老存档小值）', () => {
+t('genParams：timeoutSec 归一到 60s 下限（需求 2026-09-29：几秒就超时是老存档小值）', () => {
   S.store.set('chatDefaults', {});
   const g = S.api.genParams;
   const dirty0 = g({ baseUrl: 'x', model: 'm', timeoutSec: 0 }, {});
@@ -13161,7 +13176,7 @@ t('能力落到「模型」：不同档位的表达能力不一样', () => {
   if (elV3.maxCharacters !== 5000 || elV2.maxCharacters !== 10000 || elFlash.maxCharacters !== 40000) {
     throw new Error('字符上限跟官方文档对不上');
   }
-  /* 给界面看的人话能力表：逐条连接算，别按服务商一刀切（用户：「每个接口不一样」） */
+  /* 给界面看的人话能力表：逐条连接算，别按服务商一刀切（需求：「每个接口不一样」） */
   const fFish = T.featuresOf('fish_audio', 's2.1-pro-free');
   const fElV3 = T.featuresOf('elevenlabs', 'eleven_v3');
   const fElV2 = T.featuresOf('elevenlabs', 'eleven_multilingual_v2');
@@ -13180,7 +13195,7 @@ t('能力落到「模型」：不同档位的表达能力不一样', () => {
   T.PROVIDER_ORDER.forEach((pid) => {
     if (T.providerOf(pid).planned) throw new Error(pid + ' 还没有适配器，不该开放入口');
   });
-  /* 2026-10-07 用户：「阿里云那些用不了的全部去掉」——
+  /* 2026-10-07：「阿里云那些用不了的全部去掉」——
      planned 清单（dashscope 等）整份撤掉，providerOf 对它们返回 null。
      这里反过来断言：已经撤掉的那几家不许再查得到。 */
   ['dashscope', 'volcengine', 'tencent_tts', 'xfyun', 'edge_tts', 'openai'].forEach((pid) => {
@@ -13633,7 +13648,7 @@ t('P0-2 待回复队列跨岛不互相抹掉（schedule + tick 都按全量写�
   }
 });
 
-/* flush 的语义锁定（用户 2026-09-23 验收要求单列）：
+/* flush 的语义锁定（需求 2026-09-23 验收要求单列）：
    只处理**当前岛** —— 不动别的岛的条目、不改它们的 dueAt、也不整批回写。
    修之前的写法是「改 scoped 列表 → savePending(它)」，会把别的岛整批抹掉。 */
 t('flush 只处理当前岛：别的岛条目一条不动、内容逐字段不变', () => {
@@ -13677,7 +13692,7 @@ t('flush 只处理当前岛：别的岛条目一条不动、内容逐字段不�
   }
 });
 
-/* clearPending 的语义（用户 2026-09-23 验收要求改）：
+/* clearPending 的语义（需求 2026-09-23 验收要求改）：
    默认只清**本岛**；要真·全局清空得显式叫 clearAllPending()。
    以前它是 savePending([])，等于顺手把别的岛的待回复一起清了。 */
 t('clearPending 只清本岛；clearAllPending 才清全部', () => {
@@ -13766,7 +13781,7 @@ t('P0-1 回复里的 [手机] 痕迹落进查手机（真实数据链路）', ()
 
 /* 静态护栏：多选条是**从上面插进流里**的（append 在 .msg-wrap 之前），
    它一露面就把消息区顶下去一条子那么高（量过：wrap.top 100 → 147、
-   参照气泡的屏幕坐标 109 → 156）—— 用户 2026-09-23：「聊天里面的多选，
+   参照气泡的屏幕坐标 109 → 156）—— 2026-09-23：「聊天里面的多选，
    我点一个气泡之后页面就会下滑」。守的是「露面前后都把高度差补回 scrollTop」
    那两句别被顺手删掉：删了就是「一进多选，整段对话往下滑」。
    ⚠️ 露面的路（selecting=true，在函数末尾）和收起的路（selecting=false，
@@ -13909,7 +13924,7 @@ t('记忆注入：规则类不许吃满配额，经历类有保底（2026-09-22 
   ]);
   const inj = S.memoryStore.getMemoryInjection(ch);
   /* 旧版这三条全是 false —— 边界 3 + 纠正 3 正好把 6 格吃满，
-     共同经历和约定一条都进不来（用户 09-22 提「六条太少」时实测到的）。 */
+     共同经历和约定一条都进不来（需求 09-22 提「六条太少」时实测到的）。 */
   if (inj.indexOf('一起去看过海') < 0) throw new Error('共同经历被规则类挤掉了');
   if (inj.indexOf('旧书店') < 0) throw new Error('约定被规则类挤掉了');
   if (inj.indexOf('不吃香菜') < 0) throw new Error('事实被规则类挤掉了');
@@ -16619,7 +16634,7 @@ t('新建表单页重开必须重画（freshOnOpen 静态护栏）', () => {
   return { app机制: true, contactedit: true, maskedit: true };
 });
 
-/* 用户 2026-10-03 报的两个 bug 的**静态**护栏。
+/* 2026-10-03 报的两个 bug 的**静态**护栏。
    上面那条（数据层）已经证明 core 的隔离逻辑是好的 —— 病根全在 UI 层
    拿「人」的方式，所以必须扫源码才抓得住回潮。
 
@@ -16628,7 +16643,7 @@ t('新建表单页重开必须重画（freshOnOpen 静态护栏）', () => {
       且 mask-edit 必须校验「这条记录属于要编辑的那座岛」。
    ② 认知档位在没马甲的岛上不许整段消失：门槛只能是「有没有角色」，
       不许出现 `mains.length && masks.length` 这种把马甲数当条件的写法。 */
-t('跨岛隔离静态护栏：编辑页不许拿带兜底的 activeUser，认知锁不许按马甲数隐藏（用户 10-03 报）', () => {
+t('跨岛隔离静态护栏：编辑页不许拿带兜底的 activeUser，认知锁不许按马甲数隐藏（需求 10-03 报）', () => {
   const idc = fs.readFileSync(path.join(ROOT, 'page-idcard.js'), 'utf8');
   const isl = fs.readFileSync(path.join(ROOT, 'page-island.js'), 'utf8');
 
@@ -18112,7 +18127,7 @@ t('新建页：第二次新建不能命中第一次的幂等键（页面实例�
 /* v321（2026-11-01）：清空记录分两档（page-chat dropMessages keepMemory + 设置页/群设置两行）—— 基准随批 v320 → v321。 */
 /* v322（2026-11-01）：括号语义纠偏（prompt-engine BRACKET_NOTE + page-chat 元指令换【系统提示】外壳）—— 基准随批 v321 → v322。 */
 /* v323（2026-11-01）：整理记忆确认弹窗（summaryEngine.pendingStat）+ 记忆条目带温度（summary 卡 text 放宽为一到两句）—— 基准随批 v322 → v323。 */
-const EXPECTED_SW_CACHE = 'sleepy-v324';
+const EXPECTED_SW_CACHE = 'sleepy-v325';
 
 t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必须跳位）', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
@@ -18134,7 +18149,7 @@ t('SW 缓存版本：与独立基准一致（本批改过运行时脚本，必�
   return { 缓存: m[1], 基准: EXPECTED_SW_CACHE };
 });
 
-/* ---------- PWA 全屏（2026-10-26 用户点名）----------
+/* ---------- PWA 全屏（2026-10-26 设计规格指定）----------
    真机上「顶栏很往下」的真相：standalone 下系统状态栏还在，App 自己又画了
    一条 #statusbar，两条叠着。Android 认 fullscreen（系统栏消失、safe-area
    归零），iOS Safari 不认 display_override —— 所以 display 仍要 standalone 兜底。
@@ -18161,7 +18176,7 @@ t('PWA 全屏：display_override 优先 fullscreen，standalone 兜底（2026-10
 });
 
 /* ---------- 心声星瓶（2026-10-26 上架 → 2026-10-30 整体下架）----------
-   用户：「那个花瓶好丑，下掉吧干脆」。下架后反向断言：
+   需求：「那个花瓶好丑，下掉吧干脆」。下架后反向断言：
    渲染器 / MOCKS / 样式 / 商城目录一处都不许残留（防死灰复燃），
    page-desktop 必须带 RETIRED_TYPES 清洗（不然老用户存档里的旧格子
    会变成「看得见删不掉」的幽灵 —— 光摘目录不够）。 */
@@ -19452,7 +19467,7 @@ t('授权闸装配：bootHome 先过闸再挂桌面 + 表单一份两用', () =>
   if (licSrc.indexOf("show('activate')") < 0) throw new Error('启动闸没有分步（默认应先出激活）');
   if (licSrc.indexOf('license-gate-switch') < 0) throw new Error('分步切换入口没挂（登录步得有路回来）');
   /* 注册→登录流程：激活成功只切到登录步，onPass 只能挂在登录步上 ——
-     激活步的 onSuccess 必须是 show('login')，不是 onPass（用户 2026-10-23 晚口径）。 */
+     激活步的 onSuccess 必须是 show('login')，不是 onPass（需求 2026-10-23 晚口径）。 */
   if (licSrc.indexOf("onSuccess: function () { show('login'); }") < 0) {
     throw new Error('激活成功没转登录步（应像注册→登录：设完密码再登录一次才进门）');
   }
@@ -19544,7 +19559,7 @@ t('账密网络层静态护栏：多 base 结构在，浏览器原始错误文�
 });
 
 /* ==================== 聊天气泡粉蓝半透明（2026-10-24 用户口径批） ====================
-   用户原话：「只改聊天，不改桌面；我方藕粉、对方淡蓝、透明感重一些」。
+   原始需求：「只改聊天，不改桌面；我方藕粉、对方淡蓝、透明感重一些」。
    色板 lotus 与 style.css 气泡段三值硬对齐 —— 本组断言两边都锁，
    防「改一处忘另一处 = 外观页开了/关了两个颜色」。 */
 t('聊天气泡默认档：藕粉我方 + 淡蓝对方 + 半透明（applyTo 真生成一遍）', () => {
@@ -19647,7 +19662,7 @@ function runDemoSeedBlock() {
     if (xm.content.indexOf('淘宝客服') < 0) throw new Error('人设缺客服魂');
     if (xm.speech.indexOf('好的呢亲亲') < 0) throw new Error('speech 缺客服体锚点');
     if (xm.neverDo.indexOf('不替用户做决定') < 0) throw new Error('红线没写');
-    /* 2026-10-31 用户：「不要每句话都带着拿token办事的口头禅」——反向钉死，
+    /* 2026-10-31：「不要每句话都带着拿token办事的口头禅」——反向钉死，
        人设/说话方式里不许再长回来。 */
     if (xm.content.indexOf('拿token') >= 0) throw new Error('content 里还有拿token口头禅');
     if (xm.speech.indexOf('拿token') >= 0) throw new Error('speech 里还有拿token口头禅');

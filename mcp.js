@@ -4,7 +4,7 @@
    用户的需求：「支持工具调用，可以加多个 mcp，每个 mcp 有总开关，
    点进去每个 tool 也加开关，角色聊天设置页再加一个 MCP 能力开关。」
 
-   ---- 只支持两种 transport（2026-10-06 用户拍板）----
+   ---- 只支持两种 transport（2026-10-06 设计确认）----
    · 'http'  streamable HTTP（MCP 当前主流）：每轮 JSON-RPC 直接 POST
      到服务地址；首次 initialize 后记下 Mcp-Session-Id 响应头，
      后续请求都带上 —— 有会话要求的服务也能用。

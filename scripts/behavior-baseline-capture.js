@@ -696,7 +696,7 @@ var GAPS = [
   { scenario: 'all', kind: 'dispatch', what: 'developerMode=false 未覆盖',
     detail: 'dev=false 会把 locked 卡标 hidden（hidden 字段只在 slots 里，不影响 messages 正文）；' +
       '本批只捕 dev=true（生产默认）。' },
-  /* ⚠️ 上面这条的「生产默认」自 2026-10-07 起过时：内置预设全上锁（用户拍板），
+  /* ⚠️ 上面这条的「生产默认」自 2026-10-07 起过时：内置预设全上锁（设计确认），
      生产出厂 dev=off、旧存档的 dev:true 被一次性洗成 false（promptEngine.cfg 迁移）。
      本捕获夹具显式 developerMode:true + devMigrated:true，捕获口径不变；
      GAPS 数组被 v1 基线 gaps 指纹钉死，说明文本不改，只在此登记。 */

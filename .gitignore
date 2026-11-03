@@ -17,7 +17,7 @@ Thumbs.db
 shot-*.png
 _shots/
 
-# WorkBuddy 助手工作区（记忆文件，不上传）
+# 本地助手工作区（记忆文件，不提交）
 .workbuddy/
 .wrangler/
 

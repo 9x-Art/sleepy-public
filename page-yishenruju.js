@@ -94,7 +94,7 @@
       '.yr-dot.on{background:var(--wj-silver)}',
       '.yr-motto{margin:12px 2px 0;font-size:12px;line-height:1.75;color:var(--wj-dim);min-height:40px}',
       '.yr-motto b{color:var(--wj-text);font-weight:500}',
-      /* 纸皮下按钮/说明文字一律墨色（2026-10-11 用户：白字看不清） */
+      /* 纸皮下按钮/说明文字一律墨色（2026-10-11：白字看不清） */
       yrSel('.yr-take') + '{color:#2b2620;border-color:rgba(43,38,32,.5);background:rgba(255,255,255,.55);}',
       yrSel('.yr-motto') + '{color:#4a4438;}',
       yrSel('.yr-card') + '{color:#2b2620;}',
@@ -155,7 +155,7 @@
     document.head.appendChild(st);
   }
 
-  /* ---- 2026-10-10 换装（用户反馈：颜色不太行，想要群声那种
+  /* ---- 2026-10-10 换装（反馈：颜色不太行，想要群声那种
      纸面 + 深色撞色的质感；晚一轮确认「以身入局全部换」）----
      yishenruju / yr-board / yr-play 三页共用这一份纸面撞色皮；
      style.css 的帷境换皮组保留（别的 wj 页还走夜色），这里整体压过去。 */
@@ -196,10 +196,10 @@
       '--wj-paper:#faf7f0;--wj-paper-2:#ece5d4;--wj-ink:#2b2620;--wj-green:#315d68;}',
       /* 色板已在页级给全树，这里只补 .yr-root 的文字色 */
       yrSel('.yr-root') + '{color:#2b2620;}',
-      /* 顶栏：单细线压底（2026-10-11 用户：「有两个黑线」——
+      /* 顶栏：单细线压底（2026-10-11：「有两个黑线」——
          报头双细杠和壳头叠在一起显乱，收敛成一条） */
       yrSel('.yr-top') + '{border-bottom:1px solid rgba(43,38,32,.45);padding-bottom:10px;}',
-      /* 报头文字强制墨色（2026-10-11 用户：白字看不清） */
+      /* 报头文字强制墨色（2026-10-11：白字看不清） */
       yrSel('.yr-brand') + '{color:#2b2620;}',
       yrSel('.yr-energy') + '{color:#6f675c;}',
       yrSel('.yr-energy strong') + '{color:#2b2620;}',
@@ -224,7 +224,7 @@
       yrSel('.yp-act') + ',' + yrSel('.yp-balls') + '{background:rgba(250,247,240,.94);}',
       yrSel('.yp-act') + '{border-top:1px solid rgba(43,38,32,.18);}',
       yrSel('.yp-row input') + ',' + yrSel('.yp-row button') + ',' + yrSel('.yp-ball') + '{background:rgba(255,255,255,.72);}',
-      /* 纸面对比度体系（2026-10-11 用户：「字体不适配」）：
+      /* 纸面对比度体系（2026-10-11：「字体不适配」）：
          主动作 = 墨底反白（群声撞色），次动作 = 白瓷 + 墨边，弱动作 = 暖灰。
          原来的 rgba(255,255,255,.05) 底在纸上等于透明，浅字全糊。 */
       yrSel('.yp-send') + '{background:#1c1a17;border:0;color:#f4f0e7;}',
@@ -384,7 +384,7 @@
   /* ------------------------------ 渲染 ------------------------------ */
 
   function boxCard(ctx, sid, box, idx) {
-    /* 竖书脊档案盒：恢复原配色轮换（纸/夜/酒）—— 2026-10-11 用户：
+    /* 竖书脊档案盒：恢复原配色轮换（纸/夜/酒）—— 2026-10-11：
        不要按来源改白底，书脊保持原色，演练/TXT 靠「戳」区分就够了。 */
     var el = h('button', 'yr-box' + (box.enterable ? [' night', ' wine', ' paper'][idx % 3] : ' empty'));
     if (!box.enterable) el.setAttribute('aria-disabled', 'true');
@@ -402,7 +402,7 @@
         Sleepy.toast('这一格等世界包定稿再上架。');
         return;
       }
-      /* 演练盒（2026-10-11 用户：演练要重走三步）永远先进领局牌页；
+      /* 演练盒（2026-10-11：演练要重走三步）永远先进领局牌页；
          其他已开局的盒直进游玩页，未开局的进建档页。 */
       if (box.status === 'ongoing' && box.source !== 'drill') {
         Sleepy.nav.open('yr-play', { boxId: box.id, sandboxId: sid });
@@ -457,7 +457,7 @@
     shelfA.appendChild(h('div', 'yr-board'));
     room.appendChild(shelfA);
 
-    /* 档案架 · 第二层（封存）—— 2026-10-10 用户反馈：封存也是一排书架，
+    /* 档案架 · 第二层（封存）—— 2026-10-10 反馈：封存也是一排书架，
        不是一句空话。封存盒（status='sealed' / 已结案戳）立上来，没货摆空位。 */
     var sealed = boxes.filter(function (b) {
       return b.status === 'sealed' || b.stamp === '已结案';
